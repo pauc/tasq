@@ -87,6 +87,7 @@ Examples:
   tasq gitlab                grouped view of the tasks tagged #gitlab
   tasq A                     grouped view of the priority-A tasks
   tasq list --status waiting --tag support
+  tasq list --all            open tasks, then the done ones
   tasq create "Fix the build" --prio A --due tomorrow --tag ci
   tasq set 12 in-progress    change status (or A/B/C for priority)
   tasq log 12 "found the cause"

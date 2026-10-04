@@ -235,6 +235,61 @@ mod list {
     }
 
     #[test]
+    fn all_adds_a_done_group_after_the_open_ones() {
+        let env = TestEnv::fixture();
+        let out = env.tasq().args(["list", "--all"]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_snapshot!(stdout(&out));
+        // Filters still apply inside the done group.
+        env.tasq()
+            .args(["list", "--all", "--tag", "nosuch"])
+            .assert()
+            .success()
+            .stdout("No todos tagged #nosuch.\n");
+        let out = env
+            .tasq()
+            .args(["--json", "list", "--all"])
+            .output()
+            .unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+        let tasks = doc["tasks"].as_array().unwrap();
+        let done: Vec<&serde_json::Value> = tasks.iter().filter(|t| t["done"] == true).collect();
+        assert_eq!(done.len(), 1, "{tasks:?}");
+        assert_eq!(tasks.last().unwrap()["done"], true, "done tasks come last");
+    }
+
+    #[test]
+    fn done_lists_only_closed_tasks() {
+        let env = TestEnv::fixture();
+        let out = env.tasq().args(["list", "--done"]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            "DONE\n  [ 4] #C Ship the release notes  #gitlab \n\n"
+        );
+        env.tasq()
+            .args(["list", "--done", "--prio", "A"])
+            .assert()
+            .success()
+            .stdout("No done todos with priority #A.\n");
+        env.tasq()
+            .args(["list", "--all", "--done"])
+            .assert()
+            .code(2);
+        let env = TestEnv::empty();
+        env.tasq()
+            .args(["list", "--all"])
+            .assert()
+            .success()
+            .stdout("No todos.\n");
+        env.tasq()
+            .args(["list", "--done"])
+            .assert()
+            .success()
+            .stdout("No done todos.\n");
+    }
+
+    #[test]
     fn empty_notebook() {
         let env = TestEnv::empty();
         env.tasq().assert().success().stdout("No open todos.\n");

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tasq list --all` (done tasks in a `DONE` group after the open ones, also in `--json`) and
+  `tasq list --done` (only closed tasks); the other filters apply to both. `[ui.colors] done`
+  colours the group.
 - Plugins (ADR 0006): `tasq <name> [args...]` runs an executable `tasq-<name>` from `PATH`
   when `<name>` is not a built-in command, with `TASQ_BIN`, `TASQ_PROFILE`, `TASQ_CONFIG` and
   `TASQ_SET` forwarded so the plugin sees the same configuration; `[hooks]` config

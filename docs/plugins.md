@@ -50,6 +50,7 @@ Read with `--json`, write through the commands:
 | Need | Command |
 |---|---|
 | open tasks in display order | `tasq list --json` (filters: `--status`, `--tag`, `--prio`, `--text`) |
+| done tasks too, or only them | `tasq list --all --json` (done tasks last), `tasq list --done --json` |
 | one task | `tasq view <id> --json` |
 | a day's progress notes per task | `tasq summary --json --raw [DAY]` |
 | resolve a date range | `tasq dates --json [SPEC]` (`from`, `to`, `days`, `working_days`) |
@@ -59,9 +60,6 @@ Read with `--json`, write through the commands:
 
 Every document carries `"schema": 1`; check it and refuse anything else. Exit codes: `0`,
 `1` for an error you can fix (message on stderr), `2` for a usage error.
-
-Done tasks are not in `tasq list --json`; they appear per day in `tasq summary --json` and
-individually through `tasq view <id> --json`.
 
 ### The reference plugin: `tasq-tlogs`
 

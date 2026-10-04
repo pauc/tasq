@@ -20,33 +20,84 @@ use crate::cli::ListArgs;
 use crate::error::{CliError, Result};
 use crate::json;
 use crate::output::{Color, Style};
-pub use tasq_core::theme::{Theme, group_label};
+pub use tasq_core::theme::{DONE_LABEL, Theme, group_label};
 
 /// Runs `list`.
 pub fn run(app: &App, args: &ListArgs) -> Result<()> {
     let workflow = app.workflow();
     let criteria = Criteria::from_args(args, &workflow)?;
     let store = app.open_store()?;
-    let open = store.list(&Filter::default())?;
-    let groups = query::list(&open, &criteria.filter(), &workflow);
+    let tasks = store.list(&criteria.scope.store_filter())?;
+    let matched = query::filter(&tasks, &criteria.filter());
+    let groups = query::group_by_status(matched.iter().copied().filter(|t| !t.done), &workflow);
+    let done = query::sort(matched.iter().copied().filter(|t| t.done));
     if app.out.json_mode() {
         let tasks: Vec<&Task> = groups
             .iter()
             .flat_map(|g| g.tasks.iter().copied())
+            .chain(done.iter().copied())
             .collect();
         return app
             .out
             .json(&json::document([("tasks", json::to_value(&tasks))]));
     }
-    if open.is_empty() {
-        return app.out.print("No open todos.\n");
+    if tasks.is_empty() {
+        return app.out.print(&format!("{}.\n", criteria.scope.nothing()));
     }
-    if groups.is_empty() {
+    if groups.is_empty() && done.is_empty() {
         return app.out.print(&format!("{}\n", criteria.empty_message()));
     }
     let theme = Theme::from_config(&app.config().ui);
-    let text = render(&groups, &theme, app.out.style(), criteria.status.is_some());
+    let text = render(
+        &groups,
+        &done,
+        &theme,
+        app.out.style(),
+        criteria.status.is_some(),
+    );
     app.out.page(&text)
+}
+
+/// Which tasks `list` looks at: open ones (the default), every task
+/// (`--all`) or done ones (`--done`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Scope {
+    /// Open tasks only, as the script listed.
+    #[default]
+    Open,
+    /// Open and done tasks.
+    All,
+    /// Done tasks only.
+    Done,
+}
+
+impl Scope {
+    /// `--all` wins over `--done` (clap rejects both together).
+    pub fn from_flags(all: bool, done: bool) -> Self {
+        match (all, done) {
+            (true, _) => Self::All,
+            (false, true) => Self::Done,
+            (false, false) => Self::Open,
+        }
+    }
+
+    /// The filter for reading the store.
+    pub fn store_filter(self) -> Filter {
+        match self {
+            Self::Open => Filter::default(),
+            Self::All => Filter::default().any_done(),
+            Self::Done => Filter::default().done(true),
+        }
+    }
+
+    /// `No open todos` / `No todos` / `No done todos`.
+    pub fn nothing(self) -> &'static str {
+        match self {
+            Self::Open => "No open todos",
+            Self::All => "No todos",
+            Self::Done => "No done todos",
+        }
+    }
 }
 
 /// The list filter as the user expressed it, kept apart from [`Filter`]
@@ -61,6 +112,8 @@ pub struct Criteria {
     pub priority: Option<Priority>,
     /// `--text`.
     pub text: Option<String>,
+    /// `--all` / `--done`.
+    pub scope: Scope,
 }
 
 impl Criteria {
@@ -97,12 +150,13 @@ impl Criteria {
             })?);
         }
         criteria.text.clone_from(&args.text);
+        criteria.scope = Scope::from_flags(args.all, args.done);
         Ok(criteria)
     }
 
-    /// The core filter: open tasks matching every criterion.
+    /// The core filter: the scope's tasks matching every criterion.
     pub fn filter(&self) -> Filter {
-        let mut filter = Filter::default();
+        let mut filter = self.scope.store_filter();
         if let Some(status) = &self.status {
             filter = filter.status(status.clone());
         }
@@ -135,9 +189,9 @@ impl Criteria {
             parts.push(format!("matching {text:?}"));
         }
         if parts.is_empty() {
-            "No open todos.".to_owned()
+            format!("{}.", self.scope.nothing())
         } else {
-            format!("No open todos {}.", parts.join(" "))
+            format!("{} {}.", self.scope.nothing(), parts.join(" "))
         }
     }
 }
@@ -151,9 +205,16 @@ fn status_list(workflow: &Workflow) -> String {
         .join(" ")
 }
 
-/// Renders the groups. `single_status` reproduces the script's
-/// one-status view: the header is the status name, bold but uncoloured.
-pub fn render(groups: &[Group<'_>], theme: &Theme, style: Style, single_status: bool) -> String {
+/// Renders the groups, then `done` as a `DONE` group when non-empty.
+/// `single_status` reproduces the script's one-status view: the header is
+/// the status name, bold but uncoloured.
+pub fn render(
+    groups: &[Group<'_>],
+    done: &[&Task],
+    theme: &Theme,
+    style: Style,
+    single_status: bool,
+) -> String {
     let mut out = String::new();
     for group in groups {
         let header = match (&group.status, single_status) {
@@ -166,6 +227,14 @@ pub fn render(groups: &[Group<'_>], theme: &Theme, style: Style, single_status: 
         out.push_str(&header);
         out.push('\n');
         for task in &group.tasks {
+            out.push_str(&row(task, style));
+        }
+        out.push('\n');
+    }
+    if !done.is_empty() {
+        out.push_str(&style.bold_color(theme.done_color(), DONE_LABEL));
+        out.push('\n');
+        for task in done {
             out.push_str(&row(task, style));
         }
         out.push('\n');
@@ -235,6 +304,8 @@ mod tests {
             tag: vec!["gitlab".into(), "#support".into()],
             prio: Some("c".into()),
             text: Some("build".into()),
+            all: false,
+            done: false,
         };
         assert_eq!(
             Criteria::from_args(&a, &wf).unwrap_err().to_string(),
@@ -276,6 +347,68 @@ mod tests {
     }
 
     #[test]
+    fn scope_flags_filters_and_messages() {
+        assert_eq!(Scope::from_flags(false, false), Scope::Open);
+        assert_eq!(Scope::from_flags(true, false), Scope::All);
+        assert_eq!(Scope::from_flags(true, true), Scope::All);
+        assert_eq!(Scope::from_flags(false, true), Scope::Done);
+        let mut open = Task::new(TaskId::from(1), "open");
+        open.set_status(Status::READY);
+        let mut done = Task::new(TaskId::from(2), "done");
+        done.done = true;
+        assert!(Scope::Open.store_filter().matches(&open));
+        assert!(!Scope::Open.store_filter().matches(&done));
+        assert!(Scope::All.store_filter().matches(&open));
+        assert!(Scope::All.store_filter().matches(&done));
+        assert!(!Scope::Done.store_filter().matches(&open));
+        assert!(Scope::Done.store_filter().matches(&done));
+
+        let wf = Workflow::default();
+        let a = ListArgs {
+            all: true,
+            tag: vec!["x".into()],
+            ..ListArgs::default()
+        };
+        let c = Criteria::from_args(&a, &wf).unwrap();
+        assert_eq!(c.scope, Scope::All);
+        assert_eq!(c.empty_message(), "No todos tagged #x.");
+        let mut tagged_done = done.clone();
+        tagged_done.add_tag(Tag::new("x").unwrap());
+        assert!(c.filter().matches(&tagged_done));
+        assert!(!c.filter().matches(&done));
+        let a = ListArgs {
+            done: true,
+            ..ListArgs::default()
+        };
+        let c = Criteria::from_args(&a, &wf).unwrap();
+        assert_eq!(c.scope, Scope::Done);
+        assert_eq!(c.empty_message(), "No done todos.");
+        assert!(c.filter().matches(&done));
+        assert!(!c.filter().matches(&open));
+        assert_eq!(Scope::Open.nothing(), "No open todos");
+    }
+
+    #[test]
+    fn render_done_group_comes_last() {
+        let mut a = Task::new(TaskId::from(1), "A");
+        a.set_status(Status::READY);
+        let mut d = Task::new(TaskId::from(2), "D");
+        d.done = true;
+        let tasks = vec![a, d];
+        let groups = query::list(&tasks, &Filter::default(), &Workflow::default());
+        let done: Vec<&Task> = tasks.iter().filter(|t| t.done).collect();
+        let theme = Theme::from_config(&UiConfig::default());
+        assert_eq!(
+            render(&groups, &done, &theme, Style::OFF, false),
+            "READY\n  [ 1] #B A\n\nDONE\n  [ 2] #B D\n\n"
+        );
+        assert_eq!(
+            render(&[], &done, &theme, Style::ON, false),
+            "\x1b[1;2mDONE\x1b[0m\n  \x1b[2m[ 2]\x1b[0m \x1b[2m#B\x1b[0m D\n\n"
+        );
+    }
+
+    #[test]
     fn filter_round_trip() {
         let wf = Workflow::default();
         let c = Criteria::from_args(&args(Some("ready")), &wf).unwrap();
@@ -313,7 +446,7 @@ mod tests {
         let groups = query::list(&tasks, &Filter::default(), &Workflow::default());
         let theme = Theme::from_config(&UiConfig::default());
         assert_eq!(
-            render(&groups, &theme, Style::OFF, false),
+            render(&groups, &[], &theme, Style::OFF, false),
             "READY\n  [ 1] #B A\n\nNO STATUS\n  [ 2] #B B\n\n"
         );
         let one = query::list(
@@ -322,11 +455,11 @@ mod tests {
             &Workflow::default(),
         );
         assert_eq!(
-            render(&one, &theme, Style::ON, true),
+            render(&one, &[], &theme, Style::ON, true),
             "\x1b[1mready\x1b[0m\n  \x1b[2m[ 1]\x1b[0m \x1b[2m#B\x1b[0m A\n\n"
         );
         assert_eq!(
-            render(&one, &theme, Style::ON, false),
+            render(&one, &[], &theme, Style::ON, false),
             "\x1b[1;32mREADY\x1b[0m\n  \x1b[2m[ 1]\x1b[0m \x1b[2m#B\x1b[0m A\n\n"
         );
     }

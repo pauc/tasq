@@ -23,6 +23,12 @@ Options:
       --text <TEXT>
           Only tasks whose title contains TEXT (case-insensitive)
 
+      --all
+          Include done tasks, in a DONE group after the open ones
+
+      --done
+          Only done tasks
+
       --profile <NAME>
           Apply the `[profile.<NAME>]` block of the config files (also TASQ_PROFILE)
 
@@ -64,3 +70,8 @@ tasks are sorted by priority, then due date (undated last), then id.
 WORD is interpreted like the original script: a status prints that one
 group, A/B/C prints the grouped view of that priority, anything else is a
 tag. The explicit flags can be combined and also combine with WORD.
+
+Done tasks are left out unless --all (a DONE group after the open ones,
+sorted by priority, due date and id) or --done (only them) is given; the
+other filters still apply. With --json the DONE group follows the open
+tasks in the `tasks` array.

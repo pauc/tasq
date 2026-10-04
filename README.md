@@ -197,7 +197,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 
 | Command | Purpose |
 |---|---|
-| `tasq [WORD]`, `tasq list [WORD] [--status S] [--tag T]... [--prio P] [--text TEXT]` | Open tasks grouped by status; `WORD` is a status, a tag or a priority |
+| `tasq [WORD]`, `tasq list [WORD] [--status S] [--tag T]... [--prio P] [--text TEXT] [--all \| --done]` | Open tasks grouped by status; `WORD` is a status, a tag or a priority; `--all` adds a DONE group, `--done` shows only closed tasks |
 | `tasq create TITLE [--desc] [--status] [--prio] [--due] [--project] [--tag]... [--related]... [--mr]... [--note]` | Create a task |
 | `tasq set ID VALUE [NOTE]` | Set the status or the priority, optionally logging a note |
 | `tasq log ID NOTE` | Append a dated progress note |

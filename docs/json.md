@@ -6,7 +6,7 @@ refuse anything else; a future shape change bumps the number.
 
 | Command | Payload next to `"schema": 1` |
 |---|---|
-| `tasq [list ...]` | `"tasks": [Task, ...]` in display order (group order, then priority, due, id) |
+| `tasq [list ...]` | `"tasks": [Task, ...]` in display order (group order, then priority, due, id); done tasks only with `--all` (after the open ones) or `--done` |
 | `tasq create`, `set`, `log`, `done`, `view`, `project`, `worktree`, `session`, `mr`, `apply` | `"task": Task` as stored after the command |
 | `tasq project <id>` (show) | `"task": Task`, `"default_project": path or null` |
 | `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool`, `"launcher"`, `"env": {name: value}`, `"steps": [string]` |

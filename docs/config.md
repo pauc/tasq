@@ -254,6 +254,7 @@ them per status name, with `no-status` for the last group:
 ready = "208"            # a 256-colour palette index
 review = "cyan"          # red green yellow blue magenta cyan white dim (grey/gray)
 no-status = "white"
+done = "green"           # the DONE group of `tasq list --all` / `--done`
 ```
 
 A value that is not a colour name or a number from 0 to 255 is ignored. `NO_COLOR` or

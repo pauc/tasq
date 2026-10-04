@@ -32,6 +32,7 @@ Examples:
   tasq gitlab                grouped view of the tasks tagged #gitlab
   tasq A                     grouped view of the priority-A tasks
   tasq list --status waiting --tag support
+  tasq list --all            open tasks, then the done ones
   tasq create \"Fix the build\" --prio A --due tomorrow --tag ci
   tasq set 12 in-progress    change status (or A/B/C for priority)
   tasq log 12 \"found the cause\"
@@ -363,7 +364,12 @@ tasks are sorted by priority, then due date (undated last), then id.
 
 WORD is interpreted like the original script: a status prints that one
 group, A/B/C prints the grouped view of that priority, anything else is a
-tag. The explicit flags can be combined and also combine with WORD.";
+tag. The explicit flags can be combined and also combine with WORD.
+
+Done tasks are left out unless --all (a DONE group after the open ones,
+sorted by priority, due date and id) or --done (only them) is given; the
+other filters still apply. With --json the DONE group follows the open
+tasks in the `tasks` array.";
 
 const CREATE_HELP: &str = "\
 The file gets the sections the original script wrote, in its order:
@@ -529,6 +535,14 @@ pub struct ListArgs {
     /// Only tasks whose title contains TEXT (case-insensitive).
     #[arg(long, value_name = "TEXT")]
     pub text: Option<String>,
+
+    /// Include done tasks, in a DONE group after the open ones.
+    #[arg(long, conflicts_with = "done")]
+    pub all: bool,
+
+    /// Only done tasks.
+    #[arg(long)]
+    pub done: bool,
 }
 
 /// `tasq store ...`.

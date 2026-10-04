@@ -1,0 +1,18 @@
+---
+source: crates/cli/tests/cli.rs
+expression: stdout(&out)
+---
+IN PROGRESS
+  [ 1] #A Rewrite the tasks script in Rust (due 2026-10-10)  #gitlab 
+
+READY
+  [ 3] #B Answer the support ticket  #support 
+
+WAITING
+  [ 6] #B Wait for the security review
+
+NO STATUS
+  [ 7] #B Task without a tags section
+
+DONE
+  [ 4] #C Ship the release notes  #gitlab

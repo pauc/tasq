@@ -57,6 +57,8 @@ impl Color {
 
 /// The `[ui.colors]` key of the no-status group.
 pub const NO_STATUS_KEY: &str = "no-status";
+/// The `[ui.colors]` key of the done group (`tasq list --all` / `--done`).
+pub const DONE_KEY: &str = "done";
 
 /// Colours of the status groups: the script's five plus `cyan` for any
 /// other configured status and dim for `NO STATUS`, overridable per status
@@ -95,6 +97,16 @@ impl Theme {
         }
     }
 }
+
+impl Theme {
+    /// The colour of the `DONE` group: `[ui.colors] done`, else dim.
+    pub fn done_color(&self) -> Color {
+        self.overrides.get(DONE_KEY).copied().unwrap_or(Color::Dim)
+    }
+}
+
+/// The label of the done group.
+pub const DONE_LABEL: &str = "DONE";
 
 /// The `IN PROGRESS` / `NO STATUS` header of a status group, as the
 /// script printed it: upper case, hyphens as spaces.
@@ -144,6 +156,8 @@ mod tests {
             Color::Cyan
         );
         assert_eq!(theme.status_color(None), Color::Dim);
+        assert_eq!(theme.done_color(), Color::Dim);
+        assert_eq!(DONE_LABEL, "DONE");
     }
 
     #[test]
@@ -153,7 +167,9 @@ mod tests {
         ui.colors.insert("no-status".into(), "white".into());
         ui.colors.insert("later".into(), "not-a-colour".into());
         ui.colors.insert("review".into(), "red".into());
+        ui.colors.insert("done".into(), "green".into());
         let theme = Theme::from_config(&ui);
+        assert_eq!(theme.done_color(), Color::Green);
         assert_eq!(theme.status_color(Some(&Status::READY)), Color::Fixed(208));
         assert_eq!(theme.status_color(None), Color::White);
         assert_eq!(theme.status_color(Some(&Status::LATER)), Color::Magenta);
@@ -162,7 +178,7 @@ mod tests {
             Color::Red
         );
         assert_eq!(theme.status_color(Some(&Status::IN_PROGRESS)), Color::Blue);
-        assert_eq!(theme.overrides.len(), 3, "{:?}", theme.overrides);
+        assert_eq!(theme.overrides.len(), 4, "{:?}", theme.overrides);
     }
 
     #[test]
