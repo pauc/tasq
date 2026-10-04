@@ -32,6 +32,8 @@ allow = [
     "CC0-1.0",
     "Unlicense",
     "BSL-1.0",
+    # webpki-roots (Mozilla's CA bundle, pulled in by ureq/rustls): permissive data license.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
