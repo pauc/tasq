@@ -51,7 +51,10 @@ test run exceeds it, only the processes inside the scope are killed. `.cargo/con
 parallel `rustc` jobs at eight, and dev profiles carry reduced debuginfo.
 
 Why: on a 32-core machine a cold build with the default job count, run three times concurrently
-alongside cargo-mutants, exhausted 62 GB of RAM and killed the desktop session. Rules of thumb:
+alongside cargo-mutants, exhausted 62 GB of RAM and killed the desktop session. On Linux, cargo also runs every test binary through `scripts/test-runner`, which caps the
+process address space at 4 GiB (`TASQ_TEST_AS_KB` overrides). A test, or a mutant, that
+allocates without bound then aborts on its own and is counted as a failure, instead of
+outrunning cargo-mutants' timeout. Rules of thumb:
 
 - Run cargo through the guard (`scripts/guard cargo ...`) whenever you are not using `just`.
 - Never run more than one cargo-mutants at a time, and keep `--jobs 2` (each job builds a full copy of the tree).

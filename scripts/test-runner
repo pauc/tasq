@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# test-runner — cargo `runner` for Linux targets: caps the address space of
+# every test binary before exec'ing it.
+#
+# A mutated or buggy loop that allocates without bound can eat tens of GB in
+# under a second, faster than cargo-mutants' timeout or any userspace OOM
+# daemon reacts. With a 4 GiB address-space limit the allocation fails, the
+# test aborts, and the mutant is counted as caught instead of taking the
+# machine down. Override with TASQ_TEST_AS_KB (kilobytes).
+set -euo pipefail
+ulimit -v "${TASQ_TEST_AS_KB:-4194304}"
+exec "$@"

@@ -12,7 +12,7 @@
 # (CI containers, macOS), printing a one-line notice to stderr.
 set -euo pipefail
 
-mem="${GUARD_MEM:-16G}"
+mem="${GUARD_MEM:-12G}"
 if [[ "${1:-}" == "--mem" ]]; then
   mem="$2"; shift 2
 fi
@@ -20,7 +20,7 @@ fi
 
 if command -v systemd-run >/dev/null 2>&1 && systemd-run --user --scope -q -p MemoryMax=10M true 2>/dev/null; then
   exec systemd-run --user --scope -q \
-    -p "MemoryMax=$mem" -p "MemoryHigh=$mem" -p MemorySwapMax=512M \
+    -p "MemoryMax=$mem" -p "MemoryHigh=$mem" -p MemorySwapMax=0 \
     -- "$@"
 else
   echo "guard: systemd-run unavailable, running unguarded" >&2

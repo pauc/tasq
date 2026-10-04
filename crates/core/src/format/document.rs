@@ -113,25 +113,34 @@ impl<'a> Section<'a> {
     /// A subsection ends at the next line starting with `##`, which is how
     /// the script closed `### Merge requests`.
     pub fn subsections(&self) -> Vec<Section<'a>> {
+        // Written as bounded iteration over heading positions rather than a
+        // manual index loop: no single operator change can make it spin
+        // forever while allocating (that mutant once took a machine down).
+        let headings = self
+            .body
+            .iter()
+            .enumerate()
+            .filter_map(|(i, line)| line.strip_prefix("### ").map(|name| (i, name)));
         let mut out = Vec::new();
-        let mut i = 0;
-        while i < self.body.len() {
-            if let Some(name) = self.body[i].strip_prefix("### ") {
-                let start = i + 1;
-                let mut end = start;
-                while end < self.body.len() && !self.body[end].starts_with("##") {
-                    end += 1;
-                }
-                out.push(Section {
-                    level: 3,
-                    name,
-                    heading: self.heading + 1 + i,
-                    body: self.body[start..end].to_vec(),
-                });
-                i = end;
-            } else {
-                i += 1;
+        let mut covered_until = 0;
+        for (i, name) in headings {
+            if i < covered_until {
+                // A `###` line inside a previous subsection's body cannot
+                // happen (any `##` closes it), but keep the invariant explicit.
+                continue;
             }
+            let start = i + 1;
+            let end = self.body[start..]
+                .iter()
+                .position(|l| l.starts_with("##"))
+                .map_or(self.body.len(), |n| start + n);
+            out.push(Section {
+                level: 3,
+                name,
+                heading: self.heading + 1 + i,
+                body: self.body[start..end].to_vec(),
+            });
+            covered_until = end;
         }
         out
     }

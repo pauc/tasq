@@ -28,6 +28,12 @@ place for status, learnings, blockers and deviations from the plan.
 
 ## Learnings
 
+- **Mutation testing needs a per-test memory limit.** A mutant that turns a loop infinite while
+  allocating outruns any timeout or OOM daemon. The cargo `runner` + `ulimit -v` wrapper in
+  `scripts/test-runner` is the systemic fix; prefer bounded `for` iteration over manual
+  `while i < len` index loops in code that allocates per iteration.
+- **Never bypass `scripts/guard`, not even for a "quick" reproduction.** That is exactly what
+  killed the session the second time.
 - **Parallel agents on one Rust workspace are a memory hazard.** Cap `build.jobs`, wrap builds in
   a cgroup (`scripts/guard`), and serialize anything that compiles. See Blockers.
 
@@ -107,6 +113,15 @@ place for status, learnings, blockers and deviations from the plan.
   a systemd scope with `MemoryMax=16G`; all `just` recipes use it; cargo-mutants limited to
   `--jobs 2`; dev profiles use `line-tables-only` debuginfo; **agents now run one at a time** and
   must use the guard for every cargo call.
+- **2026-10-04 second OOM incident (resolved).** Root cause found: the cargo-mutants mutant
+  `replace + with * in Section::subsections` (format/document.rs) made `end == i`, so the loop
+  pushed a `Section` forever and allocated tens of GB in under a second, faster than the mutants
+  timeout. Under the guard the cgroup was killed and the run reported "interrupted" (desktop
+  survived); one unguarded reproduction run killed GNOME again. Fixes: (1) `scripts/test-runner`
+  is cargo's `runner` on Linux and caps every test binary's address space at 4 GiB, so an
+  allocation bomb aborts and the mutant is *caught*; (2) `subsections` rewritten as bounded
+  iteration over heading positions; (3) guard lowered to `MemoryMax=12G`, `MemorySwapMax=0`.
+  Verified: the 13 subsections mutants are all caught in 9 s.
 
 ## Deviations from the plan
 
