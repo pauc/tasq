@@ -284,7 +284,7 @@ command = "claude -p --model sonnet"
 
 **Acceptance Criteria:**
 - [ ] `.cargo/mutants.toml` committed: `examine_globs` for `crates/core`, `crates/store-nb`, `crates/sources`, `crates/launch`; `exclude_globs` for `crates/tui` view code and `crates/cli` arg plumbing (covered by snapshot tests instead); `timeout_multiplier = 3`
-- [ ] Functions that only wrap I/O or `exec` (process replacement, terminal setup) are annotated `#[cfg_attr(test, mutants::skip)]` with a one-line reason
+- [ ] Functions that only wrap I/O or `exec` (process replacement, terminal setup) are annotated `#[mutants::skip]` (plain form; the `mutants` crate is a regular dependency because cargo-mutants reads the attribute from source text and never evaluates `cfg_attr`) with a one-line reason
 - [ ] `just mutants` runs locally with `--jobs` auto-detected and `--in-diff` against `main`; `just mutants-full` runs everything
 - [ ] CI PR job fails when a mutant in the diff survives; nightly full run opens/updates a tracking issue listing survivors
 - [ ] Target recorded in README: **zero missed mutants** in `tasq-core::format`, `query`, `reconcile`, `config`, `dates`; ≤5% missed across `core` as a whole
