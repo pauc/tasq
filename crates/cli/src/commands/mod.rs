@@ -3,6 +3,9 @@
 
 pub mod completions;
 pub mod config;
+pub mod create;
 pub mod doctor;
+pub mod edit;
 pub mod list;
+pub mod mr;
 pub mod store;

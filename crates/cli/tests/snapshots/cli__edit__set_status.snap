@@ -1,0 +1,17 @@
+---
+source: crates/cli/tests/cli.rs
+expression: support_file(&env)
+---
+# [ ] Answer the support ticket
+
+## Description
+
+Customer asks about the export format.
+
+## Tags
+
+#support #B #blocked
+
+## Progress
+
+- 2026-10-02 10:00: created via tasks create

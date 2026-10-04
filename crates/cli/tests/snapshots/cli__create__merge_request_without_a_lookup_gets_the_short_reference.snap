@@ -1,0 +1,19 @@
+---
+source: crates/cli/tests/cli.rs
+expression: file
+---
+# [ ] Review it
+
+## Tags
+
+#B #ready
+
+## Related
+
+### Merge requests
+
+- [group/project!77](https://gitlab.example.invalid/group/project/-/merge_requests/77)
+
+## Progress
+
+- 2026-10-07 09:30: created via tasq create

@@ -1,0 +1,29 @@
+---
+source: crates/cli/tests/cli.rs
+expression: env.normalize(&file)
+---
+# [ ] Reply to the auditor
+
+## Description
+
+They asked for the Q3 export.
+
+## Project
+
+[ROOT]/home/proj
+
+## Due
+
+2026-10-08
+
+## Related
+
+- https://example.invalid/ticket/9
+
+## Tags
+
+#audit #support #A #waiting
+
+## Progress
+
+- 2026-10-07 09:30: mail sent

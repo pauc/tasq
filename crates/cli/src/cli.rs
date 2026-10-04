@@ -32,6 +32,10 @@ Examples:
   tasq gitlab                grouped view of the tasks tagged #gitlab
   tasq A                     grouped view of the priority-A tasks
   tasq list --status waiting --tag support
+  tasq create \"Fix the build\" --prio A --due tomorrow --tag ci
+  tasq set 12 in-progress    change status (or A/B/C for priority)
+  tasq log 12 \"found the cause\"
+  tasq done 12 \"merged\"
   tasq store info            where the tasks live
   tasq doctor                check config, notebook, nb and optional tools";
 
@@ -115,6 +119,46 @@ pub enum Command {
     #[command(after_help = LIST_HELP)]
     List(ListArgs),
 
+    /// Create a task.
+    #[command(after_help = CREATE_HELP)]
+    Create(CreateArgs),
+
+    /// Set the status or the priority of a task, optionally logging a note.
+    ///
+    /// VALUE is a status of the workflow (in-progress, ready, ...) or a
+    /// priority (A, B, C, with or without the #). Prints `[id] -> value`.
+    Set {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// New status or priority.
+        #[arg(value_name = "VALUE")]
+        value: String,
+        /// Progress note to append at the same time.
+        #[arg(value_name = "NOTE")]
+        note: Option<String>,
+    },
+
+    /// Append a dated progress note to a task.
+    Log {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// The note.
+        #[arg(value_name = "NOTE")]
+        note: String,
+    },
+
+    /// Mark a task done (`# [x]`, status tag removed), optionally logging a final note.
+    Done {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Final progress note, appended before closing.
+        #[arg(value_name = "NOTE")]
+        note: Option<String>,
+    },
+
     /// The store behind the tasks: where it is and how to sync it.
     #[command(subcommand)]
     Store(StoreCommand),
@@ -150,6 +194,64 @@ tasks are sorted by priority, then due date (undated last), then id.
 WORD is interpreted like the original script: a status prints that one
 group, A/B/C prints the grouped view of that priority, anything else is a
 tag. The explicit flags can be combined and also combine with WORD.";
+
+const CREATE_HELP: &str = "\
+The file gets the sections the original script wrote, in its order:
+Description, Project, Due, Related (with Merge requests), Tags, Progress.
+Status defaults to workflow.default_status and priority to B. The first
+progress note is --note, or `created via tasq create`.
+
+--due accepts YYYY-MM-DD, today, tomorrow and yesterday. --project must be
+an existing directory and is stored as an absolute path. --status done
+creates the task already closed (`# [x]`, no status tag). Merge requests
+need a title; until a forge lookup exists the title falls back to
+`group/project!123` (GitLab) or `owner/repo#123` (GitHub).
+
+Prints `[id] created: Title (#status #prio)`.";
+
+/// `tasq create` arguments.
+#[derive(Debug, Clone, Args, Default)]
+pub struct CreateArgs {
+    /// Task title (the `# [ ] Title` line).
+    #[arg(value_name = "TITLE")]
+    pub title: String,
+
+    /// `## Description` text.
+    #[arg(long, value_name = "TEXT")]
+    pub desc: Option<String>,
+
+    /// Initial status, or `done` [default: workflow.default_status].
+    #[arg(long, value_name = "STATUS")]
+    pub status: Option<String>,
+
+    /// Priority A, B or C [default: B].
+    #[arg(long, value_name = "PRIO")]
+    pub prio: Option<String>,
+
+    /// Due date: YYYY-MM-DD, today, tomorrow or yesterday.
+    #[arg(long, value_name = "DATE")]
+    pub due: Option<String>,
+
+    /// Project directory sessions start in (must exist).
+    #[arg(long, value_name = "DIR")]
+    pub project: Option<PathBuf>,
+
+    /// Topic tag, with or without the leading #. Repeatable.
+    #[arg(long, value_name = "TAG")]
+    pub tag: Vec<String>,
+
+    /// Related link for `## Related`. Repeatable.
+    #[arg(long, value_name = "URL")]
+    pub related: Vec<String>,
+
+    /// Merge request to track under `### Merge requests`. Repeatable.
+    #[arg(long, value_name = "URL")]
+    pub mr: Vec<String>,
+
+    /// First progress note [default: "created via tasq create"].
+    #[arg(long, value_name = "TEXT")]
+    pub note: Option<String>,
+}
 
 /// `tasq list` arguments.
 #[derive(Debug, Clone, Args, Default)]

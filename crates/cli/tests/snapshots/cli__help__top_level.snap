@@ -16,6 +16,10 @@ Usage: tasq [OPTIONS] [WORD] [COMMAND]
 
 Commands:
   list         List open tasks grouped by status (the default command)
+  create       Create a task
+  set          Set the status or the priority of a task, optionally logging a note
+  log          Append a dated progress note to a task
+  done         Mark a task done (`# [x]`, status tag removed), optionally logging a final note
   store        The store behind the tasks: where it is and how to sync it
   doctor       Check the configuration, the notebook, nb and optional tools
   config       Show the effective configuration
@@ -70,5 +74,9 @@ Examples:
   tasq gitlab                grouped view of the tasks tagged #gitlab
   tasq A                     grouped view of the priority-A tasks
   tasq list --status waiting --tag support
+  tasq create "Fix the build" --prio A --due tomorrow --tag ci
+  tasq set 12 in-progress    change status (or A/B/C for priority)
+  tasq log 12 "found the cause"
+  tasq done 12 "merged"
   tasq store info            where the tasks live
   tasq doctor                check config, notebook, nb and optional tools

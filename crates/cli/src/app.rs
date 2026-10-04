@@ -3,14 +3,19 @@
 
 use std::collections::BTreeMap;
 
+use tasq_core::clock::{Clock, FixedClock, SystemClock, When, parse_timestamp};
 use tasq_core::config::{Config, LoadOptions, Loaded};
-use tasq_core::model::Workflow;
+use tasq_core::model::{TaskId, Workflow};
 use tasq_store_nb::{NbStore, NbStoreOptions};
 
 use crate::cli::{Cli, Command, GlobalArgs, ListArgs};
 use crate::commands;
 use crate::error::{CliError, Result};
 use crate::output::Output;
+
+/// Environment variable fixing "now" (`YYYY-MM-DD HH:MM`) for every
+/// timestamp `tasq` writes; for tests and reproducible demos.
+pub const ENV_NOW: &str = "TASQ_NOW";
 
 /// Everything a command needs: flags, loaded configuration and output.
 #[derive(Debug)]
@@ -53,6 +58,14 @@ pub fn run(cli: Cli) -> Result<()> {
                     },
                 ),
                 Some(Command::List(args)) => commands::list::run(&app, &args),
+                Some(Command::Create(args)) => commands::create::run(&app, &args),
+                Some(Command::Set { id, value, note }) => {
+                    commands::edit::set(&app, &id, &value, note.as_deref())
+                }
+                Some(Command::Log { id, note }) => commands::edit::log(&app, &id, &note),
+                Some(Command::Done { id, note }) => {
+                    commands::edit::done(&app, &id, note.as_deref())
+                }
                 Some(Command::Store(cmd)) => commands::store::run(&app, cmd),
                 Some(Command::Config(cmd)) => commands::config::run(&app, cmd),
                 Some(Command::Doctor | Command::Completions { .. }) => {
@@ -66,6 +79,10 @@ pub fn run(cli: Cli) -> Result<()> {
 fn command_name(command: &Command) -> &'static str {
     match command {
         Command::List(_) => "list",
+        Command::Create(_) => "create",
+        Command::Set { .. } => "set",
+        Command::Log { .. } => "log",
+        Command::Done { .. } => "done",
         Command::Store(_) => "store",
         Command::Doctor => "doctor",
         Command::Config(_) => "config",
@@ -132,10 +149,30 @@ impl App {
         options
     }
 
+    /// The clock that stamps notes, sessions and new files: the system
+    /// clock, or a fixed one when [`ENV_NOW`] is set (a testing aid).
+    pub fn clock(&self) -> Result<Box<dyn Clock>> {
+        match self.opts.env.get(ENV_NOW).filter(|v| !v.is_empty()) {
+            None => Ok(Box::new(SystemClock)),
+            Some(text) => match parse_timestamp(text) {
+                Ok(When::DateTime(at)) => Ok(Box::new(FixedClock(at))),
+                Ok(When::Date(_)) | Err(_) => Err(CliError::user(format!(
+                    "{ENV_NOW}={text:?}: expected YYYY-MM-DD HH:MM"
+                ))),
+            },
+        }
+    }
+
+    /// A task id from the command line (anything non-empty).
+    pub fn task_id(text: &str) -> Result<TaskId> {
+        TaskId::new(text).map_err(|_| CliError::user("task id must not be empty"))
+    }
+
     /// Opens the configured store. Warnings raised while opening (a
     /// rebuilt index) go to stderr.
     pub fn open_store(&self) -> Result<NbStore> {
-        let mut store = NbStore::open(&self.config().store, &self.store_options())?;
+        let mut store =
+            NbStore::open(&self.config().store, &self.store_options())?.with_clock(self.clock()?);
         for warning in store.take_warnings() {
             self.out.warn(&warning.to_string());
         }
