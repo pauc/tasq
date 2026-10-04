@@ -61,7 +61,7 @@ migration).
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
 | T-801 | TUI foundation | done | `crates/tui/src/{model,msg,keys,update,view,runtime}.rs`; `tasq ui` in `crates/cli/src/commands/ui.rs`; 18 `TestBackend` snapshots in `crates/tui/tests/render.rs`; gif not recorded |
-| T-802 | TUI editing actions | done | `s p l d` through `tasq_core::edit`; `c` creates a task (title only, `workflow.default_status`) through `Store::create` and fires `post-create` through `Host::after_create` (ADR 0011); `e`/`Enter`/`S` through the `Host` trait, run as `$EDITOR`, `tasq pick`, `tasq sync` child processes with the terminal released; paste collapses to one line; `?` help overlay |
+| T-802 | TUI editing actions | done | `s p l d` through `tasq_core::edit`; `c` creates a task (title only, `workflow.default_status`) through `Store::create` and fires `post-create` through `Host::after_create` (ADR 0011); `Ctrl+Enter`/`Shift+Enter` open the session in a new window, focused or not (`tasq pick --detached [--no-focus]`, ADR 0012); `e`/`Enter`/`S` through the `Host` trait, run as `$EDITOR`, `tasq pick`, `tasq sync` child processes with the terminal released; paste collapses to one line; `?` help overlay |
 | T-803 | Theming and config | done | `tasq_core::theme::{Color, Theme}` shared with the CLI; `NO_COLOR`/`--color never` monochrome; two-pane from 100 columns, one pane below; both layouts snapshotted |
 
 ### Phase 7 status
@@ -219,6 +219,19 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 ## Learnings
 
 ### Plugin and release decisions (T-901 to T-904)
+
+- **Sessions in a new window from the TUI (follow-up 2026-10-05, ADR 0012).** `Enter` stays
+  "here"; `Ctrl+Enter` / `Shift+Enter` are `Cmd::Launch(id, LaunchTarget::Detached { focus })`
+  and `Host::launch(id, target)`; the CLI host runs `tasq pick <id> --detached [--no-focus]`
+  with `Command::output()` so the UI keeps the screen and shows the child's last line. New
+  config: `launch.detached` (`auto` = herdr, else tmux, else an error before any write) and
+  `launch.herdr.placement` (`auto` | `workspace` | `tab`); `LaunchContext.focus`; tmux gets
+  `-d`, herdr skips `agent/tab/workspace focus`. The runtime pushes
+  `KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES` when `supports_keyboard_enhancement()`
+  and pops it on restore (a static `AtomicBool` guards the pop, so a terminal that never got
+  the push is not sent `CSI < u`). Probed from a herdr 0.9.3 pane: `CSI ? u` answers
+  `CSI ? 0 u`, so herdr speaks the kitty protocol and the chords arrive as such. Mutants on
+  `launch/{registry,herdr,tmux}.rs` + `core/launch.rs`: 108 tested, 0 missed. Commit 8abc1ba.
 
 - **`post-done` from the TUI (follow-up, ADR 0010).** `Host::after_done(&Task)` is called by
   the TUI's `dispatch` after `edit::done` succeeded; the CLI's `CliHost` (now holding `&App`)
