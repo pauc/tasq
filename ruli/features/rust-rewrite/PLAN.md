@@ -209,7 +209,8 @@ default_status = "ready"
 
 [work]
 default_project = "~/code/SF/silverfin_worspace/silverfin"
-worktree_manager = "gwm"     # or "git"
+worktree_manager = "git"     # git | command
+# worktree_command = "gwm create {new} {branch} --no-tmux -s"
 
 [launch]
 default = "claude"           # shell | claude | tmux | herdr
@@ -463,7 +464,7 @@ command = "claude -p --model sonnet"
 **Acceptance Criteria:**
 - [ ] `tasq project <id>` prints the tracked dir or `no project tracked (default: ...)`
 - [ ] `tasq worktree <id> <path>` records path and current branch, idempotent
-- [ ] `WorktreeManager` trait with `Gwm` and `Git` impls; `Gwm` finds `gwm.yml` upwards and decides `-b` by checking local/remote branches, like the script
+- [ ] `WorktreeManager` trait with `Git` (default) and `Command` impls; `Command` runs the configured `work.worktree_command` template (gwm is one line of config, not a dependency) and both decide `{new}`/`-b` by checking local/remote branches, like the script
 - [ ] Tests use a temporary git repo and a fake `gwm` script on PATH
 
 ### T-307: `session` and `mr`
@@ -758,3 +759,4 @@ Rename is a find-and-replace on crate names before T-903; nothing in the plan de
 - License: GPL-3.0-or-later (nb is AGPLv3; CLI has no network-service clause need).
 - nb relationship: hybrid — native reads and file writes, nb for index/git bookkeeping when installed, native fallback otherwise.
 - Forge sources split per concern: `<forge>-review-requests` and `<forge>-work-items`; work items create tasks by default.
+- (2026-10-04, during Phase 3) No gwm adapter in tasq: worktree provisioning is a separate, per-repo concern. `work.worktree_manager` is `git` by default or `command` with a user template; gwm users set `worktree_command = "gwm create {new} {branch} --no-tmux -s"`.

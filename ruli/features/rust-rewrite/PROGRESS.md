@@ -21,7 +21,7 @@ T-405).
 | T-303 | `create` | done | `--due` words via `tasq_core::dates::parse_day` (mutants 8 tested, 0 missed); `--mr` falls back to a `group/project!123` label until T-307 |
 | T-304 | `set`, `log`, `done` | done | whole-task `Store::update`; `TASQ_NOW` fixes timestamps in tests |
 | T-305 | `view` | done | `linkify_pre/post`, `unwrap_urls`, `shortref` ported as pure functions with unit tests; `--raw`; glow only on a TTY |
-| T-306 | `project`, `worktree` | done | `tasq_core::work` (trait + pure helpers), `tasq_launch::worktree` (`GwmManager`, `GitManager`, fake gwm + real git tests) |
+| T-306 | `project`, `worktree` | done | `tasq_core::work` (trait + pure helpers), `tasq_launch::worktree` (`GitManager` default, `CommandManager` for gwm and friends; real git + fake tool tests) |
 | T-307 | `session`, `mr` | done | idempotent; resume hint CLI-side until the `Launcher` trait exists; MR title fallback from T-303 |
 | T-308 | `apply` | done | `{"schema":1,"task":{...}}` on stdin or a file; `docs/json.md`; `view --json \| apply` is a no-op (mtime-checked) |
 
@@ -155,13 +155,15 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   line; an empty link label becomes `****`). Width: `$COLUMNS`, else `tput cols`, else 100.
   The script's `tasks view <id> [nb args]` passthrough is gone (`--raw` instead).
 - `worktree --create`: `tasq_core::work::WorktreeManager` (trait, `CreatedWorktree`, `WorkError`,
-  `find_up`, `branch_slug`, `sibling_worktree`, `project_dir`) with the process-running impls
-  in `tasq-launch` (`process::run` is the only `#[mutants::skip]`). `GwmManager` reproduces the
-  script: `gwm.yml` found upwards from the project, `-b` only when the branch exists neither
-  locally nor on `origin`, `GWM_SHELL_MODE=1 gwm create [-b] <branch> --no-tmux -s` in the
-  project, last output line = path, other lines shown to the user. `GitManager` (new, for
-  people without gwm) uses `git worktree add` into `<project>-<branch-slug>` next to the
-  project and reuses the directory when it exists.
+  `branch_slug`, `sibling_worktree`, `project_dir`) with the process-running impls in
+  `tasq-launch` (`process::run` is the only `#[mutants::skip]`). `GitManager` (the default) uses
+  `git worktree add` into `<project>-<branch-slug>` next to the project and reuses the directory
+  when it exists. `CommandManager` runs `work.worktree_command`, a template with `{branch}`,
+  `{project}`, `{new}` (`-b` when the branch exists neither locally nor on `origin`; `{new:x}`
+  for another flag), inside the project; last stdout line = path, other lines shown. **tasq has
+  no gwm code**: gwm is `worktree_command = "gwm create {new} {branch} --no-tmux -s"`, which is
+  what the script's `GWM_SHELL_MODE=1 gwm create [-b] <branch> --no-tmux -s` becomes. Config
+  validation rejects `command` without a `worktree_command`.
 - `session`: the file never stores a launcher, so `Session.launcher` stays `None` on write (a
   `Some` would be `Unsupported`); the resume hint (`claude --resume <id>`, `tmux attach -t`)
   comes from `--launcher`/`launch.default` in `commands::session::resume_hint`, to move onto the
@@ -169,6 +171,10 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 - `apply` reads the `view --json` envelope only (`schema` must be 1, `task` required); errors
   are prefixed `apply:` and name the field via serde's message. Unsupported edits surface the
   store's `unsupported: changing title of task 3 (...)` message unchanged.
+- Config module mutants: replacing gwm surfaced two survivors in untouched `load.rs` code
+  (`leaf_keys::walk`'s empty-table guard and `coerce`'s integer arm, which no key uses yet).
+  Both now have tests (`an_empty_table_is_recorded_as_a_leaf_key`, a unit test calling `coerce`
+  with a hand-built template) rather than being argued equivalent. Config: 90 mutants, 0 missed.
 - Test harness: `TestEnv::fake_tool(name, body)` installs scripts in the `PATH` dir; fakes must
   use absolute paths for anything that is not a shell builtin (`/bin/mkdir`), because that
   `PATH` holds only `git`. `cargo test --workspace` stops at the first failing test binary; use
@@ -357,8 +363,9 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 - T-302: `--json` emits `{"schema":1,"tasks":[...]}` rather than a bare array (FR-4 asks for a
   versioned schema on every command).
 - T-305: no nb passthrough (`tasks view <id> [args]`); `--raw` prints the file instead.
-- T-306: a `git` worktree manager exists besides `gwm` (config `work.worktree_manager = "git"`),
-  placing worktrees at `<project>-<branch-slug>`; the plan only described gwm.
+- T-306: no gwm adapter. `work.worktree_manager` is `git` (default, `<project>-<branch-slug>`)
+  or `command` (user template); gwm is one line of config. Decided 2026-10-04 so tasq carries no
+  dependency on the author's provisioning tool.
 - T-307: the resume hint is a CLI table keyed by launcher name until Phase 4 adds the trait.
 - T-001: repository URL in `Cargo.toml` is a placeholder (`https://example.invalid/tasq`) until a
   GitHub repo exists. Extra just recipes `default` and `fmt-check`.
