@@ -1,6 +1,5 @@
-//! `tasq` binary: clap command-line interface, rendering, pager, OSC 8 links
-//! and `--json` output.
+//! `tasq` binary. Everything lives in the `tasq_cli` library.
 
-fn main() {
-    println!("tasq");
+fn main() -> std::process::ExitCode {
+    tasq_cli::main()
 }

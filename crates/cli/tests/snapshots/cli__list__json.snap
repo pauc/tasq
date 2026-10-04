@@ -1,0 +1,131 @@
+---
+source: crates/cli/tests/cli.rs
+expression: text
+---
+{
+  "schema": 1,
+  "tasks": [
+    {
+      "description": "Port the bash script to a Rust workspace.\nKeep the nb files unchanged.",
+      "done": false,
+      "due": "2026-10-10",
+      "id": "1",
+      "merge_requests": [
+        {
+          "label": "Add parser",
+          "url": "https://gitlab.example.invalid/group/project/-/merge_requests/123"
+        }
+      ],
+      "origin": null,
+      "priority": "A",
+      "progress": [
+        {
+          "at": "2025-03-01",
+          "note": "legacy note without time"
+        },
+        {
+          "at": "2026-10-04 10:15",
+          "note": "created via tasks create"
+        },
+        {
+          "at": "2026-10-04 11:40",
+          "note": "parser done"
+        }
+      ],
+      "project": "/home/pau/code/tasks",
+      "related": [
+        {
+          "label": null,
+          "url": "https://gitlab.example.invalid/group/project/-/issues/42"
+        }
+      ],
+      "sessions": [
+        {
+          "at": "2026-10-04 10:20",
+          "description": "first session",
+          "id": "abc-123",
+          "launcher": null
+        }
+      ],
+      "status": "in-progress",
+      "tags": [
+        "gitlab"
+      ],
+      "title": "Rewrite the tasks script in Rust",
+      "worktrees": [
+        {
+          "branch": "feature-a",
+          "path": "/home/pau/code/tasks-wt/feature-a"
+        }
+      ]
+    },
+    {
+      "description": "Customer asks about the export format.",
+      "done": false,
+      "due": null,
+      "id": "3",
+      "merge_requests": [],
+      "origin": null,
+      "priority": "B",
+      "progress": [
+        {
+          "at": "2026-10-02 10:00",
+          "note": "created via tasks create"
+        }
+      ],
+      "project": null,
+      "related": [],
+      "sessions": [],
+      "status": "ready",
+      "tags": [
+        "support"
+      ],
+      "title": "Answer the support ticket",
+      "worktrees": []
+    },
+    {
+      "description": null,
+      "done": false,
+      "due": null,
+      "id": "6",
+      "merge_requests": [],
+      "origin": null,
+      "priority": "B",
+      "progress": [
+        {
+          "at": "2026-10-04 12:00",
+          "note": "created via tasks create"
+        }
+      ],
+      "project": null,
+      "related": [],
+      "sessions": [],
+      "status": "waiting",
+      "tags": [],
+      "title": "Wait for the security review",
+      "worktrees": []
+    },
+    {
+      "description": null,
+      "done": false,
+      "due": null,
+      "id": "7",
+      "merge_requests": [],
+      "origin": null,
+      "priority": "B",
+      "progress": [
+        {
+          "at": "2026-10-06 14:00",
+          "note": "created via tasks create"
+        }
+      ],
+      "project": null,
+      "related": [],
+      "sessions": [],
+      "status": null,
+      "tags": [],
+      "title": "Task without a tags section",
+      "worktrees": []
+    }
+  ]
+}

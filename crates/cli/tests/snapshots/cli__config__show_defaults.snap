@@ -1,0 +1,38 @@
+---
+source: crates/cli/tests/cli.rs
+expression: env.normalize(&stdout(&out))
+---
+# profile: none
+# layers, later ones win:
+#   1. defaults
+
+[store]
+bookkeeper = "auto"                          # defaults
+kind = "nb"                                  # defaults
+notebook = "home"                            # defaults
+
+[workflow]
+default_status = "ready"                     # defaults
+statuses = ["in-progress", "ready", "waiting", "blocked", "later"] # defaults
+
+[work]
+worktree_manager = "gwm"                     # defaults
+
+[launch]
+default = "claude"                           # defaults
+env = "direnv"                               # defaults
+
+[launch.claude]
+
+[ui]
+glow_style = "dark"                          # defaults
+no_osc8 = false                              # defaults
+pager = "less -RFX"                          # defaults
+
+[ui.colors]
+
+[forge]
+
+[report.summary]
+command = "claude -p"                        # defaults
+summarizer = "llm"                           # defaults

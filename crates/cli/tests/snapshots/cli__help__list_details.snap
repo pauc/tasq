@@ -1,0 +1,66 @@
+---
+source: crates/cli/tests/cli.rs
+expression: stdout(&out)
+---
+List open tasks grouped by status (the default command)
+
+Usage: tasq list [OPTIONS] [WORD]
+
+Arguments:
+  [WORD]
+          Status, tag or priority (with or without the leading #)
+
+Options:
+      --status <STATUS>
+          Only tasks with this status
+
+      --tag <TAG>
+          Only tasks carrying this tag. Repeatable; every tag must match
+
+      --prio <PRIO>
+          Only tasks with this priority (A, B or C)
+
+      --text <TEXT>
+          Only tasks whose title contains TEXT (case-insensitive)
+
+      --profile <NAME>
+          Apply the `[profile.<NAME>]` block of the config files (also TASQ_PROFILE)
+
+      --config <FILE>
+          Use FILE instead of the global config file (also TASQ_CONFIG)
+
+      --set <KEY=VALUE>
+          Override one config key, e.g. --set store.notebook=work. Repeatable
+
+      --json
+          Print machine-readable JSON (every document carries "schema": 1)
+
+      --color <WHEN>
+          When to colour the output: auto (only on a terminal, unless NO_COLOR is set), always or never
+
+          Possible values:
+          - auto:   Colour when stdout is a terminal and NO_COLOR is unset
+          - always: Always emit colour escapes
+          - never:  Never emit colour escapes
+          
+          [default: auto]
+
+      --no-color
+          Never colour the output (same as --color never)
+
+      --no-pager
+          Print long output directly instead of through the pager (`ui.pager`)
+
+  -v, --verbose...
+          Show more detail (bookkeeping output, resolved paths). Repeatable
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+With no filter, open tasks are grouped by status in workflow order
+(IN PROGRESS, READY, WAITING, BLOCKED, LATER, then NO STATUS). Inside a group
+tasks are sorted by priority, then due date (undated last), then id.
+
+WORD is interpreted like the original script: a status prints that one
+group, A/B/C prints the grouped view of that priority, anything else is a
+tag. The explicit flags can be combined and also combine with WORD.

@@ -1,0 +1,6 @@
+---
+source: crates/cli/tests/cli.rs
+expression: stdout(&out)
+---
+ready
+  [ 3] #B Answer the support ticket  #support

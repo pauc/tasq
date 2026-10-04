@@ -1,0 +1,5 @@
+---
+source: crates/cli/tests/cli.rs
+expression: env.normalize(&stdout(&out))
+---
+not a git repository; nothing to sync

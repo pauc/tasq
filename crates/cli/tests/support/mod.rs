@@ -1,0 +1,142 @@
+//! Harness for the CLI integration tests: a temporary copy of the nb store's
+//! fixture notebook, an isolated `HOME` and a `PATH` holding only `git`, so
+//! the binary under test never sees the real `~/.nb`, the real config or a
+//! real `nb` (which keeps the output identical whether or not nb is
+//! installed).
+
+#![allow(dead_code)]
+
+use std::path::{Path, PathBuf};
+use std::process::Output;
+
+use tempfile::TempDir;
+
+/// An isolated environment for one test.
+pub struct TestEnv {
+    /// Owns the temporary tree.
+    pub root: TempDir,
+    /// `<root>/nb`, what `NB_DIR` points at.
+    pub nb_dir: PathBuf,
+    /// `<root>/home`, what `HOME` points at; also the working directory.
+    pub home: PathBuf,
+    /// `<root>/bin`, the only `PATH` entry.
+    pub bin: PathBuf,
+}
+
+impl TestEnv {
+    /// A copy of `crates/store-nb/tests/fixtures/nb/home` as notebook `home`.
+    pub fn fixture() -> Self {
+        let env = Self::bare();
+        copy_dir(&fixture_dir(), &env.notebook());
+        env
+    }
+
+    /// A notebook `home` with an empty index and no tasks.
+    pub fn empty() -> Self {
+        let env = Self::bare();
+        std::fs::create_dir_all(env.notebook()).unwrap();
+        std::fs::write(env.notebook().join(".index"), "").unwrap();
+        env
+    }
+
+    fn bare() -> Self {
+        let root = tempfile::tempdir().expect("tempdir");
+        let nb_dir = root.path().join("nb");
+        let home = root.path().join("home");
+        let bin = root.path().join("bin");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(
+            home.join(".gitconfig"),
+            "[user]\n\tname = tasq tests\n\temail = tasq-tests@example.invalid\n",
+        )
+        .unwrap();
+        if let Some(git) = find_on_path("git") {
+            std::os::unix::fs::symlink(git, bin.join("git")).unwrap();
+        }
+        Self {
+            root,
+            nb_dir,
+            home,
+            bin,
+        }
+    }
+
+    /// `<root>/nb/home`.
+    pub fn notebook(&self) -> PathBuf {
+        self.nb_dir.join("home")
+    }
+
+    /// The binary under test with only this environment, run from `home`.
+    pub fn tasq(&self) -> assert_cmd::Command {
+        let mut cmd = assert_cmd::Command::new(env!("CARGO_BIN_EXE_tasq"));
+        cmd.env_clear()
+            .env("HOME", &self.home)
+            .env("NB_DIR", &self.nb_dir)
+            .env("PATH", &self.bin)
+            .current_dir(&self.home);
+        cmd
+    }
+
+    /// Writes a file inside the notebook.
+    pub fn write_task(&self, name: &str, text: &str) {
+        std::fs::write(self.notebook().join(name), text).unwrap();
+    }
+
+    /// Writes `<home>/.tasq.toml`.
+    pub fn write_project_config(&self, text: &str) {
+        std::fs::write(self.home.join(".tasq.toml"), text).unwrap();
+    }
+
+    /// Writes `<home>/.config/tasq/config.toml`.
+    pub fn write_global_config(&self, text: &str) -> PathBuf {
+        let dir = self.home.join(".config").join("tasq");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("config.toml");
+        std::fs::write(&file, text).unwrap();
+        file
+    }
+
+    /// Replaces the temporary root with `[ROOT]` so output can be snapshotted.
+    pub fn normalize(&self, text: &str) -> String {
+        text.replace(&self.root.path().display().to_string(), "[ROOT]")
+    }
+}
+
+/// Standard output as text.
+pub fn stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// Standard error as text.
+pub fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// The nb store's fixture notebook in the source tree.
+pub fn fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../store-nb/tests/fixtures/nb/home")
+        .canonicalize()
+        .expect("fixture notebook exists")
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
+}

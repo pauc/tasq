@@ -1,0 +1,9 @@
+---
+source: crates/cli/tests/cli.rs
+expression: env.normalize(&stdout(&out))
+---
+store:       nb
+location:    [ROOT]/nb/home
+tasks:       5 (open and done)
+ids:         positional (line numbers in .index); they can change after 'nb index reconcile' or deletions
+bookkeeper:  native

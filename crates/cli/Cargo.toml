@@ -8,11 +8,36 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-[dependencies]
-
-[lints]
-workspace = true
+# The library holds every command so unit tests can exercise rendering and
+# argument handling directly; the binary is one line. The lib is named
+# `tasq_cli` so that `cargo doc` does not collide with the `tasq` binary.
+[lib]
+name = "tasq_cli"
+path = "src/lib.rs"
 
 [[bin]]
 name = "tasq"
 path = "src/main.rs"
+
+[dependencies]
+tasq-core = { path = "../core" }
+tasq-store-nb = { path = "../store-nb" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Splits `ui.pager` ("less -RFX") into argv without a shell.
+shell-words = "1"
+# `config show` walks the effective config as a TOML table to annotate each key.
+toml = "0.9"
+
+[dev-dependencies]
+assert_cmd = "2"
+chrono = { version = "0.4", default-features = false }
+insta = "1"
+predicates = "3"
+tempfile = "3"
+
+[lints]
+workspace = true

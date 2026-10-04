@@ -1,0 +1,151 @@
+//! Wiring: process state into `LoadOptions`, config into an [`App`], the
+//! `App` into an open store, and the parsed command line into a command.
+
+use std::collections::BTreeMap;
+
+use tasq_core::config::{Config, LoadOptions, Loaded};
+use tasq_core::model::Workflow;
+use tasq_store_nb::{NbStore, NbStoreOptions};
+
+use crate::cli::{Cli, Command, GlobalArgs, ListArgs};
+use crate::commands;
+use crate::error::{CliError, Result};
+use crate::output::Output;
+
+/// Everything a command needs: flags, loaded configuration and output.
+#[derive(Debug)]
+pub struct App {
+    /// The global flags.
+    pub global: GlobalArgs,
+    /// Working directory, home and environment the config was loaded with.
+    pub opts: LoadOptions,
+    /// The effective configuration and its provenance.
+    pub loaded: Loaded,
+    /// Where output goes.
+    pub out: Output,
+}
+
+/// Runs the parsed command line.
+pub fn run(cli: Cli) -> Result<()> {
+    let Cli {
+        global,
+        word,
+        command,
+    } = cli;
+    if let (Some(word), Some(command)) = (&word, &command) {
+        return Err(CliError::user(format!(
+            "unexpected argument {word:?} before the '{}' command",
+            command_name(command)
+        )));
+    }
+    let opts = load_options(&global)?;
+    match command {
+        Some(Command::Completions { shell }) => commands::completions::run(shell),
+        Some(Command::Doctor) => commands::doctor::run(global, opts),
+        other => {
+            let app = App::load(global, opts)?;
+            match other {
+                None => commands::list::run(
+                    &app,
+                    &ListArgs {
+                        word,
+                        ..ListArgs::default()
+                    },
+                ),
+                Some(Command::List(args)) => commands::list::run(&app, &args),
+                Some(Command::Store(cmd)) => commands::store::run(&app, cmd),
+                Some(Command::Config(cmd)) => commands::config::run(&app, cmd),
+                Some(Command::Doctor | Command::Completions { .. }) => {
+                    unreachable!("handled before loading the config")
+                }
+            }
+        }
+    }
+}
+
+fn command_name(command: &Command) -> &'static str {
+    match command {
+        Command::List(_) => "list",
+        Command::Store(_) => "store",
+        Command::Doctor => "doctor",
+        Command::Config(_) => "config",
+        Command::Completions { .. } => "completions",
+    }
+}
+
+/// [`LoadOptions`] from the process (cwd, `$HOME`, environment) plus the
+/// `--config`, `--profile` and `--set` flags.
+pub fn load_options(global: &GlobalArgs) -> Result<LoadOptions> {
+    let mut opts = LoadOptions::from_process()?;
+    opts.explicit_file.clone_from(&global.config);
+    opts.profile.clone_from(&global.profile);
+    opts.overrides.clone_from(&global.set);
+    Ok(opts)
+}
+
+impl App {
+    /// Loads the configuration for `opts` and decides output settings.
+    pub fn load(global: GlobalArgs, opts: LoadOptions) -> Result<Self> {
+        let loaded = Config::load(&opts)?;
+        let out = Output::from_process(&global, &loaded.config.ui, &opts.env);
+        Ok(Self::new(global, opts, loaded, out))
+    }
+
+    /// An app from already loaded parts.
+    pub fn new(global: GlobalArgs, opts: LoadOptions, loaded: Loaded, out: Output) -> Self {
+        Self {
+            global,
+            opts,
+            loaded,
+            out,
+        }
+    }
+
+    /// The effective configuration.
+    pub fn config(&self) -> &Config {
+        &self.loaded.config
+    }
+
+    /// The configured status workflow.
+    pub fn workflow(&self) -> Workflow {
+        self.config().workflow.workflow()
+    }
+
+    /// The environment as the store wants it.
+    pub fn env_vec(&self) -> Vec<(String, String)> {
+        env_vec(&self.opts.env)
+    }
+
+    /// Store options from the config and the process environment: `nb` is
+    /// looked up on this environment's `PATH`, `NB_DIR` in it, and the
+    /// file that set `store.notebook` is recorded for error messages.
+    pub fn store_options(&self) -> NbStoreOptions {
+        let mut options = NbStoreOptions::new(self.workflow())
+            .with_env(self.env_vec())
+            .with_bookkeeper(self.config().store.bookkeeper);
+        if let Some(home) = &self.opts.home {
+            options = options.with_home(home);
+        }
+        if let Some(file) = self.loaded.file_for("store.notebook") {
+            options = options.with_config_file(file);
+        }
+        options
+    }
+
+    /// Opens the configured store. Warnings raised while opening (a
+    /// rebuilt index) go to stderr.
+    pub fn open_store(&self) -> Result<NbStore> {
+        let mut store = NbStore::open(&self.config().store, &self.store_options())?;
+        for warning in store.take_warnings() {
+            self.out.warn(&warning.to_string());
+        }
+        self.out
+            .verbose(&format!("notebook: {}", store.dir().display()));
+        Ok(store)
+    }
+}
+
+/// A `BTreeMap` environment as the `Vec` the store API takes.
+pub fn env_vec(env: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    env.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+}

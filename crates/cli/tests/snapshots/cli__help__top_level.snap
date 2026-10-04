@@ -1,0 +1,74 @@
+---
+source: crates/cli/tests/cli.rs
+expression: stdout(&out)
+---
+Terminal task manager over nb markdown todos.
+
+Tasks are the `*.todo.md` files of an nb notebook; `tasq` reads and writes
+them directly, in the same format the original `tasks` script used, and
+leaves index registration and git commits to nb when it is installed.
+
+Every command accepts --json for machine-readable output. Exit codes: 0 on
+success, 1 for an error you can fix (`tasq: <message>` on stderr), 2 for a
+usage error or an internal failure.
+
+Usage: tasq [OPTIONS] [WORD] [COMMAND]
+
+Commands:
+  list         List open tasks grouped by status (the default command)
+  store        The store behind the tasks: where it is and how to sync it
+  doctor       Check the configuration, the notebook, nb and optional tools
+  config       Show the effective configuration
+  completions  Print a shell completion script to stdout
+  help         Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [WORD]
+          Status, tag or priority to list; same as `tasq list <WORD>`
+
+Options:
+      --profile <NAME>
+          Apply the `[profile.<NAME>]` block of the config files (also TASQ_PROFILE)
+
+      --config <FILE>
+          Use FILE instead of the global config file (also TASQ_CONFIG)
+
+      --set <KEY=VALUE>
+          Override one config key, e.g. --set store.notebook=work. Repeatable
+
+      --json
+          Print machine-readable JSON (every document carries "schema": 1)
+
+      --color <WHEN>
+          When to colour the output: auto (only on a terminal, unless NO_COLOR is set), always or never
+
+          Possible values:
+          - auto:   Colour when stdout is a terminal and NO_COLOR is unset
+          - always: Always emit colour escapes
+          - never:  Never emit colour escapes
+          
+          [default: auto]
+
+      --no-color
+          Never colour the output (same as --color never)
+
+      --no-pager
+          Print long output directly instead of through the pager (`ui.pager`)
+
+  -v, --verbose...
+          Show more detail (bookkeeping output, resolved paths). Repeatable
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Examples:
+  tasq                       open tasks grouped by status
+  tasq ready                 only the READY group
+  tasq gitlab                grouped view of the tasks tagged #gitlab
+  tasq A                     grouped view of the priority-A tasks
+  tasq list --status waiting --tag support
+  tasq store info            where the tasks live
+  tasq doctor                check config, notebook, nb and optional tools

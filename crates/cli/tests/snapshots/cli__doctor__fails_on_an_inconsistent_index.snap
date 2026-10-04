@@ -1,0 +1,28 @@
+---
+source: crates/cli/tests/cli.rs
+expression: env.normalize(&stdout(&out))
+---
+OK    config       loaded from defaults
+OK    notebook     notebook at [ROOT]/nb/home, not a git repository (no commits or sync)
+FAIL  index        [ROOT]/nb/home/.index: index out of date: 1 listed file(s) missing, 0 file(s) not listed
+                   fix: run 'nb index reconcile' in the notebook
+WARN  ids          ids are positions in .index (5 tasks) and can change after 'nb index reconcile' or deletions
+                   fix: refer to tasks by title in notes you keep outside tasq
+WARN  nb           nb is not on PATH; the native bookkeeper keeps .index and commits
+                   fix: install nb (https://github.com/xwmx/nb) to share the notebook with nb
+OK    bookkeeper   bookkeeper: native
+OK    git          git found at [ROOT]/bin/git
+WARN  glow         glow is not on PATH
+                   fix: install glow (https://github.com/charmbracelet/glow) for rendered `tasq view`
+WARN  claude       claude is not on PATH
+                   fix: install Claude Code for the claude launcher and the llm summarizer
+WARN  direnv       direnv is not on PATH
+                   fix: install direnv (https://direnv.net), or set launch.env = "inherit"
+WARN  gwm          gwm is not on PATH
+                   fix: install gwm, or set work.worktree_manager = "git"
+WARN  herdr        herdr is not on PATH
+                   fix: install herdr to open sessions in herdr workspaces
+WARN  glab         glab is not on PATH
+                   fix: install glab (https://gitlab.com/gitlab-org/cli) to resolve GitLab merge request titles
+WARN  gh           gh is not on PATH
+                   fix: install gh (https://cli.github.com) to resolve GitHub pull request titles

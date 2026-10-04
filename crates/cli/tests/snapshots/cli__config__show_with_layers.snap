@@ -1,0 +1,44 @@
+---
+source: crates/cli/tests/cli.rs
+expression: env.normalize(&stdout(&out))
+---
+# profile: none
+# profiles available: work
+# layers, later ones win:
+#   1. defaults
+#   2. [ROOT]/home/.config/tasq/config.toml
+#   3. [ROOT]/home/.tasq.toml
+#   4. env
+#   5. --set
+
+[store]
+bookkeeper = "auto"                          # defaults
+kind = "nb"                                  # defaults
+notebook = "home"                            # defaults
+
+[workflow]
+default_status = "ready"                     # defaults
+statuses = ["in-progress", "ready", "waiting", "blocked", "later"] # defaults
+
+[work]
+default_project = "[ROOT]/home/code/x" # [ROOT]/home/.tasq.toml
+worktree_manager = "gwm"                     # defaults
+
+[launch]
+default = "claude"                           # defaults
+env = "direnv"                               # defaults
+
+[launch.claude]
+
+[ui]
+glow_style = "light"                         # env
+no_osc8 = true                               # --set
+pager = "cat"                                # [ROOT]/home/.config/tasq/config.toml
+
+[ui.colors]
+
+[forge]
+
+[report.summary]
+command = "claude -p"                        # defaults
+summarizer = "llm"                           # defaults

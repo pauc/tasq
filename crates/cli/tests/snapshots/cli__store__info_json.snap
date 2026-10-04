@@ -1,0 +1,15 @@
+---
+source: crates/cli/tests/cli.rs
+expression: env.normalize(&stdout(&out))
+---
+{
+  "bookkeeper": "native",
+  "schema": 1,
+  "store": {
+    "id_scheme": "positional",
+    "ids_may_change_on_reconcile": true,
+    "location": "[ROOT]/nb/home",
+    "name": "nb",
+    "task_count": 5
+  }
+}
