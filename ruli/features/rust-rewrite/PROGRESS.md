@@ -34,7 +34,7 @@ now fires `post-done` through a fourth `Host` method (ADR 0010); commit sha belo
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
 | T-901 | Plugin mechanism | done | ADR 0006 Accepted; `crates/cli/src/plugins.rs` (dispatch, discovery, hooks), `commands/plugins.rs`; core `HooksConfig` + `TASQ_SET`; `docs/plugins.md`; `examples/plugins/{tasq-tlogs,hooks/log-event.sh}`; 6 integration + 6 unit tests |
-| T-902 | Documentation and examples | done | README, `CONTRIBUTING.md`, `docs/config.md` (every key with default), `docs/json.md`, `docs/testing.md` (wiremock claim removed), `examples/config/{plain-markdown,author}.toml`, `examples/README.md`; gif recorded 2026-10-05 (`docs/demo/`, VHS in docker) |
+| T-902 | Documentation and examples | done | README, `CONTRIBUTING.md`, `docs/config.md` (every key with default), `docs/json.md`, `docs/testing.md` (wiremock claim removed), `examples/config/{plain-markdown,author}.toml`, `examples/README.md`; gif recorded 2026-10-05 (`docs/demo/`, VHS in docker, commit c294f54) |
 | T-903 | Release pipeline | done, unrun | `.github/workflows/release.yml`, `cliff.toml`, `homebrew/tasq.rb.template`, `docs/release.md`; manifests carry `version` on path deps, `homepage`/`keywords`/`categories`; needs a GitHub repo and `CARGO_REGISTRY_TOKEN` to run |
 | T-904 | Migration guide | docs done, acceptance pending | `docs/migration.md` (command and env mapping from `original/tasks`, switch-over checklist, daily verification); the one-week run is manual |
 
