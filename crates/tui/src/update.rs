@@ -18,6 +18,14 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             model.set_tasks(tasks);
             Vec::new()
         }
+        Msg::Select(id) => {
+            // A task hidden by the filter stays unselected: the message
+            // line already says it was created.
+            if model.visible().iter().any(|t| t.id == id) {
+                model.selected = Some(id);
+            }
+            Vec::new()
+        }
         Msg::Info(text) => {
             model.message = Some(Message::info(text));
             Vec::new()
@@ -34,6 +42,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 Mode::Status { cursor } => status_picker(model, cursor, &key),
                 Mode::Priority { cursor } => priority_picker(model, cursor, &key),
                 Mode::Note { input, target } => note(model, input, target, key),
+                Mode::Create { input } => create(model, input, key),
                 Mode::Help => {
                     if key == Msg::Quit {
                         model.quit = true;
@@ -96,11 +105,16 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         }
         Msg::BeginNote => begin_note(model, NoteTarget::Log),
         Msg::BeginDone => begin_note(model, NoteTarget::Done),
+        Msg::BeginCreate => {
+            model.mode = Mode::Create {
+                input: String::new(),
+            };
+        }
         Msg::Edit => return with_selection(model, Cmd::Edit),
         Msg::Launch | Msg::Enter => return with_selection(model, Cmd::Launch),
         Msg::Sync => return vec![Cmd::Sync],
         Msg::Backspace | Msg::Char(_) | Msg::Paste(_) => {}
-        Msg::Resize(..) | Msg::Loaded(_) | Msg::Info(_) | Msg::Failed(_) => {
+        Msg::Resize(..) | Msg::Loaded(_) | Msg::Select(_) | Msg::Info(_) | Msg::Failed(_) => {
             unreachable!("handled before the mode dispatch")
         }
     }
@@ -273,6 +287,40 @@ fn note(model: &mut Model, mut input: String, target: NoteTarget, msg: Msg) -> V
     Vec::new()
 }
 
+/// The title of a new task (`c`): typed like a note, written with the
+/// model's draft on Enter. An empty title is refused and the input stays
+/// open, as `tasq create` refuses it.
+fn create(model: &mut Model, mut input: String, msg: Msg) -> Vec<Cmd> {
+    match msg {
+        Msg::Quit => model.quit = true,
+        Msg::Escape => model.mode = Mode::Normal,
+        Msg::Char(c) => {
+            input.push(c);
+            model.mode = Mode::Create { input };
+        }
+        Msg::Paste(text) => {
+            input.push_str(&one_line(&text));
+            model.mode = Mode::Create { input };
+        }
+        Msg::Backspace => {
+            input.pop();
+            model.mode = Mode::Create { input };
+        }
+        Msg::Enter => {
+            let title = input.trim();
+            if title.is_empty() {
+                model.message = Some(Message::error("the title must not be empty"));
+            } else {
+                let draft = model.draft(title);
+                model.mode = Mode::Normal;
+                return vec![Cmd::Create(Box::new(draft))];
+            }
+        }
+        _ => {}
+    }
+    Vec::new()
+}
+
 /// A progress entry is one line in the file: pasted line breaks become
 /// spaces (a trailing newline from the clipboard disappears).
 pub fn one_line(text: &str) -> String {
@@ -284,7 +332,7 @@ pub fn one_line(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tasq_core::model::{Status, Task, Workflow};
+    use tasq_core::model::{Status, Task, TaskDraft, Workflow};
     use tasq_core::theme::Theme;
 
     fn task(id: u64, title: &str, status: Option<Status>) -> Task {
@@ -616,6 +664,100 @@ mod tests {
             update(&mut m, Msg::Enter),
             vec![Cmd::Done(TaskId::from(1), Some("merged".into()))]
         );
+    }
+
+    #[test]
+    fn create_flow() {
+        let mut m = model();
+        update(&mut m, Msg::BeginCreate);
+        assert_eq!(
+            m.mode,
+            Mode::Create {
+                input: String::new()
+            }
+        );
+        // An empty title is refused and the input stays open.
+        assert_eq!(update(&mut m, Msg::Enter), Vec::new());
+        assert_eq!(
+            m.message,
+            Some(Message::error("the title must not be empty"))
+        );
+        assert!(matches!(m.mode, Mode::Create { .. }));
+        feed(&mut m, chars("  Call "));
+        update(&mut m, Msg::Paste("the\nbank\n".into()));
+        update(&mut m, Msg::Char('!'));
+        update(&mut m, Msg::Backspace);
+        assert_eq!(
+            m.mode,
+            Mode::Create {
+                input: "  Call the bank".into()
+            }
+        );
+        assert_eq!(update(&mut m, Msg::Down), Vec::new(), "ignored key");
+        assert_eq!(
+            update(&mut m, Msg::Enter),
+            vec![Cmd::Create(Box::new(
+                TaskDraft::new("Call the bank").with_status(Some(Status::READY))
+            ))]
+        );
+        assert_eq!(m.mode, Mode::Normal);
+        // The configured default status goes into the draft.
+        let mut m = model().with_default_status(Status::LATER);
+        feed(&mut m, [Msg::BeginCreate, Msg::Char('x')]);
+        assert_eq!(
+            update(&mut m, Msg::Enter),
+            vec![Cmd::Create(Box::new(
+                TaskDraft::new("x").with_status(Some(Status::LATER))
+            ))]
+        );
+        // Escape drops the typed title; Ctrl-C quits.
+        update(&mut m, Msg::BeginCreate);
+        update(&mut m, Msg::Char('x'));
+        update(&mut m, Msg::Escape);
+        assert_eq!(m.mode, Mode::Normal);
+        update(&mut m, Msg::BeginCreate);
+        update(&mut m, Msg::Quit);
+        assert!(m.quit);
+    }
+
+    #[test]
+    fn create_needs_no_selection_and_the_new_task_gets_selected() {
+        let mut m = model();
+        update(&mut m, Msg::Loaded(Vec::new()));
+        update(&mut m, Msg::BeginCreate);
+        assert_eq!(m.message, None);
+        assert!(matches!(m.mode, Mode::Create { .. }));
+        feed(&mut m, chars("New"));
+        assert_eq!(update(&mut m, Msg::Enter).len(), 1);
+        // What dispatch sends back after the write.
+        update(&mut m, Msg::Info("[7] created: New".into()));
+        update(
+            &mut m,
+            Msg::Loaded(vec![
+                task(1, "First", Some(Status::IN_PROGRESS)),
+                task(7, "New", Some(Status::READY)),
+            ]),
+        );
+        assert_eq!(
+            m.selected,
+            Some(TaskId::from(1)),
+            "the reload keeps the first"
+        );
+        update(&mut m, Msg::Select(TaskId::from(7)));
+        assert_eq!(m.selected, Some(TaskId::from(7)));
+        assert_eq!(
+            m.message,
+            Some(Message::info("[7] created: New")),
+            "selecting is a result, not a key: the message stays"
+        );
+        // A new task hidden by the filter is not selected.
+        m.set_filter("First".into());
+        update(&mut m, Msg::Select(TaskId::from(7)));
+        assert_eq!(m.selected, Some(TaskId::from(1)));
+        // An unknown id is ignored too.
+        m.set_filter(String::new());
+        update(&mut m, Msg::Select(TaskId::from(99)));
+        assert_eq!(m.selected, Some(TaskId::from(1)));
     }
 
     #[test]

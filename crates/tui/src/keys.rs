@@ -18,7 +18,7 @@ pub fn translate(mode: &Mode, key: &KeyEvent) -> Option<Msg> {
     }
     match mode {
         Mode::Normal => normal(key.code, ctrl),
-        Mode::Filter { .. } | Mode::Note { .. } => text(key.code, ctrl),
+        Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => text(key.code, ctrl),
         Mode::Status { .. } | Mode::Priority { .. } => picker(key.code),
         Mode::Help => Some(Msg::Escape),
     }
@@ -39,6 +39,7 @@ fn normal(code: KeyCode, ctrl: bool) -> Option<Msg> {
         KeyCode::Char('p') => Msg::BeginPriority,
         KeyCode::Char('l') => Msg::BeginNote,
         KeyCode::Char('d') => Msg::BeginDone,
+        KeyCode::Char('c') => Msg::BeginCreate,
         KeyCode::Char('e') => Msg::Edit,
         KeyCode::Enter => Msg::Launch,
         KeyCode::Char('S') => Msg::Sync,
@@ -110,6 +111,7 @@ mod tests {
             (ch('p'), Msg::BeginPriority),
             (ch('l'), Msg::BeginNote),
             (ch('d'), Msg::BeginDone),
+            (ch('c'), Msg::BeginCreate),
             (ch('e'), Msg::Edit),
             (key(KeyCode::Enter), Msg::Launch),
             (ch('S'), Msg::Sync),
@@ -149,8 +151,12 @@ mod tests {
                 input: String::new(),
                 target: NoteTarget::Log,
             },
+            Mode::Create {
+                input: String::new(),
+            },
         ] {
             assert_eq!(translate(&mode, &ch('j')), Some(Msg::Char('j')));
+            assert_eq!(translate(&mode, &ch('c')), Some(Msg::Char('c')));
             assert_eq!(translate(&mode, &ch('q')), Some(Msg::Char('q')));
             assert_eq!(translate(&mode, &ch(' ')), Some(Msg::Char(' ')));
             assert_eq!(translate(&mode, &key(KeyCode::Enter)), Some(Msg::Enter));

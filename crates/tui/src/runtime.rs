@@ -17,7 +17,7 @@ use ratatui::crossterm::terminal::{
 };
 use tasq_core::clock::Clock;
 use tasq_core::edit::{self, Value};
-use tasq_core::model::TaskId;
+use tasq_core::model::{TaskDraft, TaskId};
 use tasq_core::query::Filter;
 use tasq_core::store::Store;
 
@@ -29,13 +29,15 @@ use crate::view::view;
 
 /// Runs `cmd` and returns what the model should hear: the outcome, then a
 /// fresh task list (every command but `Load` reloads, so the screen never
-/// shows stale data after an edit, an editor or a sync, successful or not).
+/// shows stale data after an edit, an editor or a sync, successful or not),
+/// then, after a create, the new task's id to select.
 pub fn dispatch(
     cmd: &Cmd,
     store: &mut dyn Store,
     clock: &dyn Clock,
     host: &mut dyn Host,
 ) -> Vec<Msg> {
+    let mut created = None;
     let outcome: Result<String, String> = match cmd {
         Cmd::Load => return vec![reload(store)],
         Cmd::SetStatus(id, status) => {
@@ -54,6 +56,11 @@ pub fn dispatch(
             .map(|_| format!("[{id}] logged: {note}"))
             .map_err(|e| e.to_string()),
         Cmd::Done(id, note) => close(store, clock, host, id, note.as_deref()),
+        Cmd::Create(draft) => {
+            let (id, result) = create(store, host, (**draft).clone());
+            created = id;
+            result
+        }
         Cmd::Edit(id) => edit_file(store, host, id),
         Cmd::Launch(id) => host.launch(id),
         Cmd::Sync => host.sync(),
@@ -62,7 +69,30 @@ pub fn dispatch(
         Ok(text) => Msg::Info(text),
         Err(text) => Msg::Failed(text),
     };
-    vec![first, reload(store)]
+    let mut msgs = vec![first, reload(store)];
+    msgs.extend(created.map(Msg::Select));
+    msgs
+}
+
+/// `Store::create`, then the host's turn (the CLI's `post-create` hooks).
+/// Returns the new id when the write succeeded, whatever the host said,
+/// so the UI can select the task; a host warning is reported like a
+/// failure but the task exists.
+fn create(
+    store: &mut dyn Store,
+    host: &mut dyn Host,
+    draft: TaskDraft,
+) -> (Option<TaskId>, Result<String, String>) {
+    let task = match store.create(draft) {
+        Ok(task) => task,
+        Err(e) => return (None, Err(e.to_string())),
+    };
+    let line = format!("[{}] created: {}", task.id, task.title);
+    let result = match host.after_create(&task) {
+        Ok(()) => Ok(line),
+        Err(warning) => Err(format!("{line} ({warning})")),
+    };
+    (Some(task.id), result)
 }
 
 /// `edit::done`, then the host's turn (the CLI's `post-done` hooks). A
@@ -311,6 +341,97 @@ mod tests {
         assert_eq!(open_ids(&msgs), Vec::<&str>::new());
         // Only a close reaches the host, once per task, after the write.
         assert_eq!(host.calls, vec!["after_done 1", "after_done 2"]);
+    }
+
+    #[test]
+    fn create_writes_the_draft_tells_the_host_and_selects_the_task() {
+        let mut store = store();
+        let mut host = RecordingHost::default();
+        let draft = TaskDraft::new("C").with_status(Some(Status::LATER));
+        let msgs = dispatch(
+            &Cmd::Create(Box::new(draft)),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(
+            msgs,
+            vec![
+                Msg::Info("[3] created: C".into()),
+                Msg::Loaded(store.list(&Filter::default()).unwrap()),
+                Msg::Select(TaskId::from(3)),
+            ]
+        );
+        let task = store.get(&TaskId::from(3)).unwrap();
+        assert_eq!(task.title, "C");
+        assert_eq!(task.status, Some(Status::LATER));
+        assert_eq!(task.priority, Priority::B);
+        assert_eq!(task.progress, Vec::new());
+        assert_eq!(open_ids(&msgs[..2]), ["1", "2", "3"]);
+        assert_eq!(host.calls, vec!["after_create 3"]);
+    }
+
+    #[test]
+    fn a_host_warning_after_a_create_is_shown_but_the_task_exists() {
+        let mut store = store();
+        let mut host = RecordingHost {
+            answer: Some(Err("post-create hook \"x\" failed: exit status 4".into())),
+            ..RecordingHost::default()
+        };
+        let msgs = dispatch(
+            &Cmd::Create(Box::new(TaskDraft::new("C"))),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(
+            msgs[0],
+            Msg::Failed("[3] created: C (post-create hook \"x\" failed: exit status 4)".into())
+        );
+        assert_eq!(msgs[2], Msg::Select(TaskId::from(3)));
+        assert_eq!(store.get(&TaskId::from(3)).unwrap().title, "C");
+        assert_eq!(host.calls, vec!["after_create 3"]);
+    }
+
+    #[test]
+    fn a_failed_create_does_not_reach_the_host_and_selects_nothing() {
+        struct Full;
+        impl Store for Full {
+            fn list(&self, _f: &Filter) -> Result<Vec<Task>, tasq_core::store::StoreError> {
+                Ok(Vec::new())
+            }
+            fn get(&self, id: &TaskId) -> Result<Task, tasq_core::store::StoreError> {
+                Err(tasq_core::store::StoreError::NotFound(id.clone()))
+            }
+            fn create(&mut self, _d: TaskDraft) -> Result<Task, tasq_core::store::StoreError> {
+                Err(tasq_core::store::StoreError::Unsupported {
+                    operation: "read-only store".into(),
+                })
+            }
+            fn update(&mut self, t: &Task) -> Result<(), tasq_core::store::StoreError> {
+                Err(tasq_core::store::StoreError::NotFound(t.id.clone()))
+            }
+            fn set_done(
+                &mut self,
+                id: &TaskId,
+                _d: bool,
+            ) -> Result<(), tasq_core::store::StoreError> {
+                Err(tasq_core::store::StoreError::NotFound(id.clone()))
+            }
+            fn describe(&self) -> tasq_core::store::StoreInfo {
+                MemoryStore::default().describe()
+            }
+        }
+        let mut host = RecordingHost::default();
+        let msgs = dispatch(
+            &Cmd::Create(Box::new(TaskDraft::new("C"))),
+            &mut Full,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(msgs.len(), 2, "{msgs:?}");
+        assert!(matches!(&msgs[0], Msg::Failed(text) if text.contains("read-only store")));
+        assert_eq!(host.calls, Vec::<String>::new());
     }
 
     #[test]

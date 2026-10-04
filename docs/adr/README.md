@@ -36,3 +36,4 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0008](0008-license.md) | GPL-3.0-or-later license | Accepted |
 | [0009](0009-tui-host-actions-through-the-cli.md) | TUI edits through core, host actions through the CLI binary | Accepted |
 | [0010](0010-post-done-hook-from-the-tui.md) | The TUI's close reaches the `post-done` hooks through the `Host` | Accepted |
+| [0011](0011-create-from-the-tui.md) | Creating a task from the TUI: title only, through the `Store`, hooks through the `Host` | Accepted |

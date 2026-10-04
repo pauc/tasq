@@ -2,7 +2,7 @@
 //! now. Pure data with pure helpers; [`crate::update()`] mutates it and
 //! [`crate::view()`] reads it.
 
-use tasq_core::model::{Priority, Status, Task, TaskId, Workflow};
+use tasq_core::model::{Priority, Status, Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::{self, Filter, Group};
 use tasq_core::theme::Theme;
 
@@ -39,6 +39,11 @@ pub enum Mode {
         input: String,
         /// What the note is for.
         target: NoteTarget,
+    },
+    /// Typing the title of a new task (`c`).
+    Create {
+        /// Text typed so far.
+        input: String,
     },
     /// The key help overlay (`?`).
     Help,
@@ -105,6 +110,8 @@ pub struct Model {
     pub tasks: Vec<Task>,
     /// The configured statuses, for grouping and the status picker.
     pub workflow: Workflow,
+    /// The status a task created with `c` starts in (`workflow.default_status`).
+    pub default_status: Status,
     /// Group colours (`[ui.colors]`).
     pub theme: Theme,
     /// Whether colours are used at all (`false` under `NO_COLOR`).
@@ -129,10 +136,13 @@ pub struct Model {
 
 impl Model {
     /// An empty model (no tasks loaded yet) for a terminal of unknown size.
+    /// New tasks start as `ready`, the script's default, until
+    /// [`Model::with_default_status`] says otherwise.
     pub fn new(workflow: Workflow, theme: Theme, color: bool) -> Self {
         Self {
             tasks: Vec::new(),
             workflow,
+            default_status: Status::READY,
             theme,
             color,
             filter: String::new(),
@@ -144,6 +154,22 @@ impl Model {
             show_detail: false,
             quit: false,
         }
+    }
+
+    /// The status new tasks start in (`workflow.default_status` in the
+    /// configuration).
+    #[must_use]
+    pub fn with_default_status(mut self, status: Status) -> Self {
+        self.default_status = status;
+        self
+    }
+
+    /// The draft for a task created from the UI: `title`, the default
+    /// status, and the script's other defaults (priority `B`, no note).
+    /// Priority, tags and the rest are set afterwards with `s`, `p` or
+    /// the CLI.
+    pub fn draft(&self, title: &str) -> TaskDraft {
+        TaskDraft::new(title).with_status(Some(self.default_status.clone()))
     }
 
     /// The layout for the current width.
@@ -392,6 +418,20 @@ mod tests {
         assert_eq!(m.selected, None);
         m.select_last();
         assert_eq!(m.selected, None);
+    }
+
+    #[test]
+    fn drafts_take_the_default_status() {
+        let m = model();
+        assert_eq!(m.default_status, Status::READY);
+        let d = m.draft("New");
+        assert_eq!(d.title, "New");
+        assert_eq!(d.status, Some(Status::READY));
+        assert_eq!(d.priority, Priority::B);
+        assert_eq!(d.note, None);
+        assert!(!d.done);
+        let m = m.with_default_status(Status::LATER);
+        assert_eq!(m.draft("x").status, Some(Status::LATER));
     }
 
     #[test]

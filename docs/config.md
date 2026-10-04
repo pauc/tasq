@@ -225,8 +225,8 @@ reads a JSON document on stdin:
 
 | Hook | When | Stdin | Failure |
 |---|---|---|---|
-| `post-create` | after `tasq create` wrote the task | `{"schema":1,"hook":"post-create","task":{...}}` | warning on stderr |
-| `post-done` | after `tasq done` closed the task | `{"schema":1,"hook":"post-done","task":{...}}` | warning on stderr |
+| `post-create` | after `tasq create` (or the UI's `c` key) wrote the task | `{"schema":1,"hook":"post-create","task":{...}}` | warning on stderr |
+| `post-done` | after `tasq done` (or the UI's `d` key) closed the task | `{"schema":1,"hook":"post-done","task":{...}}` | warning on stderr |
 | `pre-launch` | before `tasq next`/`tasq pick` start a session | the same plus `"workdir"` and `"launcher"` | a non-zero exit aborts the launch |
 
 `task` is the `Task` object of `docs/json.md`. The environment carries `TASQ_HOOK` (the hook

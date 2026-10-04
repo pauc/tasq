@@ -24,10 +24,10 @@ use crate::model::{LayoutKind, Mode, Model, NoteTarget, Row};
 pub const PROGRESS_SHOWN: usize = 8;
 
 /// The key hints of the status bar in normal mode.
-pub const HINTS: &str = "j/k move  / filter  s status  p prio  l log  d done  e edit  Enter open  S sync  ? help  q quit";
+pub const HINTS: &str = "j/k  / filter  c new  s status  p prio  l log  d done  e edit  Enter open  S sync  ? help  q quit";
 
 /// The hints for terminals too narrow for [`HINTS`].
-pub const SHORT_HINTS: &str = "j/k  /  s p l d e  Enter open  S sync  ? help  q quit";
+pub const SHORT_HINTS: &str = "j/k  /  c s p l d e  Enter open  S sync  ? help  q quit";
 
 /// The help overlay, one `(keys, action)` per line.
 pub const HELP: &[(&str, &str)] = &[
@@ -39,6 +39,7 @@ pub const HELP: &[(&str, &str)] = &[
         "filter: text matches titles, #word a status, tag or priority",
     ),
     ("Esc", "clear the filter, close the detail or a dialog"),
+    ("c", "create a task from a title (then s, p to refine)"),
     ("s", "set the status (workflow statuses, pick by number)"),
     ("p", "set the priority (A, B, C)"),
     ("l", "log a progress note"),
@@ -94,7 +95,7 @@ pub fn view(model: &Model, frame: &mut Frame) {
                 .collect::<Vec<_>>(),
             *cursor,
         ),
-        Mode::Normal | Mode::Filter { .. } | Mode::Note { .. } => {}
+        Mode::Normal | Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => {}
     }
 }
 
@@ -379,6 +380,14 @@ pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
                 Span::styled("\u{2581}", dim()),
             ])
         }
+        Mode::Create { input } => Line::from(vec![
+            Span::styled(
+                format!("new task ({}): ", model.default_status.as_str()),
+                bold(),
+            ),
+            Span::raw(input.as_str()),
+            Span::styled("\u{2581}", dim()),
+        ]),
         _ => match &model.message {
             Some(message) if message.is_error => Line::styled(
                 message.text.as_str(),
@@ -500,11 +509,13 @@ mod tests {
 
     #[test]
     fn hints_shrink_with_the_terminal() {
+        assert_eq!(HINTS.len(), 97, "the full hints must fit 100 columns");
+        assert_eq!(SHORT_HINTS.len(), 55);
         assert_eq!(hints(200), HINTS);
-        assert_eq!(hints(95), HINTS);
-        assert_eq!(hints(94), SHORT_HINTS);
-        assert_eq!(hints(53), SHORT_HINTS);
-        assert_eq!(hints(52), "? help  q quit");
+        assert_eq!(hints(97), HINTS);
+        assert_eq!(hints(96), SHORT_HINTS);
+        assert_eq!(hints(55), SHORT_HINTS);
+        assert_eq!(hints(54), "? help  q quit");
         assert_eq!(hints(0), "? help  q quit");
     }
 

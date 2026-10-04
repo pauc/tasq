@@ -140,6 +140,24 @@ fn overlays() {
     update(&mut model, Msg::Escape);
     update(&mut model, Msg::BeginDone);
     assert_snapshot!("done_prompt", screen(&mut model, 120, 20));
+    update(&mut model, Msg::Escape);
+    update(&mut model, Msg::BeginCreate);
+    for c in "Call the bank".chars() {
+        update(&mut model, Msg::Char(c));
+    }
+    assert_snapshot!("typing_a_title", screen(&mut model, 120, 20));
+}
+
+#[test]
+fn creating_from_an_empty_list() {
+    let mut model =
+        Model::new(Workflow::default(), Theme::default(), true).with_default_status(Status::LATER);
+    update(&mut model, Msg::Loaded(Vec::new()));
+    update(&mut model, Msg::BeginCreate);
+    for c in "First one".chars() {
+        update(&mut model, Msg::Char(c));
+    }
+    assert_snapshot!("typing_a_title_with_no_tasks", screen(&mut model, 80, 10));
 }
 
 #[test]

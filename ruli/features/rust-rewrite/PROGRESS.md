@@ -55,8 +55,8 @@ migration).
 
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
-| T-801 | TUI foundation | done | `crates/tui/src/{model,msg,keys,update,view,runtime}.rs`; `tasq ui` in `crates/cli/src/commands/ui.rs`; 16 `TestBackend` snapshots in `crates/tui/tests/render.rs`; gif not recorded |
-| T-802 | TUI editing actions | done | `s p l d` through `tasq_core::edit`; `e`/`Enter`/`S` through the `Host` trait, run as `$EDITOR`, `tasq pick`, `tasq sync` child processes with the terminal released; paste collapses to one line; `?` help overlay |
+| T-801 | TUI foundation | done | `crates/tui/src/{model,msg,keys,update,view,runtime}.rs`; `tasq ui` in `crates/cli/src/commands/ui.rs`; 18 `TestBackend` snapshots in `crates/tui/tests/render.rs`; gif not recorded |
+| T-802 | TUI editing actions | done | `s p l d` through `tasq_core::edit`; `c` creates a task (title only, `workflow.default_status`) through `Store::create` and fires `post-create` through `Host::after_create` (ADR 0011); `e`/`Enter`/`S` through the `Host` trait, run as `$EDITOR`, `tasq pick`, `tasq sync` child processes with the terminal released; paste collapses to one line; `?` help overlay |
 | T-803 | Theming and config | done | `tasq_core::theme::{Color, Theme}` shared with the CLI; `NO_COLOR`/`--color never` monochrome; two-pane from 100 columns, one pane below; both layouts snapshotted |
 
 ### Phase 7 status
@@ -288,6 +288,16 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 - The crates.io registry for the pinned toolchain lives under `~/.asdf/installs/rust/<ver>/
   registry`, not `~/.cargo/registry`; `cargo-mutants` is installed there too (`which` misses
   it, `cargo mutants --version` works).
+
+- **Create from the TUI (ADR 0011).** `c` is a one-line title prompt; Enter writes
+  `Model::draft(title)` (`TaskDraft::new` plus `Model::default_status`, which `tasq ui` fills
+  from `workflow.default_status`; `Workflow` itself carries no default) through
+  `Cmd::Create(Box<TaskDraft>)` (boxed: clippy's `large_enum_variant`, the draft is ~270 bytes
+  against 48 for the next variant). `dispatch` then emits `Msg::Select(id)` after the reload,
+  handled like a result (does not clear the message) and ignored when a filter hides the new
+  task. `Host::after_create` mirrors `after_done`; `CliHost::hooks(hook, task)` is the shared
+  runner. Status-bar `HINTS` lost the word "move" to stay under 100 columns (97) with
+  `c new` added; the `hints()` test now pins both lengths. Commit: (pending).
 
 ### Plugin decisions (T-701)
 
@@ -716,6 +726,10 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   starts with `tasq sync` rather than ending with it (see Plugin decisions).
 - T-001: repository URL in `Cargo.toml` is a placeholder (`https://example.invalid/tasq`) until a
   GitHub repo exists. Extra just recipes `default` and `fmt-check`.
+
+- T-802: `c` (create a task from the TUI) was not in the plan's key list; added as title-only
+  with the configured default status, refined afterwards with `s`/`p` (ADR 0011). The
+  "`post-create` still has no TUI counterpart" negative of ADR 0010 no longer holds.
 
 ## Open questions raised during implementation
 

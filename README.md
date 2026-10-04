@@ -126,9 +126,9 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    tasq ui
    ```
 
-   `j`/`k` move, `/` filters, `s`/`p` set status and priority, `l` logs a note, `d` marks
-   done, `e` opens the file in `$EDITOR`, `Enter` starts a session, `S` runs the sources,
-   `?` lists every key.
+   `j`/`k` move, `/` filters, `c` creates a task from a title, `s`/`p` set status and
+   priority, `l` logs a note, `d` marks done, `e` opens the file in `$EDITOR`, `Enter` starts
+   a session, `S` runs the sources, `?` lists every key.
 
 ## Concepts
 
@@ -261,8 +261,9 @@ A stable Rust toolchain (`rust-toolchain.toml`; MSRV 1.90) and
 [`just`](https://github.com/casey/just). `just check` runs formatting, clippy with warnings
 denied and the tests; `just --list` shows the rest. Every recipe runs cargo through
 `scripts/guard`, a memory-capped systemd scope, and only one build should run at a time on a
-machine: the reasons and the rules are in [`CONTRIBUTING.md`](CONTRIBUTING.md). Test
-conventions, the nb fixture notebook and mutation testing: [`docs/testing.md`](docs/testing.md).
+machine: the reasons and the rules are in [`CONTRIBUTING.md`](CONTRIBUTING.md). The crates,
+what each owns and how they depend on each other: [`docs/architecture.md`](docs/architecture.md).
+Test conventions, the nb fixture notebook and mutation testing: [`docs/testing.md`](docs/testing.md).
 
 ## License
 

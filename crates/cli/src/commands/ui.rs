@@ -4,8 +4,9 @@
 //! builds its model from the config, hands it the open store and the
 //! clock, and implements the [`Host`]: the three actions that need the
 //! outside world run as child processes while the UI has released the
-//! terminal, and the `post-done` hooks run in-process after the `d` key,
-//! their warnings handed back for the status bar (ADR-0010). The editor is
+//! terminal, and the `post-done` and `post-create` hooks run in-process
+//! after the `d` and `c` keys, their warnings handed back for the status
+//! bar (ADR-0010, ADR-0011). The editor is
 //! `$VISUAL`, else `$EDITOR`, else `vi`; sessions and syncs run
 //! `tasq pick <id>` and `tasq sync` through this same binary, with the
 //! global flags passed on, so the TUI and the CLI cannot disagree about
@@ -34,7 +35,8 @@ pub fn run(app: &App) -> Result<()> {
         return Err(CliError::user("tasq ui needs a terminal"));
     }
     let theme = Theme::from_config(&app.config().ui);
-    let model = Model::new(app.workflow(), theme, app.out.color());
+    let model = Model::new(app.workflow(), theme, app.out.color())
+        .with_default_status(app.config().workflow.default_status.clone());
     let mut store = app.open_store()?;
     let clock = app.clock()?;
     let exe = std::env::current_exe()
@@ -50,7 +52,7 @@ pub fn run(app: &App) -> Result<()> {
 }
 
 /// The [`Host`] of the CLI: child processes on the released terminal, and
-/// the hooks of `app` after a close.
+/// the hooks of `app` after a close or a create.
 #[derive(Debug)]
 pub struct CliHost<'a> {
     /// The configuration the hooks come from.
@@ -89,13 +91,25 @@ impl Host for CliHost<'_> {
             .map(|()| "sync finished".to_owned())
     }
 
-    /// The same `post-done` hooks as `tasq done`, with the same document;
-    /// what `tasq done` would print as warnings comes back as the `Err`,
-    /// one per failed command, joined with `; `. A hook's stdout (`-v`
-    /// material on the CLI) has nowhere to go in the UI and is dropped.
+    /// The same `post-done` hooks as `tasq done`, with the same document.
     fn after_done(&mut self, task: &Task) -> std::result::Result<(), String> {
+        self.hooks(Hook::PostDone, task)
+    }
+
+    /// The same `post-create` hooks as `tasq create`, with the same document.
+    fn after_create(&mut self, task: &Task) -> std::result::Result<(), String> {
+        self.hooks(Hook::PostCreate, task)
+    }
+}
+
+impl CliHost<'_> {
+    /// Runs the `hook` command lines on `task`; what the CLI would print
+    /// as warnings comes back as the `Err`, one per failed command, joined
+    /// with `; `. A hook's stdout (`-v` material on the CLI) has nowhere
+    /// to go in the UI and is dropped.
+    fn hooks(&self, hook: Hook, task: &Task) -> std::result::Result<(), String> {
         let mut warnings = Vec::new();
-        plugins::run_hooks_with(self.app, Hook::PostDone, task, &[], &mut |event| {
+        plugins::run_hooks_with(self.app, hook, task, &[], &mut |event| {
             if let HookEvent::Warning(text) = event {
                 warnings.push(text);
             }
@@ -237,6 +251,36 @@ post-done = [
             HookEvent::Output("post-done hook \"/bin/sh -c 'echo chatter'\": chatter".into())
         );
         assert!(matches!(&events[2], HookEvent::Warning(w) if w.contains("/nonexistent/hook")));
+    }
+
+    #[test]
+    fn after_create_runs_the_post_create_hooks_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("hooks.log");
+        let config = r#"[hooks]
+post-done = ["/nonexistent/other-hook"]
+post-create = [
+    "/bin/sh -c 'echo \"$TASQ_HOOK $TASQ_TASK_ID\" > @LOG@; cat >> @LOG@'",
+    "/bin/sh -c 'echo nope >&2; exit 4'",
+]
+"#
+        .replace("@LOG@", &log.display().to_string());
+        let app = app_in(dir.path(), &config);
+        let task = Task::new(TaskId::from(9), "Fresh");
+        let err = host(&app).after_create(&task).unwrap_err();
+        assert_eq!(
+            err,
+            "post-create hook \"/bin/sh -c 'echo nope >&2; exit 4'\" failed: exit status 4: nope"
+        );
+        let logged = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            logged.starts_with("post-create 9\n{\"hook\":\"post-create\",\"schema\":1,\"task\":{"),
+            "{logged}"
+        );
+        assert!(logged.contains("\"title\":\"Fresh\""), "{logged}");
+        // Without hooks there is nothing to report.
+        let app = app_in(dir.path(), "");
+        assert_eq!(host(&app).after_create(&task), Ok(()));
     }
 
     #[test]

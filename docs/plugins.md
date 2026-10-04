@@ -97,7 +97,7 @@ pre-launch = ["check-vpn --quiet"]
 
 | Hook | Runs | On failure |
 |---|---|---|
-| `post-create` | after `tasq create` wrote the task | warning on stderr; the task exists |
+| `post-create` | after `tasq create`, or the terminal UI's `c` key, wrote the task | warning on stderr (in the UI: in the status bar); the task exists |
 | `post-done` | after `tasq done`, or the terminal UI's `d` key, closed the task | warning on stderr (in the UI: in the status bar); the task is closed |
 | `pre-launch` | in `tasq next`/`tasq pick`, after the task is set to in-progress and the working directory is resolved, right before the launcher runs | the launch is aborted with the hook's message (exit 1) |
 
@@ -129,9 +129,10 @@ quote) is a configuration error, not a warning.
 ### Hooks and the terminal UI
 
 `tasq ui` fires the same hooks as the commands it stands in for: `Enter` runs `tasq pick`, so
-`pre-launch` fires there, and `d` runs the `post-done` hooks in-process after the close, with
-the same document and environment as `tasq done` (ADR-0010). A failing `post-done` hook shows
-in the UI's status bar after the `[id] done: ...` line; the task stays closed. A hook's stdout
+`pre-launch` fires there; `d` runs the `post-done` hooks in-process after the close, with
+the same document and environment as `tasq done` (ADR-0010); `c` runs the `post-create` hooks
+the same way after the write (ADR-0011). A failing hook shows in the UI's status bar after the
+`[id] done: ...` or `[id] created: ...` line; the task stays closed, or exists. A hook's stdout
 is not shown in the UI, `-v` or not.
 
 ### What does not fire a hook
