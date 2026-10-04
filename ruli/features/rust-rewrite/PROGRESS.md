@@ -5,11 +5,12 @@ place for status, learnings, blockers and deviations from the plan.
 
 ## Status
 
-**Phase 3 (CLI parity) in progress, started 2026-10-04.** T-301 (skeleton, output modes, errors,
-completions, test harness), T-302 (`list`) and the CLI side of T-205 (`doctor`, `config show`) and
-T-204 (`store info`) are done; `tasq store sync` (T-206) too. T-303 `create` and T-304
-`set`/`log`/`done` done. 421 workspace tests. Next: T-305 `view`, T-306 `project`/`worktree`,
-T-307 `session`/`mr`, T-308 `apply`.
+**Phase 3 (CLI parity) complete (2026-10-04).** Every command of the script except `next`/`pick`
+(Phase 4), `update`/`update-support` (Phase 5 `sync`), `summary` (Phase 6) and `tlogs` (external
+plugin) exists under `tasq`, each with `--json`. 468 workspace tests (cli 49 unit + 66
+integration). Mutants: core `work` 9/0 missed, `clock` 22/0, `dates` 8/0, model 0 missed; launch
+crate 0 missed (process wrappers skipped). Next: Phase 4 (launchers, `next`/`pick`, T-401 to
+T-405).
 
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
@@ -19,10 +20,10 @@ T-307 `session`/`mr`, T-308 `apply`.
 | T-204 | `store info` | done | plus `store sync` from T-206 |
 | T-303 | `create` | done | `--due` words via `tasq_core::dates::parse_day` (mutants 8 tested, 0 missed); `--mr` falls back to a `group/project!123` label until T-307 |
 | T-304 | `set`, `log`, `done` | done | whole-task `Store::update`; `TASQ_NOW` fixes timestamps in tests |
-| T-305 | `view` | todo | |
-| T-306 | `project`, `worktree` | todo | |
-| T-307 | `session`, `mr` | todo | |
-| T-308 | `apply` | todo | |
+| T-305 | `view` | done | `linkify_pre/post`, `unwrap_urls`, `shortref` ported as pure functions with unit tests; `--raw`; glow only on a TTY |
+| T-306 | `project`, `worktree` | done | `tasq_core::work` (trait + pure helpers), `tasq_launch::worktree` (`GwmManager`, `GitManager`, fake gwm + real git tests) |
+| T-307 | `session`, `mr` | done | idempotent; resume hint CLI-side until the `Launcher` trait exists; MR title fallback from T-303 |
+| T-308 | `apply` | done | `{"schema":1,"task":{...}}` on stdin or a file; `docs/json.md`; `view --json \| apply` is a no-op (mtime-checked) |
 
 ### Phase 2 status
 
@@ -138,6 +139,40 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   is T-307/T-503, so `commands::mr::link_for` labels GitLab/GitHub URLs with their short
   reference (`group/project!77`, `owner/repo#7`) and warns; other URLs need an explicit
   title. The lookup slots in front of the fallback later.
+
+### CLI decisions (T-305 to T-308)
+
+- **Minute precision is a model invariant.** `Store::update` compares the re-read task with the
+  wanted one field by field; a progress entry stamped with seconds never matched the file's
+  `HH:MM` and would have made every real-clock `log`/`set` fail with `Unsupported{progress}`
+  (the tests passed only because `TASQ_NOW` has no seconds). `When::from(NaiveDateTime)`,
+  `ProgressEntry::new` and the new `Session::new` now truncate via `clock::to_minute`;
+  `store-nb/tests/write.rs` has the regression test with a 42-second clock.
+- `view`: glow runs only when stdout is a TTY and `glow` is on the injected `PATH`; otherwise
+  the file is printed (paged on a TTY). `--raw` is always verbatim. The awk passes are
+  `commands::view::{linkify_pre, linkify_post, unwrap_urls, shortref}`; a few awk quirks are
+  kept deliberately and pinned by tests (a lone URL ending in `.` leaves the `.` as its own
+  line; an empty link label becomes `****`). Width: `$COLUMNS`, else `tput cols`, else 100.
+  The script's `tasks view <id> [nb args]` passthrough is gone (`--raw` instead).
+- `worktree --create`: `tasq_core::work::WorktreeManager` (trait, `CreatedWorktree`, `WorkError`,
+  `find_up`, `branch_slug`, `sibling_worktree`, `project_dir`) with the process-running impls
+  in `tasq-launch` (`process::run` is the only `#[mutants::skip]`). `GwmManager` reproduces the
+  script: `gwm.yml` found upwards from the project, `-b` only when the branch exists neither
+  locally nor on `origin`, `GWM_SHELL_MODE=1 gwm create [-b] <branch> --no-tmux -s` in the
+  project, last output line = path, other lines shown to the user. `GitManager` (new, for
+  people without gwm) uses `git worktree add` into `<project>-<branch-slug>` next to the
+  project and reuses the directory when it exists.
+- `session`: the file never stores a launcher, so `Session.launcher` stays `None` on write (a
+  `Some` would be `Unsupported`); the resume hint (`claude --resume <id>`, `tmux attach -t`)
+  comes from `--launcher`/`launch.default` in `commands::session::resume_hint`, to move onto the
+  `Launcher` trait in Phase 4. Session ids may not contain backticks (the file delimiter).
+- `apply` reads the `view --json` envelope only (`schema` must be 1, `task` required); errors
+  are prefixed `apply:` and name the field via serde's message. Unsupported edits surface the
+  store's `unsupported: changing title of task 3 (...)` message unchanged.
+- Test harness: `TestEnv::fake_tool(name, body)` installs scripts in the `PATH` dir; fakes must
+  use absolute paths for anything that is not a shell builtin (`/bin/mkdir`), because that
+  `PATH` holds only `git`. `cargo test --workspace` stops at the first failing test binary; use
+  `--no-fail-fast` to see every crate.
 
 ### Store decisions (T-201/T-202/T-204)
 
@@ -321,6 +356,10 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 - T-301: usage errors exit 2 (clap convention), not 1; only domain errors exit 1 with `tasq: ...`.
 - T-302: `--json` emits `{"schema":1,"tasks":[...]}` rather than a bare array (FR-4 asks for a
   versioned schema on every command).
+- T-305: no nb passthrough (`tasks view <id> [args]`); `--raw` prints the file instead.
+- T-306: a `git` worktree manager exists besides `gwm` (config `work.worktree_manager = "git"`),
+  placing worktrees at `<project>-<branch-slug>`; the plan only described gwm.
+- T-307: the resume hint is a CLI table keyed by launcher name until Phase 4 adds the trait.
 - T-001: repository URL in `Cargo.toml` is a placeholder (`https://example.invalid/tasq`) until a
   GitHub repo exists. Extra just recipes `default` and `fmt-check`.
 
