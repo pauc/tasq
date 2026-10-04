@@ -16,7 +16,7 @@ default_status = "ready"                     # defaults
 statuses = ["in-progress", "ready", "waiting", "blocked", "later"] # defaults
 
 [work]
-worktree_manager = "gwm"                     # defaults
+worktree_manager = "git"                     # defaults
 
 [launch]
 default = "claude"                           # defaults

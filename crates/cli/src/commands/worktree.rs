@@ -28,7 +28,12 @@ pub fn run(app: &App, id: &str, path: Option<&Path>, create: Option<&str>) -> Re
                     "task {id} tracks no project and work.default_project is unset; set one with tasq project {id} <path>"
                 ))
             })?;
-        let manager = manager_for(app.config().work.worktree_manager, app.env_vec());
+        let manager = manager_for(
+            app.config().work.worktree_manager,
+            app.config().work.worktree_command.as_deref(),
+            app.env_vec(),
+        )
+        .map_err(|e| CliError::user(e.to_string()))?;
         let created = manager
             .create(&project, branch)
             .map_err(|e| CliError::user(e.to_string()))?;

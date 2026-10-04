@@ -992,15 +992,14 @@ mod worktree {
     }
 
     #[test]
-    fn create_with_gwm_manager_uses_the_workspace_above_the_project() {
+    fn create_with_a_command_manager() {
         let env = TestEnv::fixture();
         let project = env.home.join("ws").join("proj");
         env.git_repo(&project);
-        std::fs::write(env.home.join("ws").join("gwm.yml"), "name: ws\n").unwrap();
-        let log = env.home.join("gwm.log");
+        let log = env.home.join("mkwt.log");
         let target = env.home.join("ws").join("wt-z");
         env.fake_tool(
-            "gwm",
+            "mkwt",
             &format!(
                 "[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\nprintf '%s\\n' \"$*\" > '{}'\n/bin/mkdir -p '{}'\necho 'Linked .envrc'\necho '{}'",
                 log.display(),
@@ -1011,6 +1010,8 @@ mod worktree {
         let out = env
             .tasq()
             .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
+            .env("TASQ_WORKTREE_MANAGER", "command")
+            .env("TASQ_WORKTREE_COMMAND", "mkwt {new} {branch} --no-tmux -s")
             .args(["worktree", "3", "--create", "feature/z"])
             .output()
             .unwrap();
@@ -1021,7 +1022,7 @@ mod worktree {
         );
         assert_eq!(
             std::fs::read_to_string(&log).unwrap(),
-            "create -b feature/z --no-tmux -s\n"
+            "-b feature/z --no-tmux -s\n"
         );
     }
 
@@ -1035,13 +1036,33 @@ mod worktree {
             .stderr("tasq: task 3 tracks no project and work.default_project is unset; set one with tasq project 3 <path>\n");
         let project = env.home.join("proj");
         std::fs::create_dir(&project).unwrap();
+        // The command manager without a command is a config error.
+        env.tasq()
+            .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
+            .args(["worktree", "3", "--create", "b", "--set", "work.worktree_manager=command"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with(
+                "tasq: work.worktree_manager = \"command\" (set by --set) requires work.worktree_command",
+            ));
+        // A failing command surfaces its message.
+        env.fake_tool("mkwt", "echo 'boom' >&2\nexit 3");
+        env.tasq()
+            .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
+            .env("TASQ_WORKTREE_MANAGER", "command")
+            .env("TASQ_WORKTREE_COMMAND", "mkwt {branch}")
+            .args(["worktree", "3", "--create", "b"])
+            .assert()
+            .code(1)
+            .stderr("tasq: mkwt failed for branch 'b': boom\n");
+        // git is the default manager and needs a repository.
         env.tasq()
             .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
             .args(["worktree", "3", "--create", "b"])
             .assert()
             .code(1)
             .stderr(predicate::str::starts_with(
-                "tasq: no gwm workspace found above",
+                "tasq: git failed for branch 'b':",
             ));
     }
 }

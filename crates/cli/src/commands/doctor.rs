@@ -34,7 +34,6 @@ pub const TOOLS: &[(&str, &str)] = &[
         "direnv",
         "install direnv (https://direnv.net), or set launch.env = \"inherit\"",
     ),
-    ("gwm", "install gwm, or set work.worktree_manager = \"git\""),
     (
         "herdr",
         "install herdr to open sessions in herdr workspaces",

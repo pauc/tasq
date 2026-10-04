@@ -17,8 +17,6 @@ WARN  claude       claude is not on PATH
                    fix: install Claude Code for the claude launcher and the llm summarizer
 WARN  direnv       direnv is not on PATH
                    fix: install direnv (https://direnv.net), or set launch.env = "inherit"
-WARN  gwm          gwm is not on PATH
-                   fix: install gwm, or set work.worktree_manager = "git"
 WARN  herdr        herdr is not on PATH
                    fix: install herdr to open sessions in herdr workspaces
 WARN  glab         glab is not on PATH

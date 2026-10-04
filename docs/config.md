@@ -28,7 +28,8 @@ statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
 default_status = "ready"
 
 [work]
-worktree_manager = "gwm"     # gwm | git
+worktree_manager = "git"     # git | command
+# worktree_command = "gwm create {new} {branch} --no-tmux -s"
 # default_project = "~/code/..."
 
 [launch]
@@ -74,6 +75,7 @@ command = "claude -p"
 | `TASQ_BOOKKEEPER` | `store.bookkeeper` |
 | `TASQ_DEFAULT_PROJECT` | `work.default_project` |
 | `TASQ_WORKTREE_MANAGER` | `work.worktree_manager` |
+| `TASQ_WORKTREE_COMMAND` | `work.worktree_command` |
 | `TASQ_LAUNCHER` | `launch.default` |
 | `TASQ_LAUNCH_ENV` | `launch.env` |
 | `TASQ_PAGER` | `ui.pager` |
@@ -90,3 +92,17 @@ Empty values count as unset. `XDG_CONFIG_HOME` is honoured for the global file l
 - A `[forge.<name>]` named `gitlab` or `github` infers `kind` and `host`; any other name needs `kind`.
 - Forge-backed sources need `forge` pointing at a forge of the matching kind; `llm-bridge` needs `command`.
 - `~` is expanded in paths.
+
+## Worktree managers
+
+`tasq worktree <id> --create <branch>` makes a worktree for the task's project (its `## Project`,
+else `work.default_project`) and tracks it. `work.worktree_manager` picks how:
+
+- `git` (default): `git worktree add` into `<project>-<branch>` next to the project, with `-b`
+  when the branch exists neither locally nor on `origin`. The directory is reused if it exists.
+- `command`: runs `work.worktree_command` inside the project. The value is a template split
+  like a shell command line (quotes allowed, no shell), with `{branch}`, `{project}` (absolute
+  path) and `{new}` substituted; `{new}` is `-b` when the branch does not exist yet and nothing
+  otherwise (`{new:<text>}` substitutes `<text>` instead). The command must print the worktree
+  path as its last line of standard output; earlier lines are shown to the user. Example for
+  gwm: `"gwm create {new} {branch} --no-tmux -s"`.

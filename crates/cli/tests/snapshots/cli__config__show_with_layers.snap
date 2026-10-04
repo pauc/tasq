@@ -22,7 +22,7 @@ statuses = ["in-progress", "ready", "waiting", "blocked", "later"] # defaults
 
 [work]
 default_project = "[ROOT]/home/code/x" # [ROOT]/home/.tasq.toml
-worktree_manager = "gwm"                     # defaults
+worktree_manager = "git"                     # defaults
 
 [launch]
 default = "claude"                           # defaults
