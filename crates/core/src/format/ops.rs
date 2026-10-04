@@ -354,3 +354,12 @@ pub fn set_done(doc: &mut Document, workflow: &Workflow) {
     }
     strip_status_tag(doc, workflow);
 }
+
+/// `nb todo undo`: flips the title back to `# [ ]`. The status tag is not
+/// restored (nothing remembers it); callers set one afterwards if they want.
+pub fn set_open(doc: &mut Document) {
+    if let Some(title) = doc.title_line().strip_prefix(DONE_PREFIX) {
+        let line = format!("{OPEN_PREFIX}{title}");
+        doc.replace(0, line);
+    }
+}

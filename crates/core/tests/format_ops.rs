@@ -646,6 +646,23 @@ fn set_done_only_touches_the_first_line_marker() {
 }
 
 #[test]
+fn set_open_only_touches_the_first_line_marker() {
+    let mut doc = Document::parse("# [x] # [x] nested\n\n## Tags\n\n#A\n").unwrap();
+    ops::set_open(&mut doc);
+    assert_eq!(
+        format::render(&doc),
+        "# [ ] # [x] nested\n\n## Tags\n\n#A\n"
+    );
+    assert!(!doc.is_done());
+    // Already open: nothing changes.
+    ops::set_open(&mut doc);
+    assert_eq!(
+        format::render(&doc),
+        "# [ ] # [x] nested\n\n## Tags\n\n#A\n"
+    );
+}
+
+#[test]
 fn operations_round_trip_through_the_task() {
     let wf = Workflow::default();
     let text = std::fs::read_to_string(format!(
@@ -675,6 +692,10 @@ fn operations_round_trip_through_the_task() {
     let task = format::project(&parsed.document, tasq_core::model::TaskId::from(1), &wf);
     expected.mark_done();
     assert_eq!(task, expected);
+    ops::set_open(&mut parsed.document);
+    let task = format::project(&parsed.document, tasq_core::model::TaskId::from(1), &wf);
+    expected.done = false;
+    assert_eq!(task, expected, "reopened without a status");
 }
 
 #[test]
