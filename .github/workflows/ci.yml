@@ -52,7 +52,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # The nb store's parity tests drive the real nb (a single bash script;
+      # bash and git are on every runner) against a temporary NB_DIR.
+      # TASQ_REQUIRE_NB turns "skip when nb is missing" into a failure.
+      - name: Install nb
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb -o "$HOME/.local/bin/nb"
+          chmod +x "$HOME/.local/bin/nb"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/nb" --version
       - run: cargo test --workspace
+        env:
+          TASQ_REQUIRE_NB: "1"
 
   deny:
     name: cargo-deny
