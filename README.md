@@ -23,6 +23,14 @@ every workflow the script offers today.
 Pre-alpha. See [`ruli/features/rust-rewrite/PLAN.md`](ruli/features/rust-rewrite/PLAN.md)
 for the implementation plan.
 
+## Terminal UI
+
+`tasq ui` shows the same grouped list full screen with the selected task beside it: `j`/`k`
+move, `/` filters, `s`/`p` set the status or priority, `l` logs a note, `d` closes the task,
+`e` opens the file in your editor, `Enter` starts a work session and `S` runs `tasq sync`.
+Every edit is the same operation as the matching CLI command. Colours follow `[ui.colors]`
+and `NO_COLOR` (see [`docs/config.md`](docs/config.md)).
+
 ## Claude Code plugin
 
 `plugins/claude` is a Claude Code plugin (namespace `tasq`) with two skills: `/tasq:wrapup`

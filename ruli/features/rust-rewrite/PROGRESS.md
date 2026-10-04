@@ -5,6 +5,32 @@ place for status, learnings, blockers and deviations from the plan.
 
 ## Status
 
+**Phase 8 (TUI) complete (2026-10-04).** `tasq ui` is a ratatui UI in `crates/tui`
+(`tasq-tui`, depends on `tasq-core` and ratatui only): the grouped list with the CLI's ordering
+and the selected task's detail beside it (one pane below 100 columns, `Tab` switches), `/`
+filter, `s`/`p` pickers from the configured workflow, `l`/`d` note prompts, `e` editor, `Enter`
+session, `S` sync, `?` help, `[ui.colors]` and `NO_COLOR`. Elm shape: pure `update`, `view` on
+a `Frame`, `dispatch` running `Cmd`s against the injected `Store`, `Clock` and a `Host`. The
+edit logic moved into `tasq_core::edit` so the CLI and the TUI share it (ADR 0009);
+`tasq_core::theme` holds the colour semantics; `tasq_core::store::MemoryStore` is the test
+double and `Store::file_of` tells a UI which file to open. 686 workspace tests. Mutants:
+core `theme` + `edit` + `store` and store-nb `store.rs` + tui `model`/`update`/`keys`/`msg`/
+`runtime`: 276 tested, 0 missed after fixes (first pass 5 missed: two tests added, two code
+shapes changed, one terminal `Drop` skipped); tui alone 162 tested, 134 caught, 28 unviable.
+Verified in a pseudo-terminal (`script` + `stty`): draws, moves, opens help and the picker,
+quits and restores the screen. Not done: the README gif (no `vhs`/`asciinema` on this
+machine) and `cargo deny` locally (not installed; CI runs it; every new dependency is
+MIT/Apache/Zlib). Next: Phase 9 (T-901 plugin mechanism, T-902 docs, T-903 release, T-904
+migration).
+
+| Task | Title | Status | Notes |
+|------|-------|--------|-------|
+| T-801 | TUI foundation | done | `crates/tui/src/{model,msg,keys,update,view,runtime}.rs`; `tasq ui` in `crates/cli/src/commands/ui.rs`; 16 `TestBackend` snapshots in `crates/tui/tests/render.rs`; gif not recorded |
+| T-802 | TUI editing actions | done | `s p l d` through `tasq_core::edit`; `e`/`Enter`/`S` through the `Host` trait, run as `$EDITOR`, `tasq pick`, `tasq sync` child processes with the terminal released; paste collapses to one line; `?` help overlay |
+| T-803 | Theming and config | done | `tasq_core::theme::{Color, Theme}` shared with the CLI; `NO_COLOR`/`--color never` monochrome; two-pane from 100 columns, one pane below; both layouts snapshotted |
+
+### Phase 7 status
+
 **Phase 7 (Claude Code plugin) complete (2026-10-04).** `plugins/claude` is a Claude Code plugin
 named `tasq` (so its skills are `/tasq:wrapup` and `/tasq:sync`) plus a status-line snippet;
 the repository root is a one-plugin marketplace (`.claude-plugin/marketplace.json`), so
@@ -156,6 +182,38 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 4. T-102+T-103 (one agent), T-104, T-106 in parallel, each owning one module directory.
 
 ## Learnings
+
+### TUI decisions (T-801 to T-803)
+
+- **ratatui 0.30** (crossterm 0.29 through `ratatui::crossterm`, so one version of the event
+  types). Bracketed paste is a default crossterm feature; `Event::Paste` carries the text and
+  the TUI collapses line breaks to spaces because a progress entry is one file line.
+- The dependency rule is exact: `tasq-tui` → `tasq-core` + ratatui. Outside-world actions go
+  through a three-method `Host` trait (`edit(id, file)`, `launch(id)`, `sync()`); the CLI's
+  `Host` runs **the `tasq` binary itself** (`current_exe()` + `pick`/`sync` with `--profile`,
+  `--config`, `--set` passed on) so a session from the TUI is literally `tasq pick`, exec'd
+  launchers included. `Store::file_of` (default `Ok(None)`, nb returns the path) is what `e`
+  needs; `MemoryStore` returns `None` and the TUI says so.
+- **Edits moved to core** (`tasq_core::edit::{Value, set, log, done}`, `EditError`): the CLI's
+  `commands::edit` shrank to argument parsing and printing. Side effect: `tasq set/done` with
+  an empty note now fail with "the note must not be empty" instead of logging an empty entry.
+- `dispatch` always ends with a reload (`Msg::Loaded`), after failures too: a `Conflict` or an
+  editor that wrote the file never leaves stale rows on screen. Results never clear the status
+  message; the next key does.
+- Selection is a `TaskId`, not an index, so reloads and filters keep it (`fix_selection`
+  falls back to the first visible task). `with_selection` reads the *visible* task, which
+  removed a guard mutant; the filter's lone-`#` guard was equivalent to its fallback and was
+  removed by reshaping the match (plan rule: fix the shape, do not argue).
+- Snapshots: `TestBackend`'s `Display` prints each row quoted, good enough for `insta`;
+  styles are asserted on `buffer()[(x, y)]` cells (`fg`, `modifier`). The status-bar hints
+  come in three lengths (`hints(width)`), so the 80-column snapshot is not just a truncation.
+- `script` gives a program a pty whose size is 0x0: run `stty cols N rows M` inside the
+  session or ratatui draws nothing (the smoke test looked broken until then).
+- `rustdoc` flags `` [`update`] `` as ambiguous when a module and a function share the name;
+  write `` [`update()`] ``.
+- The crates.io registry for the pinned toolchain lives under `~/.asdf/installs/rust/<ver>/
+  registry`, not `~/.cargo/registry`; `cargo-mutants` is installed there too (`which` misses
+  it, `cargo mutants --version` works).
 
 ### Plugin decisions (T-701)
 
@@ -531,6 +589,17 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ## Deviations from the plan
 
+- T-801: the README gif was not recorded (`vhs`/`asciinema` are not installed); the terminal
+  path was checked with `script` instead (see `docs/testing.md`). `d` asks for an optional
+  final note (the `tasq done [note]` shape) rather than closing on the keypress alone.
+- T-802: launching does not "run the launcher" in-process: the TUI runs `tasq pick <id>` (and
+  `tasq sync`, `$EDITOR`) as a child with the terminal released, then waits for Enter after
+  `pick`/`sync` so their output can be read (ADR 0009). The edit operations moved into
+  `tasq_core::edit`, so "the same core functions the CLI uses" is literal; `tasq set`/`done`
+  now reject an empty note.
+- T-803: `[ui.colors]` keys are status names plus `no-status` (the plan left the names open);
+  the same table colours the CLI's group headers (`tasq_core::theme`). Below 100 columns the
+  detail pane is reached with `Tab` (the plan only said "single pane").
 - T-301: usage errors exit 2 (clap convention), not 1; only domain errors exit 1 with `tasq: ...`.
 - T-302: `--json` emits `{"schema":1,"tasks":[...]}` rather than a bare array (FR-4 asks for a
   versioned schema on every command).

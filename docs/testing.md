@@ -20,6 +20,26 @@ the launch prompt template only names skills the plugin ships. The authoritative
 Claude Code and is not in CI: `claude plugin validate --strict plugins/claude` (and the same for
 `.claude-plugin/marketplace.json` and `plugins/claude/skills`).
 
+## Terminal UI
+
+`tasq-tui` is Elm-shaped so that almost all of it is testable without a terminal: `update()`
+is a pure function tested with message sequences (`crates/tui/src/update.rs`), key bindings are
+a pure table (`keys.rs`), and `dispatch()` runs commands against `tasq_core::store::MemoryStore`
+and a `RecordingHost` (`runtime.rs`). Rendering is pinned by `crates/tui/tests/render.rs`,
+which draws models onto `ratatui::backend::TestBackend` at both layouts (120 and 80 columns)
+and in every mode, and snapshots the screen with `insta` (`INSTA_UPDATE=always cargo test -p
+tasq-tui` accepts changes); one test asserts cell styles for the theme and for `NO_COLOR`. The
+only untested code is the event loop and the raw-mode/alternate-screen switching, marked
+`#[mutants::skip]`. To check the terminal path by hand without a real session:
+
+```sh
+printf 'j?qq' | script -qec "stty cols 120 rows 30; target/debug/tasq ui" /dev/null
+```
+
+(`script` gives the program a pseudo-terminal; without `stty` its size is 0x0 and nothing is
+drawn.) The TUI crate is excluded from the mutants config like the CLI, but its pure modules are
+checked per task with `cargo mutants --no-config -f crates/tui/src/update.rs ...`.
+
 ## Deterministic time
 
 `TASQ_NOW="YYYY-MM-DD HH:MM"` in the environment makes the binary use a fixed clock for every

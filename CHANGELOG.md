@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tasq ui`: a ratatui terminal UI over the same tasks. Grouped list with the CLI's ordering,
+  the selected task's detail beside it (one pane below 100 columns, `Tab` to switch), `/`
+  filter, status and priority pickers from the configured workflow, note and done prompts,
+  `e` for `$EDITOR`, `Enter` for a work session and `S` for `tasq sync` (both run as child
+  `tasq` processes while the terminal is released), `?` help. Colours follow `[ui.colors]`
+  and `NO_COLOR`. The edit operations behind `tasq set/log/done` moved to `tasq_core::edit`
+  so both front ends share them; `tasq_core::store::MemoryStore` is the in-memory store for
+  tests and `Store::file_of` tells a UI which file to open.
+
 - `tasq` CLI with every editing command of the original script: `list` (default, with
   status/tag/priority/text filters), `create`, `set`, `log`, `done`, `view` (glow rendering
   with OSC 8 links on a terminal), `project`, `worktree` (track, or `--create` through gwm or

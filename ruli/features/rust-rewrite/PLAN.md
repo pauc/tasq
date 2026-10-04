@@ -759,4 +759,9 @@ Rename is a find-and-replace on crate names before T-903; nothing in the plan de
 - License: GPL-3.0-or-later (nb is AGPLv3; CLI has no network-service clause need).
 - nb relationship: hybrid — native reads and file writes, nb for index/git bookkeeping when installed, native fallback otherwise.
 - Forge sources split per concern: `<forge>-review-requests` and `<forge>-work-items`; work items create tasks by default.
+- (2026-10-04, during Phase 8) The TUI edits through `tasq_core::edit` (shared with `tasq
+  set/log/done`) and runs its three outside-world actions (editor, session, sync) as child
+  processes of the `tasq` binary itself, never by linking the launch or sources crates (ADR
+  0009). `Store::file_of` tells a UI which file a task lives in; colour semantics live in
+  `tasq_core::theme`.
 - (2026-10-04, during Phase 3) No gwm adapter in tasq: worktree provisioning is a separate, per-repo concern. `work.worktree_manager` is `git` by default or `command` with a user template; gwm users set `worktree_command = "gwm create {new} {branch} --no-tmux -s"`.

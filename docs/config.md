@@ -44,7 +44,7 @@ pager = "less -RFX"
 no_osc8 = false
 glow_style = "dark"
 
-[ui.colors]
+[ui.colors]                  # status name (or "no-status") = colour, see "Colours"
 
 # [forge.gitlab]            # kind and host inferred from the name when omitted
 # host = "gitlab.example.com"
@@ -142,3 +142,29 @@ tracked worktree that exists, else the task's `## Project`, else `work.default_p
 The session's environment carries `TASQ_TASK_ID`, `TASQ_NOTEBOOK` and, when a profile is
 selected, `TASQ_PROFILE`. `--dry-run` prints the directory, the commands and the prompt
 without launching (with `--json`: `task`, `workdir`, `in_worktree`, `launcher`, `env`, `steps`).
+
+## Colours
+
+Status groups are coloured the same way in `tasq list` headers and in the terminal UI
+(`tasq ui`): `in-progress` blue, `ready` green, `waiting` yellow, `blocked` red, `later`
+magenta, any other configured status cyan, and the no-status group dim. `[ui.colors]` overrides
+them per status name, with `no-status` for the last group:
+
+```toml
+[ui.colors]
+ready = "208"            # a 256-colour palette index
+review = "cyan"          # red green yellow blue magenta cyan white dim (grey/gray)
+no-status = "white"
+```
+
+A value that is not a colour name or a number from 0 to 255 is ignored. `NO_COLOR` or
+`--color never` turns every colour off in both front ends; bold, dim and reversed stay.
+
+## Terminal UI
+
+`tasq ui` is the grouped list plus the selected task's detail (side by side from 100 columns,
+otherwise one pane with `Tab` switching between them). Its edits are the same operations as
+`tasq set`, `tasq log` and `tasq done`; `e` opens the task file in `$VISUAL`, else `$EDITOR`,
+else `vi`; `Enter` and `S` run `tasq pick <id>` and `tasq sync` as child processes with the
+same `--profile`, `--config` and `--set` flags, while the UI has released the terminal. `?`
+lists every key.
