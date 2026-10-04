@@ -48,6 +48,13 @@ mutants:
     fi
     scripts/guard cargo mutants --jobs 2 --in-diff "$diff_file"
 
+# Mutation testing on one directory or file, e.g. `just mutants-in crates/core/src/format`.
+# `--no-config` is required: with the config loaded, `-f` is unioned with
+# `examine_globs` and never narrows. The exclude patterns repeat the config.
+mutants-in path:
+    {{guard}} cargo mutants --no-config --jobs 2 --timeout-multiplier 3 --minimum-test-timeout 20 \
+        -f '{{path}}/*.rs' -f '{{path}}' -E 'impl Debug' -E 'impl Display' -E 'impl Default'
+
 # Mutation testing on the whole workspace (nightly / phase review).
 mutants-full:
     {{guard}} cargo mutants --jobs 2 --workspace

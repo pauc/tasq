@@ -13,8 +13,8 @@ place for status, learnings, blockers and deviations from the plan.
 | T-004 | cargo-mutants setup | done | commit 07d3203; cargo-mutants 27.1.0 |
 | T-101 | Domain model | done | commit f9e606c; 59 tests; mutants 121 total, 0 missed, 1 skip (SystemClock::now) |
 | T-105 | Clock and progress logging | done | commit f9e606c; `When` enum keeps date-only entries lossless |
-| T-102 | Markdown parser | gates green, mutants pending | wave 4; agent killed by OOM before mutants pass and commit |
-| T-103 | Markdown writer and round trip | gates green, mutants pending | wave 4; agent killed by OOM before mutants pass and commit |
+| T-102 | Markdown parser | acceptance tests done, mutants running | commits 5ed472e, 7bd3ff5; 308 mutants in progress |
+| T-103 | Markdown writer and round trip | acceptance tests done, mutants running | commits 5ed472e, 7bd3ff5; 308 mutants in progress |
 | T-104 | Queries and grouping | done | commit 72790ee; 29 tests; 0 missed mutants |
 | T-106 | Configuration loading | gates green, mutants pending | wave 4; agent killed by OOM before mutants pass and commit |
 
@@ -76,9 +76,9 @@ place for status, learnings, blockers and deviations from the plan.
 
 ### Mutation-testing learnings
 
-- `cargo mutants -f crates/core/src/query.rs` swept the whole crate (161 mutants) instead of the
-  file (40): the `-f` path filter looks unreliable on 27.1.0. Check `cargo mutants --list -f ...`
-  before trusting the scope.
+- **`-f` never narrows while `.cargo/mutants.toml` is loaded**: cargo-mutants 27.1 unions the CLI
+  filter with `examine_globs` (557 mutants with or without `-f`). Use `--no-config -f <glob>` plus
+  the `-E` excludes, wrapped as `just mutants-in <path>` (308 mutants for the format module).
 
 - `exclude_re` for Display/Default/Debug works, but `From<T> for String` / `TryFrom<String>` on
   newtypes are mutated: serde round-trip tests are what kills them.

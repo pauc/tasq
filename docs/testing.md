@@ -23,8 +23,10 @@ least one test to fail. Install it with `cargo install cargo-mutants --locked`.
 - `just mutants-full` tests every mutant in `tasq-core`, `tasq-store-nb`, `tasq-sources` and
   `tasq-launch`. CI runs it nightly on `main` and keeps the issue "Surviving mutants (nightly)"
   up to date.
-- `cargo mutants -f crates/core/src/format` checks a single module, which is how the per-task
-  acceptance criteria in the plan are verified.
+- `just mutants-in crates/core/src/format` checks a single module, which is how the per-task
+  acceptance criteria in the plan are verified. It passes `--no-config` because cargo-mutants
+  27.1 unions `-f` with the config's `examine_globs`, so with the config active `-f` never narrows
+  the scope. Check with `cargo mutants --list ...` before trusting any scope.
 
 The TUI and CLI crates are excluded in `.cargo/mutants.toml`; they are covered by snapshot tests
 instead. `impl Debug`, `impl Display` and `impl Default` are excluded as noise.
