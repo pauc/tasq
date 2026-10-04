@@ -16,7 +16,10 @@ edition = "2024"
 # stable (1.98) so distro toolchains can still build the workspace.
 rust-version = "1.90"
 license = "GPL-3.0-or-later"
-repository = "https://example.invalid/tasq" # TODO: replace with the real remote
+repository = "https://github.com/OWNER/tasq" # TODO: replace OWNER with the real GitHub owner
+homepage = "https://github.com/OWNER/tasq" # TODO: same as repository
+keywords = ["todo", "tasks", "markdown", "nb", "cli"]
+categories = ["command-line-utilities"]
 authors = ["Pau Compte"]
 
 [workspace.lints.rust]

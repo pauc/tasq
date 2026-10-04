@@ -1,0 +1,72 @@
+# git-cliff configuration (https://git-cliff.org/docs/configuration).
+#
+# Renders Keep a Changelog sections from the workspace's conventional commits
+# (`feat(store-nb): ...`, `fix(core): ...`, `docs(plan): ...`). Used by
+# .github/workflows/release.yml to write the notes of one release, and by hand
+# to regenerate CHANGELOG.md; see docs/release.md.
+
+[changelog]
+# Printed once at the top of CHANGELOG.md; dropped with `--strip header`.
+header = """
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+"""
+# One release. Groups carry a hidden `<!-- N -->` prefix so they sort in Keep a
+# Changelog order; `striptags` removes it before printing.
+# TODO: replace OWNER with the real GitHub owner once the repository exists.
+body = """
+{%- set repo = "https://github.com/OWNER/tasq" -%}
+{% if version %}
+## [{{ version | trim_start_matches(pat="v") }}]({{ repo }}/releases/tag/{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}
+## [Unreleased]
+{% endif %}
+{%- for group, commits in commits | group_by(attribute="group") %}
+
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}\
+  {% if commit.breaking %}[**breaking**] {% endif %}\
+  {{ commit.message | upper_first | trim }} \
+  ([{{ commit.id | truncate(length=7, end="") }}]({{ repo }}/commit/{{ commit.id }}))
+{%- endfor %}
+{% endfor %}
+"""
+footer = ""
+# Remove leading and trailing whitespace from the rendered body.
+trim = true
+postprocessors = []
+
+[git]
+# Only conventional commits are listed; anything else is dropped.
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+# A `feat!:` or `BREAKING CHANGE:` commit is never skipped by a parser below.
+protect_breaking_commits = true
+commit_preprocessors = []
+# First match wins.
+commit_parsers = [
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^feat", group = "<!-- 0 -->Added" },
+  { message = "^fix", group = "<!-- 1 -->Fixed" },
+  { message = "^refactor", group = "<!-- 2 -->Changed" },
+  { message = "^perf", group = "<!-- 2 -->Changed" },
+  { message = "^docs", group = "<!-- 3 -->Documentation" },
+  { message = "^test", skip = true },
+  { message = "^build", group = "<!-- 4 -->Internal" },
+  { message = "^ci", group = "<!-- 4 -->Internal" },
+  { message = "^chore", group = "<!-- 4 -->Internal" },
+]
+filter_commits = false
+# Release tags look like v0.1.0; anything else is not a release boundary.
+tag_pattern = "^v[0-9]"
+skip_tags = ""
+ignore_tags = ""
+topo_order = false
+sort_commits = "oldest"

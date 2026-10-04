@@ -1,0 +1,309 @@
+name: Release
+
+# Hand-written release pipeline. cargo-dist and release-plz were considered
+# and rejected for now: both generate workflow code that must be kept in sync
+# with a tool version, and neither is installed on the author's machine.
+# docs/release.md explains the flow and how to cut a release.
+#
+# Triggers:
+#   - a tag `vX.Y.Z` pushed to the repository: full release (binaries, GitHub
+#     release with notes, crates.io, optional Homebrew tap);
+#   - workflow_dispatch: dry run. Builds and packages every target and renders
+#     the release notes, but creates no GitHub release and publishes nothing.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  # Never cancel a release half-way through publishing.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The tag must name the version in Cargo.toml. On a dry run there is no tag,
+  # so only the version is read; every later job takes it from this output.
+  check-version:
+    name: check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the workspace version and compare it with the tag
+        id: version
+        run: |
+          version="$(sed -nE 's/^version *= *"([^"]+)".*/\1/p' Cargo.toml | head -n1)"
+          if [ -z "$version" ]; then
+            echo "version not found in Cargo.toml" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$tag" != "$version" ]; then
+              echo "tag v$tag does not match the workspace version $version in Cargo.toml" >&2
+              exit 1
+            fi
+            echo "releasing v$version"
+          else
+            echo "dry run for version $version (nothing is published)"
+          fi
+
+  # One native build per target: no cross-compilation, every runner builds its
+  # own triple. The job fails if the runner's host triple is not the one the
+  # matrix row claims, so a renamed runner image cannot mislabel a tarball.
+  build:
+    name: build (${{ matrix.target }})
+    needs: check-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          - { target: x86_64-apple-darwin, os: macos-13 }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+    env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: Check the runner builds the expected target
+        run: |
+          host="$(rustc -vV | sed -nE 's/^host: (.*)$/\1/p')"
+          if [ "$host" != "$TARGET" ]; then
+            echo "runner host triple is $host, expected $TARGET" >&2
+            exit 1
+          fi
+      - run: cargo build --release --locked -p tasq
+      - name: Smoke test
+        run: |
+          target/release/tasq --version
+          target/release/tasq completions bash > /dev/null
+      # Tarball layout: tasq-v<version>-<target>/{tasq,README.md,LICENSE,CHANGELOG.md}.
+      # Homebrew strips the single top-level directory when it unpacks it.
+      # `shasum` is used because macOS has no `sha256sum`.
+      - name: Package
+        run: |
+          name="tasq-v${VERSION}-${TARGET}"
+          mkdir -p "dist/$name"
+          cp target/release/tasq README.md LICENSE CHANGELOG.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+          cat "dist/$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tasq-v${{ env.VERSION }}-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  # Release notes for this tag from the conventional commits (cliff.toml), then
+  # the GitHub release with every tarball and checksum attached. On a dry run
+  # the notes are rendered and uploaded as an artifact; no release is created.
+  release:
+    name: github release
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # git-cliff walks the history between tags.
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      - name: Render release notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          # `--latest`: the commits of the newest tag only. A dry run has no
+          # fresh tag, so it renders the unreleased section instead.
+          args: ${{ github.event_name == 'push' && '--latest --strip header' || '--unreleased --strip header' }}
+        env:
+          OUTPUT: RELEASE_NOTES.md
+      - run: cat RELEASE_NOTES.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: RELEASE_NOTES.md
+          if-no-files-found: error
+      - name: Create the GitHub release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: v${{ needs.check-version.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          fail_on_unmatched_files: true
+          # `v0.2.0-rc.1` is a pre-release, `v0.2.0` is not.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # crates.io, in dependency order: tasq-core first, then the four crates that
+  # depend only on it, then the `tasq` binary crate. Each publish is skipped
+  # when that version is already on crates.io (re-runs), and is followed by a
+  # wait until the version is visible in the sparse index, because the next
+  # crate's `cargo publish` verification build resolves its dependencies from
+  # the index. Never runs on a dry run.
+  publish:
+    name: crates.io
+    needs: [check-version, release]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      VERSION: ${{ needs.check-version.outputs.version }}
+      # crates.io rejects requests without a User-Agent.
+      USER_AGENT: tasq-release (https://github.com/${{ github.repository }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Check the registry token is set
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "CARGO_REGISTRY_TOKEN secret is not set" >&2
+            exit 1
+          fi
+      - name: Publish in dependency order
+        run: |
+          set -euo pipefail
+
+          # https://crates.io/api/v1/crates/<name>/<version> is 200 once the
+          # version exists (the API, used for the idempotency check).
+          published() {
+            curl -fsS -A "$USER_AGENT" -o /dev/null \
+              "https://crates.io/api/v1/crates/$1/$2"
+          }
+
+          # Path of a crate in the sparse index (https://doc.rust-lang.org/cargo/reference/registry-index.html).
+          index_path() {
+            local n="$1"
+            case "${#n}" in
+              1) echo "1/$n" ;;
+              2) echo "2/$n" ;;
+              3) echo "3/${n:0:1}/$n" ;;
+              *) echo "${n:0:2}/${n:2:2}/$n" ;;
+            esac
+          }
+
+          # The index is what `cargo publish` of the next crate resolves against.
+          in_index() {
+            curl -fsS -A "$USER_AGENT" "https://index.crates.io/$(index_path "$1")" 2>/dev/null |
+              grep -q "\"vers\":\"$2\""
+          }
+
+          wait_for_index() {
+            local crate="$1" tries=0
+            until in_index "$crate" "$VERSION"; do
+              tries=$((tries + 1))
+              if [ "$tries" -ge 60 ]; then
+                echo "$crate@$VERSION did not appear in the crates.io index after 10 minutes" >&2
+                exit 1
+              fi
+              echo "waiting for $crate@$VERSION in the index ($tries)..."
+              sleep 10
+            done
+            echo "$crate@$VERSION is in the index"
+          }
+
+          for crate in tasq-core tasq-store-nb tasq-sources tasq-launch tasq-tui tasq; do
+            echo "::group::$crate@$VERSION"
+            if published "$crate" "$VERSION"; then
+              echo "$crate@$VERSION is already on crates.io, skipping"
+            else
+              cargo publish --locked -p "$crate"
+            fi
+            wait_for_index "$crate"
+            echo "::endgroup::"
+          done
+
+  # Homebrew tap: renders homebrew/tasq.rb.template with the four tarball URLs
+  # and checksums and pushes it to <owner>/homebrew-tasq as Formula/tasq.rb.
+  # Optional: GitHub Actions cannot test a secret in `if:`, so the token goes
+  # into `env` and the first step decides whether the rest runs.
+  homebrew:
+    name: homebrew tap
+    needs: [check-version, release]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      VERSION: ${{ needs.check-version.outputs.version }}
+      TAP_REPO: ${{ github.repository_owner }}/homebrew-tasq
+      HOMEPAGE: https://github.com/${{ github.repository }}
+      BASE_URL: https://github.com/${{ github.repository }}/releases/download/v${{ needs.check-version.outputs.version }}
+    steps:
+      - name: Check for the tap token
+        id: token
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN is not set; skipping the Homebrew formula"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.enabled == 'true'
+      - uses: actions/download-artifact@v4
+        if: steps.token.outputs.enabled == 'true'
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Render the formula
+        if: steps.token.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          sha() { cut -d' ' -f1 "dist/tasq-v${VERSION}-$1.tar.gz.sha256"; }
+          sed \
+            -e "s|{{version}}|${VERSION}|g" \
+            -e "s|{{homepage}}|${HOMEPAGE}|g" \
+            -e "s|{{base_url}}|${BASE_URL}|g" \
+            -e "s|{{sha256_x86_64_unknown_linux_gnu}}|$(sha x86_64-unknown-linux-gnu)|g" \
+            -e "s|{{sha256_aarch64_unknown_linux_gnu}}|$(sha aarch64-unknown-linux-gnu)|g" \
+            -e "s|{{sha256_x86_64_apple_darwin}}|$(sha x86_64-apple-darwin)|g" \
+            -e "s|{{sha256_aarch64_apple_darwin}}|$(sha aarch64-apple-darwin)|g" \
+            homebrew/tasq.rb.template > tasq.rb
+          if grep -n '{{' tasq.rb; then
+            echo "unrendered placeholder in the formula" >&2
+            exit 1
+          fi
+          cat tasq.rb
+      - name: Push the formula to the tap
+        if: steps.token.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
+          mkdir -p tap/Formula
+          cp tasq.rb tap/Formula/tasq.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/tasq.rb
+          if git diff --cached --quiet; then
+            echo "Formula/tasq.rb is already at ${VERSION}"
+            exit 0
+          fi
+          git commit -m "tasq ${VERSION}"
+          git push
