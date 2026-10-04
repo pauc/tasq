@@ -6,10 +6,13 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 authors.workspace = true
 
 [dependencies]
-tasq-core = { path = "../core" }
+tasq-core = { path = "../core", version = "0.1.0" }
 # `#[mutants::skip]` on the functions that only do network or process I/O.
 mutants = "0.0.4"
 serde = { version = "1", features = ["derive"] }

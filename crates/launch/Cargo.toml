@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 authors.workspace = true
 
 [features]
@@ -15,7 +18,7 @@ default = ["herdr"]
 herdr = ["dep:serde_json"]
 
 [dependencies]
-tasq-core = { path = "../core" }
+tasq-core = { path = "../core", version = "0.1.0" }
 # `#[mutants::skip]` on the functions that only spawn processes.
 mutants = "0.0.4"
 # Prompt template placeholders and sections.
