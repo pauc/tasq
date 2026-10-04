@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config show` and `completions`; `--json` on every command (`docs/json.md`),
   `--color`/`--no-color`/`--no-pager`, `--profile`/`--config`/`--set`, `TASQ_NOW` for
   reproducible timestamps.
+- `tasq next` and `tasq pick <id>`: open a work session in the first tracked worktree that
+  exists, else the project, else `work.default_project`, with `--launcher` and `--dry-run`.
+  Launchers: `claude` (prompt from a template, `direnv exec` when the `.envrc` is allowed),
+  `shell`, `tmux`, `herdr` (workspace or tab, Claude agent, prompt pasted in) and `auto`.
 - nb-compatible store (`tasq-store-nb`) with nb and native bookkeepers.
 - Core domain model, lossless markdown format, queries and layered TOML config.
 - Cargo workspace with the `tasq-core`, `tasq-store-nb`, `tasq-sources`,

@@ -5,12 +5,25 @@ place for status, learnings, blockers and deviations from the plan.
 
 ## Status
 
-**Phase 3 (CLI parity) complete (2026-10-04).** Every command of the script except `next`/`pick`
-(Phase 4), `update`/`update-support` (Phase 5 `sync`), `summary` (Phase 6) and `tlogs` (external
-plugin) exists under `tasq`, each with `--json`. 468 workspace tests (cli 49 unit + 66
-integration). Mutants: core `work` 9/0 missed, `clock` 22/0, `dates` 8/0, model 0 missed; launch
-crate 0 missed (process wrappers skipped). Next: Phase 4 (launchers, `next`/`pick`, T-401 to
-T-405).
+**Phase 4 (launchers) complete (2026-10-04).** `tasq next` and `tasq pick` open sessions through
+the `claude`, `shell`, `tmux` and `herdr` launchers (`auto` picks herdr inside herdr). Every
+command of the script except `update`/`update-support` (Phase 5 `sync`), `summary` (Phase 6) and
+`tlogs` (external plugin) now exists under `tasq`. 511 workspace tests. Mutants: core `launch`
+12/0 missed; launch crate 192 tested, 0 missed (`process::run`, `process::exec` and the
+feature-off `herdr` stub skipped). Next: Phase 5 (sources and `sync`, T-501 to T-505).
+
+| Task | Title | Status | Notes |
+|------|-------|--------|-------|
+| T-401 | Launch context resolution | done | `tasq_core::launch::resolve_workdir` (pure, fs as a closure); recreate prompt only on a TTY |
+| T-402 | Environment strategy | done | `tasq_launch::env`: `direnv status` parsed (`Found RC allowed`), `direnv exec` wrap, `direnv allow` warning |
+| T-403 | Shell and tmux launchers | done | `exec $SHELL`; `tmux new-window -c -n -e`, error outside tmux |
+| T-404 | Claude launcher, `next`/`pick` | done | template `crates/launch/templates/claude.md` (+ `prompt_file`), `--launcher`, `--dry-run` (text or JSON) |
+| T-405 | herdr launcher | done | feature `herdr` (default on); serde_json over herdr's output; `short_label` in core; fake herdr tests |
+
+### Phase 3 status
+
+**Phase 3 (CLI parity) complete (2026-10-04).** 468 workspace tests at the time (cli 49 unit + 66
+integration). Mutants: core `work` 9/0 missed, `clock` 22/0, `dates` 8/0, model 0 missed.
 
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
@@ -139,6 +152,38 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   is T-307/T-503, so `commands::mr::link_for` labels GitLab/GitHub URLs with their short
   reference (`group/project!77`, `owner/repo#7`) and warns; other URLs need an explicit
   title. The lookup slots in front of the fallback later.
+
+### Launcher decisions (T-401 to T-405)
+
+- `tasq_core::launch`: `LaunchContext { task, file, markdown, workdir, in_worktree, env, statuses }`,
+  `resolve_workdir(task, default_project, is_dir)` (first existing worktree → project if it exists,
+  else a warning and the default → `NoWorkdir`/`WorkdirMissing` errors), the `Launcher` trait
+  (`describe` for `--dry-run`, `launch`, `resume_hint`) and `short_label` (ported, unit-tested).
+  `Session.at`/`Worktree` line formatters are re-exported from `format` for the prompt.
+- The prompt is data: `templates/claude.md` with `{{name}}` placeholders and
+  `{{#name}}...{{/name}}` sections (kept only when the variable is non-empty); section markers sit
+  inline so the blank lines match the script's `${wt_list:+...}` layout. Unknown placeholders are
+  errors naming them. It names `tasq log/set/project/worktree/session/mr/done` and `/tasq:wrapup`.
+- Launchers that replace the process (`shell`, `claude`) use `process::exec` and are tested
+  through `command()`/`describe()` plus a CLI integration test with a fake `claude` on `PATH`
+  (the exec'd fake records cwd, env and the prompt). `tmux` and `herdr` run subprocesses and are
+  tested with fake executables; the herdr launcher takes its fallback launcher and prompt
+  function as injected boxes, so the fallback path is tested with a recording launcher instead of
+  exec'ing anything from a test.
+- herdr port: `worktree list --cwd` is skipped when the workdir is the default project (as the
+  script's `$workdir != $DEFAULT_WORKTREE`); `workspace create` or `tab create` with `--env
+  TASQ_TASK_ID/TASQ_NOTEBOOK(/TASQ_PROFILE) --no-focus`; `agent start task-<id>` retried as
+  `task-<id>-<pid>`; `agent prompt`; `agent focus`, `tab focus`, `workspace focus`. JSON is read
+  with `serde_json`, searching every object for the key (herdr repeats ids across nested
+  objects). Without a pane the fallback launcher runs in the current pane.
+- `launch.default` accepts `auto` (herdr when `HERDR_ENV` is set, else claude), which is what the
+  script did implicitly; the default stays `claude`. `--dry-run` never writes (the in-progress
+  change is reported as skipped) and `--json` with `--dry-run` prints the context and steps.
+- Launch-crate survivors fixed by shape, not by argument: a hand-written `impl std::fmt::Debug`
+  is not matched by the `-E 'impl Debug'` exclude (write `impl Debug` via `use std::fmt::Debug`);
+  an `in_herdr: true` override that could never differ from the derived value was removed; the
+  `#[cfg(not(feature = "herdr"))]` stub is `#[mutants::skip]` because the default-feature test
+  build never compiles it.
 
 ### CLI decisions (T-305 to T-308)
 
@@ -366,7 +411,11 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 - T-306: no gwm adapter. `work.worktree_manager` is `git` (default, `<project>-<branch-slug>`)
   or `command` (user template); gwm is one line of config. Decided 2026-10-04 so tasq carries no
   dependency on the author's provisioning tool.
-- T-307: the resume hint is a CLI table keyed by launcher name until Phase 4 adds the trait.
+- T-307: the resume hint came from a CLI table until Phase 4; it is now `Launcher::resume_hint`.
+- T-403: the tmux launcher opens a shell window, not a Claude session (what the plan says);
+  the window is named `<id> <short label>`.
+- T-404: `launch.default = "auto"` added (not in the plan's value list) to keep the script's
+  "herdr when inside herdr" behaviour configurable rather than implicit.
 - T-001: repository URL in `Cargo.toml` is a placeholder (`https://example.invalid/tasq`) until a
   GitHub repo exists. Extra just recipes `default` and `fmt-check`.
 
