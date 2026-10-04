@@ -21,7 +21,8 @@ publishing. 701 workspace tests; config module 107 mutants, 0 missed; `cargo doc
 **Not verifiable here:** the release pipeline has never run (no GitHub repository yet, `OWNER`
 placeholders), `cargo install tasq` is not possible until the crates are published, and
 T-904's one-week side-by-side run on the real notebook is the author's manual acceptance
-(procedure in `docs/migration.md`). Follow-up recorded: `tasq list --all` for done tasks.
+(procedure in `docs/migration.md`). Follow-up recorded: `tasq list --all` for done tasks. Commits ae29142, b5a649d, ef2bcce,
+b272893, f2f0fad, 50cb267 and the manifest follow-up.
 
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
