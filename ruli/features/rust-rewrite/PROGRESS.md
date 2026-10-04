@@ -5,6 +5,11 @@ place for status, learnings, blockers and deviations from the plan.
 
 ## Status
 
+**Phase 2 complete (2026-10-04).** 29 commits; 331 workspace tests (nb-gated ones enforced with
+`TASQ_REQUIRE_NB=1`); store-nb mutants 270 tested, 0 missed, 0 timeouts (skips only on the four
+process spawners `Nb::run/run_in/version`, `Git::run`); fmt, clippy, doc clean. Next: Phase 3
+(CLI parity, T-301 to T-308), which also wires `tasq doctor` and `tasq config show` (T-205).
+
 Phase 2 (nb store) started 2026-10-04. nb is always driven with `NB_DIR` and `NBRC_PATH` pointing
 inside a temp copy of a fixture notebook in the repo, never at the real `~/.nb`.
 
@@ -14,9 +19,9 @@ inside a temp copy of a fixture notebook in the repo, never at the real `~/.nb`.
 | T-201 | Notebook resolution and index reading | done | commit 4d957d9 |
 | T-202 | Reading and writing tasks through the store | done | commits 801581d (Store trait), 4d957d9; 79 store-nb tests; mutants 139 tested, 0 missed |
 | T-204 | Store capability reporting | done | commit 4d957d9 |
-| T-203 | Creating tasks | in progress | wave B |
-| T-206 | Bookkeeper (nb CLI vs native) | in progress | wave B |
-| T-205 | doctor / config show | in progress | diagnostics functions in wave B, CLI in Phase 3 |
+| T-203 | Creating tasks | done | commit 5ef8efc |
+| T-206 | Bookkeeper (nb CLI vs native) | done | commit 1d36cf8 |
+| T-205 | doctor / config show | library done | commit 95ec027 (`doctor::checks`, `tool_check`); CLI command in Phase 3 |
 
 ### Phase 0 and 1 status
 
@@ -80,7 +85,33 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   are explicit about which nb runs. No process is spawned when `$NB_DIR/<notebook>` exists.
 - Added `format::ops::set_open` (reopen) to core.
 
+### Bookkeeper and create decisions (T-203/T-206)
+
+- Filename: `YYYYMMDDHHMMSS.todo.md` from the injected clock, bumped one second while taken, error
+  after 60 attempts with nothing written.
+- Merge requests need a label at the store level (`- [title](url)`); the CLI resolves titles.
+- Default creation note: `created via tasq create`.
+- `nb git checkpoint` is always run with `--wait` and immediately after the write; nb pushes when
+  the user's `auto_sync` is on (kept, per ADR 0007).
+- Register failure after a written file is an error naming the file (no id exists yet); later
+  checkpoint failures are warnings carrying the manual fix (`nb index reconcile`).
+- `Bookkeeper::checkpoint -> bool` (committed or skipped), `verify -> Verification`, plus `sync`.
+
 ### nb facts (probed 2026-10-04 with nb 7.25.4 in an isolated NB_DIR)
+
+- **`nb git checkpoint` commits asynchronously unless `--wait`**; and any nb read command
+  (`nb todos` included) commits a dirty notebook in the background as `[nb] Commit`. Checkpoint
+  right after writing, with `--wait`, or nb takes the commit with its own message.
+- `nb index verify` exits 1 with "Index corrupted" on stderr in this version (an earlier probe saw
+  exit 0): parse the text, not just the exit code.
+- `nb index add` appends `basename\n` and skips names already listed; it does not repair a missing
+  trailing newline on the previous line.
+- `nb git dirty` exits 1 both when clean and when the notebook is not a git repo; check `.git` first.
+- `nb sync` without a remote exits 1 ("No remote configured"); reported as not synced, not an error.
+- A cwd inside a notebook makes nb treat it as the current notebook: that is how `git`/`sync`
+  (no folder argument) are targeted; index subcommands take the folder as final argument.
+- Test harness: a freshly written fake executable can hit `ETXTBSY` when other test threads fork;
+  probe it until it runs.
 
 - **nb needs a git identity**: with `HOME` pointing at a dir without `.gitconfig`, every nb
   command prints the welcome and does nothing. The harness writes one.
