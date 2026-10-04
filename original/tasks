@@ -1,0 +1,1170 @@
+#!/usr/bin/env bash
+# tasks — status-grouped view of open nb todos, with status/progress editing.
+#
+# Usage:
+#   tasks                       Show open todos grouped by status
+#   tasks <status|tag>          Show one status group, or the grouped view filtered by tag
+#                               (e.g. tasks review-request, tasks gitlab, tasks A)
+#   tasks create <title> [--desc <text>] [--status <status|done>] [--prio <A|B|C>]
+#                [--due <date>] [--project <path>] [--tag <tag>]... [--related <url>]...
+#                [--mr <url>]... [--note <text>]   Create a todo with the standard sections
+#                (--status done creates it already closed, with no status tag)
+#   tasks set <id> <status|priority> [note]   Set status or priority (optionally logging a note)
+#   tasks log <id> <note>       Append a dated progress note
+#   tasks next                  Open a Claude session on the next task
+#   tasks pick <id>             Open a Claude session on a specific task
+#   tasks done <id> [note]      Mark a task as done (optionally logging a final note)
+#   tasks view <id> [args]      View a task rendered with glow (with args: nb show passthrough)
+#   tasks project <id> [path]   Show or set the task's project directory (where sessions
+#                               start when no tracked worktree exists)
+#   tasks worktree <id> <path>  Track a git worktree used to develop the task (sessions
+#                               start in the first tracked one that exists)
+#   tasks worktree <id> --create <branch>  Create a worktree via gwm in the task's
+#                               project workspace (linked configs) and track it
+#   tasks session <id> <session-id> [desc]  Track a Claude session (resume: claude --resume <session-id>)
+#   tasks mr <id> <mr-url> [title]  Track a merge request (title auto-resolved via glab)
+#   tasks update [args]         Refresh todos from GitLab/Slack/Gmail via a Claude briefing session
+#   tasks update <id> [<id>...]  Re-check only those todos against their sources (MR reviewed? issue closed?)
+#   tasks update-support [args]  Refresh support todos from Freshdesk (open tickets in the
+#                               3L Team Core queue) via a Claude briefing session. Separate
+#                               from `tasks update`, which never looks at Freshdesk; these
+#                               todos are tagged `support`, so `tasks support` lists them.
+#                               Args: a Freshdesk ticket id/URL limits the sweep to that
+#                               ticket, nb todo ids re-check only those todos
+#   tasks summary [date] [--raw]  Standup-ready summary of what you worked on that date,
+#                               distilled by claude from your progress notes (default:
+#                               the last working day, so Monday shows Friday; accepts
+#                               "today"; --raw prints the full notes)
+#   tasks tlogs [when]          Create GitLab time logs via a Claude session: HiBob time off
+#                               sets the daily target (8h, 4h on a half day, 0h on a full
+#                               absence), then nb todos, GitLab activity, Google Calendar
+#                               and Slack are used to reconstruct the day. Proposes a
+#                               breakdown per day and posts it with /spend once you approve.
+#                               No argument: today. Otherwise a spoken range ("yesterday",
+#                               "this week", "last week", "this month", "last month",
+#                               "last 5 days", "last monday"), one date, or two dates for
+#                               an inclusive range. Weeks run Mon-Fri, nothing past today,
+#                               weekends are skipped
+#
+# Statuses: in-progress, ready, waiting, blocked, later
+# Priorities: A (high), B (default), C (low) — tags #A/#B/#C, e.g. tasks set 23 A
+# Status is stored as an nb tag (#ready, #waiting, ...) in the todo's Tags
+# section, so nb's native filtering works too: nb todos open --tags waiting
+#
+# Todos are read from the nb notebook named in TASKS_NB_NOTEBOOK, defaulting to
+# `home`. nb's own current-notebook state is deliberately ignored: nb rewrites
+# NB_NOTEBOOK_PATH as internal bookkeeping, so it is not a stable setting to key
+# off. Select the notebook per project instead, e.g. export TASKS_NB_NOTEBOOK=Zantop.
+#
+# Sessions start in the first tracked worktree that exists (tasks worktree <id>
+# <path>), otherwise in the todo's own `## Project` directory (tasks project
+# <id> <path>). When every tracked worktree is gone, next/pick name the newest
+# one and offer to recreate it with gwm on its recorded branch. TASKS_DEFAULT_WORKTREE
+# is the fallback for todos that track neither, and is also where `tasks update`,
+# `tasks tlogs` and glab MR-title lookups run. Set it alongside the notebook,
+# e.g. export TASKS_DEFAULT_WORKTREE=~/code/zantop_atelier/zantop.
+#
+# The session gets the working directory's own environment (its bin/ on PATH,
+# its BUNDLE_GEMFILE) rather than the environment of the shell that ran `tasks`:
+# in herdr from the new pane's own shell and its direnv hook, otherwise through
+# `direnv exec <dir>`.
+#
+# Lists are paged through `less -RFX` when on a terminal (set TASKS_PAGER to
+# override, e.g. TASKS_PAGER="bat -p --paging=always"); piped output is plain.
+# `tasks view` renders links as clickable OSC 8 hyperlinks (label only, URL
+# hidden; GitLab URLs get !123/#123 labels). Set TASKS_NO_OSC8=1 if your
+# terminal or pager can't handle them (falls back to plain visible URLs).
+# Inside herdr (HERDR_ENV set), next/pick open the Claude session in a new
+# herdr workspace; the session renames it to a short task-identifying title.
+set -euo pipefail
+
+NOTEBOOK="${TASKS_NB_NOTEBOOK:-home}"
+# Global notebooks are plain directories under NB_DIR, so resolve the name
+# there first and only ask nb when that misses (local or relocated notebooks).
+# nb decorates its output in some environments, and stray escape or CR bytes
+# in the path make every later test fail on a path that still looks correct
+# when printed, so keep just the last line and strip anything non-printing.
+NB_HOME="${NB_DIR:-$HOME/.nb}/$NOTEBOOK"
+if [[ ! -d "$NB_HOME" ]]; then
+  NB_HOME=$(nb notebooks show "$NOTEBOOK" --path 2>/dev/null | tail -1 |
+    sed $'s/\033\\[[0-9;?]*[a-zA-Z]//g; s/\r//g; s/^[[:space:]]*//; s/[[:space:]]*$//' || true)
+fi
+INDEX="$NB_HOME/.index"
+DEFAULT_WORKTREE="${TASKS_DEFAULT_WORKTREE:-$HOME/code/SF/silverfin_worspace/silverfin}"
+STATUSES=(in-progress ready waiting blocked later)
+STATUS_TAG_RE="^#($(IFS='|'; echo "${STATUSES[*]}"))$"
+SEP=$'\x1f'
+M0=$'\xee\x80\x80' M1=$'\xee\x80\x81' M2=$'\xee\x80\x82'
+
+if [[ -t 1 ]]; then
+  BOLD=$(tput bold 2>/dev/null || true)
+  DIM=$(tput dim 2>/dev/null || true)
+  RESET=$(tput sgr0 2>/dev/null | tr -d '\017' || true)
+  GREEN=$(tput setaf 2 2>/dev/null || true)
+  YELLOW=$(tput setaf 3 2>/dev/null || true)
+  RED=$(tput setaf 1 2>/dev/null || true)
+  BLUE=$(tput setaf 4 2>/dev/null || true)
+  MAGENTA=$(tput setaf 5 2>/dev/null || true)
+  TAGBG="$(tput setab 24 2>/dev/null || true)$(tput setaf 231 2>/dev/null || true)"
+else
+  BOLD="" DIM="" RESET="" GREEN="" YELLOW="" RED="" BLUE="" MAGENTA="" TAGBG=""
+fi
+
+die() { echo "tasks: $*" >&2; exit 1; }
+
+valid_status() {
+  local s
+  for s in "${STATUSES[@]}"; do [[ "$s" == "$1" ]] && return 0; done
+  return 1
+}
+
+file_for_id() {
+  local file
+  file=$(sed -n "${1}p" "$INDEX")
+  [[ -n "$file" && -f "$NB_HOME/$file" ]] || die "no todo with id $1"
+  echo "$NB_HOME/$file"
+}
+
+# Prints: id <TAB> status <TAB> due <TAB> title <TAB> latest progress note
+parse_todo() {
+  local id="$1" file="$2"
+  awk -v id="$id" -v sep="$SEP" '
+    NR == 1 {
+      if ($0 !~ /^# \[ \]/) exit
+      title = $0; sub(/^# \[ \] /, "", title)
+    }
+    /^## / { sect = substr($0, 4); next }
+    sect == "Due" && NF && due == "" { due = $0 }
+    sect == "Tags" { tags = tags " " $0 }
+    sect == "Progress" && /^- / { progress = $0; sub(/^- /, "", progress) }
+    END {
+      if (title == "") exit
+      n = split(tags, arr, /[ \t]+/)
+      for (i = 1; i <= n; i++) {
+        t = arr[i]; sub(/^#/, "", t)
+        if (t == "in-progress" || t == "ready" || t == "waiting" || t == "blocked" || t == "later") status = t
+        if (t == "A" || t == "B" || t == "C") prio = t
+      }
+      if (status == "") status = "no-status"
+      if (prio == "") prio = "B"
+      gsub(/^[ \t]+|[ \t]+$/, "", tags)
+      printf "%s%s%s%s%s%s%s%s%s%s%s%s%s\n", id, sep, status, sep, due, sep, title, sep, progress, sep, prio, sep, tags
+    }
+  ' "$file"
+}
+
+all_open() {
+  local id=0 file
+  while IFS= read -r file; do
+    id=$((id + 1))
+    [[ "$file" == *.todo.md && -f "$NB_HOME/$file" ]] || continue
+    parse_todo "$id" "$NB_HOME/$file"
+  done < "$INDEX"
+}
+
+sorted_group() {
+  local status="$1" rows="$2"
+  awk -F"$SEP" -v s="$status" -v OFS="$SEP" \
+    '$2 == s { print $6, ($3 == "" ? "9999-99-99" : $3), $0 }' <<< "$rows" |
+    sort -t"$SEP" -k1,1 -k2,2 -k3,3n |
+    cut -d"$SEP" -f3-
+}
+
+print_group() {
+  local status="$1" color="$2" label="$3" rows="$4"
+  local group
+  group=$(sorted_group "$status" "$rows")
+  [[ -n "$group" ]] || return 0
+  printf "%s%s%s%s\n" "$BOLD" "$color" "$label" "$RESET"
+  while IFS="$SEP" read -r id _ due title _ prio tags; do
+    local due_str="" prio_str chips="" tag
+    [[ -n "$due" ]] && due_str=" ${DIM}(due $due)${RESET}"
+    case "$prio" in
+      A) prio_str="${BOLD}${RED}#A${RESET}" ;;
+      C) prio_str="${DIM}#C${RESET}" ;;
+      *) prio_str="${DIM}#B${RESET}" ;;
+    esac
+    for tag in $tags; do
+      case "${tag#\#}" in
+        in-progress|ready|waiting|blocked|later|A|B|C) ;;
+        *) chips+=" ${TAGBG} ${tag} ${RESET}" ;;
+      esac
+    done
+    printf "  %s[%2s]%s %s %s%s%s\n" "$DIM" "$id" "$RESET" "$prio_str" "$title" "$due_str" "$chips"
+  done <<< "$group"
+  echo
+}
+
+cmd_list() {
+  local filter="${1:-}" rows
+  rows=$(all_open)
+  [[ -n "$rows" ]] || { echo "No open todos."; exit 0; }
+  if [[ -n "$filter" ]]; then
+    if valid_status "$filter"; then
+      print_group "$filter" "" "$filter" "$rows"
+      return
+    fi
+    rows=$(awk -F"$SEP" -v t="$filter" '$7 ~ ("(^| )#" t "( |$)")' <<< "$rows")
+    [[ -n "$rows" ]] || { echo "No open todos tagged #$filter."; return; }
+  fi
+  print_group "in-progress" "$BLUE"    "IN PROGRESS" "$rows"
+  print_group "ready"       "$GREEN"   "READY"       "$rows"
+  print_group "waiting"     "$YELLOW"  "WAITING"     "$rows"
+  print_group "blocked"     "$RED"     "BLOCKED"     "$rows"
+  print_group "later"       "$MAGENTA" "LATER"       "$rows"
+  print_group "no-status"   "$DIM"     "NO STATUS"   "$rows"
+}
+
+append_to_section() {
+  local file="$1" section="$2" entry="$3"
+  if ! grep -q "^## $section$" "$file"; then
+    if [[ "$section" != "Progress" ]] && grep -q "^## Progress$" "$file"; then
+      awk -v hdr="## $section" '
+        /^## Progress$/ && !done { print hdr; print ""; done = 1 }
+        { print }
+      ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+    else
+      printf "\n## %s\n" "$section" >> "$file"
+    fi
+  fi
+  awk -v entry="$entry" -v hdr="## $section" '
+    {
+      lines[NR] = $0
+      if (/^## /) { insec = ($0 == hdr); if (insec) h = NR }
+      else if (insec && /^- /) last = NR
+    }
+    END {
+      if (last) {
+        for (i = 1; i <= last; i++) print lines[i]
+        print entry
+        for (i = last + 1; i <= NR; i++) print lines[i]
+      } else {
+        for (i = 1; i <= h; i++) print lines[i]
+        print ""; print entry
+        for (i = h + 1; i <= NR; i++) print lines[i]
+      }
+    }
+  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
+
+cmd_set() {
+  local id="${1:-}" value="${2:-}" note="${3:-}"
+  [[ -n "$id" && -n "$value" ]] || die "usage: tasks set <id> <status|priority> [note]"
+  local re label
+  if [[ "$value" =~ ^#?[ABC]$ ]]; then
+    value="${value#\#}"
+    re='^#(A|B|C)$'
+    label="priority #$value"
+  elif valid_status "$value"; then
+    re="$STATUS_TAG_RE"
+    label="$value"
+  else
+    die "unknown status or priority '$value' (statuses: ${STATUSES[*]}; priorities: A B C)"
+  fi
+  local file
+  file=$(file_for_id "$id")
+  if grep -q "^## Tags$" "$file"; then
+    awk -v s="$value" -v re="$re" '
+      /^## / { sect = substr($0, 4) }
+      sect == "Tags" && $0 !~ /^## / && /#/ {
+        out = ""
+        for (i = 1; i <= NF; i++) if ($i !~ re) out = out (out == "" ? "" : " ") $i
+        if (!added) { out = (out == "" ? "" : out " ") "#" s; added = 1 }
+        $0 = out
+      }
+      { print }
+    ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+  else
+    printf "\n## Tags\n\n#%s\n" "$value" >> "$file"
+  fi
+  [[ -n "$note" ]] && append_progress "$file" "$note"
+  echo "[$id] -> $label${note:+ ($note)}"
+}
+
+# Drops the status tag from the Tags section, leaving priority and topic tags
+# alone. A closed todo keeps whatever status it was last in otherwise, which
+# then misdescribes it in every view that reads the tags.
+strip_status_tag() {
+  local file="$1"
+  grep -q "^## Tags$" "$file" || return 0
+  awk -v re="$STATUS_TAG_RE" '
+    /^## / { sect = substr($0, 4) }
+    sect == "Tags" && $0 !~ /^## / && /#/ {
+      out = ""
+      for (i = 1; i <= NF; i++) if ($i !~ re) out = out (out == "" ? "" : " ") $i
+      if (out == "") next
+      $0 = out
+    }
+    { print }
+  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
+
+append_progress() {
+  local file="$1" note="$2"
+  append_to_section "$file" "Progress" "- $(date +'%F %H:%M'): $note"
+}
+
+project_for_file() {
+  awk '/^## /{ ins = ($0 == "## Project"); next } ins && NF { print; exit }' "$1"
+}
+
+set_project() {
+  local file="$1" path="$2"
+  awk -v p="$path" '
+    { lines[NR] = $0 }
+    $0 == "## Project" { found = 1 }
+    END {
+      if (found) {
+        i = 1
+        while (i <= NR) {
+          if (lines[i] == "## Project") {
+            print lines[i]; print ""; print p
+            i++
+            while (i <= NR && lines[i] !~ /^## /) i++
+            if (i <= NR) print ""
+            continue
+          }
+          print lines[i]; i++
+        }
+      } else {
+        insafter = 1
+        first = 0
+        for (i = 1; i <= NR; i++) if (lines[i] ~ /^## /) { first = i; break }
+        if (first && lines[first] == "## Description") {
+          second = 0
+          for (i = first + 1; i <= NR; i++) if (lines[i] ~ /^## /) { second = i; break }
+          insafter = (second ? second - 1 : NR)
+        }
+        for (i = 1; i <= insafter; i++) print lines[i]
+        if (lines[insafter] != "") print ""
+        print "## Project"; print ""; print p
+        if (insafter < NR && lines[insafter + 1] != "") print ""
+        for (i = insafter + 1; i <= NR; i++) print lines[i]
+      }
+    }
+  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
+
+cmd_project() {
+  local id="${1:-}" path="${2:-}"
+  [[ -n "$id" ]] || die "usage: tasks project <id> [path]"
+  local file
+  file=$(file_for_id "$id")
+  if [[ -z "$path" ]]; then
+    local cur
+    cur=$(project_for_file "$file")
+    if [[ -n "$cur" ]]; then
+      echo "$cur"
+    else
+      echo "no project tracked (default worktree: $DEFAULT_WORKTREE)"
+    fi
+    return 0
+  fi
+  path=$(cd "$path" 2>/dev/null && pwd) || die "project path not found: $path"
+  set_project "$file" "$path"
+  echo "[$id] project: $path"
+}
+
+project_for_task() {
+  local file="$1" project
+  project=$(project_for_file "$file")
+  [[ -n "$project" ]] || project="$DEFAULT_WORKTREE"
+  echo "$project"
+}
+
+create_worktree() {
+  local id="$1" branch="${2:-}"
+  [[ -n "$branch" ]] || die "usage: tasks worktree <id> --create <branch>"
+  local file project dir
+  file=$(file_for_id "$id")
+  project=$(project_for_task "$file")
+  [[ -d "$project" ]] || die "project directory not found: $project"
+  dir="$project"
+  while [[ "$dir" != "/" && ! -f "$dir/gwm.yml" ]]; do dir=$(dirname "$dir"); done
+  [[ -f "$dir/gwm.yml" ]] ||
+    die "no gwm workspace found above $project (missing gwm.yml) — track an existing dir instead: tasks worktree $id <path>"
+  local new_flag=""
+  git -C "$project" show-ref --verify --quiet "refs/heads/$branch" ||
+    git -C "$project" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 ||
+    new_flag="-b"
+  local out path
+  out=$(cd "$project" && GWM_SHELL_MODE=1 gwm create $new_flag "$branch" --no-tmux -s) || {
+    [[ -n "$out" ]] && printf '%s\n' "$out" >&2
+    die "gwm create failed for branch '$branch' in $dir"
+  }
+  path=$(tail -1 <<< "$out")
+  [[ -n "$path" && -d "$path" ]] || { printf '%s\n' "$out" >&2; die "gwm did not return a worktree path"; }
+  sed '$d' <<< "$out"
+  cmd_worktree "$id" "$path"
+}
+
+cmd_worktree() {
+  local id="${1:-}" path="${2:-}"
+  [[ -n "$id" && -n "$path" ]] || die "usage: tasks worktree <id> <path>  |  tasks worktree <id> --create <branch>"
+  if [[ "$path" == "--create" ]]; then
+    create_worktree "$id" "${3:-}"
+    return 0
+  fi
+  local file
+  file=$(file_for_id "$id")
+  path=$(cd "$path" 2>/dev/null && pwd) || die "worktree path not found: $path"
+  if awk -v p="- $path" '($0 == p) || (index($0, p " ") == 1) { found = 1 } END { exit !found }' "$file"; then
+    echo "[$id] worktree already tracked: $path"
+    return 0
+  fi
+  local branch
+  branch=$(git -C "$path" branch --show-current 2>/dev/null || true)
+  append_to_section "$file" "Worktrees" "- $path${branch:+ (\`$branch\`)}"
+  echo "[$id] worktree: $path${branch:+ ($branch)}"
+}
+
+cmd_session() {
+  local id="${1:-}" sid="${2:-}" desc="${3:-}"
+  [[ -n "$id" && -n "$sid" ]] || die "usage: tasks session <id> <session-id> [description]"
+  local file
+  file=$(file_for_id "$id")
+  if grep -qF -- "\`$sid\`" "$file"; then
+    echo "[$id] session already tracked: $sid"
+    return 0
+  fi
+  append_to_section "$file" "Sessions" "- $(date +'%F %H:%M'): \`$sid\`${desc:+ — $desc}"
+  echo "[$id] session: $sid (resume: claude --resume $sid)"
+}
+
+# Claude inherits the environment of the shell that ran `tasks`, so a session
+# opened in another project keeps the launching repo's ./bin on PATH and its
+# BUNDLE_GEMFILE, and `rails`/`bundle`/`yarn` then run against the wrong app.
+# `direnv exec` reverts the currently loaded .envrc before loading the target's,
+# so the session gets exactly the environment a shell in that directory has.
+envrc_allowed() {
+  local dir="$1" allowed
+  command -v direnv >/dev/null 2>&1 || return 1
+  [[ -f "$dir/.envrc" ]] || return 1
+  allowed=$( (cd "$dir" && direnv status 2>/dev/null | awk '/^Found RC allowed/ { print $NF; exit }') || true )
+  [[ "$allowed" == "true" || "$allowed" == "0" ]]
+}
+
+# A .envrc that direnv refuses to load leaves the session without the project
+# environment, which is not obvious from inside it.
+warn_unallowed_envrc() {
+  local dir="$1"
+  command -v direnv >/dev/null 2>&1 || return 0
+  [[ -f "$dir/.envrc" ]] || return 0
+  envrc_allowed "$dir" && return 0
+  echo "tasks: $dir/.envrc is not allowed by direnv — run: direnv allow $dir" >&2
+}
+
+build_claude_cmd() {
+  local dir="$1"; shift
+  CLAUDE_CMD=(claude "$@")
+  warn_unallowed_envrc "$dir"
+  envrc_allowed "$dir" || return 0
+  CLAUDE_CMD=(direnv exec "$dir" "${CLAUDE_CMD[@]}")
+}
+
+# herdr returns one JSON object per command; the fields we need (workspace_id,
+# pane_id) repeat with the same value across the nested objects it reports.
+herdr_field() {
+  grep -o "\"$1\":\"[^\"]*\"" <<< "$2" | head -1 | cut -d'"' -f4 || true
+}
+
+# herdr's worktree list reports, per checkout, the workspace holding it open,
+# whether or not that workspace was created through `worktree open`.
+workspace_holding_path() {
+  local path="$1"
+  herdr worktree list --cwd "$path" 2>/dev/null |
+    tr '{' '\n' |
+    grep -F "\"path\":\"$path\"" |
+    grep -o '"open_workspace_id":"[^"]*"' |
+    head -1 | cut -d'"' -f4 || true
+}
+
+first_existing_worktree() {
+  local wt
+  while IFS= read -r wt; do
+    if [[ -n "$wt" && -d "$wt" ]]; then
+      echo "$wt"
+      return 0
+    fi
+  done < <(awk '/^## /{ ins = ($0 == "## Worktrees") } ins && /^- /{ print $2 }' "$1")
+  return 1
+}
+
+# A tracked worktree is usually deleted once its branch merges, and the session
+# then falls back to the project checkout without saying so. Name the missing
+# path instead and offer to build it again on the branch recorded next to it.
+recreate_missing_worktree() {
+  local id="$1" file="$2" entry path branch reply
+  entry=$(awk '/^## /{ ins = ($0 == "## Worktrees") } ins && /^- /{ last = $0 } END { print last }' "$file")
+  [[ -n "$entry" ]] || return 1
+  path=$(awk '{ print $2 }' <<< "$entry")
+  branch=$(sed -n 's/.*(`\(.*\)`).*/\1/p' <<< "$entry")
+  echo "tasks: tracked worktree is gone: $path" >&2
+  [[ -n "$branch" ]] || {
+    echo "tasks: no branch recorded for it, starting in the project instead" >&2
+    return 1
+  }
+  [[ -t 0 ]] || {
+    echo "tasks: no terminal to ask on, starting in the project instead" >&2
+    return 1
+  }
+  read -r -p "Recreate it with gwm on branch $branch? [y/N] " reply
+  [[ "$reply" == [yY]* ]] || return 1
+  # create_worktree calls die on any failure; the subshell keeps that from
+  # killing the session, which can still start in the project directory.
+  ( create_worktree "$id" "$branch" )
+}
+
+open_session() {
+  local id="$1" file title
+  file=$(file_for_id "$id")
+  local cur_status
+  cur_status=$(parse_todo "$id" "$file" | awk -F"$SEP" '{ print $2 }')
+  [[ "$cur_status" == "in-progress" ]] || cmd_set "$id" in-progress
+  title=$(head -1 "$file")
+  title=${title#"# [ ] "}
+  echo "Task: [$id] $title"
+
+  local workdir wt wt_list sess_list in_worktree=""
+  workdir=$(project_for_task "$file")
+  if [[ ! -d "$workdir" ]]; then
+    echo "tasks: tracked project not found: $workdir — using default" >&2
+    workdir="$DEFAULT_WORKTREE"
+  fi
+  wt=$(first_existing_worktree "$file" || true)
+  if [[ -z "$wt" ]]; then
+    recreate_missing_worktree "$id" "$file" && wt=$(first_existing_worktree "$file" || true)
+  fi
+  if [[ -n "$wt" ]]; then
+    workdir="$wt"
+    in_worktree=1
+    echo "Starting in tracked worktree: $wt"
+  fi
+  [[ -n "$in_worktree" ]] || echo "Starting in project: $workdir"
+  wt_list=$(awk '/^## /{ ins = ($0 == "## Worktrees") } ins && /^- /' "$file")
+  sess_list=$(awk '/^## /{ ins = ($0 == "## Sessions") } ins && /^- /' "$file")
+
+  local prompt
+  prompt="Work with me on my next task: todo [$id] from my nb notebook (file: $file).
+
+$(cat "$file")
+
+Working directory: $workdir${wt_list:+
+
+Tracked development worktrees for this task (we start in the first one that exists):
+$wt_list}${sess_list:+
+
+Previous Claude sessions on this task — if earlier context would help, suggest resuming one with: claude --resume <session-id>
+$sess_list}
+
+Start by reading the task and its Related links to build context (use the glab CLI for GitLab URLs — run it from this repo so it authenticates). Give me a short summary of where the task stands and propose a first step, then help me work on it.${HERDR_ENV:+ This session runs in a herdr workspace created for this task with a provisional label — as your very first action, rename it to a short meaningful title: 2-3 keywords that identify the task and fit a narrow sidebar (e.g. \"Company metrics\"), no ids or prefixes, via: herdr workspace rename \$HERDR_WORKSPACE_ID \"<title>\"}
+
+As we make progress, record it: tasks log $id \"<note>\". If the status changes: tasks set $id <in-progress|ready|waiting|blocked|later> [note]; priority (A/B/C tags): tasks set $id <A|B|C>. Track the task's project directory with: tasks project $id <path> (sessions start in the first tracked worktree that exists, otherwise there). Track development worktrees with: tasks worktree $id <path>; to create a new worktree use: tasks worktree $id --create <branch> — it runs gwm in the project's workspace, which links shared config files into the worktree, and tracks the result. Track Claude sessions with: tasks session $id <session-id> [desc] — and merge requests with: tasks mr $id <mr-url> (link text = MR title, auto-resolved via glab). When the task is finished, mark it done: nb todo do $id. At the end of the session, run the /wrapup skill to record progress and final status."
+
+  if [[ -n "${HERDR_ENV:-}" ]]; then
+    local label ws_out="" ws_id="" tab_id="" pane_id="" agent_name
+    label=$(short_label "$title")
+    # herdr panes are spawned by the daemon, which does not inherit our
+    # environment, so the notebook selection has to be passed explicitly or
+    # the session's own `tasks` calls would fall back to `home`. TASKS_TODO_ID
+    # rides along for the Claude Code status line, which shows the todo id.
+    local -a env_args=(--env "TASKS_NB_NOTEBOOK=$NOTEBOOK" --env "TASKS_TODO_ID=$id")
+    if [[ "$workdir" != "$DEFAULT_WORKTREE" ]]; then
+      ws_id=$(workspace_holding_path "$workdir")
+    fi
+    if [[ -z "$ws_id" ]]; then
+      # `workspace create` rather than `worktree open`: it seeds the environment,
+      # and the space stays top-level in the sidebar instead of nesting under the
+      # repo's primary checkout.
+      ws_out=$(herdr workspace create --label "$label" --cwd "$workdir" "${env_args[@]}" --no-focus 2>/dev/null || true)
+      ws_id=$(herdr_field workspace_id "$ws_out")
+      pane_id=$(herdr_field pane_id "$ws_out")
+    else
+      local tab_out
+      tab_out=$(herdr tab create --workspace "$ws_id" --cwd "$workdir" --label "$label" "${env_args[@]}" --no-focus 2>/dev/null || true)
+      tab_id=$(herdr_field tab_id "$tab_out")
+      pane_id=$(herdr_field pane_id "$tab_out")
+    fi
+    if [[ -n "$pane_id" ]]; then
+      # The pane is an interactive zsh at $workdir, so its direnv hook loads
+      # .envrc; `agent start` builds the argv from the claude executable and
+      # takes no wrapper command.
+      warn_unallowed_envrc "$workdir"
+      agent_name="task-$id"
+      if ! herdr agent start "$agent_name" --kind claude --pane "$pane_id" --timeout 90000 >/dev/null 2>&1; then
+        agent_name="task-$id-$$"
+        herdr agent start "$agent_name" --kind claude --pane "$pane_id" --timeout 90000 >/dev/null
+      fi
+      # The prompt is multi-line, which `agent start` cannot type into the
+      # pane's shell; `agent prompt` pastes it into the running agent instead.
+      herdr agent prompt "$agent_name" "$prompt" >/dev/null
+      # `agent focus` moves the server's focus but leaves the attached client
+      # showing whatever it showed before; only `workspace focus` switches the
+      # view, and it lands on the workspace's active tab, so set that first.
+      herdr agent focus "$agent_name" >/dev/null 2>&1 || true
+      [[ -z "$tab_id" ]] || herdr tab focus "$tab_id" >/dev/null 2>&1 || true
+      herdr workspace focus "$ws_id" >/dev/null 2>&1 || true
+      echo "Opened herdr workspace $ws_id (\"$label\") with agent $agent_name"
+      return 0
+    fi
+    echo "tasks: herdr workspace creation failed; opening in the current pane" >&2
+  fi
+
+  cd "$workdir" || die "workdir not found: $workdir"
+  export TASKS_TODO_ID="$id"
+  build_claude_cmd "$workdir" "$prompt"
+  exec "${CLAUDE_CMD[@]}"
+}
+
+short_label() {
+  local t="$1"
+  t=$(sed -E 's/^(\[[^]]*\] *)+//; s/^Review MR [^:]*: *//; s/^(\[[^]]*\] *)+//' <<< "$t")
+  t=$(awk '{ print $1, $2, $3 }' <<< "$t")
+  t=${t:0:24}
+  echo "${t%% }"
+}
+
+cmd_next() {
+  local rows row id st
+  rows=$(all_open)
+  row=""
+  for st in in-progress ready; do
+    row=$(sorted_group "$st" "$rows" | head -1)
+    [[ -n "$row" ]] && break
+  done
+  [[ -n "$row" ]] || die "no in-progress or ready todos"
+  IFS="$SEP" read -r id _ <<< "$row"
+  open_session "$id"
+}
+
+cmd_pick() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || die "usage: tasks pick <id>"
+  open_session "$id"
+}
+
+cmd_view() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || die "usage: tasks view <id> [args]"
+  local file
+  file=$(file_for_id "$id")
+  shift
+  if (( $# == 0 )) && [[ -t 1 ]] && command -v glow >/dev/null 2>&1; then
+    local w
+    w=$(tput cols 2>/dev/null || echo 100)
+    if [[ -n "${TASKS_NO_OSC8:-}" ]]; then
+      nb show "$NOTEBOOK:$id" --print --no-color | unwrap_urls "$w" |
+        PAGER="${TASKS_PAGER:-less -RFX}" glow -p ${TASKS_GLOW_STYLE:+-s "$TASKS_GLOW_STYLE"} -w "$w"
+      return
+    fi
+    local map md
+    map=$(mktemp)
+    md=$(nb show "$NOTEBOOK:$id" --print --no-color | linkify_pre "$map")
+    printf '%s\n' "$md" | glow -s "${TASKS_GLOW_STYLE:-dark}" -w "$w" |
+      linkify_post "$map" | ${TASKS_PAGER:-less -RFX} || true
+    rm -f "$map"
+  else
+    nb show "$NOTEBOOK:$id" "$@"
+  fi
+}
+
+linkify_pre() {
+  awk -v mapfile="$1" -v m0="$M0" -v m1="$M1" -v m2="$M2" '
+    function mark(url, label) {
+      n++
+      print n "\t" url > mapfile
+      return m0 n m1 label m2
+    }
+    function shortref(u,  ref) {
+      if (match(u, /\/merge_requests\/[0-9]+/)) {
+        ref = substr(u, RSTART, RLENGTH); sub(/^.*\//, "", ref)
+        return "!" ref
+      }
+      if (match(u, /\/(work_items|issues)\/[0-9]+/)) {
+        ref = substr(u, RSTART, RLENGTH); sub(/^.*\//, "", ref)
+        return "#" ref
+      }
+      sub(/^https?:\/\//, "", u)
+      sub(/^www\./, "", u)
+      if (length(u) > 60) u = substr(u, 1, 45) "..." substr(u, length(u) - 9)
+      return u
+    }
+    /^```/ { fence = !fence; print; next }
+    fence { print; next }
+    {
+      line = $0
+      out = ""
+      while (match(line, /\[([^][]|\[[^][]*\])*\]\(https?:\/\/[^)]*\)/)) {
+        seg = substr(line, RSTART, RLENGTH)
+        label = seg; sub(/^\[/, "", label); sub(/\]\([^(]*\)$/, "", label)
+        url = seg; sub(/^.*\]\(/, "", url); sub(/\)$/, "", url)
+        if (label == "") label = shortref(url)
+        out = out substr(line, 1, RSTART - 1) mark(url, label)
+        line = substr(line, RSTART + RLENGTH)
+      }
+      line = out line
+      out = ""
+      while (match(line, /<?https?:\/\/[^ \t<>)]+>?/)) {
+        seg = substr(line, RSTART, RLENGTH)
+        pre = substr(line, 1, RSTART - 1)
+        rest = substr(line, RSTART + RLENGTH)
+        url = seg; sub(/^</, "", url); sub(/>$/, "", url)
+        while (url ~ /[.,;:!?]$/) { rest = substr(url, length(url)) rest; url = substr(url, 1, length(url) - 1) }
+        out = out pre mark(url, shortref(url))
+        line = rest
+      }
+      print out line
+    }
+  '
+}
+
+linkify_post() {
+  awk -v mapfile="$1" -v m0="$M0" -v m1="$M1" -v m2="$M2" '
+    BEGIN {
+      while ((getline l < mapfile) > 0) {
+        i = index(l, "\t")
+        map[substr(l, 1, i - 1)] = substr(l, i + 1)
+      }
+      close(mapfile)
+      esc = sprintf("%c", 27); bel = sprintf("%c", 7)
+      lnk = esc "[38;5;75;4m"
+      off = esc "[24;39m" esc "]8;;" bel
+      reopen = m0 "[0-9]+" m1
+    }
+    {
+      line = $0
+      out = ""
+      while (match(line, reopen)) {
+        id = substr(line, RSTART + length(m0), RLENGTH - length(m0) - length(m1))
+        out = out substr(line, 1, RSTART - 1) esc "]8;;" map[id] bel lnk
+        line = substr(line, RSTART + RLENGTH)
+      }
+      line = out line
+      gsub(m2, off, line)
+      print line
+    }
+  '
+}
+
+unwrap_urls() {
+  awk -v w="$1" '
+    /^```/ { fence = !fence; print; next }
+    fence || length($0) <= w - 6 { print; next }
+    {
+      n = 0
+      line = $0
+      match(line, /^[ \t]*/)
+      indent = substr(line, 1, RLENGTH)
+      out = ""
+      while (match(line, /\[([^][]|\[[^][]*\])*\]\(https?:\/\/[^)]*\)/)) {
+        seg = substr(line, RSTART, RLENGTH)
+        label = seg; sub(/^\[/, "", label); sub(/\]\([^(]*\)$/, "", label)
+        url = seg; sub(/^.*\]\(/, "", url); sub(/\)$/, "", url)
+        out = out substr(line, 1, RSTART - 1) "**" label "**"
+        urls[++n] = url
+        line = substr(line, RSTART + RLENGTH)
+      }
+      line = out line
+      out = ""
+      while (match(line, /<?https?:\/\/[^ \t<>)]+>?/)) {
+        seg = substr(line, RSTART, RLENGTH)
+        pre = substr(line, 1, RSTART - 1)
+        line = substr(line, RSTART + RLENGTH)
+        url = seg; sub(/^</, "", url); sub(/>$/, "", url)
+        while (url ~ /[.,;:!?]$/) { line = substr(url, length(url)) line; url = substr(url, 1, length(url) - 1) }
+        if (n == 0 && out == "" && pre ~ /^[ \t]*([-*][ \t])?[ \t]*$/ && line ~ /^[ \t]*$/) {
+          print pre "<" url ">"
+          next
+        }
+        urls[++n] = url
+        out = out pre
+      }
+      line = out line
+      gsub(/[ \t]+\./, ".", line); gsub(/[ \t]+,/, ",", line); gsub(/[ \t]+;/, ";", line)
+      sub(/[ \t]+$/, "", line)
+      if (line !~ /^[ \t]*[-*]?[ \t]*$/) print line
+      for (i = 1; i <= n; i++) print indent "  - <" urls[i] ">"
+    }
+  '
+}
+
+cmd_mr() {
+  local id="${1:-}" url="${2:-}" mr_title="${3:-}"
+  [[ -n "$id" && -n "$url" ]] || die "usage: tasks mr <id> <mr-url> [title]"
+  local file
+  file=$(file_for_id "$id")
+  if awk -v u="($url)" '
+    /^##/ { ins = ($0 == "### Merge requests") }
+    ins && index($0, u) { found = 1 }
+    END { exit !found }
+  ' "$file"; then
+    echo "[$id] MR already tracked: $url"
+    return 0
+  fi
+  if [[ -z "$mr_title" && "$url" =~ ^https://gitlab\.silverfin\.com/(.+)/-/merge_requests/([0-9]+) ]]; then
+    local proj="${BASH_REMATCH[1]}" iid="${BASH_REMATCH[2]}"
+    mr_title=$(cd "$DEFAULT_WORKTREE" 2>/dev/null &&
+      glab api "projects/${proj//\//%2F}/merge_requests/$iid" 2>/dev/null |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])' 2>/dev/null || true)
+  fi
+  [[ -n "$mr_title" ]] || die "could not resolve the MR title; pass it explicitly: tasks mr $id <mr-url> \"<title>\""
+  append_mr_entry "$file" "- [$mr_title]($url)"
+  echo "[$id] MR: $mr_title"
+}
+
+append_mr_entry() {
+  local file="$1" entry="$2"
+  if ! grep -q "^### Merge requests$" "$file"; then
+    if ! grep -q "^## Related$" "$file"; then
+      if grep -q "^## Progress$" "$file"; then
+        awk '
+          /^## Progress$/ && !done { print "## Related"; print ""; done = 1 }
+          { print }
+        ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+      else
+        printf "\n## Related\n" >> "$file"
+      fi
+    fi
+    awk '
+      /^## Related$/ { inrel = 1; print; next }
+      inrel && /^## / { print "### Merge requests"; print ""; inrel = 0 }
+      { print }
+      END { if (inrel) { print ""; print "### Merge requests" } }
+    ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+  fi
+  awk -v entry="$entry" '
+    {
+      lines[NR] = $0
+      if ($0 == "### Merge requests") { h = NR; insub = 1 }
+      else if (/^##/) insub = 0
+      else if (insub && /^- /) last = NR
+    }
+    END {
+      if (!last) last = 0
+      if (last) {
+        for (i = 1; i <= last; i++) print lines[i]
+        print entry
+        for (i = last + 1; i <= NR; i++) print lines[i]
+      } else {
+        for (i = 1; i <= h; i++) print lines[i]
+        print ""; print entry
+        for (i = h + 1; i <= NR; i++) print lines[i]
+      }
+    }
+  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
+
+cmd_create() {
+  local title="${1:-}"
+  [[ -n "$title" && "$title" != --* ]] ||
+    die "usage: tasks create <title> [--desc <text>] [--status <status|done>] [--prio <A|B|C>] [--due <date>] [--project <path>] [--tag <tag>]... [--related <url>]... [--mr <url>]... [--note <text>]"
+  shift
+  local desc="" status="ready" prio="B" due="" note="" project="" tags=() related=() mrs=()
+  while (( $# )); do
+    case "$1" in
+      --desc) desc="${2:-}"; shift 2 ;;
+      --project)
+        [[ -n "${2:-}" ]] || die "--project needs a value"
+        project=$(cd "$2" 2>/dev/null && pwd) || die "project path not found: $2"
+        shift 2 ;;
+      --status)
+        # "done" is not a live status — it creates the todo already closed,
+        # so it carries no status tag, the same shape `tasks done` leaves behind.
+        [[ "${2:-}" == done ]] || valid_status "${2:-}" ||
+          die "unknown status '${2:-}' (statuses: ${STATUSES[*]}, done)"
+        status="$2"; shift 2 ;;
+      --prio)
+        [[ "${2:-}" =~ ^#?[ABC]$ ]] || die "priority must be A, B or C"
+        prio="${2#\#}"; shift 2 ;;
+      --due) due="${2:-}"; shift 2 ;;
+      --tag) [[ -n "${2:-}" ]] || die "--tag needs a value"; tags+=("${2#\#}"); shift 2 ;;
+      --related) [[ -n "${2:-}" ]] || die "--related needs a value"; related+=("$2"); shift 2 ;;
+      --mr) [[ -n "${2:-}" ]] || die "--mr needs a value"; mrs+=("$2"); shift 2 ;;
+      --note) note="${2:-}"; shift 2 ;;
+      *) die "unknown option '$1'" ;;
+    esac
+  done
+
+  nb todo add "$NOTEBOOK:" "$title" >/dev/null
+  local fname id file
+  fname=$(basename "$(ls -t "$NB_HOME"/*.todo.md | head -1)")
+  id=$(grep -nxF "$fname" "$INDEX" | tail -1 | cut -d: -f1)
+  [[ -n "$id" ]] || die "created $fname but could not find it in the nb index"
+  file="$NB_HOME/$fname"
+
+  local status_tag="$status"
+  [[ "$status" == done ]] && status_tag=""
+  local tagline="" t
+  for t in ${tags[@]+"${tags[@]}"} "$prio" ${status_tag:+"$status_tag"}; do
+    tagline+="${tagline:+ }#$t"
+  done
+  {
+    printf "# [ ] %s\n" "$title"
+    [[ -n "$desc" ]] && printf "\n## Description\n\n%s\n" "$desc"
+    [[ -n "$project" ]] && printf "\n## Project\n\n%s\n" "$project"
+    [[ -n "$due" ]] && printf "\n## Due\n\n%s\n" "$due"
+    if (( ${#related[@]} )); then
+      printf "\n## Related\n\n"
+      printf -- "- %s\n" "${related[@]}"
+    fi
+    printf "\n## Tags\n\n%s\n" "$tagline"
+    printf "\n## Progress\n\n- %s: %s\n" "$(date +'%F %H:%M')" "${note:-created via tasks create}"
+  } > "$file"
+
+  local url
+  for url in ${mrs[@]+"${mrs[@]}"}; do
+    cmd_mr "$id" "$url"
+  done
+  if [[ "$status" == done ]]; then
+    nb todo do "$NOTEBOOK:$id" >/dev/null
+    echo "[$id] created: $title (done, #$prio)"
+  else
+    echo "[$id] created: $title (#$status #$prio)"
+  fi
+}
+
+cmd_done() {
+  local id="${1:-}" note="${2:-}"
+  [[ -n "$id" ]] || die "usage: tasks done <id> [note]"
+  local file
+  file=$(file_for_id "$id")
+  [[ -n "$note" ]] && append_progress "$file" "$note"
+  nb todo do "$NOTEBOOK:$id"
+  strip_status_tag "$file"
+}
+
+cmd_update() {
+  cd "$DEFAULT_WORKTREE" || die "default worktree not found: $DEFAULT_WORKTREE"
+  build_claude_cmd "$DEFAULT_WORKTREE" "/update-tasks $*"
+  exec "${CLAUDE_CMD[@]}"
+}
+
+# Freshdesk is deliberately its own source: `tasks update` never reads it, and
+# this never reads GitLab/Slack/Gmail. bin/freshdesk lives in the worktree.
+cmd_update_support() {
+  cd "$DEFAULT_WORKTREE" || die "default worktree not found: $DEFAULT_WORKTREE"
+  [[ -n "${FRESHDESK_API_KEY:-}" ]] || die "FRESHDESK_API_KEY is not set"
+  [[ -x bin/freshdesk ]] || die "bin/freshdesk not found in $DEFAULT_WORKTREE"
+  build_claude_cmd "$DEFAULT_WORKTREE" "/update-support-tasks $*"
+  exec "${CLAUDE_CMD[@]}"
+}
+
+# Resolves a spoken date range ("last week", "this month", "last 5 days") into
+# "<from> <to>", both ISO and inclusive. Weeks run Monday-Friday; ranges never
+# extend past today. Returns 1 when the words are not a known range phrase.
+resolve_range() {
+  local spec dow from to n
+  spec=$(tr '[:upper:]' '[:lower:]' <<< "$*" | tr -s '[:space:]' ' ')
+  spec="${spec# }"; spec="${spec% }"
+  dow=$(date +%u)
+  case "$spec" in
+    "")
+      from=$(date +%F); to="$from" ;;
+    week|"this week"|"current week")
+      from=$(date -d "$((dow - 1)) days ago" +%F); to=$(date +%F) ;;
+    "last week"|"past week"|"previous week")
+      from=$(date -d "$((dow + 6)) days ago" +%F)
+      to=$(date -d "$((dow + 2)) days ago" +%F) ;;
+    month|"this month"|"current month")
+      from=$(date +%Y-%m-01); to=$(date +%F) ;;
+    "last month"|"past month"|"previous month")
+      from=$(date -d "$(date +%Y-%m-01) -1 month" +%F)
+      to=$(date -d "$(date +%Y-%m-01) -1 day" +%F) ;;
+    "last "[0-9]*" day"|"last "[0-9]*" days"|"past "[0-9]*" day"|"past "[0-9]*" days")
+      n=$(awk '{ print $2 }' <<< "$spec")
+      [[ "$n" =~ ^[0-9]+$ && "$n" -gt 0 ]] || return 1
+      from=$(date -d "$((n - 1)) days ago" +%F); to=$(date +%F) ;;
+    *)
+      return 1 ;;
+  esac
+  printf '%s %s\n' "$from" "$to"
+}
+
+cmd_tlogs() {
+  local usage="usage: tasks tlogs [<date> [<date>]] | today | yesterday | this|last week | this|last month | last <n> days"
+  local arg range from="" to="" swap joined
+  for arg in "$@"; do
+    [[ "$arg" != -* ]] || die "$usage"
+  done
+
+  local -a parts=()
+  joined="$*"
+  IFS=$' \t' read -r -a parts <<< "$joined"
+  if range=$(resolve_range "$@"); then
+    read -r from to <<< "$range"
+  elif (( ${#parts[@]} <= 2 )) && from=$(date -d "${parts[0]:-}" +%F 2>/dev/null) &&
+    to=$(date -d "${parts[1]:-$from}" +%F 2>/dev/null); then
+    :
+  else
+    from=$(date -d "$joined" +%F 2>/dev/null) || die "unrecognized date '$joined' — $usage"
+    to="$from"
+  fi
+
+  if [[ "$from" > "$to" ]]; then
+    swap="$from"; from="$to"; to="$swap"
+  fi
+  cd "$DEFAULT_WORKTREE" || die "default worktree not found: $DEFAULT_WORKTREE"
+  build_claude_cmd "$DEFAULT_WORKTREE" "/time-logs $from $to"
+  exec "${CLAUDE_CMD[@]}"
+}
+
+summary_raw() {
+  local day="$1" id=0 fname file title done_mark notes
+  while IFS= read -r fname; do
+    id=$((id + 1))
+    [[ "$fname" == *.todo.md && -f "$NB_HOME/$fname" ]] || continue
+    file="$NB_HOME/$fname"
+    title=$(head -1 "$file")
+    done_mark=""
+    case "$title" in
+      "# [ ] "*) title=${title#"# [ ] "} ;;
+      "# [x] "*) title=${title#"# [x] "}; done_mark=" (done)" ;;
+      *) continue ;;
+    esac
+    notes=$(awk -v d="$day" '
+      /^## / { ins = ($0 == "## Progress"); next }
+      ins && index($0, "- " d) == 1 {
+        n = substr($0, 3)
+        sub("^" d "( [0-9][0-9]:[0-9][0-9])?:[ \t]*", "", n)
+        if (n != "") print n
+      }
+    ' "$file")
+    [[ -n "$notes" ]] || continue
+    if [[ $(wc -l <<< "$notes") -eq 1 ]]; then
+      printf -- "- [%s] %s%s — %s\n" "$id" "$title" "$done_mark" "$notes"
+    else
+      printf -- "- [%s] %s%s\n" "$id" "$title" "$done_mark"
+      while IFS= read -r note; do
+        printf -- "    - %s\n" "$note"
+      done <<< "$notes"
+    fi
+  done < "$INDEX"
+}
+
+last_working_day() {
+  local back=1
+  while [[ $(date -d "$back days ago" +%u) -gt 5 ]]; do
+    back=$((back + 1))
+  done
+  date -d "$back days ago" +%F
+}
+
+summary_prompt() {
+  cat <<EOF
+Below are the raw progress notes from my task tracker for $1, one top-level bullet per task (todo id in brackets, "(done)" marks completed todos). Rewrite them as a standup update I can read aloud or paste in Slack.
+
+Split the bullets into two groups:
+- First, with no heading, the tasks where I spent significant time or did relevant work that day: investigation, implementation, substantive reviews, production fixes. Judge this from the amount and depth of that day's notes, not from the task's importance.
+- Then, under a single line "Also:", the small stuff that took almost no time — answering a question, a routine rebase, chasing or waiting on a review, a status check that found nothing new. One half-line bullet each, no sub-bullets. Omit the "Also:" line entirely if there is nothing small.
+
+Rules:
+- One bullet per task, leading with where it stands (merged, in review, waiting on X, blocked, done, investigating).
+- Very short: aim for under 15 words per bullet; telegraphic style is fine. Drop implementation details, file paths, spec and mutation-test counts, commit shas, worktree/tooling notes, and step-by-step narration.
+- Refer to MRs/issues by short reference (!1234, #1234), as a markdown link whenever the same reference appears linked anywhere in the notes — copy that URL verbatim. Never invent a URL: references that only ever appear without a link (e.g. "toolkit !438", "infra !5569") MUST stay plain text, since these live in different repos and a guessed URL points at the wrong MR.
+- Drop the todo ids in brackets.
+- Use sub-bullets only when a task had clearly separate pieces of work that each matter — still one short line each.
+- Skip tasks with no real activity that day (notes like "created via tasks create" alone).
+- Output plain markdown: no other headers, no preamble, no closing line — just the two groups of bullets.
+EOF
+}
+
+render_summary() {
+  local md="$1" w
+  if [[ ! -t 1 ]] || ! command -v glow >/dev/null 2>&1; then
+    printf '%s\n' "$md"
+    return 0
+  fi
+  w=$(tput cols 2>/dev/null || echo 100)
+  if [[ -n "${TASKS_NO_OSC8:-}" ]]; then
+    printf '%s\n' "$md" | unwrap_urls "$w" | glow ${TASKS_GLOW_STYLE:+-s "$TASKS_GLOW_STYLE"} -w "$w"
+    return 0
+  fi
+  local map
+  map=$(mktemp)
+  printf '%s\n' "$md" | linkify_pre "$map" |
+    glow -s "${TASKS_GLOW_STYLE:-dark}" -w "$w" | linkify_post "$map"
+  rm -f "$map"
+}
+
+cmd_summary() {
+  local day="" raw="" arg header out
+  for arg in "$@"; do
+    case "$arg" in
+      --raw) raw=1 ;;
+      -*) die "usage: tasks summary [date] [--raw]" ;;
+      *) [[ -z "$day" ]] || die "usage: tasks summary [date] [--raw]"; day="$arg" ;;
+    esac
+  done
+  if [[ -z "$day" ]]; then
+    day=$(last_working_day)
+  else
+    day=$(date -d "$day" +%F 2>/dev/null) || die "unrecognized date '$day' (try YYYY-MM-DD, today, yesterday)"
+  fi
+  header=$(date -d "$day" +'%A %F')
+  out=$(summary_raw "$day")
+  if [[ -z "$out" ]]; then
+    echo "Nothing logged on $header."
+    return 0
+  fi
+  if [[ -n "$raw" ]]; then
+    printf "%s%s%s\n%s\n" "$BOLD" "$header" "$RESET" "$out"
+    return 0
+  fi
+  command -v claude >/dev/null 2>&1 || die "claude CLI not found (use --raw for the unsummarized notes)"
+  [[ -t 2 ]] && echo "${DIM}summarizing with claude…${RESET}" >&2
+  out=$(claude -p --model "${TASKS_SUMMARY_MODEL:-sonnet}" "$(summary_prompt "$header")" <<< "$out")
+  render_summary "## $header
+
+$out"
+}
+
+cmd_log() {
+  local id="${1:-}" note="${2:-}"
+  [[ -n "$id" && -n "$note" ]] || die "usage: tasks log <id> <note>"
+  local file
+  file=$(file_for_id "$id")
+  append_progress "$file" "$note"
+  echo "[$id] logged: $note"
+}
+
+run_list() {
+  if [[ -t 1 ]]; then
+    cmd_list "$@" | ${TASKS_PAGER:-less -RFX}
+  else
+    cmd_list "$@"
+  fi
+}
+
+[[ -n "$NB_HOME" ]] ||
+  die "nb notebook '$NOTEBOOK' not found (set TASKS_NB_NOTEBOOK to an existing notebook)"
+[[ -d "$NB_HOME" ]] ||
+  die "notebook '$NOTEBOOK' resolved to $(printf '%q' "$NB_HOME"), which is not a directory"
+if [[ ! -f "$INDEX" ]]; then
+  # nb treats .index as a cache and rebuilds it lazily on any nb run, so a
+  # missing index is a normal state, not an error. Rebuilding renumbers ids
+  # when todos were deleted, so warn.
+  nb index reconcile "$NB_HOME" >/dev/null 2>&1 || true
+  [[ -f "$INDEX" ]] ||
+    die "nb index not found at $INDEX, and 'nb index reconcile' could not rebuild it"
+  echo "tasks: rebuilt missing nb index at $INDEX (todo ids may have changed)" >&2
+fi
+
+case "${1:-}" in
+  create) shift; cmd_create "$@" ;;
+  set) shift; cmd_set "$@" ;;
+  log) shift; cmd_log "$@" ;;
+  next) cmd_next ;;
+  pick) shift; cmd_pick "$@" ;;
+  done) shift; cmd_done "$@" ;;
+  view) shift; cmd_view "$@" ;;
+  project) shift; cmd_project "$@" ;;
+  worktree) shift; cmd_worktree "$@" ;;
+  session) shift; cmd_session "$@" ;;
+  mr) shift; cmd_mr "$@" ;;
+  update) shift; cmd_update "$@" ;;
+  update-support) shift; cmd_update_support "$@" ;;
+  summary) shift; cmd_summary "$@" ;;
+  tlogs) shift; cmd_tlogs "$@" ;;
+  -h|--help|help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" ;;
+  *) run_list "${1:-}" ;;
+esac
