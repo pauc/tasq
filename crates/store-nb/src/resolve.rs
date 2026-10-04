@@ -96,6 +96,7 @@ mod tests {
             home: home.map(PathBuf::from),
             config_file: None,
             workflow: Workflow::default(),
+            bookkeeper: tasq_core::config::Bookkeeper::Auto,
         }
     }
 

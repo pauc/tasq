@@ -524,6 +524,8 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "mutants",
+ "serde",
+ "serde_json",
  "tasq-core",
  "tempfile",
  "thiserror",

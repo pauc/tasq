@@ -6,7 +6,7 @@
 //! temporary one, so no test can ever touch a real `~/.nb`.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use thiserror::Error;
 
@@ -83,15 +83,31 @@ impl Nb {
     /// checked by the integration tests with a fake `nb`, not by a unit test.
     #[mutants::skip]
     pub fn run(&self, args: &[&str]) -> Result<String, NbError> {
-        let output = Command::new(&self.program)
+        self.run_in(None, args)
+    }
+
+    /// Like [`run`](Self::run), with the working directory set to `dir` when
+    /// given. nb treats a working directory inside a notebook as that
+    /// notebook ("local"), which is how `git` and `sync` subcommands, which
+    /// take no folder argument, are pointed at the right one. Standard input
+    /// is closed so nb never waits on a terminal.
+    ///
+    /// Reason: spawns a process (see [`run`](Self::run)).
+    #[mutants::skip]
+    pub fn run_in(&self, dir: Option<&Path>, args: &[&str]) -> Result<String, NbError> {
+        let mut command = Command::new(&self.program);
+        command
             .args(args)
             .env_clear()
             .envs(self.env.iter().map(|(k, v)| (k, v)))
-            .output()
-            .map_err(|source| NbError::Spawn {
-                program: self.program.clone(),
-                source,
-            })?;
+            .stdin(Stdio::null());
+        if let Some(dir) = dir {
+            command.current_dir(dir);
+        }
+        let output = command.output().map_err(|source| NbError::Spawn {
+            program: self.program.clone(),
+            source,
+        })?;
         if output.status.success() {
             Ok(strip_ansi(&String::from_utf8_lossy(&output.stdout)))
         } else {
@@ -103,6 +119,14 @@ impl Nb {
                     .to_owned(),
             })
         }
+    }
+
+    /// `nb --version`, trimmed (`7.25.4`).
+    ///
+    /// Reason: spawns a process.
+    #[mutants::skip]
+    pub fn version(&self) -> Result<String, NbError> {
+        self.run(&["--version"]).map(|v| v.trim().to_owned())
     }
 }
 

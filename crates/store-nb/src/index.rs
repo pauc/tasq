@@ -40,6 +40,16 @@ impl Index {
         (!name.is_empty()).then_some(name.as_str())
     }
 
+    /// The id of the *last* line equal to `name`, as the script's
+    /// `grep -nxF "$fname" .index | tail -1` found it. `None` when the name
+    /// is not listed.
+    pub fn last_id_of(&self, name: &str) -> Option<TaskId> {
+        self.entries()
+            .filter(|(_, listed)| *listed == name)
+            .map(|(id, _)| id)
+            .last()
+    }
+
     /// Number of lines.
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -90,6 +100,16 @@ mod tests {
         assert_eq!(index.file_for(&TaskId::from(0)), None);
         assert_eq!(index.file_for(&TaskId::new("x").unwrap()), None);
         assert_eq!(index.file_for(&TaskId::new("-1").unwrap()), None);
+    }
+
+    #[test]
+    fn last_id_of_picks_the_last_duplicate() {
+        let index = Index::parse("a.todo.md\nb.todo.md\na.todo.md\n");
+        assert_eq!(index.last_id_of("a.todo.md"), Some(TaskId::from(3)));
+        assert_eq!(index.last_id_of("b.todo.md"), Some(TaskId::from(2)));
+        assert_eq!(index.last_id_of("c.todo.md"), None);
+        assert_eq!(index.last_id_of(""), None, "no empty lines here");
+        assert_eq!(Index::parse("x\n\n").last_id_of(""), Some(TaskId::from(2)));
     }
 
     #[test]

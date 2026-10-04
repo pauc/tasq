@@ -6,13 +6,14 @@ use std::fmt;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use tasq_core::clock::{Clock, SystemClock};
 use tasq_core::config::StoreConfig;
 use tasq_core::format::{self, FormatError, Parsed};
 use tasq_core::model::{Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::Filter;
 use tasq_core::store::{IdScheme, Store, StoreError, StoreInfo};
 
-use crate::bookkeeper::{Bookkeeper, NoopBookkeeper};
+use crate::bookkeeper::{Bookkeeper, select_bookkeeper};
 use crate::diff;
 use crate::index::{Index, is_todo};
 use crate::nb::Nb;
@@ -34,6 +35,8 @@ pub struct NbStoreOptions {
     pub config_file: Option<PathBuf>,
     /// Which `#tags` are statuses.
     pub workflow: Workflow,
+    /// Who keeps `.index` and the git history (`store.bookkeeper`).
+    pub bookkeeper: tasq_core::config::Bookkeeper,
 }
 
 impl NbStoreOptions {
@@ -44,6 +47,7 @@ impl NbStoreOptions {
             home: None,
             config_file: None,
             workflow,
+            bookkeeper: tasq_core::config::Bookkeeper::Auto,
         }
     }
 
@@ -59,6 +63,7 @@ impl NbStoreOptions {
             home,
             config_file: None,
             workflow,
+            bookkeeper: tasq_core::config::Bookkeeper::Auto,
         }
     }
 
@@ -80,6 +85,13 @@ impl NbStoreOptions {
     #[must_use]
     pub fn with_config_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.config_file = Some(file.into());
+        self
+    }
+
+    /// Chooses the bookkeeping strategy (default: `Auto`).
+    #[must_use]
+    pub fn with_bookkeeper(mut self, bookkeeper: tasq_core::config::Bookkeeper) -> Self {
+        self.bookkeeper = bookkeeper;
         self
     }
 }
@@ -123,8 +135,10 @@ impl fmt::Display for StoreWarning {
 pub struct NbStore {
     dir: PathBuf,
     workflow: Workflow,
+    env: Vec<(String, String)>,
     nb: Option<Nb>,
     bookkeeper: Box<dyn Bookkeeper>,
+    clock: Box<dyn Clock>,
     index: RefCell<Index>,
     revisions: RefCell<HashMap<TaskId, Revision>>,
     warnings: Vec<StoreWarning>,
@@ -142,16 +156,20 @@ impl fmt::Debug for NbStore {
 }
 
 impl NbStore {
-    /// Resolves `config.notebook` (see [`crate::resolve`]) and opens it.
+    /// Resolves `config.notebook` (see [`crate::resolve`]) and opens it with
+    /// the bookkeeper `config.bookkeeper` asks for.
     pub fn open(config: &StoreConfig, options: &NbStoreOptions) -> Result<Self, StoreError> {
         let nb = Nb::locate(&options.env);
         let dir = resolve_notebook(&config.notebook, options, nb.as_ref())?;
-        Self::open_dir(dir, options)
+        let options = options.clone().with_bookkeeper(config.bookkeeper);
+        Self::open_dir(dir, &options)
     }
 
     /// Opens the notebook at `dir` directly. A missing `.index` is rebuilt
     /// with `nb index reconcile` when `nb` is available, which is recorded
-    /// as [`StoreWarning::RebuiltIndex`]; without `nb` it is an error.
+    /// as [`StoreWarning::RebuiltIndex`]; without `nb` it is an error. The
+    /// bookkeeper is chosen from `options.bookkeeper` (see
+    /// [`select_bookkeeper`]).
     pub fn open_dir(dir: impl Into<PathBuf>, options: &NbStoreOptions) -> Result<Self, StoreError> {
         let dir = dir.into();
         let nb = Nb::locate(&options.env);
@@ -175,11 +193,14 @@ impl NbStore {
             }
             warnings.push(StoreWarning::RebuiltIndex { path: index_file });
         }
+        let bookkeeper = select_bookkeeper(options.bookkeeper, nb.as_ref(), &dir, &options.env)?;
         let store = Self {
             dir,
             workflow: options.workflow.clone(),
+            env: options.env.clone(),
             nb,
-            bookkeeper: Box::new(NoopBookkeeper),
+            bookkeeper,
+            clock: Box::new(SystemClock),
             index: RefCell::new(Index::default()),
             revisions: RefCell::new(HashMap::new()),
             warnings,
@@ -188,11 +209,26 @@ impl NbStore {
         Ok(store)
     }
 
-    /// Replaces the bookkeeper (default: [`NoopBookkeeper`]).
+    /// Replaces the bookkeeper chosen at `open` (tests use a recording or
+    /// [`crate::NoopBookkeeper`]).
     #[must_use]
     pub fn with_bookkeeper(mut self, bookkeeper: Box<dyn Bookkeeper>) -> Self {
         self.bookkeeper = bookkeeper;
         self
+    }
+
+    /// Replaces the clock that stamps new files and notes (default: the
+    /// system clock).
+    #[must_use]
+    pub fn with_clock(mut self, clock: Box<dyn Clock>) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// The environment the store was opened with (`nb` and `git` run with
+    /// it).
+    pub fn env(&self) -> &[(String, String)] {
+        &self.env
     }
 
     /// The notebook directory.
@@ -363,7 +399,7 @@ impl Store for NbStore {
     }
 
     /// Not available yet: creation needs nb's filename rule and index
-    /// registration (plan T-203, T-206).
+    /// registration (plan T-203).
     fn create(&mut self, draft: TaskDraft) -> Result<Task, StoreError> {
         Err(StoreError::Unsupported {
             operation: format!("creating task {:?}: not implemented yet", draft.title),
@@ -483,14 +519,17 @@ mod tests {
         let o = NbStoreOptions::new(Workflow::default())
             .with_env(vec![("NB_DIR".into(), "/d".into())])
             .with_home("/h")
-            .with_config_file("/c.toml");
+            .with_config_file("/c.toml")
+            .with_bookkeeper(tasq_core::config::Bookkeeper::Native);
         assert_eq!(o.env, vec![("NB_DIR".to_owned(), "/d".to_owned())]);
         assert_eq!(o.home, Some(PathBuf::from("/h")));
         assert_eq!(o.config_file, Some(PathBuf::from("/c.toml")));
         assert_eq!(o.workflow, Workflow::default());
+        assert_eq!(o.bookkeeper, tasq_core::config::Bookkeeper::Native);
         let plain = NbStoreOptions::new(Workflow::default());
         assert_eq!(plain.env, Vec::new());
         assert_eq!((plain.home, plain.config_file), (None, None));
+        assert_eq!(plain.bookkeeper, tasq_core::config::Bookkeeper::Auto);
     }
 
     #[test]

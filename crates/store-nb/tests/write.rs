@@ -8,10 +8,12 @@ use std::rc::Rc;
 
 use tasq_core::clock::FixedClock;
 use tasq_core::model::{
-    Link, Priority, ProgressEntry, Session, Status, TaskDraft, TaskId, Workflow, Worktree,
+    Link, Priority, ProgressEntry, Session, Status, TaskId, Workflow, Worktree,
 };
 use tasq_core::query::Filter;
-use tasq_store_nb::{Bookkeeper, NbStore, NbStoreOptions, Store, StoreError, StoreWarning};
+use tasq_store_nb::{
+    Bookkeeper, NbStore, NbStoreOptions, Store, StoreError, StoreWarning, SyncOutcome, Verification,
+};
 
 use support::{NbEnv, file_name, id};
 
@@ -323,19 +325,6 @@ fn set_done_of_unknown_ids_is_not_found() {
     }
 }
 
-#[test]
-fn create_is_not_supported_yet() {
-    let nb = NbEnv::fixture();
-    let mut store = nb.open();
-    let before = nb.mtimes();
-    let err = store.create(TaskDraft::new("New")).unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "unsupported: creating task \"New\": not implemented yet"
-    );
-    assert_eq!(nb.mtimes(), before);
-}
-
 /// A bookkeeper that records its calls in a shared log and fails on demand.
 struct Recording {
     calls: Rc<RefCell<Vec<String>>>,
@@ -363,7 +352,7 @@ impl Bookkeeper for Recording {
             .push(format!("register {}", file.display()));
         Ok(())
     }
-    fn checkpoint(&self, message: &str) -> Result<(), StoreError> {
+    fn checkpoint(&self, message: &str) -> Result<bool, StoreError> {
         self.calls
             .borrow_mut()
             .push(format!("checkpoint {message}"));
@@ -372,11 +361,14 @@ impl Bookkeeper for Recording {
                 message: "nb git checkpoint failed; run 'nb git checkpoint' by hand".into(),
             })
         } else {
-            Ok(())
+            Ok(true)
         }
     }
-    fn verify(&self) -> Result<(), StoreError> {
-        Ok(())
+    fn verify(&self) -> Result<Verification, StoreError> {
+        Ok(Verification::consistent("recorded"))
+    }
+    fn sync(&self) -> Result<SyncOutcome, StoreError> {
+        Ok(SyncOutcome::skipped("recorded"))
     }
 }
 

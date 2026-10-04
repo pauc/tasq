@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
+use tasq_core::config::{Bookkeeper, StoreConfig};
 use tasq_core::model::Workflow;
 use tasq_store_nb::sanitize::strip_ansi;
 use tasq_store_nb::{NbStore, NbStoreOptions};
@@ -210,10 +211,83 @@ impl NbEnv {
     }
 
     /// Opens the fixture notebook through `NbStore::open` with the default
-    /// `store.notebook = "home"`.
+    /// `store.notebook = "home"` and `store.bookkeeper = "auto"`.
     pub fn open(&self) -> NbStore {
-        NbStore::open(&tasq_core::config::StoreConfig::default(), &self.options())
-            .expect("fixture notebook opens")
+        self.open_with(Bookkeeper::Auto)
+    }
+
+    /// Opens the fixture notebook with the given bookkeeping strategy.
+    pub fn open_with(&self, bookkeeper: Bookkeeper) -> NbStore {
+        let config = StoreConfig {
+            bookkeeper,
+            ..StoreConfig::default()
+        };
+        NbStore::open(&config, &self.options()).expect("fixture notebook opens")
+    }
+
+    /// Runs `git <args>` in the notebook with this environment and returns
+    /// its standard output. Panics when git fails.
+    pub fn git(&self, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(self.notebook())
+            .env_clear()
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
+            .output()
+            .expect("git runs");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// `git status --porcelain` of the notebook, trimmed.
+    pub fn git_status(&self) -> String {
+        self.git(&["status", "--porcelain"]).trim().to_owned()
+    }
+
+    /// Creates `<tmp>/remote.git`, a bare repository, adds it as `origin`
+    /// of the notebook (which must be a repository) and pushes `main` so
+    /// that pull and push both have something to talk to.
+    pub fn add_bare_remote(&self) -> PathBuf {
+        let remote = self.root.path().join("remote.git");
+        let status = Command::new("git")
+            .args(["init", "-q", "--bare", "-b", "main"])
+            .arg(&remote)
+            .env_clear()
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
+            .status()
+            .expect("git runs");
+        assert!(status.success());
+        self.git(&["remote", "add", "origin", &remote.display().to_string()]);
+        self.git(&["push", "-q", "-u", "origin", "main"]);
+        remote
+    }
+
+    /// `git log --format=%s` of a bare repository, newest first.
+    pub fn subjects_of(&self, repo: &Path) -> Vec<String> {
+        let out = Command::new("git")
+            .args(["log", "--format=%s"])
+            .current_dir(repo)
+            .env_clear()
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
+            .output()
+            .expect("git runs");
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Writes the file the fixture index names but does not ship (line
+    /// `id::MISSING`), so that the index is consistent.
+    pub fn restore_missing_file(&self) {
+        self.write(
+            file_name(id::MISSING),
+            "# [ ] Restored\n\n## Tags\n\n#B #ready\n\n## Progress\n\n- 2026-09-05 13:00: created via tasks create\n",
+        );
     }
 }
 
@@ -272,6 +346,11 @@ pub fn nb_ids(output: &str) -> Vec<u64> {
 /// A directory holding a fake `nb` script with `body` as its contents
 /// (after the shebang). The script's argv and the invocation count go to
 /// `<dir>/argv.log`, one line per call.
+///
+/// Tests run in parallel threads, and a thread that forks while this one
+/// still has the script open for writing makes the first exec of it fail
+/// with `ETXTBSY`. The script is therefore probed (with `FAKE_NB_PROBE`
+/// set, which exits before logging) until it runs, before being handed out.
 pub fn fake_nb(body: &str) -> TempDir {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
@@ -280,13 +359,28 @@ pub fn fake_nb(body: &str) -> TempDir {
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n{body}\n",
+            "#!/bin/sh\n[ -n \"${{FAKE_NB_PROBE:-}}\" ] && exit 0\nprintf '%s\\n' \"$*\" >> '{}'\n{body}\n",
             log.display()
         ),
     )
     .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    dir
+    for attempt in 0..200 {
+        match Command::new(&script).env("FAKE_NB_PROBE", "1").status() {
+            Ok(status) if status.success() => return dir,
+            Ok(status) => panic!("fake nb probe exited with {status}"),
+            Err(e) if e.raw_os_error() == Some(libc_etxtbsy()) && attempt < 199 => {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            Err(e) => panic!("fake nb probe failed: {e}"),
+        }
+    }
+    unreachable!("the loop returns or panics")
+}
+
+/// `ETXTBSY` on Linux and the BSDs, without a libc dependency.
+const fn libc_etxtbsy() -> i32 {
+    26
 }
 
 /// The argv lines recorded by a [`fake_nb`].

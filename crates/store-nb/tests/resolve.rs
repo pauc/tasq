@@ -260,7 +260,12 @@ fn open_dir_skips_resolution() {
     assert_eq!(store.dir(), nb.notebook());
     assert_eq!(store.index_path(), nb.notebook().join(".index"));
     assert!(store.nb().is_none(), "no PATH in the options");
-    assert_eq!(store.bookkeeper().name(), "none");
+    assert_eq!(
+        store.bookkeeper().name(),
+        "native",
+        "auto without nb falls back to the native bookkeeper"
+    );
+    assert_eq!(store.env(), Vec::<(String, String)>::new());
     assert_eq!(store.workflow(), &Workflow::default());
     let debug = format!("{store:?}");
     assert!(debug.starts_with("NbStore { dir:"), "{debug}");

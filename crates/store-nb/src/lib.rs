@@ -18,14 +18,20 @@
 
 pub mod bookkeeper;
 pub mod diff;
+pub mod git;
 pub mod index;
+pub mod native;
 pub mod nb;
+pub mod nb_cli;
 pub mod resolve;
 pub mod revision;
 pub mod sanitize;
 pub mod store;
 
-pub use self::bookkeeper::{Bookkeeper, NoopBookkeeper};
+pub use self::bookkeeper::{
+    Bookkeeper, NativeBookkeeper, NbCliBookkeeper, NoopBookkeeper, SyncOutcome, Verification,
+    select_bookkeeper,
+};
 pub use self::index::{Index, TODO_SUFFIX};
 pub use self::nb::{Nb, NbError};
 pub use self::revision::Revision;
