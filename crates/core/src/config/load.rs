@@ -17,6 +17,10 @@ pub const PROJECT_FILE: &str = ".tasq.toml";
 pub const ENV_CONFIG: &str = "TASQ_CONFIG";
 /// Environment variable selecting a `[profile.<name>]`.
 pub const ENV_PROFILE: &str = "TASQ_PROFILE";
+/// Environment variable carrying `key=value` overrides, one per line, the
+/// same way `--set` does. It is how `tasq` hands its `--set` flags to the
+/// plugins and hooks it runs (see [`parse_env_set`]).
+pub const ENV_SET: &str = "TASQ_SET";
 
 /// Environment variables that override single keys, as `(variable, key)`.
 ///
@@ -38,8 +42,10 @@ pub const ENV_PROFILE: &str = "TASQ_PROFILE";
 /// | `TASQ_SUMMARY_PROMPT_FILE` | `report.summary.prompt_file` |
 ///
 /// Values are converted like `--set` values (see [`LoadOptions::overrides`]).
-/// A variable set to the empty string is treated as unset. [`ENV_CONFIG`]
-/// and [`ENV_PROFILE`] are not keys and are handled separately.
+/// A variable set to the empty string is treated as unset. [`ENV_CONFIG`],
+/// [`ENV_PROFILE`] and [`ENV_SET`] are not keys and are handled separately;
+/// [`ENV_SET`] entries belong to the same layer as these variables and win
+/// over them for the same key.
 pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_NOTEBOOK", "store.notebook"),
     ("TASQ_BOOKKEEPER", "store.bookkeeper"),
@@ -258,6 +264,7 @@ struct FileSchema {
     forge: BTreeMap<String, super::ForgeConfig>,
     source: Vec<super::SourceConfig>,
     report: super::ReportConfig,
+    hooks: super::HooksConfig,
     profile: BTreeMap<String, Config>,
 }
 
@@ -272,6 +279,7 @@ impl Default for FileSchema {
             forge,
             source,
             report,
+            hooks,
         } = Config::default();
         Self {
             store,
@@ -282,9 +290,36 @@ impl Default for FileSchema {
             forge,
             source,
             report,
+            hooks,
             profile: BTreeMap::new(),
         }
     }
+}
+
+/// Splits the value of [`ENV_SET`] into `(key, value)` pairs: one
+/// `key=value` per line, blank lines ignored, the key trimmed. A line
+/// without `=` or with an empty key is an error naming the line.
+pub fn parse_env_set(text: &str) -> Result<Vec<(String, String)>, ConfigError> {
+    let mut pairs = Vec::new();
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match line.split_once('=') {
+            Some((key, value)) if !key.trim().is_empty() => {
+                pairs.push((key.trim().to_owned(), value.to_owned()));
+            }
+            _ => {
+                return Err(ConfigError::InvalidValue {
+                    origin: Origin::Env,
+                    key: ENV_SET.to_owned(),
+                    value: line.to_owned(),
+                    expected: "KEY=VALUE".to_owned(),
+                });
+            }
+        }
+    }
+    Ok(pairs)
 }
 
 /// A parsed file: its config table and its profile blocks.
@@ -445,6 +480,31 @@ fn coerce(template: &Table, origin: &Origin, key: &str, raw: &str) -> Result<Val
     }
 }
 
+/// The environment layer: [`ENV_KEYS`] variables, then [`ENV_SET`]
+/// entries (which win for the same key), coerced to the key's type.
+fn env_layer(opts: &LoadOptions, template: &Table) -> Result<Table, ConfigError> {
+    let mut env_table = Table::new();
+    for (var, key) in ENV_KEYS {
+        if let Some(raw) = opts.env_nonempty(var) {
+            set_leaf(
+                &mut env_table,
+                key,
+                coerce(template, &Origin::Env, key, raw)?,
+            );
+        }
+    }
+    if let Some(text) = opts.env_nonempty(ENV_SET) {
+        for (key, raw) in parse_env_set(text)? {
+            set_leaf(
+                &mut env_table,
+                &key,
+                coerce(template, &Origin::Env, &key, &raw)?,
+            );
+        }
+    }
+    Ok(env_table)
+}
+
 /// Sets the leaf `key` in `table`, creating intermediate tables.
 fn set_leaf(table: &mut Table, key: &str, value: Value) {
     let mut parts = key.split('.').peekable();
@@ -563,16 +623,7 @@ impl Config {
         }
 
         let template = template();
-        let mut env_table = Table::new();
-        for (var, key) in ENV_KEYS {
-            if let Some(raw) = opts.env_nonempty(var) {
-                set_leaf(
-                    &mut env_table,
-                    key,
-                    coerce(&template, &Origin::Env, key, raw)?,
-                );
-            }
-        }
+        let env_table = env_layer(opts, &template)?;
         if !env_table.is_empty() {
             layers.push(Layer {
                 origin: Origin::Env,

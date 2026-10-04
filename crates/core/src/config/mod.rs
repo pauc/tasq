@@ -66,6 +66,11 @@
 //! [report.summary]
 //! summarizer = "llm"
 //! command = "claude -p"
+//!
+//! [hooks]
+//! post-create = []
+//! post-done = []
+//! pre-launch = []
 //! ```
 
 mod error;
@@ -81,8 +86,8 @@ use crate::model::{Status, Workflow};
 
 pub use self::error::ConfigError;
 pub use self::load::{
-    ENV_CONFIG, ENV_KEYS, ENV_PROFILE, GLOBAL_FILE, Layer, LoadOptions, Loaded, Origin,
-    PROJECT_FILE, global_file, project_file,
+    ENV_CONFIG, ENV_KEYS, ENV_PROFILE, ENV_SET, GLOBAL_FILE, Layer, LoadOptions, Loaded, Origin,
+    PROJECT_FILE, global_file, parse_env_set, project_file,
 };
 pub use self::path::expand_tilde;
 
@@ -111,6 +116,8 @@ pub struct Config {
     pub source: Vec<SourceConfig>,
     /// Report settings.
     pub report: ReportConfig,
+    /// Commands run around CLI events (`[hooks]`).
+    pub hooks: HooksConfig,
 }
 
 /// `[store]`: where tasks live.
@@ -489,6 +496,48 @@ impl Default for SummaryConfig {
             model: None,
             prompt_file: None,
         }
+    }
+}
+
+/// `[hooks]`: command lines run by the CLI around task events, the
+/// out-of-process plugin surface of ADR-0006.
+///
+/// Each entry is one command line, split like a shell command (quotes
+/// allowed, no shell) with `~` expanded in the program. The command gets a
+/// JSON document on stdin (`{"schema": 1, "hook": "<name>", "task": {...}}`
+/// plus event-specific fields) and `TASQ_HOOK`, `TASQ_TASK_ID` and
+/// `TASQ_BIN` in its environment. Running them is the CLI's job; the core
+/// only holds the configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct HooksConfig {
+    /// After `tasq create` wrote the task. A failure is a warning.
+    /// Default: none.
+    pub post_create: Vec<String>,
+    /// After `tasq done` closed the task. A failure is a warning.
+    /// Default: none.
+    pub post_done: Vec<String>,
+    /// Before `tasq next`/`tasq pick` start a session, with the resolved
+    /// working directory and launcher. A non-zero exit aborts the launch.
+    /// Default: none.
+    pub pre_launch: Vec<String>,
+}
+
+impl HooksConfig {
+    /// The configured hooks as `(name, commands)` pairs, in event order.
+    pub fn entries(&self) -> [(&'static str, &[String]); 3] {
+        [
+            ("post-create", &self.post_create),
+            ("post-done", &self.post_done),
+            ("pre-launch", &self.pre_launch),
+        ]
+    }
+
+    /// Whether any hook is configured.
+    pub fn is_empty(&self) -> bool {
+        self.entries()
+            .iter()
+            .all(|(_, commands)| commands.is_empty())
     }
 }
 

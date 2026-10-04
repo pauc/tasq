@@ -168,8 +168,129 @@ glow_style = \"dark\"
 [report.summary]
 summarizer = \"llm\"
 command = \"claude -p\"
+
+[hooks]
+post-create = []
+post-done = []
+pre-launch = []
 ";
     assert_eq!(text, expected);
+}
+
+#[test]
+fn hooks_are_read_from_files_and_set_overrides() {
+    use tasq_core::config::HooksConfig;
+    let sb = Sandbox::new();
+    sb.write_project(
+        "[hooks]\npost-create = [\"tasq-notify\", \"~/bin/log-it --quiet\"]\npre-launch = [\"check-vpn\"]\n",
+    );
+    let mut opts = sb.opts();
+    let c = Config::load(&opts).unwrap().config;
+    assert_eq!(
+        c.hooks.post_create,
+        vec!["tasq-notify".to_owned(), "~/bin/log-it --quiet".to_owned()]
+    );
+    assert_eq!(c.hooks.post_done, Vec::<String>::new());
+    assert_eq!(c.hooks.pre_launch, vec!["check-vpn".to_owned()]);
+    assert!(!c.hooks.is_empty());
+    assert_eq!(
+        c.hooks.entries(),
+        [
+            ("post-create", c.hooks.post_create.as_slice()),
+            ("post-done", c.hooks.post_done.as_slice()),
+            ("pre-launch", c.hooks.pre_launch.as_slice()),
+        ]
+    );
+    assert!(HooksConfig::default().is_empty());
+    for hooks in [
+        HooksConfig {
+            post_create: vec!["x".to_owned()],
+            ..HooksConfig::default()
+        },
+        HooksConfig {
+            post_done: vec!["x".to_owned()],
+            ..HooksConfig::default()
+        },
+        HooksConfig {
+            pre_launch: vec!["x".to_owned()],
+            ..HooksConfig::default()
+        },
+    ] {
+        assert!(!hooks.is_empty(), "{hooks:?}");
+    }
+
+    // Arrays can be set from the command line, comma-separated.
+    opts.overrides = vec![("hooks.post-done".to_owned(), "a, b".to_owned())];
+    let c = Config::load(&opts).unwrap().config;
+    assert_eq!(c.hooks.post_done, vec!["a".to_owned(), "b".to_owned()]);
+
+    // An unknown hook name is an error naming the file.
+    let file = sb.write_project("[hooks]\npost-sync = [\"x\"]\n");
+    let err = Config::load(&sb.opts()).unwrap_err().to_string();
+    assert!(
+        err.starts_with(&format!(
+            "{}:2:1: unknown field `post-sync`",
+            file.display()
+        )),
+        "{err}"
+    );
+}
+
+#[test]
+fn tasq_set_env_is_a_line_separated_set() {
+    use tasq_core::config::{ENV_SET, parse_env_set};
+    assert_eq!(ENV_SET, "TASQ_SET");
+    assert_eq!(
+        parse_env_set("store.notebook=work\n\n ui.no_osc8 =true\n").unwrap(),
+        vec![
+            ("store.notebook".to_owned(), "work".to_owned()),
+            ("ui.no_osc8".to_owned(), "true".to_owned()),
+        ]
+    );
+    assert_eq!(
+        parse_env_set("a=b=c").unwrap(),
+        vec![("a".to_owned(), "b=c".to_owned())]
+    );
+    assert_eq!(parse_env_set("").unwrap(), Vec::new());
+    assert_eq!(
+        parse_env_set("nonsense").unwrap_err().to_string(),
+        "env: TASQ_SET=\"nonsense\": expected KEY=VALUE"
+    );
+    assert_eq!(
+        parse_env_set("=x").unwrap_err().to_string(),
+        "env: TASQ_SET=\"=x\": expected KEY=VALUE"
+    );
+
+    let sb = Sandbox::new();
+    sb.write_project("[store]\nnotebook = \"file\"\n");
+    let mut opts = sb.opts();
+    // TASQ_SET beats TASQ_NOTEBOOK for the same key and is part of the env layer.
+    opts.env = env(&[
+        ("TASQ_NOTEBOOK", "env"),
+        ("TASQ_SET", "store.notebook=set\nui.no_osc8=1"),
+    ]);
+    let loaded = Config::load(&opts).unwrap();
+    assert_eq!(loaded.config.store.notebook, "set");
+    assert!(loaded.config.ui.no_osc8);
+    assert_eq!(loaded.explain("store.notebook"), Some(&Origin::Env));
+    assert_eq!(loaded.explain("ui.no_osc8"), Some(&Origin::Env));
+    // `--set` still wins.
+    opts.overrides = vec![("store.notebook".to_owned(), "flag".to_owned())];
+    assert_eq!(Config::load(&opts).unwrap().config.store.notebook, "flag");
+    // Errors name env, not --set.
+    opts.env = env(&[("TASQ_SET", "store.nope=1")]);
+    assert_eq!(
+        Config::load(&opts).unwrap_err().to_string(),
+        "env: unknown config key \"store.nope\""
+    );
+    opts.env = env(&[("TASQ_SET", "ui.no_osc8=maybe")]);
+    assert_eq!(
+        Config::load(&opts).unwrap_err().to_string(),
+        "env: ui.no_osc8=\"maybe\": expected true or false"
+    );
+    // Empty is unset.
+    opts.env = env(&[("TASQ_SET", "")]);
+    assert_eq!(Config::load(&opts).unwrap().config.store.notebook, "flag");
 }
 
 #[test]
