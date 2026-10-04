@@ -5,6 +5,21 @@ place for status, learnings, blockers and deviations from the plan.
 
 ## Status
 
+**Phase 6 (reports) complete (2026-10-04).** `tasq summary [DAY] [--raw]` collects the day's
+progress notes (open and done tasks, id order) and distils them through `report.summary.command`
+(default `claude -p`; the prompt template with the notes on stdin) or prints them raw;
+`tasq dates [SPEC]` resolves `this|last week`, `this|last month`, `last N days`, days and day
+pairs to `FROM TO` (`--json` adds `days` and `working_days`). Mutants: `core::dates` +
+`core::report` + `launch::summarizer` 105 tested, 88 caught, 17 unviable, 0 missed
+(`process::run_with_input` skipped). Next: Phase 7 (Claude Code plugin, T-701).
+
+| Task | Title | Status | Notes |
+|------|-------|--------|-------|
+| T-601 | `summary` with pluggable summarizer | done | `tasq_core::report::{DaySummary, TaskNotes, Summarizer, RawSummarizer}`; `tasq_launch::summarizer::CommandSummarizer` + `templates/summary.md`; `report.summary.prompt_file`, `TASQ_SUMMARY_COMMAND`, `TASQ_SUMMARY_PROMPT_FILE`; rendered through `view::show_markdown` |
+| T-602 | Date range resolver | done | `tasq_core::dates::{resolve_range, DateRange, parse_past_day, last_working_day}`; `tasq dates <spec> [--json]` |
+
+### Phase 5 status
+
 **Phase 5 (sources and sync) complete (2026-10-04).** `tasq sync` runs the configured sources
 (GitLab/GitHub review requests and work items, the LLM bridge), reconciles and applies; `tasq mr`
 and `create --mr` resolve titles through the configured forge. The script's `update` is now
@@ -124,6 +139,35 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 4. T-102+T-103 (one agent), T-104, T-106 in parallel, each owning one module directory.
 
 ## Learnings
+
+### Report decisions (T-601/T-602)
+
+- Two single-day parsers, because the same word means different days: `dates::parse_day`
+  (due dates, looks forward: `tomorrow`) and `dates::parse_past_day` (reports, looks back:
+  a weekday name is the most recent one on or before today, `last <weekday>` the most recent
+  one strictly before today, GNU `date -d` semantics). Reports reject `tomorrow`.
+- `resolve_range`: `this week` is Monday to `min(Friday, today)` (the plan says weeks are
+  Mon–Fri; the script returned Monday..today, a weekend day on Saturdays). `last week` is
+  Mon..Fri. Every range is clamped: `to` never passes today, a `from` after today is
+  `DateError::InFuture`. The spec is lowercased and whitespace-collapsed, and the CLI joins
+  its positional words, so `tasq dates last week` works unquoted.
+- The summarizer command reads everything on stdin: the template rendered with `{{day}}`
+  (`Friday 2026-10-02`), `{{date}}` and `{{notes}}`. The script passed the prompt as an
+  argument and the notes on stdin; one stdin document is a contract any command honours
+  (`claude -p`, `llm`, a script). `report.summary.model` is appended as `--model <model>`.
+  The `Summarizer` trait and `RawSummarizer` live in core; `CommandSummarizer` in
+  `tasq-launch` (the process-running crate), `process::run_with_input` being its only skip.
+- Plan open question 2 (raw vs llm default) stays resolved as T-106 did: `llm`, what the
+  script did. Without the command on `PATH`, `tasq summary` fails with a message naming
+  `--raw` and `report.summary.summarizer = "raw"`.
+- `summary --json` always carries the structured `tasks` and the raw `notes`; `summary` is the
+  distilled text, or `null` when raw. JSON without `--raw` still runs the command.
+- Raw output is the bold header (plain when colour is off) over the script's layout; the
+  distilled text is `## <header>` plus the command output, shown through
+  `view::show_markdown` (glow on a terminal), extracted from `view::run` for reuse.
+- Test fakes under the CLI harness see a `PATH` with only `git`: use `/bin/cat` and shell
+  builtins, and `while IFS= read -r line || [ -n "$line" ]` to catch a final unterminated
+  line (the rendered prompt ends without a newline).
 
 ### CLI decisions (T-301/T-302/T-205)
 
@@ -462,6 +506,12 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   the dev-dependency tree). `forge.<name>.url` added for self-hosted layouts and tests.
 - T-504b: `title`, `labels`, `exclude_labels`, `projects`, `create_new`, `close_when_done` and
   `flag` are `[[source]]` keys (the plan left their spelling open).
+- T-601: the summarizer command gets the prompt and the notes on stdin (the script passed the
+  prompt as an argument); `report.summary.prompt_file` added so the prompt is a user-editable
+  template (plan section 8); reports reject `tomorrow`.
+- T-602: `this week` ends on Friday (the script ended on today, even on a weekend); explicit
+  ranges are clamped to today and a start after today is an error; `--json` adds `days` and
+  `working_days` lists, not in the plan, so the time-logs plugin needs no date arithmetic.
 - T-001: repository URL in `Cargo.toml` is a placeholder (`https://example.invalid/tasq`) until a
   GitHub repo exists. Extra just recipes `default` and `fmt-check`.
 
