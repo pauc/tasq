@@ -232,6 +232,8 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   the push is not sent `CSI < u`). Probed from a herdr 0.9.3 pane: `CSI ? u` answers
   `CSI ? 0 u`, so herdr speaks the kitty protocol and the chords arrive as such. Mutants on
   `launch/{registry,herdr,tmux}.rs` + `core/launch.rs`: 108 tested, 0 missed. Commit 8abc1ba.
+  Follow-up 9c4a489: the herdr launcher focuses the workspace right after creating the pane,
+  before `agent start` waits for Claude to be ready; the switch felt slow when it came last.
 
 - **`post-done` from the TUI (follow-up, ADR 0010).** `Host::after_done(&Task)` is called by
   the TUI's `dispatch` after `edit::done` succeeded; the CLI's `CliHost` (now holding `&App`)
