@@ -1,0 +1,36 @@
+# Architecture decision records
+
+An architecture decision record (ADR) captures one significant design decision:
+the problem, the option chosen, why, and what it costs. ADRs are written when the
+decision is taken and are never edited to say something else afterwards. When a
+decision changes, a new ADR supersedes the old one and the old one keeps its text.
+
+## Status vocabulary
+
+| Status       | Meaning                                                                 |
+|--------------|-------------------------------------------------------------------------|
+| Proposed     | Under discussion. Lists the options; the decision is not final.         |
+| Accepted     | In force. Code is expected to follow it.                                |
+| Superseded   | Replaced by a later ADR. The record names its successor and stays as history. |
+
+## Adding an ADR
+
+1. Copy `template.md` to `NNNN-short-slug.md`, where `NNNN` is the next free number.
+2. Fill every section. Keep it under about 120 lines; link to the plan or code for detail.
+3. Set the status (`Proposed` when options are still open, `Accepted` otherwise) and the date.
+4. Add a row to the index below.
+5. When an ADR supersedes another, set the old one to `Superseded by ADR-NNNN` and
+   list the old one under the new one's References.
+
+## Index
+
+| ADR | Title | Status |
+|-----|-------|--------|
+| [0001](0001-rust.md) | Rust as implementation language | Accepted |
+| [0002](0002-nb-compatible-markdown-store.md) | nb-compatible markdown files as the day-one store | Accepted |
+| [0003](0003-store-source-launcher-traits.md) | Store, Source and Launcher extension traits | Accepted |
+| [0004](0004-adapter-decides-sync-strategy.md) | Each Source adapter decides its sync strategy | Accepted |
+| [0005](0005-cli-first-tui-second.md) | CLI first, TUI second | Accepted |
+| [0006](0006-plugin-mechanism.md) | Plugin mechanism | Proposed |
+| [0007](0007-nb-under-the-hood.md) | nb under the hood: hybrid native/nb bookkeeping | Accepted |
+| [0008](0008-license.md) | GPL-3.0-or-later license | Accepted |
