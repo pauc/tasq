@@ -58,6 +58,13 @@ glow_style = "dark"
 # tags = ["gitlab", "review-request"]
 # status = "ready"
 # enabled = true
+# create_new = true                 # false: only update tasks that already exist
+# close_when_done = true            # mark the task done when the item is merged/closed/approved
+# flag = "review-request"           # tag added to matched open tasks that lack it
+# title = "Review MR !{iid}: {title}"  # {title} {iid} {project}
+# labels = ["team::core"]           # work items: include only these labels
+# exclude_labels = ["wontfix"]      # work items: skip these labels
+# projects = ["group/", "owner/repo"]  # allow-list; a trailing / matches a group
 
 [report.summary]
 summarizer = "llm"           # raw | llm

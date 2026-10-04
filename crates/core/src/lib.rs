@@ -34,5 +34,6 @@ pub mod format;
 pub mod launch;
 pub mod model;
 pub mod query;
+pub mod source;
 pub mod store;
 pub mod work;

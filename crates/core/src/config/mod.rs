@@ -374,6 +374,34 @@ pub struct SourceConfig {
     /// Whether `sync` runs this source. Default: `true`.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Create tasks for new items. Default: `true`. With `false` the source
+    /// only updates tasks that already exist (the plan's `flag_only`).
+    #[serde(default = "default_true")]
+    pub create_new: bool,
+    /// Log a note and mark the task done when its item is done (merged,
+    /// closed, reassigned, approved). Default: `true`.
+    #[serde(default = "default_true")]
+    pub close_when_done: bool,
+    /// Tag added to matched open tasks that lack it (`review-request`).
+    /// Default: unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flag: Option<String>,
+    /// Title template for new tasks: `{title}`, `{iid}` (number), `{project}`
+    /// (`group/project` or `owner/repo`). Default per kind: `Review MR !{iid}:
+    /// {title}` / `Review PR #{iid}: {title}` for review requests, `#{iid}:
+    /// {title}` for work items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Work items: only those carrying one of these labels. Default: none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
+    /// Work items: skip those carrying one of these labels. Default: none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_labels: Vec<String>,
+    /// Only items from these projects (`group/project`, a group prefix with a
+    /// trailing `/`, or `owner/repo`). Default: every project.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<String>,
 }
 
 fn default_true() -> bool {
