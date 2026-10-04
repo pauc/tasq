@@ -96,6 +96,14 @@ pub enum ConfigError {
         /// Which layer set `workflow.default_status`.
         origin: Origin,
     },
+    /// `work.worktree_manager = "command"` without a `work.worktree_command`.
+    #[error(
+        "work.worktree_manager = \"command\" (set by {origin}) requires work.worktree_command, e.g. \"gwm create {{new}} {{branch}} --no-tmux -s\""
+    )]
+    WorktreeCommandRequired {
+        /// Which layer selected the command manager.
+        origin: Origin,
+    },
     /// A `[[source]]` lacks a key its `kind` needs.
     #[error("source {name:?} of kind {kind:?} requires `{field}` (set by {origin})")]
     MissingSourceField {

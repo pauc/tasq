@@ -9,7 +9,8 @@ default_status = "ready"
 
 [work]
 default_project = "~/code/SF/silverfin_worspace/silverfin"
-worktree_manager = "gwm"     # or "git"
+worktree_manager = "command" # git | command
+worktree_command = "gwm create {new} {branch} --no-tmux -s"
 
 [launch]
 default = "claude"           # shell | claude | tmux | herdr

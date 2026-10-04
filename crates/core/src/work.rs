@@ -4,8 +4,8 @@
 //! in the first tracked worktree that exists, else the project, else the
 //! configured default (plan FR-8; the resolver itself is T-401). This module
 //! holds the pure pieces and the [`WorktreeManager`] extension point that
-//! `tasq worktree --create` uses; the implementations that run `gwm` or
-//! `git` live in `tasq-launch`.
+//! `tasq worktree --create` uses; the implementations (plain `git`, or a
+//! user-configured command) live in `tasq-launch`.
 
 use std::path::{Path, PathBuf};
 
@@ -13,12 +13,9 @@ use thiserror::Error;
 
 use crate::model::Task;
 
-/// The file that marks the root of a gwm workspace.
-pub const GWM_MARKER: &str = "gwm.yml";
-
 /// Creates git worktrees for a project.
 pub trait WorktreeManager {
-    /// Implementation name (`gwm`, `git`), for messages.
+    /// Implementation name (`git`, `command`), for messages.
     fn name(&self) -> &str;
 
     /// Makes (or finds) the worktree for `branch` of the repository at
@@ -43,28 +40,33 @@ pub enum WorkError {
     /// The project directory does not exist.
     #[error("project directory not found: {0}")]
     ProjectMissing(PathBuf),
-    /// No `gwm.yml` above the project.
+    /// `worktree_manager = "command"` without a command configured.
     #[error(
-        "no gwm workspace found above {project} (missing {GWM_MARKER}); track an existing directory instead: tasq worktree <id> <path>"
+        "work.worktree_manager = \"command\" needs work.worktree_command (a template with {{branch}}, {{project}} and {{new}})"
     )]
-    NoWorkspace {
-        /// The project the search started from.
-        project: PathBuf,
+    CommandMissing,
+    /// `work.worktree_command` cannot be split into a program and arguments.
+    #[error("work.worktree_command {template:?}: {reason}")]
+    BadCommand {
+        /// The template as configured.
+        template: String,
+        /// What is wrong with it.
+        reason: String,
     },
     /// The tool exited with an error.
     #[error("{tool} failed for branch '{branch}': {message}")]
     Tool {
-        /// `gwm` or `git`.
+        /// The program that ran (`git`, or the command's first word).
         tool: String,
         /// The branch asked for.
         branch: String,
         /// The tool's output, trimmed.
         message: String,
     },
-    /// The tool succeeded but printed no usable path.
-    #[error("{tool} did not return a worktree path: {output:?}")]
+    /// The tool succeeded but its last output line is not a directory.
+    #[error("{tool} did not return a worktree path as its last line: {output:?}")]
     NoPath {
-        /// `gwm` or `git`.
+        /// The program that ran.
         tool: String,
         /// What it printed instead.
         output: String,
@@ -77,15 +79,6 @@ pub fn project_dir(task: &Task, default: Option<&Path>) -> Option<PathBuf> {
     task.project
         .clone()
         .or_else(|| default.map(Path::to_path_buf))
-}
-
-/// The nearest directory, from `start` upwards, holding a file called
-/// `marker` (as judged by `is_file`). `start` itself is checked first.
-pub fn find_up(start: &Path, marker: &str, is_file: impl Fn(&Path) -> bool) -> Option<PathBuf> {
-    start
-        .ancestors()
-        .find(|dir| is_file(&dir.join(marker)))
-        .map(Path::to_path_buf)
 }
 
 /// A branch name as a directory name: `/`, whitespace and anything that is
@@ -137,21 +130,6 @@ mod tests {
     }
 
     #[test]
-    fn find_up_walks_to_the_root() {
-        let has = |p: &Path| p == Path::new("/a/gwm.yml");
-        assert_eq!(
-            find_up(Path::new("/a/b/c"), GWM_MARKER, has),
-            Some(PathBuf::from("/a"))
-        );
-        assert_eq!(
-            find_up(Path::new("/a"), GWM_MARKER, has),
-            Some(PathBuf::from("/a"))
-        );
-        assert_eq!(find_up(Path::new("/x/y"), GWM_MARKER, has), None);
-        assert_eq!(find_up(Path::new("/a/b"), "other.yml", has), None);
-    }
-
-    #[test]
     fn slugs() {
         assert_eq!(branch_slug("feature/login-form"), "feature-login-form");
         assert_eq!(branch_slug("fix  spaces"), "fix-spaces");
@@ -183,11 +161,16 @@ mod tests {
             "project directory not found: /p"
         );
         assert_eq!(
-            WorkError::NoWorkspace {
-                project: "/p".into()
+            WorkError::CommandMissing.to_string(),
+            "work.worktree_manager = \"command\" needs work.worktree_command (a template with {branch}, {project} and {new})"
+        );
+        assert_eq!(
+            WorkError::BadCommand {
+                template: "a 'b".into(),
+                reason: "unbalanced quote".into()
             }
             .to_string(),
-            "no gwm workspace found above /p (missing gwm.yml); track an existing directory instead: tasq worktree <id> <path>"
+            "work.worktree_command \"a 'b\": unbalanced quote"
         );
         assert_eq!(
             WorkError::Tool {
@@ -204,7 +187,7 @@ mod tests {
                 output: "x".into()
             }
             .to_string(),
-            "gwm did not return a worktree path: \"x\""
+            "gwm did not return a worktree path as its last line: \"x\""
         );
     }
 }

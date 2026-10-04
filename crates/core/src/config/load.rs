@@ -26,6 +26,7 @@ pub const ENV_PROFILE: &str = "TASQ_PROFILE";
 /// | `TASQ_BOOKKEEPER` | `store.bookkeeper` |
 /// | `TASQ_DEFAULT_PROJECT` | `work.default_project` |
 /// | `TASQ_WORKTREE_MANAGER` | `work.worktree_manager` |
+/// | `TASQ_WORKTREE_COMMAND` | `work.worktree_command` |
 /// | `TASQ_LAUNCHER` | `launch.default` |
 /// | `TASQ_LAUNCH_ENV` | `launch.env` |
 /// | `TASQ_PAGER` | `ui.pager` |
@@ -42,6 +43,7 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_BOOKKEEPER", "store.bookkeeper"),
     ("TASQ_DEFAULT_PROJECT", "work.default_project"),
     ("TASQ_WORKTREE_MANAGER", "work.worktree_manager"),
+    ("TASQ_WORKTREE_COMMAND", "work.worktree_command"),
     ("TASQ_LAUNCHER", "launch.default"),
     ("TASQ_LAUNCH_ENV", "launch.env"),
     ("TASQ_PAGER", "ui.pager"),
@@ -369,6 +371,7 @@ fn leaf_keys(table: &Table) -> Vec<String> {
 fn template() -> Table {
     let mut config = Config::default();
     config.work.default_project = Some(PathBuf::from("~"));
+    config.work.worktree_command = Some(String::new());
     config.launch.claude.prompt_file = Some(PathBuf::from("~"));
     config.report.summary.model = Some(String::new());
     config.ui.colors.insert("<name>".to_owned(), String::new());
@@ -621,6 +624,18 @@ fn finalize(loaded: &mut Loaded, home: Option<&Path>) -> Result<(), ConfigError>
         }
     }
 
+    if config.work.worktree_manager == super::WorktreeManager::Command
+        && config
+            .work
+            .worktree_command
+            .as_deref()
+            .is_none_or(|c| c.trim().is_empty())
+    {
+        return Err(ConfigError::WorktreeCommandRequired {
+            origin: origin_of(loaded, "work.worktree_manager"),
+        });
+    }
+
     let statuses = config.workflow.statuses.clone();
     if !statuses.contains(&config.workflow.default_status) {
         return Err(ConfigError::DefaultStatusNotInWorkflow {
@@ -686,4 +701,27 @@ fn finalize(loaded: &mut Loaded, home: Option<&Path>) -> Result<(), ConfigError>
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No config key is an integer today; the arm exists for the first one
+    /// that is, so it is exercised against a hand-built template.
+    #[test]
+    fn coerce_handles_integers() {
+        let mut template = Table::new();
+        template.insert("limit".to_owned(), Value::Integer(0));
+        let origin = Origin::Overrides;
+        assert_eq!(
+            coerce(&template, &origin, "limit", " 42 ").unwrap(),
+            Value::Integer(42)
+        );
+        let err = coerce(&template, &origin, "limit", "many").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "--set: limit=\"many\": expected an integer"
+        );
+    }
 }

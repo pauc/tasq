@@ -115,7 +115,8 @@ fn defaults_match_the_script() {
     assert_eq!(c.workflow.default_status, Status::READY);
     assert_eq!(c.workflow.workflow(), tasq_core::model::Workflow::default());
     assert_eq!(c.work.default_project, None);
-    assert_eq!(c.work.worktree_manager, WorktreeManager::Gwm);
+    assert_eq!(c.work.worktree_manager, WorktreeManager::Git);
+    assert_eq!(c.work.worktree_command, None);
     assert_eq!(c.launch.default, "claude");
     assert_eq!(c.launch.env, EnvStrategy::Direnv);
     assert_eq!(c.launch.claude.prompt_file, None);
@@ -147,7 +148,7 @@ statuses = [\"in-progress\", \"ready\", \"waiting\", \"blocked\", \"later\"]
 default_status = \"ready\"
 
 [work]
-worktree_manager = \"gwm\"
+worktree_manager = \"git\"
 
 [launch]
 default = \"claude\"
@@ -619,6 +620,7 @@ fn env_overrides_files() {
         ("TASQ_BOOKKEEPER", "native"),
         ("TASQ_DEFAULT_PROJECT", "~/code/x"),
         ("TASQ_WORKTREE_MANAGER", "git"),
+        ("TASQ_WORKTREE_COMMAND", "mkwt {branch}"),
         ("TASQ_LAUNCHER", "tmux"),
         ("TASQ_LAUNCH_ENV", "inherit"),
         ("TASQ_PAGER", "bat -p"),
@@ -634,6 +636,7 @@ fn env_overrides_files() {
     assert_eq!(c.store.bookkeeper, Bookkeeper::Native);
     assert_eq!(c.work.default_project, Some(sb.home.join("code/x")));
     assert_eq!(c.work.worktree_manager, WorktreeManager::Git);
+    assert_eq!(c.work.worktree_command.as_deref(), Some("mkwt {branch}"));
     assert_eq!(c.launch.default, "tmux");
     assert_eq!(c.launch.env, EnvStrategy::Inherit);
     assert_eq!(c.ui.pager, "bat -p");
@@ -645,7 +648,7 @@ fn env_overrides_files() {
     assert_eq!(loaded.explain("ui.pager"), Some(&Origin::Env));
     let env_layer = loaded.layers.last().unwrap();
     assert_eq!(env_layer.origin, Origin::Env);
-    assert_eq!(env_layer.keys.len(), 11);
+    assert_eq!(env_layer.keys.len(), 12);
     assert_eq!(Origin::Env.to_string(), "env");
 }
 
@@ -658,7 +661,7 @@ fn every_documented_env_key_is_a_real_key() {
         // Any value a string key accepts; enums get their first variant.
         let value = match *key {
             "store.bookkeeper" => "auto",
-            "work.worktree_manager" => "gwm",
+            "work.worktree_manager" => "git",
             "launch.env" => "direnv",
             "ui.no_osc8" => "true",
             "report.summary.summarizer" => "raw",
@@ -1129,7 +1132,11 @@ fn plan_section_4_6_example_loads_as_is() {
         c.work.default_project,
         Some(sb.home.join("code/SF/silverfin_worspace/silverfin"))
     );
-    assert_eq!(c.work.worktree_manager, WorktreeManager::Gwm);
+    assert_eq!(c.work.worktree_manager, WorktreeManager::Command);
+    assert_eq!(
+        c.work.worktree_command.as_deref(),
+        Some("gwm create {new} {branch} --no-tmux -s")
+    );
     assert_eq!(c.launch.default, "claude");
     assert_eq!(c.launch.env, EnvStrategy::Direnv);
     assert_eq!(c.forge.len(), 1);
@@ -1335,4 +1342,44 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     );
     fs::remove_file(sb.project.join(".tasq.toml")).unwrap();
     assert_eq!(Config::load(&opts).unwrap().config.store.notebook, "global");
+}
+
+#[test]
+fn command_worktree_manager_requires_a_command() {
+    let sb = Sandbox::new();
+    let file = sb.write_project("[work]\nworktree_manager = \"command\"\n");
+    let err = Config::load(&sb.opts()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "work.worktree_manager = \"command\" (set by {}) requires work.worktree_command, e.g. \"gwm create {{new}} {{branch}} --no-tmux -s\"",
+            file.display()
+        )
+    );
+    sb.write_project("[work]\nworktree_manager = \"command\"\nworktree_command = \"  \"\n");
+    assert!(matches!(
+        Config::load(&sb.opts()).unwrap_err(),
+        ConfigError::WorktreeCommandRequired { .. }
+    ));
+    sb.write_project(
+        "[work]\nworktree_manager = \"command\"\nworktree_command = \"gwm create {new} {branch} --no-tmux -s\"\n",
+    );
+    let c = Config::load(&sb.opts()).unwrap().config;
+    assert_eq!(c.work.worktree_manager, WorktreeManager::Command);
+    // The git manager never needs the command.
+    sb.write_project("[work]\nworktree_manager = \"git\"\n");
+    assert!(Config::load(&sb.opts()).is_ok());
+}
+
+#[test]
+fn an_empty_table_is_recorded_as_a_leaf_key() {
+    let sb = Sandbox::new();
+    sb.write_project("[ui.colors]\n\n[forge]\n");
+    let loaded = Config::load(&sb.opts()).unwrap();
+    assert_eq!(loaded.layers[1].keys, vec!["forge", "ui.colors"]);
+    assert!(
+        loaded
+            .explain("ui.colors")
+            .is_some_and(|o| o.path().is_some())
+    );
 }

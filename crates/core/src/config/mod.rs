@@ -45,7 +45,7 @@
 //! default_status = "ready"
 //!
 //! [work]
-//! worktree_manager = "gwm"
+//! worktree_manager = "git"
 //!
 //! [launch]
 //! default = "claude"
@@ -192,19 +192,27 @@ pub struct WorkConfig {
     /// worktree nor a project. `~` is expanded. Default: unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_project: Option<PathBuf>,
-    /// Tool used by `tasq worktree --create`. Default: `gwm`.
+    /// How `tasq worktree --create` makes a worktree. Default: `git`.
     pub worktree_manager: WorktreeManager,
+    /// The command run by the `command` manager, a template with `{branch}`,
+    /// `{project}` and `{new}` (`-b` for a branch that does not exist yet;
+    /// `{new:<text>}` for another flag). It runs inside the project and must
+    /// print the worktree path as its last line. Required when
+    /// `worktree_manager = "command"`. Default: unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_command: Option<String>,
 }
 
 /// How `tasq worktree --create` makes a worktree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WorktreeManager {
-    /// `gwm`, which links per-project config files into the new worktree.
+    /// `git worktree add` into `<project>-<branch>` next to the project.
     #[default]
-    Gwm,
-    /// Plain `git worktree add`.
     Git,
+    /// A user-supplied command (`work.worktree_command`), for tools such as
+    /// gwm that provision the new worktree (linked files, `.envrc`, hooks).
+    Command,
 }
 
 /// `[launch]`: how `next` and `pick` open a task.
