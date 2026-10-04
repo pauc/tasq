@@ -34,7 +34,7 @@ now fires `post-done` through a fourth `Host` method (ADR 0010); commit sha belo
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
 | T-901 | Plugin mechanism | done | ADR 0006 Accepted; `crates/cli/src/plugins.rs` (dispatch, discovery, hooks), `commands/plugins.rs`; core `HooksConfig` + `TASQ_SET`; `docs/plugins.md`; `examples/plugins/{tasq-tlogs,hooks/log-event.sh}`; 6 integration + 6 unit tests |
-| T-902 | Documentation and examples | done | README, `CONTRIBUTING.md`, `docs/config.md` (every key with default), `docs/json.md`, `docs/testing.md` (wiremock claim removed), `examples/config/{plain-markdown,author}.toml`, `examples/README.md`; no gif (no recorder on this machine) |
+| T-902 | Documentation and examples | done | README, `CONTRIBUTING.md`, `docs/config.md` (every key with default), `docs/json.md`, `docs/testing.md` (wiremock claim removed), `examples/config/{plain-markdown,author}.toml`, `examples/README.md`; gif recorded 2026-10-05 (`docs/demo/`, VHS in docker) |
 | T-903 | Release pipeline | done, unrun | `.github/workflows/release.yml`, `cliff.toml`, `homebrew/tasq.rb.template`, `docs/release.md`; manifests carry `version` on path deps, `homepage`/`keywords`/`categories`; needs a GitHub repo and `CARGO_REGISTRY_TOKEN` to run |
 | T-904 | Migration guide | docs done, acceptance pending | `docs/migration.md` (command and env mapping from `original/tasks`, switch-over checklist, daily verification); the one-week run is manual |
 
@@ -53,14 +53,14 @@ core `theme` + `edit` + `store` and store-nb `store.rs` + tui `model`/`update`/`
 `runtime`: 276 tested, 0 missed after fixes (first pass 5 missed: two tests added, two code
 shapes changed, one terminal `Drop` skipped); tui alone 162 tested, 134 caught, 28 unviable.
 Verified in a pseudo-terminal (`script` + `stty`): draws, moves, opens help and the picker,
-quits and restores the screen. Not done: the README gif (no `vhs`/`asciinema` on this
-machine) and `cargo deny` locally (not installed; CI runs it; every new dependency is
+quits and restores the screen. The README gif was recorded on 2026-10-05 with VHS in docker
+(`docs/demo/`, `scripts/demo-gif`). Not done: `cargo deny` locally (not installed; CI runs it; every new dependency is
 MIT/Apache/Zlib). Next: Phase 9 (T-901 plugin mechanism, T-902 docs, T-903 release, T-904
 migration).
 
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
-| T-801 | TUI foundation | done | `crates/tui/src/{model,msg,keys,update,view,runtime}.rs`; `tasq ui` in `crates/cli/src/commands/ui.rs`; 18 `TestBackend` snapshots in `crates/tui/tests/render.rs`; gif not recorded |
+| T-801 | TUI foundation | done | `crates/tui/src/{model,msg,keys,update,view,runtime}.rs`; `tasq ui` in `crates/cli/src/commands/ui.rs`; 18 `TestBackend` snapshots in `crates/tui/tests/render.rs`; gif recorded 2026-10-05 (`docs/demo/demo.tape`) |
 | T-802 | TUI editing actions | done | `s p l d` through `tasq_core::edit`; `c` creates a task (title only, `workflow.default_status`) through `Store::create` and fires `post-create` through `Host::after_create` (ADR 0011); `Ctrl+Enter`/`Shift+Enter` open the session in a new window, focused or not (`tasq pick --detached [--no-focus]`, ADR 0012); `e`/`Enter`/`S` through the `Host` trait, run as `$EDITOR`, `tasq pick`, `tasq sync` child processes with the terminal released; paste collapses to one line; `?` help overlay |
 | T-803 | Theming and config | done | `tasq_core::theme::{Color, Theme}` shared with the CLI; `NO_COLOR`/`--color never` monochrome; two-pane from 100 columns, one pane below; both layouts snapshotted |
 
@@ -699,18 +699,23 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   ADR 0010).
   The reference plugin is a sketch of the author's tool (date range + per-day notes + even
   split), not the real HiBob/GitLab poster, which stays private.
-- T-902: no screenshot or gif (nothing to record with on this machine); README carries a TODO
-  comment. `cargo install tasq` cannot be followed yet because nothing is published.
+- T-902: the gif came a day late (2026-10-05): no recorder was installed, so it is a VHS tape
+  run through the `ghcr.io/charmbracelet/vhs` docker image (`scripts/demo-gif`) against a
+  notebook built by `docs/demo/setup.sh`. `cargo install tasq` cannot be followed yet because nothing is published.
 - T-903: hand-written workflow instead of cargo-dist/release-plz; all six crates are
   published, not two; the GitHub release and crates.io steps have never run. `CHANGELOG.md`
   is prepend-only: the `0.1.0` notes are hand-written; from the first tag on, each release
   section is rendered by `git cliff --unreleased --prepend` and then edited by hand into
   user-facing notes (decided 2026-10-05, `docs/release.md`). `git-cliff` 2.14.2 is installed
   locally; the full-file regeneration (77 commit subjects) was rendered once and discarded.
+- `create` (CLI and TUI, 2026-10-05): a task created without `--project` tracks the directory
+  `tasq` ran in (`LoadOptions.cwd`, canonicalised; the TUI gets it as `Model::default_project`
+  from the CLI). The script left `## Project` out, and `pick` then failed on
+  `work.default_project` unset. `tasq sync` tasks are unchanged.
 - T-904: the one-week side-by-side verification is a manual acceptance left to the author;
   `docs/migration.md` gives the daily procedure.
-- T-801: the README gif was not recorded (`vhs`/`asciinema` are not installed); the terminal
-  path was checked with `script` instead (see `docs/testing.md`). `d` asks for an optional
+- T-801: the README gif was recorded with VHS in docker rather than a local `vhs`/`asciinema`
+  (none is installed); the terminal path was checked with `script` first (see `docs/testing.md`). `d` asks for an optional
   final note (the `tasq done [note]` shape) rather than closing on the keypress alone.
 - T-802: launching does not "run the launcher" in-process: the TUI runs `tasq pick <id>` (and
   `tasq sync`, `$EDITOR`) as a child with the terminal released, then waits for Enter after

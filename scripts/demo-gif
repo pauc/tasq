@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+# Render docs/demo/tasq.gif from docs/demo/demo.tape with VHS running in docker,
+# so nothing (vhs, ttyd, ffmpeg) has to be installed locally.
+#
+# Builds the debug binary first and mounts it into the container, so the gif
+# shows the current tree. VHS_IMAGE overrides the image; the container runs
+# as the current user so the output is not root-owned.
+set -eu
+cd "$(dirname "$0")/.."
+scripts/guard cargo build -p tasq
+exec docker run --rm \
+    --user "$(id -u):$(id -g)" -e HOME=/tmp \
+    -v "$PWD:/vhs" \
+    -v "$PWD/target/debug/tasq:/usr/local/bin/tasq:ro" \
+    "${VHS_IMAGE:-ghcr.io/charmbracelet/vhs:v0.12.1}" docs/demo/demo.tape

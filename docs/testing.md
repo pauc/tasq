@@ -75,7 +75,18 @@ printf 'j?qq' | script -qec "stty cols 120 rows 30; target/debug/tasq ui" /dev/n
 ```
 
 (`script` gives the program a pseudo-terminal; without `stty` its size is 0x0 and nothing is
-drawn.) The TUI crate is excluded from the mutants config like the CLI, but its pure modules are
+drawn.)
+
+The README gif is a [VHS](https://github.com/charmbracelet/vhs) tape, `docs/demo/demo.tape`,
+recorded against a throwaway notebook that `docs/demo/setup.sh` builds with `tasq create`
+under a fixed `TASQ_NOW`, so re-rendering gives the same frames. `scripts/demo-gif` (also
+`just demo`) builds the debug binary and runs the tape with the pinned VHS docker image,
+mounting the repository and the binary; nothing else needs to be installed. The container has
+no `less` or `claude`, so the setup exports `TASQ_PAGER=cat` and `TASQ_SUMMARIZER=raw`.
+Re-render whenever the list or TUI output changes visibly and commit the new
+`docs/demo/tasq.gif`.
+
+The TUI crate is excluded from the mutants config like the CLI, but its pure modules are
 checked per task with `cargo mutants --no-config -f crates/tui/src/update.rs ...`.
 
 ## Deterministic time

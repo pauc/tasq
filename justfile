@@ -33,6 +33,10 @@ test:
 doc:
     {{guard}} cargo doc --workspace --no-deps
 
+# Re-render the README gif (docs/demo/tasq.gif) from docs/demo/demo.tape with VHS in docker.
+demo:
+    scripts/demo-gif
+
 # Mutation testing on code changed since `main` (what a PR would be judged on).
 # `--jobs 2` bounds concurrent mutant builds (each is a full build of a copy). The diff goes through a
 # temp file because `just` runs recipes with `sh`, which lacks `<(...)`.

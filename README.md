@@ -15,7 +15,10 @@ in the task's worktree, external sources (GitLab and GitHub review requests and 
 inbox) that create and close tasks, a full-screen terminal UI, `--json` on every command, and
 out-of-process plugins. nb itself keeps working on the same notebook.
 
-<!-- TODO: screenshot or gif of `tasq` and `tasq ui`; none has been recorded yet. -->
+![tasq listing tasks, setting a status and printing a standup summary, then tasq ui with the status picker and the help overlay](docs/demo/tasq.gif)
+
+The recording is [`docs/demo/demo.tape`](docs/demo/demo.tape) against a throwaway notebook;
+`scripts/demo-gif` re-renders it with [VHS](https://github.com/charmbracelet/vhs) in docker.
 
 ## Install
 
