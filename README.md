@@ -130,7 +130,8 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    priority, `l` logs a note, `d` marks done, `e` opens the file in `$EDITOR`, `Enter` starts
    a session here, `Ctrl+Enter` starts it in a new herdr or tmux window and switches to it,
    `Shift+Enter` does the same without leaving the list, `S` runs the sources, `?` lists
-   every key.
+   every key. Ghostty on Linux keeps `Ctrl+Enter` for fullscreen; `keybind = ctrl+enter=unbind`
+   in its config hands it back.
 
 ## Concepts
 
