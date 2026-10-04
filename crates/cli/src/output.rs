@@ -11,6 +11,7 @@ use std::process::{Command, Stdio};
 
 use serde::Serialize;
 use tasq_core::config::UiConfig;
+pub use tasq_core::theme::Color;
 
 use crate::cli::{ColorChoice, GlobalArgs};
 use crate::error::{CliError, Result};
@@ -211,13 +212,13 @@ impl Style {
     pub fn bold_color(self, color: Color, text: &str) -> String {
         match color {
             Color::Dim => self.wrap("1;2", text),
-            other => self.wrap(&format!("1;{}", other.code()), text),
+            other => self.wrap(&format!("1;{}", sgr(other)), text),
         }
     }
 
     /// Text in `color`.
     pub fn color(self, color: Color, text: &str) -> String {
-        self.wrap(&color.code(), text)
+        self.wrap(&sgr(color), text)
     }
 
     /// The tag chip of the original script: white on a dark blue background,
@@ -231,59 +232,18 @@ impl Style {
     }
 }
 
-/// A colour a status group or check verdict can be rendered in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Color {
-    /// ANSI red.
-    Red,
-    /// ANSI green.
-    Green,
-    /// ANSI yellow.
-    Yellow,
-    /// ANSI blue.
-    Blue,
-    /// ANSI magenta.
-    Magenta,
-    /// ANSI cyan.
-    Cyan,
-    /// ANSI white.
-    White,
-    /// Faint text rather than a colour.
-    Dim,
-    /// A 256-colour palette index.
-    Fixed(u8),
-}
-
-impl Color {
-    /// The SGR parameter(s) selecting this colour as the foreground.
-    pub fn code(self) -> String {
-        match self {
-            Self::Red => "31".to_owned(),
-            Self::Green => "32".to_owned(),
-            Self::Yellow => "33".to_owned(),
-            Self::Blue => "34".to_owned(),
-            Self::Magenta => "35".to_owned(),
-            Self::Cyan => "36".to_owned(),
-            Self::White => "37".to_owned(),
-            Self::Dim => "2".to_owned(),
-            Self::Fixed(n) => format!("38;5;{n}"),
-        }
-    }
-
-    /// Parses a colour name (`red`, `dim`, ...) or a palette index (`0`-`255`),
-    /// as written under `[ui.colors]`.
-    pub fn parse(text: &str) -> Option<Self> {
-        Some(match text.trim().to_ascii_lowercase().as_str() {
-            "red" => Self::Red,
-            "green" => Self::Green,
-            "yellow" => Self::Yellow,
-            "blue" => Self::Blue,
-            "magenta" => Self::Magenta,
-            "cyan" => Self::Cyan,
-            "white" => Self::White,
-            "dim" | "grey" | "gray" => Self::Dim,
-            number => Self::Fixed(number.parse().ok()?),
-        })
+/// The SGR parameter(s) selecting `color` as the foreground.
+pub fn sgr(color: Color) -> String {
+    match color {
+        Color::Red => "31".to_owned(),
+        Color::Green => "32".to_owned(),
+        Color::Yellow => "33".to_owned(),
+        Color::Blue => "34".to_owned(),
+        Color::Magenta => "35".to_owned(),
+        Color::Cyan => "36".to_owned(),
+        Color::White => "37".to_owned(),
+        Color::Dim => "2".to_owned(),
+        Color::Fixed(n) => format!("38;5;{n}"),
     }
 }
 
@@ -357,14 +317,5 @@ mod tests {
         assert_eq!(Style::OFF.bold("x"), "x");
         assert_eq!(Style::OFF.chip("#gitlab"), " #gitlab ");
         assert_eq!(Style::OFF.bold_color(Color::Red, "x"), "x");
-    }
-
-    #[test]
-    fn color_names() {
-        assert_eq!(Color::parse("Red"), Some(Color::Red));
-        assert_eq!(Color::parse("gray"), Some(Color::Dim));
-        assert_eq!(Color::parse(" 24 "), Some(Color::Fixed(24)));
-        assert_eq!(Color::parse("256"), None);
-        assert_eq!(Color::parse("octarine"), None);
     }
 }

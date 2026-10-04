@@ -570,6 +570,11 @@ impl Store for NbStore {
             ids_may_change_on_reconcile: true,
         }
     }
+
+    /// The todo file behind `id` ([`NbStore::path_of`]).
+    fn file_of(&self, id: &TaskId) -> Result<Option<PathBuf>, StoreError> {
+        self.path_of(id).map(Some)
+    }
 }
 
 #[cfg(test)]

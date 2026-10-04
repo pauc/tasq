@@ -1,36 +1,21 @@
 //! `tasq set`, `tasq log` and `tasq done`: the small edits of the script.
 //!
-//! Each one reads the task, changes the model and hands the whole task back
-//! to [`Store::update`] (or [`Store::set_done`]); the store works out the
-//! file edits. `--json` prints the task as it is after the change.
+//! The work is [`tasq_core::edit`], which the TUI calls too; this module
+//! parses the arguments, maps the errors and prints the result (or, with
+//! `--json`, the task as it is after the change).
 
-use tasq_core::model::{Priority, Status, Task, Workflow};
-use tasq_core::store::Store;
+use tasq_core::edit::{self, EditError, Value};
+use tasq_core::model::{Status, Workflow};
 
 use crate::app::App;
 use crate::commands::finish;
 use crate::error::{CliError, Result};
 
-/// What `tasq set` was given.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SetValue {
-    /// A workflow status.
-    Status(Status),
-    /// `A`, `B` or `C`.
-    Priority(Priority),
-}
-
-impl SetValue {
-    /// Interprets VALUE: a priority letter (with or without `#`) or a status
-    /// of `workflow`.
-    pub fn parse(value: &str, workflow: &Workflow) -> Result<Self> {
-        if let Ok(priority) = value.parse::<Priority>() {
-            return Ok(Self::Priority(priority));
-        }
-        if let Some(status) = workflow.parse_status(value) {
-            return Ok(Self::Status(status));
-        }
-        Err(CliError::user(format!(
+/// Interprets VALUE: a priority letter (with or without `#`) or a status
+/// of `workflow`; anything else is a user error listing both.
+pub fn parse_value(value: &str, workflow: &Workflow) -> Result<Value> {
+    Value::parse(value, workflow).ok_or_else(|| {
+        CliError::user(format!(
             "unknown status or priority '{value}' (statuses: {}; priorities: A B C)",
             workflow
                 .statuses
@@ -38,37 +23,17 @@ impl SetValue {
                 .map(Status::as_str)
                 .collect::<Vec<_>>()
                 .join(" ")
-        )))
-    }
-
-    /// The label the script printed: the status, or `priority #A`.
-    pub fn label(&self) -> String {
-        match self {
-            Self::Status(status) => status.to_string(),
-            Self::Priority(priority) => format!("priority {}", priority.to_hash()),
-        }
-    }
-
-    fn apply(&self, task: &mut Task) {
-        match self {
-            Self::Status(status) => task.set_status(status.clone()),
-            Self::Priority(priority) => task.set_priority(*priority),
-        }
-    }
+        ))
+    })
 }
 
 /// `tasq set <id> <value> [note]`.
 pub fn set(app: &App, id: &str, value: &str, note: Option<&str>) -> Result<()> {
     let id = App::task_id(id)?;
-    let value = SetValue::parse(value, &app.workflow())?;
+    let value = parse_value(value, &app.workflow())?;
     let mut store = app.open_store()?;
     let clock = app.clock()?;
-    let mut task = store.get(&id)?;
-    value.apply(&mut task);
-    if let Some(note) = note {
-        task.log(note, clock.as_ref());
-    }
-    store.update(&task)?;
+    edit::set(&mut store, &id, &value, note, clock.as_ref())?;
     let suffix = note.map_or_else(String::new, |n| format!(" ({n})"));
     finish(
         app,
@@ -81,14 +46,9 @@ pub fn set(app: &App, id: &str, value: &str, note: Option<&str>) -> Result<()> {
 /// `tasq log <id> <note>`.
 pub fn log(app: &App, id: &str, note: &str) -> Result<()> {
     let id = App::task_id(id)?;
-    if note.trim().is_empty() {
-        return Err(CliError::user("the note must not be empty"));
-    }
     let mut store = app.open_store()?;
     let clock = app.clock()?;
-    let mut task = store.get(&id)?;
-    task.log(note, clock.as_ref());
-    store.update(&task)?;
+    edit::log(&mut store, &id, note, clock.as_ref())?;
     finish(app, &store, &id, &format!("[{id}] logged: {note}\n"))
 }
 
@@ -99,45 +59,39 @@ pub fn done(app: &App, id: &str, note: Option<&str>) -> Result<()> {
     let id = App::task_id(id)?;
     let mut store = app.open_store()?;
     let clock = app.clock()?;
-    let mut task = store.get(&id)?;
-    if let Some(note) = note {
-        task.log(note, clock.as_ref());
-        store.update(&task)?;
-    }
-    store.set_done(&id, true)?;
+    let task = edit::done(&mut store, &id, note, clock.as_ref())?;
     finish(app, &store, &id, &format!("[{id}] done: {}\n", task.title))
+}
+
+impl From<EditError> for CliError {
+    fn from(e: EditError) -> Self {
+        Self::User(e.to_string())
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use tasq_core::model::Priority;
+
     use super::*;
 
     #[test]
-    fn set_value_parsing() {
+    fn value_parsing() {
         let wf = Workflow::default();
+        assert_eq!(parse_value("A", &wf).unwrap(), Value::Priority(Priority::A));
         assert_eq!(
-            SetValue::parse("A", &wf).unwrap(),
-            SetValue::Priority(Priority::A)
+            parse_value("#ready", &wf).unwrap(),
+            Value::Status(Status::READY)
         );
         assert_eq!(
-            SetValue::parse("#C", &wf).unwrap(),
-            SetValue::Priority(Priority::C)
-        );
-        assert_eq!(
-            SetValue::parse("#ready", &wf).unwrap(),
-            SetValue::Status(Status::READY)
-        );
-        assert_eq!(
-            SetValue::parse("nope", &wf).unwrap_err().to_string(),
+            parse_value("nope", &wf).unwrap_err().to_string(),
             "unknown status or priority 'nope' (statuses: in-progress ready waiting blocked later; priorities: A B C)"
         );
-        // Lowercase letters are tags in the file, so they are not priorities.
-        assert!(SetValue::parse("a", &wf).is_err());
     }
 
     #[test]
-    fn labels() {
-        assert_eq!(SetValue::Status(Status::BLOCKED).label(), "blocked");
-        assert_eq!(SetValue::Priority(Priority::A).label(), "priority #A");
+    fn edit_errors_are_user_errors() {
+        let e: CliError = EditError::EmptyNote.into();
+        assert!(matches!(e, CliError::User(ref m) if m == "the note must not be empty"));
     }
 }

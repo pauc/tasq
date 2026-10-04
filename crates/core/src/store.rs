@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::clock::FixedClock;
 use crate::format::FormatError;
 use crate::model::{Task, TaskDraft, TaskId};
 use crate::query::Filter;
@@ -139,6 +140,116 @@ pub trait Store {
 
     /// Location, size and id semantics.
     fn describe(&self) -> StoreInfo;
+
+    /// The file holding `id`, for stores that keep one file per task (the
+    /// TUI opens it in `$EDITOR`). `None` when the store has no such file;
+    /// [`StoreError::NotFound`] when there is no such task.
+    fn file_of(&self, id: &TaskId) -> Result<Option<PathBuf>, StoreError> {
+        self.get(id).map(|_| None)
+    }
+}
+
+/// A [`Store`] that keeps its tasks in memory: the test double for every
+/// front end, and a scratch store for tools that assemble tasks without a
+/// notebook. Ids are stable and assigned on creation as `1`, `2`, ...
+/// after the highest numeric id present. New tasks' notes are stamped with
+/// the injected clock.
+#[derive(Debug, Clone)]
+pub struct MemoryStore {
+    tasks: Vec<Task>,
+    clock: FixedClock,
+}
+
+impl Default for MemoryStore {
+    fn default() -> Self {
+        Self::new([])
+    }
+}
+
+impl MemoryStore {
+    /// A store holding `tasks`, with its clock at 2026-01-01 09:00.
+    pub fn new(tasks: impl IntoIterator<Item = Task>) -> Self {
+        Self {
+            tasks: tasks.into_iter().collect(),
+            clock: FixedClock::at("2026-01-01 09:00"),
+        }
+    }
+
+    /// Uses `clock` to stamp the first note of created tasks.
+    #[must_use]
+    pub fn with_clock(mut self, clock: FixedClock) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// Every task, open and done, in store order.
+    pub fn tasks(&self) -> &[Task] {
+        &self.tasks
+    }
+
+    fn position(&self, id: &TaskId) -> Result<usize, StoreError> {
+        self.tasks
+            .iter()
+            .position(|t| t.id == *id)
+            .ok_or_else(|| StoreError::NotFound(id.clone()))
+    }
+
+    fn next_id(&self) -> TaskId {
+        let highest = self
+            .tasks
+            .iter()
+            .filter_map(|t| t.id.as_str().parse::<u64>().ok())
+            .max()
+            .unwrap_or(0);
+        TaskId::from(highest + 1)
+    }
+}
+
+impl Store for MemoryStore {
+    fn list(&self, filter: &Filter) -> Result<Vec<Task>, StoreError> {
+        Ok(self
+            .tasks
+            .iter()
+            .filter(|t| filter.matches(t))
+            .cloned()
+            .collect())
+    }
+
+    fn get(&self, id: &TaskId) -> Result<Task, StoreError> {
+        Ok(self.tasks[self.position(id)?].clone())
+    }
+
+    fn create(&mut self, draft: TaskDraft) -> Result<Task, StoreError> {
+        let task = draft.into_task(self.next_id(), &self.clock);
+        self.tasks.push(task.clone());
+        Ok(task)
+    }
+
+    fn update(&mut self, task: &Task) -> Result<(), StoreError> {
+        let at = self.position(&task.id)?;
+        self.tasks[at] = task.clone();
+        Ok(())
+    }
+
+    fn set_done(&mut self, id: &TaskId, done: bool) -> Result<(), StoreError> {
+        let at = self.position(id)?;
+        if done {
+            self.tasks[at].mark_done();
+        } else {
+            self.tasks[at].done = false;
+        }
+        Ok(())
+    }
+
+    fn describe(&self) -> StoreInfo {
+        StoreInfo {
+            name: "memory".to_owned(),
+            location: PathBuf::from("memory"),
+            task_count: self.tasks.len(),
+            id_scheme: IdScheme::Stable,
+            ids_may_change_on_reconcile: false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -261,5 +372,146 @@ mod tests {
             serde_json::to_string(&IdScheme::Stable).unwrap(),
             "\"stable\""
         );
+    }
+
+    mod memory {
+        use super::*;
+        use crate::model::{Priority, Status};
+
+        fn store() -> MemoryStore {
+            let mut a = Task::new(TaskId::from(1), "A");
+            a.set_status(Status::READY);
+            let mut done = Task::new(TaskId::from(3), "Old");
+            done.mark_done();
+            MemoryStore::new([a, done])
+        }
+
+        #[test]
+        fn list_applies_the_filter_in_store_order() {
+            let store = store();
+            let open = store.list(&Filter::default()).unwrap();
+            assert_eq!(open.len(), 1);
+            assert_eq!(open[0].id, TaskId::from(1));
+            let all = store.list(&Filter::default().any_done()).unwrap();
+            assert_eq!(all, store.tasks().to_vec());
+            assert_eq!(all[1].id, TaskId::from(3));
+            assert_eq!(store.list(&Filter::default().done(true)).unwrap().len(), 1);
+            assert_eq!(MemoryStore::default().tasks(), &[] as &[Task]);
+        }
+
+        #[test]
+        fn get_finds_by_id() {
+            let store = store();
+            assert_eq!(store.get(&TaskId::from(3)).unwrap().title, "Old");
+            assert_eq!(
+                store.get(&TaskId::from(2)).unwrap_err().to_string(),
+                "no task with id 2"
+            );
+        }
+
+        #[test]
+        fn create_assigns_the_next_numeric_id_and_stamps_the_note() {
+            let mut store = store().with_clock(FixedClock::at("2026-10-04 10:15"));
+            let task = store
+                .create(TaskDraft::new("New").with_note("first"))
+                .unwrap();
+            assert_eq!(task.id, TaskId::from(4));
+            assert_eq!(task.title, "New");
+            assert_eq!(task.progress.len(), 1);
+            assert_eq!(
+                crate::clock::format_timestamp(task.progress[0].at.date_time()),
+                "2026-10-04 10:15"
+            );
+            assert_eq!(store.get(&TaskId::from(4)).unwrap(), task);
+            assert_eq!(store.tasks().len(), 3);
+            let second = store.create(TaskDraft::new("Again")).unwrap();
+            assert_eq!(second.id, TaskId::from(5));
+            assert_eq!(second.progress, Vec::new());
+
+            let mut text_ids = MemoryStore::new([Task::new(TaskId::new("abc").unwrap(), "x")]);
+            assert_eq!(
+                text_ids.create(TaskDraft::new("y")).unwrap().id,
+                TaskId::from(1)
+            );
+            let mut empty = MemoryStore::default();
+            assert_eq!(
+                empty.create(TaskDraft::new("y")).unwrap().id,
+                TaskId::from(1)
+            );
+            assert_eq!(
+                crate::clock::format_timestamp(
+                    empty
+                        .create(TaskDraft::new("z").with_note("n"))
+                        .unwrap()
+                        .progress[0]
+                        .at
+                        .date_time()
+                ),
+                "2026-01-01 09:00"
+            );
+        }
+
+        #[test]
+        fn update_replaces_the_whole_task() {
+            let mut store = store();
+            let mut task = store.get(&TaskId::from(1)).unwrap();
+            task.set_priority(Priority::A);
+            task.title = "Renamed".to_owned();
+            store.update(&task).unwrap();
+            assert_eq!(store.get(&TaskId::from(1)).unwrap(), task);
+            assert_eq!(store.tasks().len(), 2);
+            assert_eq!(store.tasks()[1].title, "Old");
+            let stranger = Task::new(TaskId::from(7), "?");
+            assert_eq!(
+                store.update(&stranger).unwrap_err().to_string(),
+                "no task with id 7"
+            );
+            assert_eq!(store.tasks().len(), 2);
+        }
+
+        #[test]
+        fn set_done_closes_and_reopens() {
+            let mut store = store();
+            store.set_done(&TaskId::from(1), true).unwrap();
+            let task = store.get(&TaskId::from(1)).unwrap();
+            assert!(task.done);
+            assert_eq!(task.status, None);
+            store.set_done(&TaskId::from(1), false).unwrap();
+            let task = store.get(&TaskId::from(1)).unwrap();
+            assert!(!task.done);
+            assert_eq!(task.status, None);
+            assert_eq!(
+                store
+                    .set_done(&TaskId::from(9), true)
+                    .unwrap_err()
+                    .to_string(),
+                "no task with id 9"
+            );
+        }
+
+        #[test]
+        fn file_of_is_none_for_existing_tasks_only() {
+            let store = store();
+            assert_eq!(store.file_of(&TaskId::from(1)).unwrap(), None);
+            assert_eq!(
+                store.file_of(&TaskId::from(2)).unwrap_err().to_string(),
+                "no task with id 2"
+            );
+        }
+
+        #[test]
+        fn describe() {
+            let info = store().describe();
+            assert_eq!(
+                info,
+                StoreInfo {
+                    name: "memory".to_owned(),
+                    location: PathBuf::from("memory"),
+                    task_count: 2,
+                    id_scheme: IdScheme::Stable,
+                    ids_may_change_on_reconcile: false,
+                }
+            );
+        }
     }
 }

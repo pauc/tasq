@@ -8,9 +8,8 @@
 //! chips (white on dark blue). When the filter names a single status the
 //! header is the status name itself, uncoloured, as the script printed it.
 
-use std::collections::BTreeMap;
-
 use tasq_core::clock::format_date;
+#[cfg(test)]
 use tasq_core::config::UiConfig;
 use tasq_core::model::{Priority, Status, Tag, Task, Workflow};
 use tasq_core::query::{self, Filter, Group};
@@ -21,6 +20,7 @@ use crate::cli::ListArgs;
 use crate::error::{CliError, Result};
 use crate::json;
 use crate::output::{Color, Style};
+pub use tasq_core::theme::{Theme, group_label};
 
 /// Runs `list`.
 pub fn run(app: &App, args: &ListArgs) -> Result<()> {
@@ -151,52 +151,6 @@ fn status_list(workflow: &Workflow) -> String {
         .join(" ")
 }
 
-/// Colours of the group headers: the script's five plus `cyan` for any
-/// other configured status and dim for `NO STATUS`, overridable per status
-/// name under `[ui.colors]` (`no-status` for the last group).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Theme {
-    overrides: BTreeMap<String, Color>,
-}
-
-impl Theme {
-    /// Reads `[ui.colors]`; entries that are not a colour are ignored.
-    pub fn from_config(ui: &UiConfig) -> Self {
-        Self {
-            overrides: ui
-                .colors
-                .iter()
-                .filter_map(|(name, spec)| Color::parse(spec).map(|c| (name.clone(), c)))
-                .collect(),
-        }
-    }
-
-    /// The header colour of a status group (`None` is the no-status group).
-    pub fn color(&self, status: Option<&Status>) -> Color {
-        let name = status.map_or("no-status", Status::as_str);
-        if let Some(color) = self.overrides.get(name) {
-            return *color;
-        }
-        match status {
-            None => Color::Dim,
-            Some(s) if *s == Status::IN_PROGRESS => Color::Blue,
-            Some(s) if *s == Status::READY => Color::Green,
-            Some(s) if *s == Status::WAITING => Color::Yellow,
-            Some(s) if *s == Status::BLOCKED => Color::Red,
-            Some(s) if *s == Status::LATER => Color::Magenta,
-            Some(_) => Color::Cyan,
-        }
-    }
-}
-
-/// The `IN PROGRESS` / `NO STATUS` header of a group.
-pub fn group_label(status: Option<&Status>) -> String {
-    status.map_or_else(
-        || "NO STATUS".to_owned(),
-        |s| s.as_str().to_uppercase().replace('-', " "),
-    )
-}
-
 /// Renders the groups. `single_status` reproduces the script's
 /// one-status view: the header is the status name, bold but uncoloured.
 pub fn render(groups: &[Group<'_>], theme: &Theme, style: Style, single_status: bool) -> String {
@@ -204,9 +158,10 @@ pub fn render(groups: &[Group<'_>], theme: &Theme, style: Style, single_status: 
     for group in groups {
         let header = match (&group.status, single_status) {
             (Some(status), true) => style.bold(status.as_str()),
-            (status, _) => {
-                style.bold_color(theme.color(status.as_ref()), &group_label(status.as_ref()))
-            }
+            (status, _) => style.bold_color(
+                theme.status_color(status.as_ref()),
+                &group_label(status.as_ref()),
+            ),
         };
         out.push_str(&header);
         out.push('\n');
@@ -328,35 +283,6 @@ mod tests {
         assert!(!c.filter().matches(&t));
         t.set_status(Status::READY);
         assert!(c.filter().matches(&t));
-    }
-
-    #[test]
-    fn theme_defaults_and_overrides() {
-        let theme = Theme::from_config(&UiConfig::default());
-        assert_eq!(theme.color(Some(&Status::IN_PROGRESS)), Color::Blue);
-        assert_eq!(theme.color(Some(&Status::READY)), Color::Green);
-        assert_eq!(theme.color(Some(&Status::WAITING)), Color::Yellow);
-        assert_eq!(theme.color(Some(&Status::BLOCKED)), Color::Red);
-        assert_eq!(theme.color(Some(&Status::LATER)), Color::Magenta);
-        assert_eq!(
-            theme.color(Some(&Status::new("review").unwrap())),
-            Color::Cyan
-        );
-        assert_eq!(theme.color(None), Color::Dim);
-        let mut ui = UiConfig::default();
-        ui.colors.insert("ready".into(), "208".into());
-        ui.colors.insert("no-status".into(), "white".into());
-        ui.colors.insert("later".into(), "not-a-colour".into());
-        let theme = Theme::from_config(&ui);
-        assert_eq!(theme.color(Some(&Status::READY)), Color::Fixed(208));
-        assert_eq!(theme.color(None), Color::White);
-        assert_eq!(theme.color(Some(&Status::LATER)), Color::Magenta);
-    }
-
-    #[test]
-    fn labels() {
-        assert_eq!(group_label(Some(&Status::IN_PROGRESS)), "IN PROGRESS");
-        assert_eq!(group_label(None), "NO STATUS");
     }
 
     #[test]

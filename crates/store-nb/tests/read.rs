@@ -225,6 +225,11 @@ fn get_of_missing_or_non_todo_ids_is_not_found() {
     let err = store.get(&TaskId::new("abc").unwrap()).unwrap_err();
     assert!(matches!(err, StoreError::NotFound(_)));
     assert!(store.path_of(&TaskId::from(id::MISSING)).is_err());
+    assert!(store.file_of(&TaskId::from(id::MISSING)).is_err());
+    assert_eq!(
+        store.file_of(&TaskId::from(id::FULL)).unwrap(),
+        Some(store.path_of(&TaskId::from(id::FULL)).unwrap())
+    );
     assert_eq!(
         store.path_of(&TaskId::from(id::FULL)).unwrap(),
         nb.file(id::FULL)
