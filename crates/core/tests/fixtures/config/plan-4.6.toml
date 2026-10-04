@@ -1,0 +1,44 @@
+[store]
+kind = "nb"
+notebook = "home"            # resolves ~/.nb/<notebook> or asks nb
+bookkeeper = "auto"          # auto | nb | native — who maintains .index and git commits
+
+[workflow]
+statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
+default_status = "ready"
+
+[work]
+default_project = "~/code/SF/silverfin_worspace/silverfin"
+worktree_manager = "gwm"     # or "git"
+
+[launch]
+default = "claude"           # shell | claude | tmux | herdr
+env = "direnv"               # inherit | direnv
+
+[forge.gitlab]                # shared client config, used by every gitlab-* source
+host = "gitlab.silverfin.com"
+token_cmd = "glab auth token"
+
+[[source]]
+name = "gitlab-review-requests"
+kind = "gitlab-review-requests"
+forge = "gitlab"
+tags = ["gitlab", "review-request"]
+status = "ready"
+
+[[source]]
+name = "gitlab-work-items"
+kind = "gitlab-work-items"     # issues / work items assigned to me
+forge = "gitlab"
+tags = ["gitlab"]
+status = "later"
+
+[[source]]
+name = "inbox"
+kind = "llm-bridge"
+command = "claude -p --output-format json"
+prompt_file = "~/.config/tasq/prompts/inbox.md"
+
+[report.summary]
+summarizer = "llm"           # raw | llm
+command = "claude -p --model sonnet"
