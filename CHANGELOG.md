@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `report.summary.command` reading a prompt template on stdin, or printed raw. `tasq dates
   [SPEC]`: `this|last week`, `this|last month`, `last N days`, days and day pairs resolved to
   `FROM TO`, with `--json` for scripts and plugins.
+- Claude Code plugin `plugins/claude` (namespace `tasq`): `/tasq:wrapup` (progress notes,
+  tracked MRs/worktree/session, final status through the CLI) and `/tasq:sync` (`tasq sync`,
+  inbox triage when no LLM bridge is configured, a briefing); the repository doubles as a
+  one-plugin marketplace; a status-line snippet shows `[id] title`.
 - nb-compatible store (`tasq-store-nb`) with nb and native bookkeepers.
 - Core domain model, lossless markdown format, queries and layered TOML config.
 - Cargo workspace with the `tasq-core`, `tasq-store-nb`, `tasq-sources`,

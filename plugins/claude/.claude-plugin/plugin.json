@@ -1,0 +1,11 @@
+{
+  "name": "tasq",
+  "displayName": "tasq",
+  "version": "0.1.0",
+  "description": "Skills for working on tasq tasks from Claude Code: /tasq:wrapup records a session's progress and status, /tasq:sync refreshes tasks from the configured sources and triages the inbox.",
+  "author": {
+    "name": "Pau Compte"
+  },
+  "license": "GPL-3.0-or-later",
+  "keywords": ["tasq", "tasks", "todo", "nb", "standup"]
+}

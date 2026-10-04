@@ -1,0 +1,16 @@
+{
+  "name": "tasq",
+  "owner": {
+    "name": "Pau Compte"
+  },
+  "metadata": {
+    "description": "Claude Code plugins shipped with the tasq task manager."
+  },
+  "plugins": [
+    {
+      "name": "tasq",
+      "source": "./plugins/claude",
+      "description": "Skills for working on tasq tasks: /tasq:wrapup and /tasq:sync."
+    }
+  ]
+}

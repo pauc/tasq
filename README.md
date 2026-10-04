@@ -23,6 +23,16 @@ every workflow the script offers today.
 Pre-alpha. See [`ruli/features/rust-rewrite/PLAN.md`](ruli/features/rust-rewrite/PLAN.md)
 for the implementation plan.
 
+## Claude Code plugin
+
+`plugins/claude` is a Claude Code plugin (namespace `tasq`) with two skills: `/tasq:wrapup`
+records a session's progress and final status on its task, `/tasq:sync` refreshes the task list
+from the configured sources and briefs you. Load it for one session with
+`claude --plugin-dir plugins/claude`, or install it: the repository is a one-plugin marketplace
+(`claude plugin marketplace add <repo>`, then `claude plugin install tasq@tasq`). See
+[`plugins/claude/README.md`](plugins/claude/README.md), which also has a status-line snippet
+showing the current task.
+
 ## Development
 
 Requires a stable Rust toolchain (see `rust-toolchain.toml`) and

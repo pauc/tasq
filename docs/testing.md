@@ -12,6 +12,14 @@ Quality gates run locally with `just check` (or the cargo commands it wraps) and
 - Snapshot tests use `insta`; property tests use `proptest`; HTTP adapters use `wiremock`; the CLI
   uses `assert_cmd`. Tests never touch the network.
 
+## Claude Code plugin
+
+`crates/cli/tests/plugin.rs` checks the layout of `plugins/claude` (manifest name `tasq`, one
+`SKILL.md` per skill with matching `name` and a `description`, no direct notebook edits) and that
+the launch prompt template only names skills the plugin ships. The authoritative check needs
+Claude Code and is not in CI: `claude plugin validate --strict plugins/claude` (and the same for
+`.claude-plugin/marketplace.json` and `plugins/claude/skills`).
+
 ## Deterministic time
 
 `TASQ_NOW="YYYY-MM-DD HH:MM"` in the environment makes the binary use a fixed clock for every
