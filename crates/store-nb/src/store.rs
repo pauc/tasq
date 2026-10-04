@@ -8,12 +8,13 @@ use std::path::{Path, PathBuf};
 
 use tasq_core::clock::{Clock, SystemClock};
 use tasq_core::config::StoreConfig;
-use tasq_core::format::{self, FormatError, Parsed};
+use tasq_core::format::{self, Document, FormatError, Parsed};
 use tasq_core::model::{Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::Filter;
 use tasq_core::store::{IdScheme, Store, StoreError, StoreInfo};
 
 use crate::bookkeeper::{Bookkeeper, select_bookkeeper};
+use crate::create::{DEFAULT_NOTE, check_draft, free_file_name};
 use crate::diff;
 use crate::index::{Index, is_todo};
 use crate::nb::Nb;
@@ -346,6 +347,35 @@ impl NbStore {
         Revision::of(path, text.as_bytes()).map_err(io_error)
     }
 
+    /// Writes `text` to the new file `path`, which must not exist yet, via a
+    /// temp file in the same directory; mode 0644 like a file nb creates.
+    fn create_atomic(path: &Path, text: &str) -> Result<(), StoreError> {
+        let io_error = |source| StoreError::Io {
+            path: path.to_owned(),
+            source,
+        };
+        let dir = path.parent().ok_or_else(|| {
+            io_error(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "task file has no parent directory",
+            ))
+        })?;
+        let mut tmp = tempfile::Builder::new()
+            .prefix(".tasq-")
+            .tempfile_in(dir)
+            .map_err(io_error)?;
+        tmp.write_all(text.as_bytes()).map_err(io_error)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tmp.as_file()
+                .set_permissions(std::fs::Permissions::from_mode(0o644))
+                .map_err(io_error)?;
+        }
+        tmp.persist_noclobber(path).map_err(|e| io_error(e.error))?;
+        Ok(())
+    }
+
     /// Runs the bookkeeper's checkpoint, turning a failure into a warning:
     /// the file is already written, so this is never data loss.
     fn checkpoint(&mut self, message: &str) {
@@ -354,6 +384,18 @@ impl NbStore {
                 message: e.to_string(),
             });
         }
+    }
+
+    /// The text [`Store::create`] writes for `draft`: the draft as a task
+    /// with the id still unknown, its note (or [`DEFAULT_NOTE`]) stamped
+    /// at `now`, rendered by [`Document::from_task`].
+    fn render_draft(&self, draft: TaskDraft) -> String {
+        let mut draft = draft;
+        if draft.note.is_none() {
+            draft.note = Some(DEFAULT_NOTE.to_owned());
+        }
+        let task = draft.into_task(TaskId::from(0), self.clock.as_ref());
+        format::render(&Document::from_task(&task, &self.workflow))
     }
 
     fn file_name(path: &Path) -> String {
@@ -398,12 +440,50 @@ impl Store for NbStore {
         Ok(parsed.task)
     }
 
-    /// Not available yet: creation needs nb's filename rule and index
-    /// registration (plan T-203).
+    /// Writes `draft` as a new `YYYYMMDDHHMMSS.todo.md` named after the
+    /// clock (next free second when taken, like nb), registers it through
+    /// the bookkeeper, reads the id back as the last index line naming the
+    /// file (the script's `grep -nxF | tail -1`), commits as
+    /// `[tasq] Add: <file>` and returns the task as stored.
+    ///
+    /// A draft without a note gets `created via tasq create`; a `done` draft
+    /// is written as `# [x]` without a status tag. Merge requests need a
+    /// label ([`StoreError::Unsupported`] otherwise). When the file is
+    /// written but cannot be registered, the error is
+    /// [`StoreError::Bookkeeping`] and names the file.
     fn create(&mut self, draft: TaskDraft) -> Result<Task, StoreError> {
-        Err(StoreError::Unsupported {
-            operation: format!("creating task {:?}: not implemented yet", draft.title),
-        })
+        check_draft(&draft)?;
+        let now = self.clock.now();
+        let name = free_file_name(now, |candidate| self.dir.join(candidate).exists()).ok_or_else(
+            || StoreError::Io {
+                path: self.dir.join(crate::create::file_name_at(now)),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!(
+                        "no free todo filename within {} seconds",
+                        crate::create::MAX_ATTEMPTS
+                    ),
+                ),
+            },
+        )?;
+        let path = self.dir.join(&name);
+        let text = self.render_draft(draft);
+        Self::create_atomic(&path, &text)?;
+        self.bookkeeper
+            .register(&path)
+            .map_err(|e| StoreError::Bookkeeping {
+                message: format!("{name} was written but not added to .index: {e}"),
+            })?;
+        let id = self
+            .load_index()?
+            .last_id_of(&name)
+            .ok_or_else(|| StoreError::Bookkeeping {
+                message: format!(
+                    "{name} was written but .index does not list it; run 'nb index reconcile' in the notebook"
+                ),
+            })?;
+        self.checkpoint(&format!("[tasq] Add: {name}"));
+        self.get(&id)
     }
 
     /// Rewrites the task's file with the operations that bring it in line

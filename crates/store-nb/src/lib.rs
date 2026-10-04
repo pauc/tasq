@@ -8,6 +8,8 @@
 //! - Writes rewrite one file atomically with the edit operations of
 //!   [`tasq_core::format::ops`], refuse to overwrite a file that changed since
 //!   it was read, and then hand over to a [`Bookkeeper`] (index and commits).
+//! - [`Store::create`] writes a new `YYYYMMDDHHMMSS.todo.md`, registers it
+//!   through the bookkeeper and reads the id back from `.index`.
 //!
 //! `nb` is only ever run with the environment the caller injects through
 //! [`NbStoreOptions`], so tests can point it at a temporary notebook.
@@ -17,6 +19,7 @@
 #![warn(missing_docs)]
 
 pub mod bookkeeper;
+pub mod create;
 pub mod diff;
 pub mod git;
 pub mod index;
