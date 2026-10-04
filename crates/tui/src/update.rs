@@ -4,7 +4,7 @@
 use tasq_core::model::{Priority, TaskId};
 
 use crate::model::{Message, Mode, Model, NoteTarget, PAGE};
-use crate::msg::{Cmd, Msg};
+use crate::msg::{Cmd, LaunchTarget, Msg};
 
 /// Applies `msg` to `model` and returns the commands to run.
 pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
@@ -111,7 +111,14 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
             };
         }
         Msg::Edit => return with_selection(model, Cmd::Edit),
-        Msg::Launch | Msg::Enter => return with_selection(model, Cmd::Launch),
+        Msg::Launch | Msg::Enter => {
+            return with_selection(model, |id| Cmd::Launch(id, LaunchTarget::Here));
+        }
+        Msg::LaunchDetached { focus } => {
+            return with_selection(model, |id| {
+                Cmd::Launch(id, LaunchTarget::Detached { focus: *focus })
+            });
+        }
         Msg::Sync => return vec![Cmd::Sync],
         Msg::Backspace | Msg::Char(_) | Msg::Paste(_) => {}
         Msg::Resize(..) | Msg::Loaded(_) | Msg::Select(_) | Msg::Info(_) | Msg::Failed(_) => {
@@ -766,17 +773,29 @@ mod tests {
         assert_eq!(update(&mut m, Msg::Edit), vec![Cmd::Edit(TaskId::from(1))]);
         assert_eq!(
             update(&mut m, Msg::Launch),
-            vec![Cmd::Launch(TaskId::from(1))]
+            vec![Cmd::Launch(TaskId::from(1), LaunchTarget::Here)]
         );
         assert_eq!(
             update(&mut m, Msg::Enter),
-            vec![Cmd::Launch(TaskId::from(1))]
+            vec![Cmd::Launch(TaskId::from(1), LaunchTarget::Here)]
         );
+        for focus in [true, false] {
+            assert_eq!(
+                update(&mut m, Msg::LaunchDetached { focus }),
+                vec![Cmd::Launch(
+                    TaskId::from(1),
+                    LaunchTarget::Detached { focus }
+                )]
+            );
+            assert_eq!(m.mode, Mode::Normal);
+        }
         assert_eq!(update(&mut m, Msg::Sync), vec![Cmd::Sync]);
         update(&mut m, Msg::Loaded(Vec::new()));
         for msg in [
             Msg::Edit,
             Msg::Launch,
+            Msg::LaunchDetached { focus: true },
+            Msg::LaunchDetached { focus: false },
             Msg::BeginStatus,
             Msg::BeginPriority,
             Msg::BeginNote,

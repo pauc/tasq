@@ -1,12 +1,14 @@
 //! The herdr launcher (plan T-405): a workspace (or a tab in the workspace
-//! already holding the directory), a Claude agent started in its pane, the
-//! prompt pasted in, focus moved there. Falls back to another launcher in
-//! the current pane when herdr cannot create the pane.
+//! already holding the directory, as `launch.herdr.placement` says), a
+//! Claude agent started in its pane, the prompt pasted in, focus moved
+//! there unless the context asks otherwise. Falls back to another launcher
+//! in the current pane when herdr cannot create the pane.
 
 use std::fmt::{self, Debug};
 use std::path::PathBuf;
 
 use serde_json::Value;
+use tasq_core::config::Placement;
 use tasq_core::launch::{LaunchContext, LaunchError, LaunchOutcome, Launcher, short_label};
 
 use crate::env::{envrc_status, envrc_warning};
@@ -14,6 +16,9 @@ use crate::process::{env_var, run};
 
 /// Environment variable herdr sets inside its panes.
 pub const ENV_HERDR: &str = "HERDR_ENV";
+/// Environment variable naming the workspace of the current pane; where a
+/// `tab` placement lands when no workspace holds the task's directory.
+pub const ENV_HERDR_WORKSPACE: &str = "HERDR_WORKSPACE_ID";
 /// Readiness timeout passed to `herdr agent start`, in milliseconds.
 pub const AGENT_TIMEOUT_MS: &str = "90000";
 
@@ -27,6 +32,8 @@ pub struct HerdrLauncher {
     /// `work.default_project`: a session there never looks for a holding
     /// workspace (the script's `$workdir != $DEFAULT_WORKTREE`).
     pub default_project: Option<PathBuf>,
+    /// `launch.herdr.placement`: what a new window is.
+    pub placement: Placement,
     /// Renders the prompt and takes over when herdr cannot open a pane.
     pub fallback: Box<dyn Launcher>,
     /// Builds the prompt pasted into the agent.
@@ -37,6 +44,7 @@ impl Debug for HerdrLauncher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HerdrLauncher")
             .field("default_project", &self.default_project)
+            .field("placement", &self.placement)
             .field("fallback", &self.fallback.name())
             .finish_non_exhaustive()
     }
@@ -118,8 +126,28 @@ impl HerdrLauncher {
             .collect()
     }
 
+    /// Whether a workspace holding the directory is looked for: never for
+    /// a `workspace` placement, always for `tab`, and for `auto` unless the
+    /// directory is `work.default_project`.
     fn looks_up_workspace(&self, ctx: &LaunchContext) -> bool {
-        self.default_project.as_deref() != Some(ctx.workdir.as_path())
+        match self.placement {
+            Placement::Workspace => false,
+            Placement::Tab => true,
+            Placement::Auto => self.default_project.as_deref() != Some(ctx.workdir.as_path()),
+        }
+    }
+
+    /// The workspace a tab goes into, if any: the one holding the
+    /// directory, else, for a `tab` placement, the current one.
+    fn tab_workspace(&self, ctx: &LaunchContext, workdir: &str) -> Option<String> {
+        if !self.looks_up_workspace(ctx) {
+            return None;
+        }
+        let out = self.herdr(&["worktree", "list", "--cwd", workdir]);
+        workspace_holding(&out.stdout, workdir).or_else(|| match self.placement {
+            Placement::Tab => env_var(&self.env, ENV_HERDR_WORKSPACE).map(str::to_owned),
+            Placement::Auto | Placement::Workspace => None,
+        })
     }
 
     /// Finds or creates the pane: `(workspace_id, tab_id, pane_id)`.
@@ -129,12 +157,7 @@ impl HerdrLauncher {
         label: &str,
     ) -> (Option<String>, Option<String>, Option<String>) {
         let workdir = ctx.workdir.display().to_string();
-        let holding = if self.looks_up_workspace(ctx) {
-            let out = self.herdr(&["worktree", "list", "--cwd", &workdir]);
-            workspace_holding(&out.stdout, &workdir)
-        } else {
-            None
-        };
+        let holding = self.tab_workspace(ctx, &workdir);
         let env_args = Self::env_args(ctx);
         let env_refs: Vec<&str> = env_args.iter().map(String::as_str).collect();
         match holding {
@@ -212,9 +235,14 @@ impl Launcher for HerdrLauncher {
         let env_args = Self::env_args(ctx).join(" ");
         let mut lines = Vec::new();
         if self.looks_up_workspace(ctx) {
-            lines.push(format!(
-                "herdr worktree list --cwd {workdir}   (reuse the workspace holding it, as a new tab)"
-            ));
+            lines.push(match self.placement {
+                Placement::Tab => format!(
+                    "herdr worktree list --cwd {workdir}   (a new tab in the workspace holding it, else in the current one)"
+                ),
+                Placement::Auto | Placement::Workspace => format!(
+                    "herdr worktree list --cwd {workdir}   (reuse the workspace holding it, as a new tab)"
+                ),
+            });
         }
         lines.push(format!(
             "herdr workspace create --label \"{label}\" --cwd {workdir} {env_args} --no-focus"
@@ -227,7 +255,11 @@ impl Launcher for HerdrLauncher {
             "herdr agent prompt task-{} \"<prompt below>\"",
             ctx.task.id
         ));
-        lines.push("herdr workspace focus <workspace>".to_owned());
+        if ctx.focus {
+            lines.push("herdr workspace focus <workspace>".to_owned());
+        } else {
+            lines.push("(no focus change: the session opens in the background)".to_owned());
+        }
         lines.push(format!(
             "(if herdr cannot open a pane: {} launcher in the current pane)",
             self.fallback.name()
@@ -261,6 +293,11 @@ impl Launcher for HerdrLauncher {
                 tool: "herdr agent prompt".to_owned(),
                 message: pasted.message(),
             });
+        }
+        if !ctx.focus {
+            return Ok(LaunchOutcome::Opened(format!(
+                "Opened herdr workspace {ws_id} (\"{label}\") with agent {agent} in the background"
+            )));
         }
         // `agent focus` moves the server's focus; only `workspace focus`
         // switches the view, landing on the workspace's active tab.

@@ -32,7 +32,9 @@ pub const ENV_SET: &str = "TASQ_SET";
 /// | `TASQ_WORKTREE_MANAGER` | `work.worktree_manager` |
 /// | `TASQ_WORKTREE_COMMAND` | `work.worktree_command` |
 /// | `TASQ_LAUNCHER` | `launch.default` |
+/// | `TASQ_LAUNCH_DETACHED` | `launch.detached` |
 /// | `TASQ_LAUNCH_ENV` | `launch.env` |
+/// | `TASQ_HERDR_PLACEMENT` | `launch.herdr.placement` |
 /// | `TASQ_PAGER` | `ui.pager` |
 /// | `TASQ_NO_OSC8` | `ui.no_osc8` |
 /// | `TASQ_GLOW_STYLE` | `ui.glow_style` |
@@ -53,7 +55,9 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_WORKTREE_MANAGER", "work.worktree_manager"),
     ("TASQ_WORKTREE_COMMAND", "work.worktree_command"),
     ("TASQ_LAUNCHER", "launch.default"),
+    ("TASQ_LAUNCH_DETACHED", "launch.detached"),
     ("TASQ_LAUNCH_ENV", "launch.env"),
+    ("TASQ_HERDR_PLACEMENT", "launch.herdr.placement"),
     ("TASQ_PAGER", "ui.pager"),
     ("TASQ_NO_OSC8", "ui.no_osc8"),
     ("TASQ_GLOW_STYLE", "ui.glow_style"),

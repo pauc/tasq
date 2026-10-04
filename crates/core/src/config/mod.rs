@@ -50,9 +50,13 @@
 //!
 //! [launch]
 //! default = "claude"
+//! detached = "auto"
 //! env = "direnv"
 //!
 //! [launch.claude]
+//!
+//! [launch.herdr]
+//! placement = "auto"
 //!
 //! [ui]
 //! pager = "less -RFX"
@@ -231,18 +235,26 @@ pub struct LaunchConfig {
     /// Not validated here because launchers are registered by other crates.
     /// Default: `claude`.
     pub default: String,
+    /// Launcher for a session in a new window (`--detached`, the TUI's
+    /// `Ctrl+Enter` and `Shift+Enter`): `herdr`, `tmux`, or `auto` for
+    /// whichever of the two the current terminal runs in. Default: `auto`.
+    pub detached: String,
     /// Where the session's environment comes from. Default: `direnv`.
     pub env: EnvStrategy,
     /// Settings of the Claude Code launcher.
     pub claude: ClaudeLaunchConfig,
+    /// Settings of the herdr launcher.
+    pub herdr: HerdrLaunchConfig,
 }
 
 impl Default for LaunchConfig {
     fn default() -> Self {
         Self {
             default: "claude".to_owned(),
+            detached: "auto".to_owned(),
             env: EnvStrategy::Direnv,
             claude: ClaudeLaunchConfig::default(),
+            herdr: HerdrLaunchConfig::default(),
         }
     }
 }
@@ -256,6 +268,28 @@ pub enum EnvStrategy {
     /// The working directory's own environment via `direnv exec <dir>`.
     #[default]
     Direnv,
+}
+
+/// `[launch.herdr]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HerdrLaunchConfig {
+    /// Where a herdr session opens. Default: `auto`.
+    pub placement: Placement,
+}
+
+/// What "a new window" is in herdr.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Placement {
+    /// A tab in the workspace already holding the task's directory, else
+    /// a new workspace (the original script's rule).
+    #[default]
+    Auto,
+    /// Always a new workspace.
+    Workspace,
+    /// Always a tab: in the holding workspace, else in the current one.
+    Tab,
 }
 
 /// `[launch.claude]`.

@@ -42,10 +42,14 @@ worktree_manager = "git"     # git | command
 
 [launch]
 default = "claude"           # auto | claude | shell | tmux | herdr
+detached = "auto"            # auto | tmux | herdr   (--detached, the TUI's Ctrl/Shift+Enter)
 env = "direnv"               # inherit | direnv
 
 [launch.claude]
 # prompt_file = "~/.config/tasq/prompts/claude.md"
+
+[launch.herdr]
+placement = "auto"           # auto | workspace | tab
 
 [ui]
 pager = "less -RFX"
@@ -103,8 +107,10 @@ pre-launch = []
 | `work.worktree_manager` | `git` \| `command` | `git` | How `tasq worktree --create` makes a worktree. |
 | `work.worktree_command` | string | unset | Template run by the `command` manager; required with it. See "Worktree managers". |
 | `launch.default` | string | `claude` | Launcher for `next`/`pick`: `auto`, `claude`, `shell`, `tmux`, `herdr`. Not validated at load time. |
+| `launch.detached` | string | `auto` | Launcher for `next`/`pick --detached` (the TUI's `Ctrl+Enter` and `Shift+Enter`): `herdr`, `tmux`, or `auto` for whichever the terminal runs in; an error when neither. See "Launchers". |
 | `launch.env` | `inherit` \| `direnv` | `direnv` | Where the session's environment comes from. |
 | `launch.claude.prompt_file` | path | unset | Prompt template replacing the built-in `crates/launch/templates/claude.md`. `~` expanded. |
+| `launch.herdr.placement` | `auto` \| `workspace` \| `tab` | `auto` | What a herdr session opens: `auto` a tab in the workspace already holding the directory, else a workspace; `workspace` always a new workspace; `tab` always a tab (in the holding workspace, else the current one). |
 | `ui.pager` | string | `less -RFX` | Pager for long output on a terminal, split without a shell. `cat` or empty disables it. |
 | `ui.no_osc8` | bool | `false` | Disable OSC 8 hyperlinks in `tasq view`. |
 | `ui.glow_style` | string | `dark` | Style passed to `glow -s`. |
@@ -152,7 +158,9 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_WORKTREE_MANAGER` | `work.worktree_manager` |
 | `TASQ_WORKTREE_COMMAND` | `work.worktree_command` |
 | `TASQ_LAUNCHER` | `launch.default` |
+| `TASQ_LAUNCH_DETACHED` | `launch.detached` |
 | `TASQ_LAUNCH_ENV` | `launch.env` |
+| `TASQ_HERDR_PLACEMENT` | `launch.herdr.placement` |
 | `TASQ_PAGER` | `ui.pager` |
 | `TASQ_NO_OSC8` | `ui.no_osc8` (`1/true/yes/on`, `0/false/no/off`) |
 | `TASQ_GLOW_STYLE` | `ui.glow_style` |
@@ -208,9 +216,21 @@ tracked worktree that exists, else the task's `## Project`, else `work.default_p
 - `shell`: `exec $SHELL` in the directory.
 - `tmux`: a new tmux window there (only inside tmux).
 - `herdr`: a herdr workspace with a Claude agent and the prompt pasted in, or a tab in the
-  workspace already holding the directory (only inside herdr); falls back to `claude` in the
-  current pane when herdr cannot open one.
+  workspace already holding the directory, as `launch.herdr.placement` says (only inside
+  herdr); falls back to `claude` in the current pane when herdr cannot open one.
 - `auto`: `herdr` when `HERDR_ENV` is set, else `claude`.
+
+### Detached sessions
+
+`tasq pick <id> --detached` (and `tasq next --detached`) opens the session in a new window
+instead of the current terminal, with `launch.detached` rather than `launch.default`: `herdr`
+or `tmux`, or `auto` for whichever of the two the terminal runs in (`HERDR_ENV`, then
+`TMUX`); outside both, `auto` is an error and nothing is written. `--launcher` overrides it as
+usual. `--no-focus` opens the window in the background: herdr skips the focus step, tmux
+passes `-d`. The TUI binds these to `Ctrl+Enter` (new window, switch to it) and `Shift+Enter`
+(new window, stay), keeping the screen and showing the launcher's result in the status bar;
+plain `Enter` stays "here, with `launch.default`". The two chords need a terminal that speaks
+the kitty keyboard protocol; elsewhere they arrive as a plain `Enter`.
 
 The session's environment carries `TASQ_TASK_ID`, `TASQ_NOTEBOOK` and, when a profile is
 selected, `TASQ_PROFILE`. `--dry-run` prints the directory, the commands and the prompt

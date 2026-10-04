@@ -72,6 +72,7 @@ mod tests {
             in_worktree: false,
             env: vec![("TASQ_TASK_ID".into(), "3".into())],
             statuses: vec!["ready".into()],
+            focus: true,
         }
     }
 

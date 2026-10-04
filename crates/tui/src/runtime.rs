@@ -3,17 +3,25 @@
 //! [`dispatch`] runs one [`Cmd`] against the store, the clock and the
 //! host and returns the messages for the model; it touches no terminal,
 //! so it is tested with the in-memory store and a recording host. [`run`]
-//! owns the terminal: raw mode, the alternate screen and bracketed paste,
-//! released while an editor, a session or `sync` has the screen.
+//! owns the terminal: raw mode, the alternate screen, bracketed paste and,
+//! where the terminal supports it, the kitty keyboard protocol (so
+//! `Ctrl+Enter` and `Shift+Enter` are not plain `Enter`), released while
+//! an editor, a session or `sync` has the screen.
 
 use std::io::{self, BufRead, Write};
 
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use ratatui::crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    supports_keyboard_enhancement,
 };
 use tasq_core::clock::Clock;
 use tasq_core::edit::{self, Value};
@@ -62,7 +70,7 @@ pub fn dispatch(
             result
         }
         Cmd::Edit(id) => edit_file(store, host, id),
-        Cmd::Launch(id) => host.launch(id),
+        Cmd::Launch(id, target) => host.launch(id, *target),
         Cmd::Sync => host.sync(),
     };
     let first = match outcome {
@@ -190,8 +198,15 @@ fn pause() -> io::Result<()> {
     Ok(())
 }
 
+/// Whether the terminal accepted the keyboard enhancement flags, so the
+/// restore path knows to pop them (a terminal that never got the push
+/// would print the pop sequence as garbage).
+static KEYBOARD_ENHANCED: AtomicBool = AtomicBool::new(false);
+
 /// Raw mode plus the alternate screen plus bracketed paste, restored on
-/// drop and before a panic message is printed.
+/// drop and before a panic message is printed. When the terminal speaks
+/// the kitty keyboard protocol, its disambiguation mode is on too, so
+/// `Ctrl+Enter` and `Shift+Enter` reach the key map as such.
 struct Screen {
     active: bool,
 }
@@ -216,6 +231,15 @@ impl Screen {
         if !self.active {
             enable_raw_mode()?;
             execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
+            if matches!(supports_keyboard_enhancement(), Ok(true)) {
+                execute!(
+                    io::stdout(),
+                    PushKeyboardEnhancementFlags(
+                        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    )
+                )?;
+                KEYBOARD_ENHANCED.store(true, Ordering::Relaxed);
+            }
             self.active = true;
         }
         Ok(())
@@ -243,6 +267,9 @@ impl Drop for Screen {
 /// Reason: terminal mode switching; nothing to assert without a terminal.
 #[mutants::skip]
 fn restore_terminal() -> io::Result<()> {
+    if KEYBOARD_ENHANCED.swap(false, Ordering::Relaxed) {
+        execute!(io::stdout(), PopKeyboardEnhancementFlags)?;
+    }
     execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen)?;
     disable_raw_mode()
 }
@@ -254,7 +281,7 @@ mod tests {
     use tasq_core::model::{Priority, Status, Task};
     use tasq_core::store::MemoryStore;
 
-    use crate::msg::RecordingHost;
+    use crate::msg::{LaunchTarget, RecordingHost};
 
     fn store() -> MemoryStore {
         let mut a = Task::new(TaskId::from(1), "A");
@@ -496,13 +523,22 @@ mod tests {
         let mut store = store();
         let mut host = RecordingHost::default();
         let msgs = dispatch(
-            &Cmd::Launch(TaskId::from(1)),
+            &Cmd::Launch(TaskId::from(1), LaunchTarget::Here),
             &mut store,
             &clock(),
             &mut host,
         );
         assert_eq!(msgs[0], Msg::Info("ok".into()));
         assert_eq!(open_ids(&msgs), ["1", "2"]);
+        for focus in [true, false] {
+            let msgs = dispatch(
+                &Cmd::Launch(TaskId::from(1), LaunchTarget::Detached { focus }),
+                &mut store,
+                &clock(),
+                &mut host,
+            );
+            assert_eq!(msgs[0], Msg::Info("ok".into()));
+        }
         let msgs = dispatch(&Cmd::Sync, &mut store, &clock(), &mut host);
         assert_eq!(msgs[0], Msg::Info("ok".into()));
         // The memory store keeps no files, so there is nothing to edit.
@@ -513,11 +549,19 @@ mod tests {
         );
         let msgs = dispatch(&Cmd::Edit(TaskId::from(9)), &mut store, &clock(), &mut host);
         assert_eq!(msgs[0], Msg::Failed("no task with id 9".into()));
-        assert_eq!(host.calls, vec!["launch 1", "sync"]);
+        assert_eq!(
+            host.calls,
+            vec![
+                "launch 1",
+                "launch 1 detached",
+                "launch 1 detached no-focus",
+                "sync"
+            ]
+        );
 
         host.answer = Some(Err("claude exited with 1".into()));
         let msgs = dispatch(
-            &Cmd::Launch(TaskId::from(2)),
+            &Cmd::Launch(TaskId::from(2), LaunchTarget::Here),
             &mut store,
             &clock(),
             &mut host,

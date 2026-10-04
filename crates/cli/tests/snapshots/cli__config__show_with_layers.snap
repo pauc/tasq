@@ -26,9 +26,13 @@ worktree_manager = "git"                     # defaults
 
 [launch]
 default = "claude"                           # defaults
+detached = "auto"                            # defaults
 env = "direnv"                               # defaults
 
 [launch.claude]
+
+[launch.herdr]
+placement = "auto"                           # defaults
 
 [ui]
 glow_style = "light"                         # env

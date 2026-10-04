@@ -1439,6 +1439,129 @@ mod launch {
     }
 
     #[test]
+    fn detached_uses_launch_detached_and_no_focus_stays_put() {
+        let env = TestEnv::fixture();
+        // Inside herdr, `auto` is herdr; `--no-focus` drops the focus step.
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .env("HERDR_ENV", "1")
+            .args([
+                "pick",
+                "3",
+                "--detached",
+                "--no-focus",
+                "--dry-run",
+                "--json",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["launcher"], "herdr");
+        let steps: Vec<&str> = value["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap())
+            .collect();
+        assert!(steps[0].starts_with("herdr workspace create"), "{steps:?}");
+        assert!(
+            steps.contains(&"(no focus change: the session opens in the background)"),
+            "{steps:?}"
+        );
+        assert!(
+            !steps.iter().any(|s| s.starts_with("herdr workspace focus")),
+            "{steps:?}"
+        );
+        // Inside tmux only, `auto` is tmux and the window is created detached.
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .env("TMUX", "/tmp/tmux-1000/default,1,0")
+            .args([
+                "pick",
+                "3",
+                "--detached",
+                "--no-focus",
+                "--dry-run",
+                "--json",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["launcher"], "tmux");
+        assert!(
+            value["steps"][0]
+                .as_str()
+                .unwrap()
+                .starts_with("tmux new-window -d -c "),
+            "{}",
+            value["steps"]
+        );
+        // With focus (the default) the tmux window is selected.
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .env("TMUX", "/tmp/tmux-1000/default,1,0")
+            .args(["pick", "3", "--detached", "--dry-run", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(
+            value["steps"][0]
+                .as_str()
+                .unwrap()
+                .starts_with("tmux new-window -c "),
+            "{}",
+            value["steps"]
+        );
+    }
+
+    #[test]
+    fn detached_outside_a_window_manager_is_refused_before_any_write() {
+        let env = TestEnv::fixture();
+        // Outside herdr and tmux there is nowhere to open: the task stays ready.
+        env.tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["pick", "3", "--detached"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::ends_with(
+                "tasq: launch.detached: auto: no window to open a session in: not inside herdr or tmux (set launch.detached)\n",
+            ));
+        let out = env.tasq().args(["view", "3", "--json"]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["task"]["status"], "ready");
+        // `--launcher` wins over `launch.detached`; `--no-focus` needs `--detached`.
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args([
+                "pick",
+                "3",
+                "--detached",
+                "--launcher",
+                "shell",
+                "--dry-run",
+                "--json",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["launcher"], "shell");
+        env.tasq()
+            .args(["pick", "3", "--no-focus", "--dry-run"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("--detached"));
+    }
+
+    #[test]
     fn auto_launcher_is_herdr_inside_herdr() {
         let env = TestEnv::fixture();
         let out = env

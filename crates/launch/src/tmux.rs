@@ -5,7 +5,8 @@ use tasq_core::launch::{LaunchContext, LaunchError, LaunchOutcome, Launcher, sho
 use crate::process::{env_var, run};
 
 /// Opens `tmux new-window` at the working directory with the context
-/// variables set (`-e`, tmux 3.0 or later). Only works inside tmux.
+/// variables set (`-e`, tmux 3.0 or later); `-d` keeps the current window
+/// selected when the context asks for no focus. Only works inside tmux.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TmuxLauncher {
     /// Environment `tmux` runs with and `TMUX` is read from.
@@ -26,14 +27,16 @@ impl TmuxLauncher {
 
     /// The `tmux` argv for `ctx`.
     pub fn argv(ctx: &LaunchContext) -> Vec<String> {
-        let mut argv = vec![
-            "tmux".to_owned(),
-            "new-window".to_owned(),
+        let mut argv = vec!["tmux".to_owned(), "new-window".to_owned()];
+        if !ctx.focus {
+            argv.push("-d".to_owned());
+        }
+        argv.extend([
             "-c".to_owned(),
             ctx.workdir.display().to_string(),
             "-n".to_owned(),
             window_name(ctx),
-        ];
+        ]);
         for (k, v) in &ctx.env {
             argv.push("-e".to_owned());
             argv.push(format!("{k}={v}"));
@@ -100,6 +103,7 @@ mod tests {
             in_worktree: false,
             env: vec![("TASQ_TASK_ID".into(), "3".into())],
             statuses: Vec::new(),
+            focus: true,
         }
     }
 
@@ -133,5 +137,11 @@ mod tests {
         let mut untitled = ctx();
         untitled.task.title = "[x]".into();
         assert_eq!(window_name(&untitled), "3");
+        let mut background = ctx();
+        background.focus = false;
+        assert_eq!(
+            inside.describe(&background).unwrap(),
+            vec!["tmux new-window -d -c /work -n 3 Fix the login -e TASQ_TASK_ID=3"]
+        );
     }
 }

@@ -118,7 +118,9 @@ fn defaults_match_the_script() {
     assert_eq!(c.work.worktree_manager, WorktreeManager::Git);
     assert_eq!(c.work.worktree_command, None);
     assert_eq!(c.launch.default, "claude");
+    assert_eq!(c.launch.detached, "auto");
     assert_eq!(c.launch.env, EnvStrategy::Direnv);
+    assert_eq!(c.launch.herdr.placement, tasq_core::config::Placement::Auto);
     assert_eq!(c.launch.claude.prompt_file, None);
     assert_eq!(c.ui.pager, "less -RFX");
     assert!(!c.ui.no_osc8);
@@ -152,9 +154,13 @@ worktree_manager = \"git\"
 
 [launch]
 default = \"claude\"
+detached = \"auto\"
 env = \"direnv\"
 
 [launch.claude]
+
+[launch.herdr]
+placement = \"auto\"
 
 [ui]
 pager = \"less -RFX\"
@@ -175,6 +181,30 @@ post-done = []
 pre-launch = []
 ";
     assert_eq!(text, expected);
+}
+
+#[test]
+fn herdr_placement_values_and_errors() {
+    use tasq_core::config::Placement;
+    for (value, placement) in [
+        ("auto", Placement::Auto),
+        ("workspace", Placement::Workspace),
+        ("tab", Placement::Tab),
+    ] {
+        let sb = Sandbox::new();
+        sb.write_project(&format!("[launch.herdr]\nplacement = \"{value}\"\n"));
+        let c = Config::load(&sb.opts()).unwrap().config;
+        assert_eq!(c.launch.herdr.placement, placement, "{value}");
+    }
+    let sb = Sandbox::new();
+    sb.write_project("[launch.herdr]\nplacement = \"window\"\n");
+    let err = Config::load(&sb.opts()).unwrap_err().to_string();
+    assert!(
+        err.ends_with(
+            ".tasq.toml:2:13: unknown variant `window`, expected one of `auto`, `workspace`, `tab`"
+        ),
+        "{err}"
+    );
 }
 
 #[test]
@@ -743,7 +773,9 @@ fn env_overrides_files() {
         ("TASQ_WORKTREE_MANAGER", "git"),
         ("TASQ_WORKTREE_COMMAND", "mkwt {branch}"),
         ("TASQ_LAUNCHER", "tmux"),
+        ("TASQ_LAUNCH_DETACHED", "herdr"),
         ("TASQ_LAUNCH_ENV", "inherit"),
+        ("TASQ_HERDR_PLACEMENT", "workspace"),
         ("TASQ_PAGER", "bat -p"),
         ("TASQ_NO_OSC8", "1"),
         ("TASQ_GLOW_STYLE", "light"),
@@ -761,7 +793,12 @@ fn env_overrides_files() {
     assert_eq!(c.work.worktree_manager, WorktreeManager::Git);
     assert_eq!(c.work.worktree_command.as_deref(), Some("mkwt {branch}"));
     assert_eq!(c.launch.default, "tmux");
+    assert_eq!(c.launch.detached, "herdr");
     assert_eq!(c.launch.env, EnvStrategy::Inherit);
+    assert_eq!(
+        c.launch.herdr.placement,
+        tasq_core::config::Placement::Workspace
+    );
     assert_eq!(c.ui.pager, "bat -p");
     assert!(c.ui.no_osc8);
     assert_eq!(c.ui.glow_style, "light");
@@ -776,7 +813,7 @@ fn env_overrides_files() {
     assert_eq!(loaded.explain("ui.pager"), Some(&Origin::Env));
     let env_layer = loaded.layers.last().unwrap();
     assert_eq!(env_layer.origin, Origin::Env);
-    assert_eq!(env_layer.keys.len(), 14);
+    assert_eq!(env_layer.keys.len(), 16);
     assert_eq!(Origin::Env.to_string(), "env");
 }
 
@@ -788,7 +825,7 @@ fn every_documented_env_key_is_a_real_key() {
         let mut opts = LoadOptions::new("/nonexistent");
         // Any value a string key accepts; enums get their first variant.
         let value = match *key {
-            "store.bookkeeper" => "auto",
+            "store.bookkeeper" | "launch.herdr.placement" => "auto",
             "work.worktree_manager" => "git",
             "launch.env" => "direnv",
             "ui.no_osc8" => "true",

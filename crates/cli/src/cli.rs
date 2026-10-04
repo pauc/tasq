@@ -168,9 +168,15 @@ pub enum Command {
     /// Open a work session on the next task: the first in-progress one, else the first ready one.
     #[command(after_help = LAUNCH_HELP)]
     Next {
-        /// Launcher to use [default: launch.default].
+        /// Launcher to use [default: launch.default, or launch.detached with --detached].
         #[arg(long, value_name = "NAME")]
         launcher: Option<String>,
+        /// Open the session in a new window (launch.detached: herdr or tmux) instead of here.
+        #[arg(long)]
+        detached: bool,
+        /// With --detached: open the window without switching to it.
+        #[arg(long, requires = "detached")]
+        no_focus: bool,
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
         dry_run: bool,
@@ -182,9 +188,15 @@ pub enum Command {
         /// Task id.
         #[arg(value_name = "ID")]
         id: String,
-        /// Launcher to use [default: launch.default].
+        /// Launcher to use [default: launch.default, or launch.detached with --detached].
         #[arg(long, value_name = "NAME")]
         launcher: Option<String>,
+        /// Open the session in a new window (launch.detached: herdr or tmux) instead of here.
+        #[arg(long)]
+        detached: bool,
+        /// With --detached: open the window without switching to it.
+        #[arg(long, requires = "detached")]
+        no_focus: bool,
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
         dry_run: bool,
@@ -396,8 +408,11 @@ task prompt (template: launch.claude.prompt_file), through `direnv exec`
 when launch.env = direnv and the directory's .envrc is allowed; shell execs
 $SHELL there; tmux opens a new window (inside tmux only); herdr opens a
 workspace with a Claude agent (inside herdr only); auto is herdr inside
-herdr, else claude. The session gets TASQ_TASK_ID, TASQ_NOTEBOOK and, when
-selected, TASQ_PROFILE.";
+herdr, else claude. --detached uses launch.detached instead (herdr, tmux,
+or auto for whichever the terminal runs in) and --no-focus leaves the new
+window in the background; launch.herdr.placement says whether a herdr
+window is a workspace or a tab. The session gets TASQ_TASK_ID,
+TASQ_NOTEBOOK and, when selected, TASQ_PROFILE.";
 
 const SYNC_HELP: &str = "\
 Every enabled [[source]] runs in order; one failing source is reported and
@@ -449,10 +464,14 @@ beside it (or, below 100 columns, behind Tab). Keys: j/k move, g/G first
 and last, / filter (text matches titles; #word is a status, tag or
 priority as for `tasq <word>`), s status, p priority, l log a note, d mark
 done (with an optional final note), e open the file in $VISUAL or $EDITOR,
-Enter open a work session (`tasq pick`), S run the sources (`tasq sync`),
-r reload, ? help, q quit. Edits are the same operations as `tasq set`,
-`log` and `done`. Group colours follow [ui.colors] (status name, or
-`no-status`); NO_COLOR or --color never gives a monochrome UI.";
+Enter open a work session here (`tasq pick`), Ctrl+Enter open it in a new
+window and switch to it, Shift+Enter open it in a new window and stay
+(`tasq pick --detached [--no-focus]`, launch.detached), S run the sources
+(`tasq sync`), r reload, ? help, q quit. Edits are the same operations as
+`tasq set`, `log` and `done`. Group colours follow [ui.colors] (status
+name, or `no-status`); NO_COLOR or --color never gives a monochrome UI.
+Ctrl+Enter and Shift+Enter need a terminal with the kitty keyboard
+protocol; elsewhere they are a plain Enter.";
 
 const PLUGINS_HELP: &str = "\
 `tasq <name> [args...]` runs the executable tasq-<name> found on PATH when

@@ -10,7 +10,10 @@
 //! `$VISUAL`, else `$EDITOR`, else `vi`; sessions and syncs run
 //! `tasq pick <id>` and `tasq sync` through this same binary, with the
 //! global flags passed on, so the TUI and the CLI cannot disagree about
-//! what those commands do.
+//! what those commands do. A detached session (`Ctrl+Enter`,
+//! `Shift+Enter`) is `tasq pick <id> --detached [--no-focus]` with its
+//! output captured, so the UI keeps the screen and shows the last line
+//! (ADR-0012).
 
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
@@ -19,7 +22,7 @@ use std::process::Command;
 
 use tasq_core::model::{Task, TaskId};
 use tasq_core::theme::Theme;
-use tasq_tui::{Host, HostResult, Model};
+use tasq_tui::{Host, HostResult, LaunchTarget, Model};
 
 use crate::app::App;
 use crate::cli::GlobalArgs;
@@ -77,11 +80,20 @@ impl Host for CliHost<'_> {
             .map(|()| format!("[{id}] edited with {program}"))
     }
 
-    fn launch(&mut self, id: &TaskId) -> HostResult {
+    fn launch(&mut self, id: &TaskId, target: LaunchTarget) -> HostResult {
         let mut args = self.global_args.clone();
         args.extend(["pick".to_owned(), id.to_string()]);
-        wait_for(Command::new(&self.exe).args(&args), "tasq pick")
-            .map(|()| format!("[{id}] session finished"))
+        match target {
+            LaunchTarget::Here => wait_for(Command::new(&self.exe).args(&args), "tasq pick")
+                .map(|()| format!("[{id}] session finished")),
+            LaunchTarget::Detached { focus } => {
+                args.push("--detached".to_owned());
+                if !focus {
+                    args.push("--no-focus".to_owned());
+                }
+                capture(Command::new(&self.exe).args(&args), "tasq pick")
+            }
+        }
     }
 
     fn sync(&mut self) -> HostResult {
@@ -120,6 +132,33 @@ impl CliHost<'_> {
         } else {
             Err(warnings.join("; "))
         }
+    }
+}
+
+/// Runs the command without the terminal and reports its last line:
+/// stdout's on success (the launcher's "Opened ..." outcome), stderr's
+/// (the CLI's error) on a non-zero exit.
+fn capture(command: &mut Command, name: &str) -> std::result::Result<String, String> {
+    let output = command
+        .output()
+        .map_err(|e| format!("could not run {name}: {e}"))?;
+    let last_line = |bytes: &[u8]| {
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .map(str::trim)
+            .rfind(|line| !line.is_empty())
+            .map(str::to_owned)
+    };
+    if output.status.success() {
+        Ok(last_line(&output.stdout).unwrap_or_else(|| format!("{name} finished")))
+    } else {
+        let exit = match output.status.code() {
+            Some(code) => format!("{name} exited with {code}"),
+            None => format!("{name} was killed by a signal"),
+        };
+        Err(last_line(&output.stderr).map_or(exit, |line| {
+            line.trim_start_matches("tasq: error: ").to_owned()
+        }))
     }
 }
 
@@ -345,7 +384,13 @@ post-create = [
             err.starts_with("could not run /nonexistent/editor: "),
             "{err}"
         );
-        let err = host.launch(&TaskId::from(1)).unwrap_err();
+        let err = host
+            .launch(&TaskId::from(1), LaunchTarget::Here)
+            .unwrap_err();
+        assert!(err.starts_with("could not run tasq pick: "), "{err}");
+        let err = host
+            .launch(&TaskId::from(1), LaunchTarget::Detached { focus: true })
+            .unwrap_err();
         assert!(err.starts_with("could not run tasq pick: "), "{err}");
         let err = host.sync().unwrap_err();
         assert!(err.starts_with("could not run tasq sync: "), "{err}");
@@ -353,6 +398,51 @@ post-create = [
         assert_eq!(
             host.edit(&TaskId::from(1), Path::new("/f")).unwrap_err(),
             "no editor configured (set $EDITOR)"
+        );
+    }
+
+    #[test]
+    fn detached_launches_are_captured_and_report_the_last_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app_in(dir.path(), "");
+        // `sh -c '<script>' pick 1 --detached [--no-focus]`: the script sees
+        // the arguments the host would give `tasq`.
+        let script = |body: &str| CliHost {
+            app: &app,
+            exe: "/bin/sh".into(),
+            global_args: vec!["-c".into(), body.into(), "sh".into()],
+            editor: Vec::new(),
+        };
+        let mut host = script(
+            "echo \"args: $*\"; echo; echo 'Opened herdr workspace w1 (\"x\") with agent task-1'",
+        );
+        assert_eq!(
+            host.launch(&TaskId::from(1), LaunchTarget::Detached { focus: true }),
+            Ok("Opened herdr workspace w1 (\"x\") with agent task-1".into())
+        );
+        let mut host = script("echo \"args: $*\"");
+        assert_eq!(
+            host.launch(&TaskId::from(1), LaunchTarget::Detached { focus: false }),
+            Ok("args: pick 1 --detached --no-focus".into())
+        );
+        assert_eq!(
+            host.launch(&TaskId::from(1), LaunchTarget::Detached { focus: true }),
+            Ok("args: pick 1 --detached".into())
+        );
+        let mut host = script("exit 0");
+        assert_eq!(
+            host.launch(&TaskId::from(1), LaunchTarget::Detached { focus: true }),
+            Ok("tasq pick finished".into())
+        );
+        let mut host = script("echo 'tasq: error: launch.detached: auto: no window' >&2; exit 2");
+        assert_eq!(
+            host.launch(&TaskId::from(1), LaunchTarget::Detached { focus: true }),
+            Err("launch.detached: auto: no window".into())
+        );
+        let mut host = script("exit 3");
+        assert_eq!(
+            host.launch(&TaskId::from(1), LaunchTarget::Detached { focus: true }),
+            Err("tasq pick exited with 3".into())
         );
     }
 
@@ -369,7 +459,9 @@ post-create = [
         let err = host.edit(&TaskId::from(1), Path::new("/f")).unwrap_err();
         assert_eq!(err, "/bin/sh exited with 3");
         // `sh -c pick 1` runs a command called `pick`, which does not exist.
-        let err = host.launch(&TaskId::from(1)).unwrap_err();
+        let err = host
+            .launch(&TaskId::from(1), LaunchTarget::Here)
+            .unwrap_err();
         assert_eq!(err, "tasq pick exited with 127");
         host.editor = vec!["/bin/sh".into(), "-c".into(), "true".into(), "sh".into()];
         assert_eq!(

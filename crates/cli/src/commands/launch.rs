@@ -11,7 +11,7 @@ use tasq_core::query::{self, Filter};
 use tasq_core::store::{Store, StoreError};
 use tasq_launch::prompt::DEFAULT_TEMPLATE;
 use tasq_launch::registry::resolve_name;
-use tasq_launch::{LaunchSettings, launcher_for};
+use tasq_launch::{LaunchSettings, launcher_for, resolve_detached};
 use tasq_store_nb::NbStore;
 
 use crate::app::App;
@@ -20,8 +20,55 @@ use crate::error::{CliError, Result};
 use crate::json;
 use crate::plugins::{self, Hook};
 
+/// How `next`/`pick` open the session: `--launcher`, `--detached`,
+/// `--no-focus`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct How {
+    /// `--launcher`: a launcher name overriding the configured one.
+    pub launcher: Option<String>,
+    /// `--detached`: a new window with `launch.detached` instead of this
+    /// terminal with `launch.default`.
+    pub detached: bool,
+    /// `--no-focus`: leave the new window in the background.
+    pub focus: bool,
+}
+
+impl How {
+    /// From the flags as clap parsed them.
+    pub fn new(launcher: Option<&str>, detached: bool, no_focus: bool) -> Self {
+        Self {
+            launcher: launcher.map(str::to_owned),
+            detached,
+            focus: !no_focus,
+        }
+    }
+
+    /// `tasq pick <id>` in this terminal with the configured launcher.
+    pub fn here() -> Self {
+        Self::new(None, false, false)
+    }
+
+    /// The launcher name to build, before `auto` is resolved: the flag,
+    /// else `launch.detached` or `launch.default`. A detached `auto` is
+    /// resolved here (herdr or tmux, else an error naming the config key)
+    /// because unlike `launch.default` it has no in-terminal fallback.
+    pub fn launcher_name(&self, app: &App) -> Result<String> {
+        if let Some(name) = &self.launcher {
+            return Ok(name.clone());
+        }
+        let launch = &app.config().launch;
+        if self.detached {
+            resolve_detached(&launch.detached, &app.env_vec())
+                .map(str::to_owned)
+                .map_err(|e| CliError::user(format!("launch.detached: {e}")))
+        } else {
+            Ok(launch.default.clone())
+        }
+    }
+}
+
 /// `tasq next`: the first in-progress task, else the first ready one.
-pub fn next(app: &App, launcher: Option<&str>, dry_run: bool) -> Result<()> {
+pub fn next(app: &App, how: &How, dry_run: bool) -> Result<()> {
     let workflow = app.workflow();
     let mut store = app.open_store()?;
     let open = store.list(&Filter::default())?;
@@ -38,14 +85,14 @@ pub fn next(app: &App, launcher: Option<&str>, dry_run: bool) -> Result<()> {
         )));
     };
     let id = task.id.clone();
-    open_session(app, &mut store, &id, launcher, dry_run)
+    open_session(app, &mut store, &id, how, dry_run)
 }
 
 /// `tasq pick <id>`.
-pub fn pick(app: &App, id: &str, launcher: Option<&str>, dry_run: bool) -> Result<()> {
+pub fn pick(app: &App, id: &str, how: &How, dry_run: bool) -> Result<()> {
     let id = App::task_id(id)?;
     let mut store = app.open_store()?;
-    open_session(app, &mut store, &id, launcher, dry_run)
+    open_session(app, &mut store, &id, how, dry_run)
 }
 
 /// Launcher settings from the config: the environment, `launch.env`, the
@@ -63,6 +110,7 @@ pub fn launch_settings(app: &App) -> Result<LaunchSettings> {
         strategy: app.config().launch.env,
         template,
         default_project: app.config().work.default_project.clone(),
+        placement: app.config().launch.herdr.placement,
     })
 }
 
@@ -71,9 +119,12 @@ fn open_session(
     app: &App,
     store: &mut NbStore,
     id: &TaskId,
-    launcher: Option<&str>,
+    how: &How,
     dry_run: bool,
 ) -> Result<()> {
+    // Before any write: a `--detached` with nowhere to open is a usage
+    // error, not a task left in-progress with no session.
+    let name = how.launcher_name(app)?;
     let mut task = store.get(id)?;
     if task.done {
         return Err(CliError::user(format!(
@@ -148,13 +199,9 @@ fn open_session(
         workdir: resolution.workdir,
         in_worktree: resolution.in_worktree,
         env,
+        focus: how.focus,
     };
-    launch_or_describe(
-        app,
-        &ctx,
-        launcher.unwrap_or(&app.config().launch.default),
-        dry_run,
-    )
+    launch_or_describe(app, &ctx, &name, dry_run)
 }
 
 /// Builds the launcher called `name` and either describes (`--dry-run`,

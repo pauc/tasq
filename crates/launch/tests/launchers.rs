@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use tasq_core::config::EnvStrategy;
+use tasq_core::config::{EnvStrategy, Placement};
 use tasq_core::launch::{LaunchContext, LaunchError, LaunchOutcome, Launcher};
 use tasq_core::model::{Session, Task, TaskId, Worktree};
 use tasq_launch::prompt::DEFAULT_TEMPLATE;
@@ -96,6 +96,7 @@ impl Sandbox {
                 ("TASQ_NOTEBOOK".to_owned(), "home".to_owned()),
             ],
             statuses: vec!["in-progress".into(), "ready".into(), "waiting".into()],
+            focus: true,
         }
     }
 }
@@ -322,6 +323,7 @@ fn herdr(
     let launcher = HerdrLauncher {
         env: sb.env(&[("HERDR_ENV", "1")]),
         default_project: default_project.map(Path::to_path_buf),
+        placement: Placement::Auto,
         fallback: Box::new(Recording {
             calls: Rc::clone(&calls),
         }),
@@ -407,6 +409,121 @@ fn herdr_reuses_the_holding_workspace_as_a_tab_and_retries_the_agent_name() {
             "tab focus tab-7".to_owned(),
             "workspace focus ws-held".to_owned(),
         ]
+    );
+}
+
+#[test]
+fn herdr_without_focus_opens_in_the_background() {
+    let sb = Sandbox::new();
+    sb.fake("herdr", HERDR_BODY);
+    let (launcher, _) = herdr(&sb, None);
+    let mut ctx = sb.ctx();
+    ctx.focus = false;
+    assert_eq!(
+        launcher.launch(&ctx).unwrap(),
+        LaunchOutcome::Opened(
+            "Opened herdr workspace ws-new (\"Fix the login\") with agent task-3 in the background"
+                .into()
+        )
+    );
+    let log = sb.log("herdr");
+    assert_eq!(log.len(), 4, "{log:?}");
+    assert!(log[3].starts_with("agent prompt task-3"), "{log:?}");
+    assert!(!log.iter().any(|l| l.contains("focus ")), "{log:?}");
+    let plan = launcher.describe(&ctx).unwrap();
+    assert!(
+        plan.contains(&"(no focus change: the session opens in the background)".to_owned()),
+        "{plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|l| l.starts_with("herdr workspace focus")),
+        "{plan:?}"
+    );
+}
+
+#[test]
+fn herdr_workspace_placement_never_looks_for_a_holding_workspace() {
+    let sb = Sandbox::new();
+    sb.fake("herdr", HERDR_BODY);
+    let (mut launcher, _) = herdr(&sb, None);
+    launcher.placement = Placement::Workspace;
+    let work = sb.work.display().to_string();
+    launcher.env.push((
+        "HERDR_WORKTREES".to_owned(),
+        format!("{{\"worktrees\":[{{\"path\":\"{work}\",\"open_workspace_id\":\"ws-held\"}}]}}"),
+    ));
+    let ctx = sb.ctx();
+    assert_eq!(
+        launcher.launch(&ctx).unwrap(),
+        LaunchOutcome::Opened(
+            "Opened herdr workspace ws-new (\"Fix the login\") with agent task-3".into()
+        )
+    );
+    let log = sb.log("herdr");
+    assert!(log[0].starts_with("workspace create"), "{log:?}");
+    assert!(
+        !log.iter().any(|l| l.starts_with("worktree list")),
+        "{log:?}"
+    );
+    let plan = launcher.describe(&ctx).unwrap();
+    assert!(
+        !plan.iter().any(|l| l.contains("worktree list")),
+        "{plan:?}"
+    );
+}
+
+#[test]
+fn herdr_tab_placement_uses_the_holding_workspace_else_the_current_one() {
+    let sb = Sandbox::new();
+    sb.fake("herdr", HERDR_BODY);
+    let (mut launcher, _) = herdr(&sb, Some(&sb.work));
+    launcher.placement = Placement::Tab;
+    let work = sb.work.display().to_string();
+    launcher
+        .env
+        .push(("HERDR_WORKSPACE_ID".to_owned(), "ws-current".to_owned()));
+    let ctx = sb.ctx();
+    // No workspace holds the directory (the fake prints an empty list), so
+    // the tab goes into the current workspace, even in the default project.
+    let outcome = launcher.launch(&ctx).unwrap();
+    assert_eq!(
+        outcome,
+        LaunchOutcome::Opened(
+            "Opened herdr workspace ws-current (\"Fix the login\") with agent task-3".into()
+        )
+    );
+    assert_eq!(
+        sb.log("herdr")[..2],
+        [
+            format!("worktree list --cwd {work}"),
+            format!(
+                "tab create --workspace ws-current --cwd {work} --label Fix the login --env TASQ_TASK_ID=3 --env TASQ_NOTEBOOK=home --no-focus"
+            ),
+        ]
+    );
+    let plan = launcher.describe(&ctx).unwrap();
+    assert!(
+        plan[0].ends_with("(a new tab in the workspace holding it, else in the current one)"),
+        "{plan:?}"
+    );
+    // A holding workspace wins over the current one.
+    let sb2 = Sandbox::new();
+    sb2.fake("herdr", HERDR_BODY);
+    let (mut launcher, _) = herdr(&sb2, None);
+    launcher.placement = Placement::Tab;
+    let work2 = sb2.work.display().to_string();
+    launcher.env.push((
+        "HERDR_WORKTREES".to_owned(),
+        format!("{{\"worktrees\":[{{\"path\":\"{work2}\",\"open_workspace_id\":\"ws-held\"}}]}}"),
+    ));
+    launcher
+        .env
+        .push(("HERDR_WORKSPACE_ID".to_owned(), "ws-current".to_owned()));
+    launcher.launch(&sb2.ctx()).unwrap();
+    assert!(
+        sb2.log("herdr")[1].starts_with("tab create --workspace ws-held "),
+        "{:?}",
+        sb2.log("herdr")
     );
 }
 

@@ -16,15 +16,19 @@ pub fn translate(mode: &Mode, key: &KeyEvent) -> Option<Msg> {
     if ctrl && key.code == KeyCode::Char('c') {
         return Some(Msg::Quit);
     }
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     match mode {
-        Mode::Normal => normal(key.code, ctrl),
+        Mode::Normal => normal(key.code, ctrl, shift),
         Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => text(key.code, ctrl),
         Mode::Status { .. } | Mode::Priority { .. } => picker(key.code),
         Mode::Help => Some(Msg::Escape),
     }
 }
 
-fn normal(code: KeyCode, ctrl: bool) -> Option<Msg> {
+/// `Ctrl+Enter` and `Shift+Enter` only arrive as such from a terminal
+/// that speaks the kitty keyboard protocol (the runtime asks for it);
+/// elsewhere both are a plain `Enter`.
+fn normal(code: KeyCode, ctrl: bool, shift: bool) -> Option<Msg> {
     Some(match code {
         KeyCode::Char('j') | KeyCode::Down => Msg::Down,
         KeyCode::Char('k') | KeyCode::Up => Msg::Up,
@@ -41,6 +45,8 @@ fn normal(code: KeyCode, ctrl: bool) -> Option<Msg> {
         KeyCode::Char('d') => Msg::BeginDone,
         KeyCode::Char('c') => Msg::BeginCreate,
         KeyCode::Char('e') => Msg::Edit,
+        KeyCode::Enter if ctrl => Msg::LaunchDetached { focus: true },
+        KeyCode::Enter if shift => Msg::LaunchDetached { focus: false },
         KeyCode::Enter => Msg::Launch,
         KeyCode::Char('S') => Msg::Sync,
         KeyCode::Char('r') => Msg::Reload,
@@ -114,6 +120,18 @@ mod tests {
             (ch('c'), Msg::BeginCreate),
             (ch('e'), Msg::Edit),
             (key(KeyCode::Enter), Msg::Launch),
+            (
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+                Msg::LaunchDetached { focus: true },
+            ),
+            (
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+                Msg::LaunchDetached { focus: false },
+            ),
+            (
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+                Msg::LaunchDetached { focus: true },
+            ),
             (ch('S'), Msg::Sync),
             (ch('r'), Msg::Reload),
             (ch('?'), Msg::Help),

@@ -23,7 +23,7 @@ pub mod update;
 pub mod view;
 
 pub use model::{Mode, Model, NoteTarget};
-pub use msg::{Cmd, Host, HostResult, Msg, NoHost, RecordingHost};
+pub use msg::{Cmd, Host, HostResult, LaunchTarget, Msg, NoHost, RecordingHost};
 pub use runtime::{dispatch, run};
 pub use update::update;
 pub use view::view;

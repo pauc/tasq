@@ -46,7 +46,11 @@ beside it (or, below 100 columns, behind Tab). Keys: j/k move, g/G first
 and last, / filter (text matches titles; #word is a status, tag or
 priority as for `tasq <word>`), s status, p priority, l log a note, d mark
 done (with an optional final note), e open the file in $VISUAL or $EDITOR,
-Enter open a work session (`tasq pick`), S run the sources (`tasq sync`),
-r reload, ? help, q quit. Edits are the same operations as `tasq set`,
-`log` and `done`. Group colours follow [ui.colors] (status name, or
-`no-status`); NO_COLOR or --color never gives a monochrome UI.
+Enter open a work session here (`tasq pick`), Ctrl+Enter open it in a new
+window and switch to it, Shift+Enter open it in a new window and stay
+(`tasq pick --detached [--no-focus]`, launch.detached), S run the sources
+(`tasq sync`), r reload, ? help, q quit. Edits are the same operations as
+`tasq set`, `log` and `done`. Group colours follow [ui.colors] (status
+name, or `no-status`); NO_COLOR or --color never gives a monochrome UI.
+Ctrl+Enter and Shift+Enter need a terminal with the kitty keyboard
+protocol; elsewhere they are a plain Enter.

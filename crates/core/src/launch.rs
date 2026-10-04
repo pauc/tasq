@@ -39,6 +39,11 @@ pub struct LaunchContext {
     pub env: Vec<(String, String)>,
     /// Status names of the workflow, for the prompt.
     pub statuses: Vec<String>,
+    /// Whether the user's attention should move to the new session. Only
+    /// launchers that open another window (herdr, tmux) can leave it where
+    /// it is (`false`); the ones that run in the current terminal ignore
+    /// it.
+    pub focus: bool,
 }
 
 /// Where a session should start, as decided by [`resolve_workdir`].
