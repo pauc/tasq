@@ -1,11 +1,11 @@
-//! The worktree managers against a temporary git repository and a fake `gwm`.
+//! The worktree managers against a temporary git repository and a fake
+//! provisioning tool (`mkwt`) standing in for gwm.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tasq_core::config::WorktreeManager as Kind;
 use tasq_core::work::{WorkError, WorktreeManager};
-use tasq_launch::{GitManager, GwmManager, current_branch, manager_for};
+use tasq_launch::{CommandManager, GitManager, current_branch};
 use tempfile::TempDir;
 
 /// A temp tree with `home/.gitconfig`, `bin/git` and a committed repository
@@ -74,15 +74,16 @@ impl Repo {
         self.project.parent().unwrap().to_path_buf()
     }
 
-    /// Installs a fake `gwm` in `bin` whose argv goes to `gwm.log`.
-    fn fake_gwm(&self, body: &str) {
+    /// Installs a fake worktree tool `mkwt` in `bin` whose argv and working
+    /// directory go to `mkwt.log`.
+    fn fake_tool(&self, body: &str) {
         use std::os::unix::fs::PermissionsExt;
-        let log = self.root.path().join("gwm.log");
-        let script = self.bin.join("gwm");
+        let log = self.root.path().join("mkwt.log");
+        let script = self.bin.join("mkwt");
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\n[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\nprintf '%s\\n' \"$*\" >> '{}'\nprintf 'mode=%s\\n' \"${{GWM_SHELL_MODE:-}}\" >> '{}'\n{body}\n",
+                "#!/bin/sh\n[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\nprintf '%s\\n' \"$*\" >> '{}'\nprintf 'cwd=%s\\n' \"$PWD\" >> '{}'\n{body}\n",
                 log.display(),
                 log.display()
             ),
@@ -101,11 +102,11 @@ impl Repo {
             }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        panic!("fake gwm never became runnable");
+        panic!("fake mkwt never became runnable");
     }
 
-    fn gwm_log(&self) -> String {
-        std::fs::read_to_string(self.root.path().join("gwm.log")).unwrap_or_default()
+    fn tool_log(&self) -> String {
+        std::fs::read_to_string(self.root.path().join("mkwt.log")).unwrap_or_default()
     }
 }
 
@@ -176,87 +177,103 @@ fn git_manager_errors() {
 }
 
 #[test]
-fn gwm_manager_passes_minus_b_only_for_new_branches() {
+fn command_manager_fills_the_template_and_reads_the_last_line() {
     let repo = Repo::new();
-    std::fs::write(repo.workspace().join("gwm.yml"), "name: ws\n").unwrap();
     let wt = repo.root.path().canonicalize().unwrap().join("wt");
-    repo.fake_gwm(&format!(
-        "shift\n[ \"$1\" = -b ] && shift\n/bin/mkdir -p '{}/'\"$1\"\necho 'Linked .envrc'\necho '{}/'\"$1\"",
+    repo.fake_tool(&format!(
+        "[ \"$1\" = --fresh ] && shift\n/bin/mkdir -p '{}/'\"$1\"\necho 'Linked .envrc'\necho\necho '{}/'\"$1\"",
         wt.display(),
         wt.display()
     ));
-    let manager = GwmManager {
+    let manager = CommandManager {
+        template: "mkwt {new:--fresh} {branch} {project}".to_owned(),
         env: repo.env.clone(),
     };
-    assert_eq!(manager.name(), "gwm");
+    assert_eq!(manager.name(), "command");
     let created = manager.create(&repo.project, "feature/x").unwrap();
     assert_eq!(created.path, wt.join("feature/x"));
     assert_eq!(created.branch, "feature/x");
     assert_eq!(created.messages, vec!["Linked .envrc".to_owned()]);
-    assert_eq!(repo.gwm_log(), "create -b feature/x --no-tmux -s\nmode=1\n");
+    assert_eq!(
+        repo.tool_log(),
+        format!(
+            "--fresh feature/x {}\ncwd={}\n",
+            repo.project.display(),
+            repo.project.display()
+        )
+    );
+    // An existing branch gets no {new} text.
     repo.git(&["branch", "existing"]);
     manager.create(&repo.project, "existing").unwrap();
     assert!(
-        repo.gwm_log()
-            .ends_with("create existing --no-tmux -s\nmode=1\n"),
+        repo.tool_log().ends_with(&format!(
+            "existing {}\ncwd={}\n",
+            repo.project.display(),
+            repo.project.display()
+        )),
         "{}",
-        repo.gwm_log()
+        repo.tool_log()
     );
 }
 
 #[test]
-fn gwm_manager_needs_a_workspace_marker() {
+fn command_manager_errors() {
     let repo = Repo::new();
-    repo.fake_gwm("echo should-not-run");
-    let manager = GwmManager {
-        env: repo.env.clone(),
-    };
-    assert_eq!(
-        manager.create(&repo.project, "b"),
-        Err(WorkError::NoWorkspace {
-            project: repo.project.clone()
-        })
-    );
-    assert_eq!(repo.gwm_log(), "");
+    let env = repo.env.clone();
     let missing = repo.workspace().join("nope");
+    let manager = CommandManager {
+        template: "mkwt {branch}".to_owned(),
+        env: env.clone(),
+    };
     assert_eq!(
         manager.create(&missing, "b"),
         Err(WorkError::ProjectMissing(missing))
     );
-}
-
-#[test]
-fn gwm_manager_reports_failures_and_missing_paths() {
-    let repo = Repo::new();
-    std::fs::write(repo.workspace().join("gwm.yml"), "name: ws\n").unwrap();
-    let manager = GwmManager {
-        env: repo.env.clone(),
-    };
-    repo.fake_gwm("echo 'no such workspace' >&2\nexit 1");
+    repo.fake_tool("echo 'no such workspace' >&2\nexit 1");
     assert_eq!(
         manager.create(&repo.project, "b"),
         Err(WorkError::Tool {
-            tool: "gwm".into(),
+            tool: "mkwt".into(),
             branch: "b".into(),
             message: "no such workspace".into()
         })
     );
-    repo.fake_gwm("echo 'did things'");
+    repo.fake_tool("echo 'did things'");
     assert_eq!(
         manager.create(&repo.project, "b"),
         Err(WorkError::NoPath {
-            tool: "gwm".into(),
+            tool: "mkwt".into(),
             output: "did things".into()
         })
     );
-    repo.fake_gwm("exit 0");
+    repo.fake_tool("exit 0");
     assert_eq!(
         manager.create(&repo.project, "b"),
         Err(WorkError::NoPath {
-            tool: "gwm".into(),
+            tool: "mkwt".into(),
             output: String::new()
         })
     );
+    // A program that is not on PATH fails like a failed run.
+    let absent = CommandManager {
+        template: "no-such-tool {branch}".to_owned(),
+        env: env.clone(),
+    };
+    match absent.create(&repo.project, "b").unwrap_err() {
+        WorkError::Tool { tool, message, .. } => {
+            assert_eq!(tool, "no-such-tool");
+            assert!(message.contains("could not run no-such-tool"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+    let bad = CommandManager {
+        template: "mkwt {nope}".to_owned(),
+        env,
+    };
+    assert!(matches!(
+        bad.create(&repo.project, "b").unwrap_err(),
+        WorkError::BadCommand { .. }
+    ));
 }
 
 #[test]
@@ -271,10 +288,4 @@ fn current_branch_outside_a_repository_is_none() {
         current_branch(Path::new("/definitely/not/here"), &repo.env),
         None
     );
-}
-
-#[test]
-fn manager_for_follows_the_config() {
-    assert_eq!(manager_for(Kind::Gwm, Vec::new()).name(), "gwm");
-    assert_eq!(manager_for(Kind::Git, Vec::new()).name(), "git");
 }

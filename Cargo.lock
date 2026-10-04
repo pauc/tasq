@@ -818,6 +818,7 @@ name = "tasq-launch"
 version = "0.1.0"
 dependencies = [
  "mutants",
+ "shell-words",
  "tasq-core",
  "tempfile",
 ]
