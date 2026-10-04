@@ -13,10 +13,10 @@ place for status, learnings, blockers and deviations from the plan.
 | T-004 | cargo-mutants setup | done | commit 07d3203; cargo-mutants 27.1.0 |
 | T-101 | Domain model | done | commit f9e606c; 59 tests; mutants 121 total, 0 missed, 1 skip (SystemClock::now) |
 | T-105 | Clock and progress logging | done | commit f9e606c; `When` enum keeps date-only entries lossless |
-| T-102 | Markdown parser | killing survivors | commits 5ed472e, 7bd3ff5, dce1403; first full run: 301 tested, 261 caught, 23 unviable, 7 timeouts, 10 missed |
-| T-103 | Markdown writer and round trip | killing survivors | commits 5ed472e, 7bd3ff5, dce1403; first full run: 301 tested, 261 caught, 23 unviable, 7 timeouts, 10 missed |
+| T-102 | Markdown parser | done | commits 5ed472e, 7bd3ff5, dce1403, e9c8779; mutants 269 tested, 0 missed, 0 timeouts |
+| T-103 | Markdown writer and round trip | done | commits 5ed472e, 7bd3ff5, dce1403, e9c8779; mutants 269 tested, 0 missed, 0 timeouts |
 | T-104 | Queries and grouping | done | commit 72790ee; 29 tests; 0 missed mutants |
-| T-106 | Configuration loading | gates green, mutants pending | wave 4; agent killed by OOM before mutants pass and commit |
+| T-106 | Configuration loading | acceptance review + mutants running | commit ce8a7d9; 41 tests |
 
 ## Wave plan
 
@@ -80,7 +80,24 @@ place for status, learnings, blockers and deviations from the plan.
 - `next` = first task of the first non-empty group among the first two workflow statuses
   (`NEXT_STATUSES = 2`); `next_from(&[Status])` is the explicit form.
 
+### Format decisions (T-102/T-103)
+
+- Non-ISO `## Due`: `task.due = None`, raw line preserved in the document.
+- `## Source` grammar: one line `source: external-id [url]`; a single `http(s)://` value is both id
+  and url. Written after `## Due` by `Document::from_task`.
+- CRLF: each line keeps its own ending; new lines use the first line's ending. Mixed endings survive.
+- `##A` / `##ready` are topic tags, not priority/status (the script's regexes required one `#`).
+- `set` without a Tags section appends `## Tags` at end of file, like the script.
+- Edit API is operation-based (`format::ops::*`), one function per awk pass of the script.
+
 ### Mutation-testing learnings
+
+- Equivalent mutants are better removed by simplifying the code shape than argued in a report
+  (two cases in format: an unreachable guard and a redundant newline choice).
+- Proptest round-trip tests cannot kill writer mutants whose output parses back to the same value;
+  add exact-string assertions for those.
+- Shared helpers (`Document::body_range`, `set_body`) make arithmetic mutants catchable by every
+  fixture round trip at once.
 
 - A full format-module run (301 mutants) takes 3 minutes with `--jobs 2` under the guard: fast
   enough to run per task. Timeouts come from `i += 1` → `i -= 1` style loops; bounded `for`
