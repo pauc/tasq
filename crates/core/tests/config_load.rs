@@ -1236,3 +1236,103 @@ fn explain_matches_prefixes_but_not_lookalike_keys() {
     assert_eq!(loaded.explain("stor"), None);
     assert_eq!(loaded.explain("store.kind"), Some(&Origin::Defaults));
 }
+
+// --- acceptance: plan requirements pinned ----------------------------------
+
+#[test]
+fn env_vars_named_by_the_plan_are_all_supported() {
+    use tasq_core::config::{ENV_CONFIG, ENV_KEYS, ENV_PROFILE};
+    let keyed: Vec<&str> = ENV_KEYS.iter().map(|(var, _)| *var).collect();
+    for var in [
+        "TASQ_NOTEBOOK",
+        "TASQ_DEFAULT_PROJECT",
+        "TASQ_PAGER",
+        "TASQ_NO_OSC8",
+        "TASQ_GLOW_STYLE",
+        "TASQ_LAUNCHER",
+    ] {
+        assert!(keyed.contains(&var), "{var} missing from ENV_KEYS");
+    }
+    assert_eq!(ENV_PROFILE, "TASQ_PROFILE");
+    assert_eq!(ENV_CONFIG, "TASQ_CONFIG");
+    assert!(!keyed.contains(&ENV_PROFILE) && !keyed.contains(&ENV_CONFIG));
+    let mut vars = keyed.clone();
+    vars.sort_unstable();
+    vars.dedup();
+    assert_eq!(vars.len(), keyed.len(), "no duplicate variables");
+}
+
+#[test]
+fn all_six_layers_stack_field_wise_in_documented_order() {
+    let sb = Sandbox::new();
+    // Every layer sets `store.notebook`; each also owns one private key.
+    let global = sb.write_global(
+        "[store]\nnotebook = \"global\"\nbookkeeper = \"nb\"\n\
+         [profile.p.store]\nnotebook = \"profile\"\n[profile.p.ui]\nglow_style = \"light\"\n",
+    );
+    let project = sb.write_project("[store]\nnotebook = \"project\"\n[ui]\npager = \"more\"\n");
+    let mut opts = sb.opts();
+    opts.profile = Some("p".to_owned());
+    opts.env = env(&[("TASQ_NOTEBOOK", "env"), ("TASQ_LAUNCHER", "shell")]);
+    opts.overrides = vec![
+        ("store.notebook".to_owned(), "override".to_owned()),
+        ("launch.env".to_owned(), "inherit".to_owned()),
+    ];
+    let loaded = Config::load(&opts).unwrap();
+    let c = &loaded.config;
+    assert_eq!(c.store.notebook, "override");
+    assert_eq!(c.store.bookkeeper, Bookkeeper::Nb);
+    assert_eq!(c.ui.pager, "more");
+    assert_eq!(c.ui.glow_style, "light");
+    assert_eq!(c.launch.default, "shell");
+    assert_eq!(c.launch.env, EnvStrategy::Inherit);
+    assert_eq!(c.store.kind, tasq_core::config::StoreKind::Nb);
+
+    let profile = Origin::Profile {
+        name: "p".to_owned(),
+        file: global.clone(),
+    };
+    assert_eq!(loaded.explain("store.notebook"), Some(&Origin::Overrides));
+    assert_eq!(
+        loaded.explain("store.bookkeeper"),
+        Some(&Origin::File(global.clone()))
+    );
+    assert_eq!(
+        loaded.explain("ui.pager"),
+        Some(&Origin::File(project.clone()))
+    );
+    assert_eq!(loaded.explain("ui.glow_style"), Some(&profile));
+    assert_eq!(loaded.explain("launch.default"), Some(&Origin::Env));
+    assert_eq!(loaded.explain("launch.env"), Some(&Origin::Overrides));
+    assert_eq!(loaded.explain("store.kind"), Some(&Origin::Defaults));
+    assert_eq!(loaded.file_for("store.notebook"), None);
+    assert_eq!(loaded.file_for("ui.glow_style"), Some(global.as_path()));
+
+    let origins: Vec<&Origin> = loaded.layers.iter().map(|l| &l.origin).collect();
+    assert_eq!(
+        origins,
+        vec![
+            &Origin::Defaults,
+            &Origin::File(global),
+            &Origin::File(project),
+            &profile,
+            &Origin::Env,
+            &Origin::Overrides,
+        ]
+    );
+    // Dropping the overrides exposes the env value, and so on down the stack.
+    opts.overrides.clear();
+    assert_eq!(Config::load(&opts).unwrap().config.store.notebook, "env");
+    opts.env.remove("TASQ_NOTEBOOK");
+    assert_eq!(
+        Config::load(&opts).unwrap().config.store.notebook,
+        "profile"
+    );
+    opts.profile = None;
+    assert_eq!(
+        Config::load(&opts).unwrap().config.store.notebook,
+        "project"
+    );
+    fs::remove_file(sb.project.join(".tasq.toml")).unwrap();
+    assert_eq!(Config::load(&opts).unwrap().config.store.notebook, "global");
+}
