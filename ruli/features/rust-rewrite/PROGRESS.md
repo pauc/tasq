@@ -11,12 +11,12 @@ place for status, learnings, blockers and deviations from the plan.
 | T-002 | CI pipeline | done | commit ab28fc1; cargo-deny 0.20.2 passes locally |
 | T-003 | ADRs | done | commit f79c210; 8 ADRs + docs/file-format.md draft |
 | T-004 | cargo-mutants setup | done | commit 07d3203; cargo-mutants 27.1.0 |
-| T-101 | Domain model | done | commit f9e606c; 59 unit tests, clippy clean |
+| T-101 | Domain model | done | commit f9e606c; 59 tests; mutants 121 total, 0 missed, 1 skip (SystemClock::now) |
 | T-105 | Clock and progress logging | done | commit f9e606c; `When` enum keeps date-only entries lossless |
-| T-102 | Markdown parser | in progress | wave 4 (with T-103) |
-| T-103 | Markdown writer and round trip | in progress | wave 4 |
-| T-104 | Queries and grouping | in progress | wave 4 |
-| T-106 | Configuration loading | in progress | wave 4 |
+| T-102 | Markdown parser | gates green, mutants pending | wave 4; agent killed by OOM before mutants pass and commit |
+| T-103 | Markdown writer and round trip | gates green, mutants pending | wave 4; agent killed by OOM before mutants pass and commit |
+| T-104 | Queries and grouping | done | commit 72790ee; 29 tests; 0 missed mutants |
+| T-106 | Configuration loading | gates green, mutants pending | wave 4; agent killed by OOM before mutants pass and commit |
 
 ## Wave plan
 
@@ -27,6 +27,9 @@ place for status, learnings, blockers and deviations from the plan.
 4. T-102+T-103 (one agent), T-104, T-106 in parallel, each owning one module directory.
 
 ## Learnings
+
+- **Parallel agents on one Rust workspace are a memory hazard.** Cap `build.jobs`, wrap builds in
+  a cgroup (`scripts/guard`), and serialize anything that compiles. See Blockers.
 
 - **`ruli/` is ignored by the user's global git excludes** (`~/.config/git/ignore`). The repo
   `.gitignore` adds `!/ruli/` so the plan and this file are tracked. Anyone cloning is unaffected.
@@ -45,6 +48,43 @@ place for status, learnings, blockers and deviations from the plan.
 - `cargo mutants --emit-schema config` prints the supported config keys for the installed version.
 - The nightly mutants job never fails the run; the tracking issue "Surviving mutants (nightly)" is the signal. The PR diff job does fail on survivors.
 
+### Model decisions (T-101/T-105)
+
+- `ProgressEntry.at` is `When { Date, DateTime }` so legacy date-only entries round-trip byte-for-byte.
+  `Session.at` is a plain `NaiveDateTime` (the script always wrote a time there).
+- `Priority::from_str` accepts only `A/B/C` and `#A/#B/#C`; lowercase is rejected because `#a` is a
+  topic tag in the file.
+- `Status` is a validated newtype (lowercase kebab) with the five defaults as consts; membership is
+  checked by `Workflow::parse_status`, which accepts an optional leading `#`.
+- `Tag::new` is strict; `Tag::from_str` strips one leading `#` (mirrors `--tag`).
+- The default creation note "created via tasks create" is CLI wording, left out of the model.
+- `model.rs` is a facade over `model/` (error, id, priority, status, tag, task). For mutants use
+  `-f crates/core/src/model.rs -f 'crates/core/src/model/*.rs'` (quote globs under zsh).
+
+### Query decisions (T-104)
+
+- **Id ordering is a total order**: digit-only ids sort numerically and before every other id; the
+  rest sort as text. A naive "numeric when both parse, else lexicographic" comparator is not
+  transitive and `sort_by` can panic on it since Rust 1.81.
+- `Filter::from_word` handles the script's `tasks A` case explicitly: status first, then `A|B|C`
+  (with or without `#`) as a priority filter, then a tag. Without that, priority words would
+  silently become topic-tag filters matching nothing.
+- Grouping keeps tasks whose status is no longer in the workflow: they get their own groups after
+  the workflow ones, before "no status", instead of being dropped.
+- `next` = first task of the first non-empty group among the first two workflow statuses
+  (`NEXT_STATUSES = 2`); `next_from(&[Status])` is the explicit form.
+
+### Mutation-testing learnings
+
+- `cargo mutants -f crates/core/src/query.rs` swept the whole crate (161 mutants) instead of the
+  file (40): the `-f` path filter looks unreliable on 27.1.0. Check `cargo mutants --list -f ...`
+  before trusting the scope.
+
+- `exclude_re` for Display/Default/Debug works, but `From<T> for String` / `TryFrom<String>` on
+  newtypes are mutated: serde round-trip tests are what kills them.
+- Clippy 1.99 added `assert_is_empty` under `all`: write `assert_eq!(v, Vec::new())`, not
+  `assert!(v.is_empty())`.
+
 ### Findings from reading the script (relevant to T-102/T-103)
 
 - Section insertion rules in the script are **not uniform**: `append_to_section` (before `## Progress`),
@@ -60,7 +100,13 @@ place for status, learnings, blockers and deviations from the plan.
 
 ## Blockers
 
-(none open)
+- **2026-10-04 OOM incident (resolved).** Three agents building concurrently on a 32-core / 62 GB
+  machine (default `cargo` = 32 parallel rustc each, plus cargo-mutants building copies of the
+  tree) exhausted memory and killed the GNOME session. The wave 4 agents died with uncommitted but
+  green work. Fixes: `.cargo/config.toml` caps `build.jobs = 8`; `scripts/guard` runs commands in
+  a systemd scope with `MemoryMax=16G`; all `just` recipes use it; cargo-mutants limited to
+  `--jobs 2`; dev profiles use `line-tables-only` debuginfo; **agents now run one at a time** and
+  must use the guard for every cargo call.
 
 ## Deviations from the plan
 

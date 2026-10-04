@@ -1,0 +1,12 @@
+# Build settings shared by everyone who clones this repo.
+#
+# `jobs` caps parallel rustc processes. On a 32-core machine the default (one
+# per core) can take tens of GB of RAM during a cold build, and several
+# concurrent cargo invocations (an editor, a test run, cargo-mutants) made the
+# desktop session run out of memory once. Eight is plenty for this workspace.
+# Override per invocation with `cargo build -j N` or CARGO_BUILD_JOBS.
+[build]
+jobs = 8
+
+[term]
+progress.when = "never"

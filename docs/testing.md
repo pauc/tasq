@@ -40,3 +40,17 @@ the attribute from source text and never evaluates the condition.
 
 Targets: zero missed mutants in `tasq-core::{format, query, reconcile, config, dates}`, at most 5%
 missed across `tasq-core`, full run under 20 minutes in CI.
+
+## Memory safety when building
+
+Every recipe in the `justfile` runs cargo through `scripts/guard`, a transient systemd user scope
+with a hard memory ceiling (16G by default, `GUARD_MEM=8G just test` to lower it). If a build or
+test run exceeds it, only the processes inside the scope are killed. `.cargo/config.toml` also caps
+parallel `rustc` jobs at eight, and dev profiles carry reduced debuginfo.
+
+Why: on a 32-core machine a cold build with the default job count, run three times concurrently
+alongside cargo-mutants, exhausted 62 GB of RAM and killed the desktop session. Rules of thumb:
+
+- Run cargo through the guard (`scripts/guard cargo ...`) whenever you are not using `just`.
+- Never run more than one cargo-mutants at a time, and keep `--jobs 2` (each job builds a full copy of the tree).
+- Do not start several agents or shells that build the same workspace concurrently.

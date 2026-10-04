@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# guard — run a command inside a memory-limited systemd user scope.
+#
+# Usage: scripts/guard [--mem <size>] <command> [args...]
+#        scripts/guard cargo test --workspace
+#
+# The command and everything it spawns are placed in a transient cgroup with a
+# hard memory ceiling (default 16G, override with --mem or GUARD_MEM). When the
+# ceiling is hit the kernel kills processes inside the scope only, so a runaway
+# compile or test fails loudly instead of taking the desktop session down.
+# Falls back to running the command directly when systemd-run is unavailable
+# (CI containers, macOS), printing a one-line notice to stderr.
+set -euo pipefail
+
+mem="${GUARD_MEM:-16G}"
+if [[ "${1:-}" == "--mem" ]]; then
+  mem="$2"; shift 2
+fi
+[[ $# -gt 0 ]] || { echo "guard: no command given" >&2; exit 2; }
+
+if command -v systemd-run >/dev/null 2>&1 && systemd-run --user --scope -q -p MemoryMax=10M true 2>/dev/null; then
+  exec systemd-run --user --scope -q \
+    -p "MemoryMax=$mem" -p "MemoryHigh=$mem" -p MemorySwapMax=512M \
+    -- "$@"
+else
+  echo "guard: systemd-run unavailable, running unguarded" >&2
+  exec "$@"
+fi

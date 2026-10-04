@@ -37,3 +37,14 @@ missing_errors_doc = "allow"
 # Same reasoning as `missing_errors_doc`: panics are rare and documented
 # where they are part of the contract.
 missing_panics_doc = "allow"
+
+# Less debuginfo keeps rustc and the linker well under a gigabyte per crate
+# during dev builds and tests; backtraces still carry line numbers.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = "line-tables-only"
