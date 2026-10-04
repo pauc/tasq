@@ -84,6 +84,57 @@ pub fn run(
     }
 }
 
+/// Runs `argv` with `input` on its stdin and exactly `env` as its
+/// environment, from the current directory. A program that cannot be
+/// started is reported like a failed run, with the OS error as `stderr`.
+///
+/// Reason: wraps `std::process::Command`; nothing to assert without a process.
+#[mutants::skip]
+pub fn run_with_input(argv: &[String], input: &str, env: &[(String, String)]) -> Finished {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let Some((program, rest)) = argv.split_first() else {
+        return Finished {
+            success: false,
+            stdout: String::new(),
+            stderr: "empty command".to_owned(),
+        };
+    };
+    let mut command = Command::new(program);
+    command
+        .args(rest)
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (k, v) in env {
+        command.env(k, v);
+    }
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            return Finished {
+                success: false,
+                stdout: String::new(),
+                stderr: format!("could not run {program}: {e}"),
+            };
+        }
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        // The program may exit without reading everything; not our error.
+        let _ = stdin.write_all(input.as_bytes());
+    }
+    match child.wait_with_output() {
+        Ok(output) => Finished::from_output(&output),
+        Err(e) => Finished {
+            success: false,
+            stdout: String::new(),
+            stderr: e.to_string(),
+        },
+    }
+}
+
 /// Replaces the current process with `argv[0] argv[1..]` in `cwd`, with
 /// `env` plus `extra` as the environment. Returns only when the exec fails.
 /// On non-Unix hosts the program is run as a child and waited for.
