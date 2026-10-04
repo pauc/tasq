@@ -5,6 +5,21 @@ place for status, learnings, blockers and deviations from the plan.
 
 ## Status
 
+Phase 2 (nb store) started 2026-10-04. nb is always driven with `NB_DIR` and `NBRC_PATH` pointing
+inside a temp copy of a fixture notebook in the repo, never at the real `~/.nb`.
+
+| Task | Title | Status | Notes |
+|------|-------|--------|-------|
+| T-200 | nb test harness (fixture notebook, NB_DIR isolation, CI nb install) | in progress | new task, prerequisite for Phase 2 |
+| T-201 | Notebook resolution and index reading | in progress | wave A |
+| T-202 | Reading and writing tasks through the store | in progress | wave A |
+| T-204 | Store capability reporting | in progress | wave A |
+| T-203 | Creating tasks | pending | wave B |
+| T-206 | Bookkeeper (nb CLI vs native) | pending | wave B |
+| T-205 | doctor / config show | pending | diagnostics functions in wave B, CLI in Phase 3 |
+
+### Phase 0 and 1 status
+
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
 | T-001 | Workspace and quality gates | done | commits cc023aa, 01e2ead; edition 2024, MSRV 1.90 |
@@ -52,6 +67,22 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 4. T-102+T-103 (one agent), T-104, T-106 in parallel, each owning one module directory.
 
 ## Learnings
+
+### nb facts (probed 2026-10-04 with nb 7.25.4 in an isolated NB_DIR)
+
+- `NB_DIR` and `NBRC_PATH` fully isolate nb; `NB_AUTO_SYNC=0` prevents remote sync attempts.
+- On a fresh `NB_DIR` the first nb command prints a welcome and initializes `home` (a git repo
+  with an `[nb] Initialize` commit); that first command's own action may be swallowed. Initialize
+  explicitly before use.
+- Todo files are `YYYYMMDDHHMMSS.todo.md`; same-second collisions bump to the next second.
+- `.index`: one filename per line, new files appended, id = line number. `nb index add <file>`
+  appends; `nb index verify` exits 0 when consistent; `nb git dirty` exits 0 when uncommitted;
+  `nb git checkpoint "<msg>"` commits with that message. nb's own messages: `[nb] Add: <file>`,
+  `[nb] Done: <file>`.
+- `nb todo do <id>` only flips `# [ ]` to `# [x]` on the title line and commits.
+- `nb todo add --tags ready,A` writes `\n## Tags\n\n#ready #A\n`, the same shape our format uses.
+- `nb notebooks show <name> --path` prints a clean absolute path (no escapes) in this environment;
+  keep the sanitizing anyway, the script needed it elsewhere.
 
 - **Mutation testing needs a per-test memory limit.** A mutant that turns a loop infinite while
   allocating outruns any timeout or OOM daemon. The cargo `runner` + `ulimit -v` wrapper in
