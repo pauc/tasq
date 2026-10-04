@@ -223,7 +223,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   screen; `run_hooks` is the printing wrapper and CLI behaviour is unchanged. `CliHost`'s
   unit tests build an `App` from a `.tasq.toml` in a temp dir and use `/bin/sh -c` hooks,
   no fake tools needed. Message on a hook failure: `[1] done: A (post-done hook "x" failed:
-  ...)` in the error style; the task is closed either way. Commit: (pending).
+  ...)` in the error style; the task is closed either way. Commit: 1f81216.
 
 - **Dispatch happens before clap and before the config is loaded.** `tasq_cli::plugins::
   External::parse` scans argv for the first positional, skipping the global flags (the four
