@@ -17,6 +17,7 @@ pub mod config;
 pub mod create;
 pub mod doctor;
 pub mod edit;
+pub mod launch;
 pub mod list;
 pub mod mr;
 pub mod project;

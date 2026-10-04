@@ -159,6 +159,31 @@ pub enum Command {
         note: Option<String>,
     },
 
+    /// Open a work session on the next task: the first in-progress one, else the first ready one.
+    #[command(after_help = LAUNCH_HELP)]
+    Next {
+        /// Launcher to use [default: launch.default].
+        #[arg(long, value_name = "NAME")]
+        launcher: Option<String>,
+        /// Print what would happen (directory, commands, prompt) and launch nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Open a work session on a specific task.
+    #[command(after_help = LAUNCH_HELP)]
+    Pick {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Launcher to use [default: launch.default].
+        #[arg(long, value_name = "NAME")]
+        launcher: Option<String>,
+        /// Print what would happen (directory, commands, prompt) and launch nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Show a task: rendered with glow on a terminal, plain markdown otherwise.
     ///
     /// On a terminal with glow installed the markdown is rendered and links
@@ -307,6 +332,20 @@ need a title; until a forge lookup exists the title falls back to
 `group/project!123` (GitLab) or `owner/repo#123` (GitHub).
 
 Prints `[id] created: Title (#status #prio)`.";
+
+const LAUNCH_HELP: &str = "\
+The task is set to in-progress, then a session starts in the first tracked
+worktree that exists, else the task's project, else work.default_project.
+When every tracked worktree is gone, the newest one is named and, on a
+terminal, you are offered to recreate it on its recorded branch.
+
+Launchers (--launcher, or launch.default): claude runs Claude Code with the
+task prompt (template: launch.claude.prompt_file), through `direnv exec`
+when launch.env = direnv and the directory's .envrc is allowed; shell execs
+$SHELL there; tmux opens a new window (inside tmux only); herdr opens a
+workspace with a Claude agent (inside herdr only); auto is herdr inside
+herdr, else claude. The session gets TASQ_TASK_ID, TASQ_NOTEBOOK and, when
+selected, TASQ_PROFILE.";
 
 /// `tasq create` arguments.
 #[derive(Debug, Clone, Args, Default)]

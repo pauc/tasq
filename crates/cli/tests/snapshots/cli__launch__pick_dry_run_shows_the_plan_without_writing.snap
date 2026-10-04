@@ -1,0 +1,33 @@
+---
+source: crates/cli/tests/cli.rs
+expression: env.normalize(&stdout(&out))
+---
+[3] -> in-progress (skipped: dry run)
+Task: [3] Answer the support ticket
+Starting in project: [ROOT]/home
+Launcher: claude (dry run)
+cd [ROOT]/home
+TASQ_TASK_ID=3 TASQ_NOTEBOOK=home exec claude "<prompt below>"
+
+--- prompt ---
+Work with me on my next task: todo [3] from my nb notebook (file: [ROOT]/nb/home/20260902100000.todo.md).
+
+# [ ] Answer the support ticket
+
+## Description
+
+Customer asks about the export format.
+
+## Tags
+
+#support #B #ready
+
+## Progress
+
+- 2026-10-02 10:00: created via tasks create
+
+Working directory: [ROOT]/home
+
+Start by reading the task and its Related links to build context (use the glab CLI for GitLab URLs — run it from this repo so it authenticates). Give me a short summary of where the task stands and propose a first step, then help me work on it.
+
+As we make progress, record it: tasq log 3 "<note>". If the status changes: tasq set 3 <in-progress|ready|waiting|blocked|later> [note]; priority: tasq set 3 <A|B|C>. Track the task's project directory with: tasq project 3 <path> (sessions start in the first tracked worktree that exists, otherwise there). Track development worktrees with: tasq worktree 3 <path>; to create a new worktree use: tasq worktree 3 --create <branch>, which runs the configured worktree manager and tracks the result. Track Claude sessions with: tasq session 3 <session-id> [desc], and merge requests with: tasq mr 3 <mr-url> [title]. When the task is finished, mark it done: tasq done 3 [note]. At the end of the session, run the /tasq:wrapup skill to record progress and final status.

@@ -17,36 +17,43 @@ pub fn run(app: &App, id: &str, path: Option<&Path>, create: Option<&str>) -> Re
     let id = App::task_id(id)?;
     let mut store = app.open_store()?;
     if let Some(branch) = create {
-        let branch = branch.trim();
-        if branch.is_empty() {
-            return Err(CliError::user("the branch name must not be empty"));
-        }
-        let task = store.get(&id)?;
-        let project = work::project_dir(&task, app.config().work.default_project.as_deref())
-            .ok_or_else(|| {
-                CliError::user(format!(
-                    "task {id} tracks no project and work.default_project is unset; set one with tasq project {id} <path>"
-                ))
-            })?;
-        let manager = manager_for(
-            app.config().work.worktree_manager,
-            app.config().work.worktree_command.as_deref(),
-            app.env_vec(),
-        )
-        .map_err(|e| CliError::user(e.to_string()))?;
-        let created = manager
-            .create(&project, branch)
-            .map_err(|e| CliError::user(e.to_string()))?;
-        if !app.out.json_mode() {
-            for message in &created.messages {
-                app.out.print(&format!("{message}\n"))?;
-            }
-        }
-        return track(app, &mut store, &id, &created.path, Some(created.branch));
+        return create_and_track(app, &mut store, &id, branch);
     }
     let path =
         path.ok_or_else(|| CliError::user("a worktree path or --create <branch> is required"))?;
     track(app, &mut store, &id, path, None)
+}
+
+/// Creates the worktree for `branch` with the configured manager, in the
+/// task's project (or the default), and tracks it. Also used by `next`
+/// and `pick` to recreate a worktree that is gone.
+pub fn create_and_track(app: &App, store: &mut NbStore, id: &TaskId, branch: &str) -> Result<()> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err(CliError::user("the branch name must not be empty"));
+    }
+    let task = store.get(id)?;
+    let project = work::project_dir(&task, app.config().work.default_project.as_deref())
+        .ok_or_else(|| {
+            CliError::user(format!(
+                "task {id} tracks no project and work.default_project is unset; set one with tasq project {id} <path>"
+            ))
+        })?;
+    let manager = manager_for(
+        app.config().work.worktree_manager,
+        app.config().work.worktree_command.as_deref(),
+        app.env_vec(),
+    )
+    .map_err(|e| CliError::user(e.to_string()))?;
+    let created = manager
+        .create(&project, branch)
+        .map_err(|e| CliError::user(e.to_string()))?;
+    if !app.out.json_mode() {
+        for message in &created.messages {
+            app.out.print(&format!("{message}\n"))?;
+        }
+    }
+    track(app, store, id, &created.path, Some(created.branch))
 }
 
 /// Records `path` (which must exist) with its current branch, unless it is

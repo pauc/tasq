@@ -33,7 +33,7 @@ worktree_manager = "git"     # git | command
 # default_project = "~/code/..."
 
 [launch]
-default = "claude"           # shell | claude | tmux | herdr
+default = "claude"           # auto | claude | shell | tmux | herdr
 env = "direnv"               # inherit | direnv
 
 [launch.claude]
@@ -106,3 +106,28 @@ else `work.default_project`) and tracks it. `work.worktree_manager` picks how:
   otherwise (`{new:<text>}` substitutes `<text>` instead). The command must print the worktree
   path as its last line of standard output; earlier lines are shown to the user. Example for
   gwm: `"gwm create {new} {branch} --no-tmux -s"`.
+
+## Launchers
+
+`tasq next` and `tasq pick <id>` set the task to in-progress and open a session in the first
+tracked worktree that exists, else the task's `## Project`, else `work.default_project`.
+`launch.default` (or `--launcher`) picks how:
+
+- `claude`: runs `claude "<prompt>"` in that directory. With `launch.env = "direnv"` and an
+  allowed `.envrc`, the command is wrapped in `direnv exec <dir>` so the session gets the
+  directory's own environment; a `.envrc` that direnv has not allowed is reported with the
+  `direnv allow` command to run. The prompt comes from `launch.claude.prompt_file` or the
+  built-in template (`crates/launch/templates/claude.md`): `{{id}}`, `{{title}}`, `{{file}}`,
+  `{{markdown}}`, `{{workdir}}`, `{{worktrees}}`, `{{sessions}}`, `{{statuses}}`, and
+  `{{#name}}...{{/name}}` sections kept only when the variable is non-empty (`{{#herdr}}`
+  inside herdr).
+- `shell`: `exec $SHELL` in the directory.
+- `tmux`: a new tmux window there (only inside tmux).
+- `herdr`: a herdr workspace with a Claude agent and the prompt pasted in, or a tab in the
+  workspace already holding the directory (only inside herdr); falls back to `claude` in the
+  current pane when herdr cannot open one.
+- `auto`: `herdr` when `HERDR_ENV` is set, else `claude`.
+
+The session's environment carries `TASQ_TASK_ID`, `TASQ_NOTEBOOK` and, when a profile is
+selected, `TASQ_PROFILE`. `--dry-run` prints the directory, the commands and the prompt
+without launching (with `--json`: `task`, `workdir`, `in_worktree`, `launcher`, `env`, `steps`).

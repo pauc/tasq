@@ -1227,3 +1227,262 @@ mod apply {
             ));
     }
 }
+
+mod launch {
+    use super::*;
+
+    const PROMPT_START: &str = "Work with me on my next task: todo [3]";
+
+    #[test]
+    fn pick_dry_run_shows_the_plan_without_writing() {
+        let env = TestEnv::fixture();
+        let before = env.read_task("20260902100000.todo.md");
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["pick", "3", "--dry-run"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stderr(&out), "");
+        assert_snapshot!(env.normalize(&stdout(&out)));
+        assert_eq!(env.read_task("20260902100000.todo.md"), before);
+    }
+
+    #[test]
+    fn pick_runs_claude_with_the_prompt_and_marks_in_progress() {
+        let env = TestEnv::fixture();
+        let log = env.home.join("claude.log");
+        env.fake_tool(
+            "claude",
+            &format!(
+                "[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\n{{ echo \"cwd=$PWD\"; echo \"id=$TASQ_TASK_ID nb=$TASQ_NOTEBOOK\"; echo \"argc=$#\"; printf '%.60s\\n' \"$1\"; }} > '{}'",
+                log.display()
+            ),
+        );
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .env("TASQ_LAUNCH_ENV", "inherit")
+            .args(["pick", "3"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "[3] -> in-progress\nTask: [3] Answer the support ticket\nStarting in project: [ROOT]/home\n"
+        );
+        let logged = env.normalize(&std::fs::read_to_string(&log).unwrap());
+        assert_eq!(
+            logged,
+            format!(
+                "cwd=[ROOT]/home\nid=3 nb=home\nargc=1\n{PROMPT_START} from my nb notebook (\n"
+            )
+        );
+        assert!(
+            env.read_task("20260902100000.todo.md")
+                .contains("#support #B #in-progress"),
+        );
+        // Already in progress: no status line the second time.
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["pick", "3"])
+            .output()
+            .unwrap();
+        assert!(stdout(&out).starts_with("Task: [3]"), "{}", stdout(&out));
+    }
+
+    #[test]
+    fn next_picks_the_first_in_progress_task() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["next", "--dry-run", "--launcher", "shell"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        // Task 1 tracks a project and a worktree that do not exist here.
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            "tasq: warning: tracked project not found: /home/pau/code/tasks; using work.default_project\n\
+             tasq: warning: tracked worktree is gone: /home/pau/code/tasks-wt/feature-a\n\
+             tasq: warning: dry run: would offer to recreate it on branch feature-a; starting in the project instead\n"
+        );
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "Task: [1] Rewrite the tasks script in Rust\nStarting in project: [ROOT]/home\nLauncher: shell (dry run)\ncd [ROOT]/home\nTASQ_TASK_ID=1 TASQ_NOTEBOOK=home exec sh\n"
+        );
+    }
+
+    #[test]
+    fn next_without_candidates() {
+        let env = TestEnv::empty();
+        env.tasq()
+            .args(["next"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no in-progress or ready todos\n");
+    }
+
+    #[test]
+    fn missing_worktree_is_not_asked_about_without_a_terminal() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["pick", "1", "--launcher", "shell", "--dry-run"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        // stdin is a pipe here, so even without --dry-run no prompt appears.
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .env("SHELL", "/nonexistent/shell")
+            .args(["pick", "1", "--launcher", "shell"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        let err = stderr(&out);
+        assert!(
+            err.contains("no terminal to ask on, starting in the project instead"),
+            "{err}"
+        );
+        assert!(err.contains("tasq: /nonexistent/shell failed:"), "{err}");
+    }
+
+    #[test]
+    fn launcher_errors() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["pick", "3", "--launcher", "tmux", "--dry-run"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::ends_with(
+                "tasq: tmux: not inside a tmux session ($TMUX is unset)\n",
+            ));
+        env.tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["pick", "3", "--launcher", "nope", "--dry-run"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::ends_with(
+                "tasq: nope: unknown launcher (available: auto, claude, shell, tmux, herdr)\n",
+            ));
+        env.tasq()
+            .args(["pick", "4", "--dry-run"])
+            .assert()
+            .code(1)
+            .stderr("tasq: task 4 is done; reopen it first (tasq set 4 <status>)\n");
+        env.tasq()
+            .args(["pick", "3", "--dry-run"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::ends_with(
+                "tasq: task 3 tracks no project and work.default_project is unset; set one with tasq project 3 <path>\n",
+            ));
+    }
+
+    #[test]
+    fn auto_launcher_is_herdr_inside_herdr() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .env("HERDR_ENV", "1")
+            .env("TASQ_LAUNCHER", "auto")
+            .args(["pick", "3", "--dry-run", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["schema"], 1);
+        assert_eq!(value["launcher"], "herdr");
+        assert_eq!(value["in_worktree"], false);
+        assert_eq!(value["env"][0][0], "TASQ_TASK_ID");
+        let steps = value["steps"].as_array().unwrap();
+        // The session is in the default project, so no holding-workspace lookup.
+        assert!(
+            steps[0]
+                .as_str()
+                .unwrap()
+                .starts_with("herdr workspace create")
+        );
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.as_str().unwrap().contains("herdr workspace rename"))
+        );
+        let outside = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .env("TASQ_LAUNCHER", "auto")
+            .args(["pick", "3", "--dry-run", "--json"])
+            .output()
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&outside.stdout).unwrap();
+        assert_eq!(value["launcher"], "claude");
+    }
+
+    #[test]
+    fn custom_prompt_template_and_profile_env() {
+        let env = TestEnv::fixture();
+        let template = env.home.join("prompt.md");
+        std::fs::write(
+            &template,
+            "Custom prompt for [{{id}}] {{title}} in {{workdir}}\n",
+        )
+        .unwrap();
+        env.write_global_config(&format!(
+            "[work]\ndefault_project = \"{}\"\n\n[launch.claude]\nprompt_file = \"{}\"\n\n[profile.work]\n",
+            env.home.display(),
+            template.display()
+        ));
+        let out = env
+            .tasq()
+            .args(["--profile", "work", "pick", "3", "--dry-run"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let text = env.normalize(&stdout(&out));
+        assert!(
+            text.contains("TASQ_TASK_ID=3 TASQ_NOTEBOOK=home TASQ_PROFILE=work exec claude"),
+            "{text}"
+        );
+        assert!(
+            text.ends_with(
+                "--- prompt ---\nCustom prompt for [3] Answer the support ticket in [ROOT]/home\n"
+            ),
+            "{text}"
+        );
+        std::fs::write(&template, "{{bogus}}").unwrap();
+        env.tasq()
+            .args(["pick", "3", "--dry-run"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::ends_with(
+                "tasq: prompt template: unknown placeholder {{bogus}}\n",
+            ));
+    }
+
+    #[test]
+    fn session_hint_comes_from_the_launcher() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["session", "3", "s-1", "--launcher", "nope"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with("tasq: nope: unknown launcher"));
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .env("HERDR_ENV", "1")
+            .args(["session", "3", "s-1", "--launcher", "auto"])
+            .assert()
+            .success()
+            .stdout("[3] session: s-1 (resume: claude --resume s-1)\n");
+    }
+}

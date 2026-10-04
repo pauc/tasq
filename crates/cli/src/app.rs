@@ -66,6 +66,14 @@ pub fn run(cli: Cli) -> Result<()> {
                 Some(Command::Done { id, note }) => {
                     commands::edit::done(&app, &id, note.as_deref())
                 }
+                Some(Command::Next { launcher, dry_run }) => {
+                    commands::launch::next(&app, launcher.as_deref(), dry_run)
+                }
+                Some(Command::Pick {
+                    id,
+                    launcher,
+                    dry_run,
+                }) => commands::launch::pick(&app, &id, launcher.as_deref(), dry_run),
                 Some(Command::View { id, raw }) => commands::view::run(&app, &id, raw),
                 Some(Command::Project { id, path }) => {
                     commands::project::run(&app, &id, path.as_deref())
@@ -106,6 +114,8 @@ fn command_name(command: &Command) -> &'static str {
         Command::Set { .. } => "set",
         Command::Log { .. } => "log",
         Command::Done { .. } => "done",
+        Command::Next { .. } => "next",
+        Command::Pick { .. } => "pick",
         Command::View { .. } => "view",
         Command::Project { .. } => "project",
         Command::Worktree { .. } => "worktree",
