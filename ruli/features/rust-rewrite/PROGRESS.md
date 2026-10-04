@@ -5,6 +5,33 @@ place for status, learnings, blockers and deviations from the plan.
 
 ## Status
 
+**Phase 9 (plugin mechanism and release) complete (2026-10-04), pending two manual acceptances.**
+ADR 0006 is Accepted: external executables for user plugins, in-process Rust for the adapters
+in this repository, no WASM. `tasq <name> [args]` execs `tasq-<name>` from `PATH` (built-ins
+win; a plugin wins over the bare `tasq <word>` filter) with `TASQ_BIN`, `TASQ_PROFILE`,
+`TASQ_CONFIG` and `TASQ_SET` forwarded; `[hooks]` (`post-create`, `post-done`, `pre-launch`)
+run command lines with a JSON document on stdin; `tasq plugins list` shows both. The
+reference plugin `examples/plugins/tasq-tlogs` runs end to end in a CLI test. Docs: README
+rewritten for a new user, `CONTRIBUTING.md`, `docs/plugins.md`, `docs/release.md`,
+`docs/migration.md`, `examples/config/`, config reference audited against the structs.
+Release: hand-written `.github/workflows/release.yml` (tag `v*`: four native builds, GitHub
+release with git-cliff notes, crates.io publish of all six crates in dependency order,
+optional Homebrew tap from `homebrew/tasq.rb.template`), `cliff.toml`, crate metadata for
+publishing. 701 workspace tests; config module 107 mutants, 0 missed; `cargo doc` clean.
+**Not verifiable here:** the release pipeline has never run (no GitHub repository yet, `OWNER`
+placeholders), `cargo install tasq` is not possible until the crates are published, and
+T-904's one-week side-by-side run on the real notebook is the author's manual acceptance
+(procedure in `docs/migration.md`). Follow-up recorded: `tasq list --all` for done tasks.
+
+| Task | Title | Status | Notes |
+|------|-------|--------|-------|
+| T-901 | Plugin mechanism | done | ADR 0006 Accepted; `crates/cli/src/plugins.rs` (dispatch, discovery, hooks), `commands/plugins.rs`; core `HooksConfig` + `TASQ_SET`; `docs/plugins.md`; `examples/plugins/{tasq-tlogs,hooks/log-event.sh}`; 6 integration + 6 unit tests |
+| T-902 | Documentation and examples | done | README, `CONTRIBUTING.md`, `docs/config.md` (every key with default), `docs/json.md`, `docs/testing.md` (wiremock claim removed), `examples/config/{plain-markdown,author}.toml`, `examples/README.md`; no gif (no recorder on this machine) |
+| T-903 | Release pipeline | done, unrun | `.github/workflows/release.yml`, `cliff.toml`, `homebrew/tasq.rb.template`, `docs/release.md`; manifests carry `version` on path deps, `homepage`/`keywords`/`categories`; needs a GitHub repo and `CARGO_REGISTRY_TOKEN` to run |
+| T-904 | Migration guide | docs done, acceptance pending | `docs/migration.md` (command and env mapping from `original/tasks`, switch-over checklist, daily verification); the one-week run is manual |
+
+### Phase 8 status
+
 **Phase 8 (TUI) complete (2026-10-04).** `tasq ui` is a ratatui UI in `crates/tui`
 (`tasq-tui`, depends on `tasq-core` and ratatui only): the grouped list with the CLI's ordering
 and the selected task's detail beside it (one pane below 100 columns, `Tab` switches), `/`
@@ -182,6 +209,40 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 4. T-102+T-103 (one agent), T-104, T-106 in parallel, each owning one module directory.
 
 ## Learnings
+
+### Plugin and release decisions (T-901 to T-904)
+
+- **Dispatch happens before clap and before the config is loaded.** `tasq_cli::plugins::
+  External::parse` scans argv for the first positional, skipping the global flags (the four
+  that take a value: `--profile`, `--config`, `--set`, `--color`); an unknown flag hands the
+  line back to clap. A plugin runs even when the config is broken and finds out through its
+  own `tasq` calls. The plugin replaces the process (`exec`), so its exit code and streams are
+  the user's.
+- **`--set` needed an environment form.** Without it a plugin's `$TASQ_BIN` calls silently
+  used another notebook. `TASQ_SET` (newline-separated `key=value`) lives in the env layer
+  of the config loader, above `TASQ_*` for the same key and below `--set`; errors say `env:`.
+  `TASQ_CONFIG` is forwarded as an absolute path because a plugin may `cd`.
+- **Hooks are CLI-only by construction.** They run from `commands::{create,edit,launch}`;
+  the TUI's `d` edits through core and fires nothing, its `Enter` runs `tasq pick` so
+  `pre-launch` fires. `pre-launch` runs after the in-progress transition (a refused launch
+  leaves the task in progress; documented). Hook stdout is shown only with `-v` so `--json`
+  output stays clean; stdin gets the same `Task` JSON as `view --json`.
+- The CLI crate has no `mutants` dependency and is excluded from mutation testing, so the
+  process wrappers there carry a "Not unit-tested" doc line instead of `#[mutants::skip]`.
+- A clippy `too_many_lines` on `Config::load` after adding `TASQ_SET` was fixed by
+  extracting `env_layer`, not by an allow. `HooksConfig::is_empty` written as three `&&`
+  survived two mutants; `entries().iter().all(..)` plus a per-field test killed them.
+- `cargo publish` rejects path dependencies without a `version`, and `cargo install tasq`
+  needs every crate the binary depends on to be on crates.io, so all six crates are published
+  (plan said core and tasq). Order: core; store-nb, sources, launch, tui; tasq, each waiting
+  for the sparse index.
+- The release workflow is hand-written (cargo-dist and release-plz are not installed and
+  generate code to keep in sync); every target builds natively on its own runner and the job
+  asserts the runner's host triple. The pipeline is untested until a GitHub repository exists.
+- Listing a generated 500-task notebook takes ~15 ms with a debug build (30 ms as JSON):
+  the plan's 50 ms target holds with margin, so no hot path argued for in-process plugins.
+- Fixture notebook: the next created task gets id 8 (seven index lines), not 7; tests that
+  create a task must use 8.
 
 ### TUI decisions (T-801 to T-803)
 
@@ -589,6 +650,19 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ## Deviations from the plan
 
+- T-901: `TASQ_BIN` and `TASQ_SET` added to the plugin environment (the plan listed
+  `TASQ_PROFILE` and `TASQ_CONFIG`); hooks are configured under `[hooks]` rather than
+  discovered, and only fire from the CLI; `tasq apply` closing a task fires no `post-done`.
+  The reference plugin is a sketch of the author's tool (date range + per-day notes + even
+  split), not the real HiBob/GitLab poster, which stays private.
+- T-902: no screenshot or gif (nothing to record with on this machine); README carries a TODO
+  comment. `cargo install tasq` cannot be followed yet because nothing is published.
+- T-903: hand-written workflow instead of cargo-dist/release-plz; all six crates are
+  published, not two; the GitHub release and crates.io steps have never run. `CHANGELOG.md`
+  stays hand-maintained for now, with `cliff.toml` ready to regenerate it from the
+  conventional commits once `git-cliff` is installed or in CI.
+- T-904: the one-week side-by-side verification is a manual acceptance left to the author;
+  `docs/migration.md` gives the daily procedure.
 - T-801: the README gif was not recorded (`vhs`/`asciinema` are not installed); the terminal
   path was checked with `script` instead (see `docs/testing.md`). `d` asks for an optional
   final note (the `tasq done [note]` shape) rather than closing on the keypress alone.
@@ -631,4 +705,6 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ## Open questions raised during implementation
 
-(none yet)
+- `tasq list --json` never includes done tasks, so a plugin cannot enumerate closed work
+  except per day through `summary --json` or one by one through `view --json`. A `list --all`
+  (or `--done`) flag is the obvious follow-up; not needed by the reference plugin.

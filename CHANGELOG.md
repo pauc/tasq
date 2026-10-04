@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Plugins (ADR 0006): `tasq <name> [args...]` runs an executable `tasq-<name>` from `PATH`
+  when `<name>` is not a built-in command, with `TASQ_BIN`, `TASQ_PROFILE`, `TASQ_CONFIG` and
+  `TASQ_SET` forwarded so the plugin sees the same configuration; `[hooks]` config
+  (`post-create`, `post-done`, `pre-launch`) runs command lines with the task as JSON on
+  stdin, a failing `pre-launch` hook aborting the launch; `tasq plugins list`; `TASQ_SET`
+  environment variable (newline-separated `key=value` overrides). Reference plugin
+  `examples/plugins/tasq-tlogs` and hook `examples/plugins/hooks/log-event.sh`;
+  `docs/plugins.md`.
+- Documentation for a new user: README (install, quick start, concepts, commands),
+  `CONTRIBUTING.md`, `docs/config.md` with every key and its default, `docs/migration.md`
+  (running alongside the original `tasks` script), `docs/release.md`, `examples/config/`.
+- Release pipeline: `.github/workflows/release.yml` builds Linux and macOS tarballs on a
+  `v*` tag, creates the GitHub release with git-cliff notes (`cliff.toml`), publishes the
+  crates in dependency order and renders a Homebrew formula from `homebrew/tasq.rb.template`.
+
 - `tasq ui`: a ratatui terminal UI over the same tasks. Grouped list with the CLI's ordering,
   the selected task's detail beside it (one pane below 100 columns, `Tab` to switch), `/`
   filter, status and priority pickers from the configured workflow, note and done prompts,

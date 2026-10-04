@@ -759,6 +759,11 @@ Rename is a find-and-replace on crate names before T-903; nothing in the plan de
 - License: GPL-3.0-or-later (nb is AGPLv3; CLI has no network-service clause need).
 - nb relationship: hybrid — native reads and file writes, nb for index/git bookkeeping when installed, native fallback otherwise.
 - Forge sources split per concern: `<forge>-review-requests` and `<forge>-work-items`; work items create tasks by default.
+- (2026-10-04, during Phase 9) ADR 0006 accepted: user plugins are `tasq-<name>` executables on
+  `PATH` talking JSON (`TASQ_BIN`, `TASQ_PROFILE`, `TASQ_CONFIG`, `TASQ_SET` forwarded), hooks
+  are `[hooks]` command lines fed a JSON document on stdin, adapters in this repository stay
+  in-process Rust, WASM is not adopted. The release pipeline is a hand-written workflow (no
+  cargo-dist) publishing all six crates; `tasq` keeps its name.
 - (2026-10-04, during Phase 8) The TUI edits through `tasq_core::edit` (shared with `tasq
   set/log/done`) and runs its three outside-world actions (editor, session, sync) as child
   processes of the `tasq` binary itself, never by linking the launch or sources crates (ADR
