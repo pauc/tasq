@@ -10,13 +10,13 @@ inside a temp copy of a fixture notebook in the repo, never at the real `~/.nb`.
 
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
-| T-200 | nb test harness (fixture notebook, NB_DIR isolation, CI nb install) | in progress | new task, prerequisite for Phase 2 |
-| T-201 | Notebook resolution and index reading | in progress | wave A |
-| T-202 | Reading and writing tasks through the store | in progress | wave A |
-| T-204 | Store capability reporting | in progress | wave A |
-| T-203 | Creating tasks | pending | wave B |
-| T-206 | Bookkeeper (nb CLI vs native) | pending | wave B |
-| T-205 | doctor / config show | pending | diagnostics functions in wave B, CLI in Phase 3 |
+| T-200 | nb test harness (fixture notebook, NB_DIR isolation, CI nb install) | done | commits 5c0fa3e, e7f663f; nb-gated tests enforced in CI via TASQ_REQUIRE_NB=1 |
+| T-201 | Notebook resolution and index reading | done | commit 4d957d9 |
+| T-202 | Reading and writing tasks through the store | done | commits 801581d (Store trait), 4d957d9; 79 store-nb tests; mutants 139 tested, 0 missed |
+| T-204 | Store capability reporting | done | commit 4d957d9 |
+| T-203 | Creating tasks | in progress | wave B |
+| T-206 | Bookkeeper (nb CLI vs native) | in progress | wave B |
+| T-205 | doctor / config show | in progress | diagnostics functions in wave B, CLI in Phase 3 |
 
 ### Phase 0 and 1 status
 
@@ -68,7 +68,26 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ## Learnings
 
+### Store decisions (T-201/T-202/T-204)
+
+- Conflict detection: a side map of `Revision` (mtime + length + hash) per `TaskId` captured on
+  read; `update` refuses with `Conflict` if the file changed. Kept out of `Task` so the model
+  stays store-agnostic.
+- `update` applies `format::ops` for the differences it can express, re-projects, and returns
+  `Unsupported{fields}` if the result still differs (title edits, tag removal, etc.), rather
+  than silently dropping changes. No write when the rendered text is unchanged.
+- The store resolves the `nb` executable from the injected env's PATH itself; tests and the CLI
+  are explicit about which nb runs. No process is spawned when `$NB_DIR/<notebook>` exists.
+- Added `format::ops::set_open` (reopen) to core.
+
 ### nb facts (probed 2026-10-04 with nb 7.25.4 in an isolated NB_DIR)
+
+- **nb needs a git identity**: with `HOME` pointing at a dir without `.gitconfig`, every nb
+  command prints the welcome and does nothing. The harness writes one.
+- `nb notebooks show <name> --path` and `nb todo do` need the notebook to be a git repo; listing
+  and `nb index reconcile` work without `.git`.
+- `nb index reconcile` on a missing index renumbers ids (observed 3→6, 7→5): the warning is needed.
+- `nb index verify` prints "Index corrupted" for a missing file but still exits 0.
 
 - `NB_DIR` and `NBRC_PATH` fully isolate nb; `NB_AUTO_SYNC=0` prevents remote sync attempts.
 - On a fresh `NB_DIR` the first nb command prints a welcome and initializes `home` (a git repo
