@@ -362,3 +362,95 @@ fn mixed_line_endings_survive() {
         ["# [ ] T", "", "## Tags", "", "#B"]
     );
 }
+
+/// Every before/after file of the operation scenarios is a file the script
+/// produced too: all of them must survive a parse/render round trip.
+#[test]
+fn every_ops_fixture_round_trips() {
+    let dir = format!("{}/tests/fixtures/ops", env!("CARGO_MANIFEST_DIR"));
+    let mut count = 0;
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let once = parse(&text);
+        assert_eq!(format::render(&once.document), text, "{}", path.display());
+        let twice = parse(&format::render(&once.document));
+        assert_eq!(once, twice, "{}", path.display());
+        count += 1;
+    }
+    assert!(count > 80, "expected the ops fixtures, found {count} files");
+}
+
+#[test]
+fn section_views_report_levels_headings_and_bodies() {
+    let doc = Document::parse(concat!(
+        "# [ ] T\n",
+        "## Related\n",
+        "- a\n",
+        "### Merge requests\n",
+        "- b\n",
+        "### Other\n",
+        "c\n",
+        "## Tags\n",
+        "#B\n",
+        "## Empty\n",
+    ))
+    .unwrap();
+    let sections = doc.sections();
+    assert_eq!(sections.len(), 3);
+    let related = &sections[0];
+    assert_eq!(
+        (related.level, related.name, related.heading),
+        (2, "Related", 1)
+    );
+    assert_eq!(
+        related.body,
+        ["- a", "### Merge requests", "- b", "### Other", "c"]
+    );
+    assert_eq!(related.own_body(), ["- a"]);
+    let subs = related.subsections();
+    assert_eq!(subs.len(), 2);
+    assert_eq!(
+        (subs[0].level, subs[0].name, subs[0].heading),
+        (3, "Merge requests", 3)
+    );
+    assert_eq!(subs[0].body, ["- b"]);
+    assert_eq!(
+        (subs[1].level, subs[1].name, subs[1].heading),
+        (3, "Other", 5)
+    );
+    assert_eq!(subs[1].body, ["c"]);
+    assert_eq!((sections[1].name, sections[1].heading), ("Tags", 7));
+    assert_eq!(sections[1].body, ["#B"]);
+    assert_eq!(sections[2].body, Vec::<&str>::new());
+    assert_eq!(sections[2].trimmed_body(), Vec::<&str>::new());
+    assert_eq!(sections[2].subsections(), Vec::new());
+    assert_eq!(sections[2].own_body(), Vec::<&str>::new());
+    assert_eq!(doc.sections_named("Tags"), vec![sections[1].clone()]);
+    assert_eq!(doc.sections_named("Nope"), Vec::new());
+    assert_eq!(doc.section("Empty").unwrap().heading, 9);
+    assert_eq!(
+        doc.section("Merge requests"),
+        None,
+        "subsections are not sections"
+    );
+    assert_eq!(doc.line_count(), 10);
+}
+
+#[test]
+fn blank_only_bodies_trim_to_nothing() {
+    let doc = Document::parse("# [ ] T\n\n## Due\n\n   \n\t\n## Tags\n").unwrap();
+    let due = doc.section("Due").unwrap();
+    assert_eq!(due.body, ["", "   ", "\t"]);
+    assert_eq!(due.trimmed_body(), Vec::<&str>::new());
+    let tags = doc.section("Tags").unwrap();
+    assert_eq!(tags.trimmed_body(), Vec::<&str>::new());
+}
+
+#[test]
+fn newline_constants() {
+    assert_eq!(Newline::Lf.as_str(), "\n");
+    assert_eq!(Newline::CrLf.as_str(), "\r\n");
+    assert_eq!(format::OPEN_PREFIX, "# [ ] ");
+    assert_eq!(format::DONE_PREFIX, "# [x] ");
+}

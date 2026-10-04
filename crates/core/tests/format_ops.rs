@@ -658,3 +658,133 @@ fn operations_round_trip_through_the_task() {
     expected.mark_done();
     assert_eq!(task, expected);
 }
+
+#[test]
+fn set_tags_leave_double_hash_tokens_alone() {
+    let wf = Workflow::default();
+    let mut doc = Document::parse("# [ ] T\n\n## Tags\n\n#x ##A ##ready #A #ready\n").unwrap();
+    ops::set_priority(&mut doc, Priority::C, &wf);
+    assert_eq!(
+        format::render(&doc),
+        "# [ ] T\n\n## Tags\n\n#x ##A ##ready #ready #C\n"
+    );
+    ops::strip_status_tag(&mut doc, &wf);
+    assert_eq!(
+        format::render(&doc),
+        "# [ ] T\n\n## Tags\n\n#x ##A ##ready #C\n"
+    );
+}
+
+#[test]
+fn append_to_section_takes_the_last_entry_of_any_duplicate_section() {
+    // awk never resets `last`: the first section's entry wins over the
+    // second section's heading when the second has no `- ` line.
+    let mut doc =
+        Document::parse("# [ ] T\n\n## Progress\n\n- 2026-10-04 10:15: a\n\n## Progress\n\ntext\n")
+            .unwrap();
+    ops::append_progress(&mut doc, &note("c"));
+    assert_eq!(
+        format::render(&doc),
+        "# [ ] T\n\n## Progress\n\n- 2026-10-04 10:15: a\n- 2026-10-04 10:15: c\n\n## Progress\n\ntext\n"
+    );
+    // A `- ` line outside the section does not count, a `###` line does not close it.
+    let mut doc = Document::parse(
+        "# [ ] T\n\n## Other\n\n- x\n\n## Progress\n\n### Sub\n\n- 2026-10-04 10:15: a\n\n## Tags\n\n- y\n",
+    )
+    .unwrap();
+    ops::append_progress(&mut doc, &note("c"));
+    assert_eq!(
+        format::render(&doc),
+        "# [ ] T\n\n## Other\n\n- x\n\n## Progress\n\n### Sub\n\n- 2026-10-04 10:15: a\n- 2026-10-04 10:15: c\n\n## Tags\n\n- y\n"
+    );
+}
+
+#[test]
+fn merge_request_tracking_scans_the_whole_file_like_the_awk() {
+    // A `### Merge requests` under another section counts as tracked...
+    let text = format!("# [ ] T\n\n## Other\n\n### Merge requests\n\n- [m]({MR1})\n");
+    let mut doc = Document::parse(&text).unwrap();
+    assert!(!ops::append_merge_request(&mut doc, &mr(MR1, "Again")));
+    assert_eq!(format::render(&doc), text);
+    // ...and is where a new entry goes, instead of creating `## Related`.
+    let mut doc =
+        Document::parse("# [ ] T\n\n## Other\n\n### Merge requests\n\n- [m](u)\n").unwrap();
+    assert!(ops::append_merge_request(&mut doc, &mr(MR1, "First")));
+    assert_eq!(
+        format::render(&doc),
+        format!("# [ ] T\n\n## Other\n\n### Merge requests\n\n- [m](u)\n- [First]({MR1})\n")
+    );
+    // The url outside a subsection, or in a subsection closed by `##`, is not tracked.
+    let mut doc = Document::parse(&format!(
+        "# [ ] T\n\n## Related\n\n- {MR1}\n\n### Merge requests\n\n### Other\n\n- [m]({MR1})\n\n## Progress\n"
+    ))
+    .unwrap();
+    assert!(ops::append_merge_request(&mut doc, &mr(MR1, "First")));
+    assert_eq!(
+        format::render(&doc),
+        format!(
+            "# [ ] T\n\n## Related\n\n- {MR1}\n\n### Merge requests\n\n- [First]({MR1})\n\n### Other\n\n- [m]({MR1})\n\n## Progress\n"
+        )
+    );
+    // Duplicate subsections: the entry follows the last `- ` line of any of them.
+    let mut doc = Document::parse(
+        "# [ ] T\n\n## Related\n\n### Merge requests\n\n- [a](u1)\n\n## Other\n\n### Merge requests\n\ntext\n",
+    )
+    .unwrap();
+    assert!(ops::append_merge_request(&mut doc, &mr("u2", "b")));
+    assert_eq!(
+        format::render(&doc),
+        "# [ ] T\n\n## Related\n\n### Merge requests\n\n- [a](u1)\n- [b](u2)\n\n## Other\n\n### Merge requests\n\ntext\n"
+    );
+    // Partial url matches do not count: the needle is `(url)` with parentheses.
+    let mut doc =
+        Document::parse("# [ ] T\n\n## Related\n\n### Merge requests\n\n- [a](u12)\n").unwrap();
+    assert!(ops::append_merge_request(&mut doc, &mr("u1", "b")));
+    assert!(!ops::append_merge_request(&mut doc, &mr("u1", "c")));
+    assert_eq!(
+        format::render(&doc),
+        "# [ ] T\n\n## Related\n\n### Merge requests\n\n- [a](u12)\n- [b](u1)\n"
+    );
+}
+
+#[test]
+fn merge_request_without_a_title_uses_the_url() {
+    let mut doc = Document::parse("# [ ] T\n").unwrap();
+    assert!(ops::append_merge_request(&mut doc, &Link::new("u")));
+    assert_eq!(
+        format::render(&doc),
+        "# [ ] T\n\n## Related\n\n### Merge requests\n\n- [u](u)\n"
+    );
+    assert!(!ops::append_merge_request(&mut doc, &Link::new("u")));
+}
+
+#[test]
+fn worktree_tracking_matches_the_path_prefix_only() {
+    let mut doc = Document::parse("# [ ] T\n\n## Worktrees\n\n- /a/b (`x`)\n- /c\n").unwrap();
+    assert!(!ops::append_worktree(&mut doc, &Worktree::new("/a/b")));
+    assert!(!ops::append_worktree(
+        &mut doc,
+        &Worktree::on_branch("/c", "y")
+    ));
+    assert!(ops::append_worktree(&mut doc, &Worktree::new("/a")));
+    assert!(ops::append_worktree(&mut doc, &Worktree::new("/a/b/c")));
+    assert_eq!(
+        format::render(&doc),
+        "# [ ] T\n\n## Worktrees\n\n- /a/b (`x`)\n- /c\n- /a\n- /a/b/c\n"
+    );
+}
+
+#[test]
+fn session_tracking_needs_the_backticks() {
+    let mut doc = Document::parse("# [ ] T\n\n## Description\n\nabout s-1 and `s-2`\n").unwrap();
+    assert!(ops::append_session(&mut doc, &session("s-1", None)));
+    assert!(!ops::append_session(&mut doc, &session("s-2", None)));
+    assert!(!ops::append_session(
+        &mut doc,
+        &session("s-1", Some("again"))
+    ));
+    assert_eq!(
+        format::render(&doc),
+        "# [ ] T\n\n## Description\n\nabout s-1 and `s-2`\n\n## Sessions\n\n- 2026-10-04 10:15: `s-1`\n"
+    );
+}

@@ -31,8 +31,9 @@ fn heading(name: &str) -> String {
 /// - The entry goes right after the last `- ` line of the section, or, when
 ///   the section has none, a blank line and the entry follow the heading.
 ///
-/// With duplicate headings the last one wins, as in the awk (`h` and `last`
-/// keep being overwritten).
+/// With duplicate headings the awk's `h` and `last` keep being overwritten:
+/// the entry goes after the last `- ` line of *any* section with that
+/// heading, and only when there is none after the last heading.
 pub fn append_to_section(doc: &mut Document, name: &str, entry: &str) {
     let hdr = heading(name);
     if doc.find_first(&hdr).is_none() {
@@ -43,13 +44,38 @@ pub fn append_to_section(doc: &mut Document, name: &str, entry: &str) {
             _ => doc.append_block([hdr.as_str()]),
         }
     }
-    let h = doc.find_last(&hdr).expect("heading was just ensured");
-    let end = doc.section_end(h);
-    match (h + 1..end).rev().find(|&i| doc.line(i).starts_with("- ")) {
+    let (h, last) = list_positions(doc, |line| line == hdr, |line| heading_name(line).is_some());
+    let h = h.expect("heading was just ensured");
+    match last {
         Some(last) => doc.insert(last + 1, entry),
         None => doc.insert_all(h + 1, ["", entry]),
     }
     doc.terminate();
+}
+
+/// One pass over the lines, as the script's awk did: returns the index of the
+/// last heading matched by `is_heading` and the index of the last `- ` line
+/// that follows such a heading before a line matched by `closes` (which also
+/// matches the headings themselves).
+fn list_positions(
+    doc: &Document,
+    is_heading: impl Fn(&str) -> bool,
+    closes: impl Fn(&str) -> bool,
+) -> (Option<usize>, Option<usize>) {
+    let mut h = None;
+    let mut last = None;
+    let mut inside = false;
+    for (i, line) in doc.lines().enumerate() {
+        if is_heading(line) {
+            h = Some(i);
+            inside = true;
+        } else if closes(line) {
+            inside = false;
+        } else if inside && line.starts_with("- ") {
+            last = Some(i);
+        }
+    }
+    (h, last)
 }
 
 /// `append_progress`: adds a progress entry (see [`append_to_section`]).
@@ -85,18 +111,24 @@ pub fn append_session(doc: &mut Document, session: &Session) -> bool {
 /// `append_mr_entry`: adds `- [title](url)` under `### Merge requests`,
 /// creating `## Related` and the subsection where the script did. Returns
 /// `false` when `(url)` already occurs inside the subsection.
+///
+/// Like the script's awk passes this works on the whole file, not on the
+/// structured view: a `### Merge requests` subsection counts wherever it is,
+/// it ends at any line starting with `##`, and with duplicates the last
+/// heading and the last `- ` line win.
 pub fn append_merge_request(doc: &mut Document, link: &Link) -> bool {
+    let sub_hdr = format!("### {}", section::MERGE_REQUESTS);
     let needle = format!("({})", link.url);
-    let tracked = doc
-        .section(section::RELATED)
-        .into_iter()
-        .flat_map(|s| s.subsections())
-        .filter(|s| s.name == section::MERGE_REQUESTS)
-        .any(|s| s.body.iter().any(|l| l.contains(&needle)));
+    let mut inside = false;
+    let tracked = doc.lines().any(|line| {
+        if line.starts_with("##") {
+            inside = line == sub_hdr;
+        }
+        inside && line.contains(&needle)
+    });
     if tracked {
         return false;
     }
-    let sub_hdr = format!("### {}", section::MERGE_REQUESTS);
     if doc.find_first(&sub_hdr).is_none() {
         let related = heading(section::RELATED);
         if doc.find_first(&related).is_none() {
@@ -114,13 +146,10 @@ pub fn append_merge_request(doc: &mut Document, link: &Link) -> bool {
             doc.insert_all(end, ["", sub_hdr.as_str()]);
         }
     }
-    let h = doc.find_first(&sub_hdr).expect("ensured above");
-    let mut end = h + 1;
-    while end < doc.line_count() && !doc.line(end).starts_with("##") {
-        end += 1;
-    }
+    let (h, last) = list_positions(doc, |line| line == sub_hdr, |line| line.starts_with("##"));
+    let h = h.expect("ensured above");
     let entry = entry::format_merge_request(link);
-    match (h + 1..end).rev().find(|&i| doc.line(i).starts_with("- ")) {
+    match last {
         Some(last) => doc.insert(last + 1, &entry),
         None => doc.insert_all(h + 1, ["", entry.as_str()]),
     }

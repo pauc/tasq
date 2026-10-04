@@ -331,3 +331,15 @@ fn source_grammar() {
         "gitlab"
     );
 }
+
+#[test]
+fn double_hash_tokens_are_neither_statuses_nor_priorities() {
+    // The script matched `^#(A|B|C)$` and `^#(status)$`; `##A` is neither.
+    let t = task("# [ ] T\n\n## Tags\n\n##A ##ready #C #waiting\n");
+    assert_eq!(t.status, Some(Status::WAITING));
+    assert_eq!(t.priority, Priority::C);
+    assert_eq!(t.tags, Vec::new());
+    let t = task("# [ ] T\n\n## Tags\n\n##A ##ready\n");
+    assert_eq!(t.status, None);
+    assert_eq!(t.priority, Priority::B);
+}

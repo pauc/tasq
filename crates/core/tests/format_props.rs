@@ -285,3 +285,26 @@ fn from_task_minimal_done_and_source() {
     assert_eq!(parsed.task.origin, task.origin);
     assert_eq!(parsed.task.description, None);
 }
+
+fn is_title_line(text: &str) -> bool {
+    [format::OPEN_PREFIX, format::DONE_PREFIX]
+        .iter()
+        .any(|p| text.len() > p.len() && text.starts_with(p))
+}
+
+proptest! {
+    #[test]
+    fn text_without_a_title_line_is_not_a_task(
+        first in prop_oneof![
+            "\\PC*",
+            "# \\[[ xX]?\\]\\PC*",
+            " ?#? ?\\[ \\] \\PC*",
+        ].prop_filter("would be a title line", |t| !is_title_line(t)),
+        rest in "(\\r?\\n\\PC*){0,3}",
+    ) {
+        let text = format!("{first}{rest}");
+        let err = format::parse(&text, TaskId::from(1), &workflow()).unwrap_err();
+        prop_assert_eq!(&err, &format::FormatError::NotATask { first_line: first.clone() });
+        prop_assert_eq!(Document::parse(&text), Err(err));
+    }
+}

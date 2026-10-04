@@ -125,9 +125,14 @@ pub(super) enum TagKind {
 }
 
 /// Classifies a whitespace-separated token. Tokens without a leading `#`, and
-/// tokens that are not valid tags (for example `##x`), yield `None`.
+/// tokens that are not valid tags (for example `##x`, `##A` or `##ready`),
+/// yield `None`: the script matched `^#(A|B|C)$` and `^#(status)$`, so a
+/// second `#` never made a priority or a status.
 pub(super) fn classify(token: &str, workflow: &Workflow) -> Option<TagKind> {
     let name = token.strip_prefix('#')?;
+    if name.starts_with('#') {
+        return None;
+    }
     if let Some(status) = workflow.parse_status(name) {
         return Some(TagKind::Status(status));
     }
