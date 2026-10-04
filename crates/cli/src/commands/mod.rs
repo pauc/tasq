@@ -23,6 +23,7 @@ pub mod mr;
 pub mod project;
 pub mod session;
 pub mod store;
+pub mod sync;
 pub mod view;
 pub mod worktree;
 

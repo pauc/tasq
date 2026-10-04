@@ -762,12 +762,7 @@ mod create {
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
-        assert_eq!(
-            stderr(&out),
-            format!(
-                "tasq: warning: no title lookup for {url} yet; tracked as \"group/project!77\" (fix it with tasq mr <id> {url} \"<title>\")\n"
-            )
-        );
+        assert_eq!(stderr(&out), "", "no forge configured: silent fallback");
         let file = std::fs::read_to_string(env.notebook().join(NEW_FILE)).unwrap();
         assert_snapshot!(file);
         env.tasq()
@@ -1484,5 +1479,288 @@ mod launch {
             .assert()
             .success()
             .stdout("[3] session: s-1 (resume: claude --resume s-1)\n");
+    }
+}
+
+mod sync {
+    use super::*;
+    use support::FakeHttp;
+
+    const USER: &str = "{\"id\":42,\"username\":\"pau\"}";
+    const MR7: &str = "{\"iid\":7,\"title\":\"Add parser\",\"web_url\":\"https://gl.test/group/project/-/merge_requests/7\",\"state\":\"opened\",\"draft\":false}";
+    const LIST: &str = "/api/v4/merge_requests?scope=all&state=opened&reviewer_id=42&per_page=100";
+    const MR7_API: &str = "/api/v4/projects/group%2Fproject/merge_requests/7";
+
+    fn bridge_config(env: &TestEnv, name: &str, command: &str, extra: &str) -> String {
+        format!(
+            "[[source]]\nname = \"{name}\"\nkind = \"llm-bridge\"\ncommand = \"{command}\"\nprompt_file = \"{}\"\ntags = [\"inbox\"]\n{extra}\n",
+            env.home.join("prompt.md").display()
+        )
+    }
+
+    fn install_bridge(env: &TestEnv) {
+        std::fs::write(env.home.join("prompt.md"), "triage\n").unwrap();
+        env.fake_tool(
+            "inbox-bridge",
+            "[ -n \"${FAKE_PROBE:-}\" ] && exit 0\nread -r prompt\necho '[{\"external_id\":\"slack:C1/1\",\"url\":\"https://slack.test/C1/1\",\"title\":\"Reply to Ana\",\"body\":\"Export format question.\",\"status\":\"ready\",\"priority\":\"A\",\"tags\":[\"slack\"]},{\"external_id\":\"slack:C1/2\",\"title\":\"reply  to ana\"}]'",
+        );
+    }
+
+    #[test]
+    fn bridge_creates_tasks_once() {
+        let env = TestEnv::fixture();
+        install_bridge(&env);
+        env.write_project_config(&bridge_config(&env, "inbox", "inbox-bridge", ""));
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .arg("sync")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            "inbox: 1 change(s)\n  [8] created: Reply to Ana\n"
+        );
+        assert_snapshot!(env.read_task("20261007093000.todo.md"));
+        // The same items again: matched by `## Source`, nothing to do.
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .arg("sync")
+            .assert()
+            .success()
+            .stdout("inbox: up to date\n");
+        // Re-checking by id: the bridge reports open, nothing happens.
+        env.tasq()
+            .args(["sync", "8"])
+            .assert()
+            .success()
+            .stdout("inbox: up to date\n");
+    }
+
+    #[test]
+    fn dry_run_and_json() {
+        let env = TestEnv::fixture();
+        install_bridge(&env);
+        env.write_project_config(&bridge_config(
+            &env,
+            "inbox",
+            "inbox-bridge",
+            "status = \"later\"",
+        ));
+        let before = std::fs::read_to_string(env.notebook().join(".index")).unwrap();
+        env.tasq()
+            .args(["sync", "--dry-run"])
+            .assert()
+            .success()
+            .stdout("inbox: 1 change(s) (dry run)\n  create: Reply to Ana\n");
+        assert_eq!(
+            std::fs::read_to_string(env.notebook().join(".index")).unwrap(),
+            before
+        );
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["sync", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["schema"], 1);
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["dry_run"], false);
+        assert_eq!(value["sources"][0]["name"], "inbox");
+        assert_eq!(value["sources"][0]["applied"][0]["id"], "8");
+        assert_eq!(value["sources"][0]["error"], serde_json::Value::Null);
+        assert!(
+            env.read_task("20261007093000.todo.md")
+                .contains("#inbox #slack #A #ready") // the item's status wins over the source default
+        );
+    }
+
+    #[test]
+    fn a_failing_source_does_not_stop_the_others() {
+        let env = TestEnv::fixture();
+        install_bridge(&env);
+        env.fake_tool(
+            "bad-bridge",
+            "[ -n \"${FAKE_PROBE:-}\" ] && exit 0\necho 'quota exceeded' >&2\nexit 2",
+        );
+        let config = format!(
+            "{}{}",
+            bridge_config(&env, "bad", "bad-bridge", ""),
+            bridge_config(&env, "inbox", "inbox-bridge", "")
+        );
+        env.write_project_config(&config);
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .arg("sync")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            stdout(&out),
+            "bad: failed: command \"bad-bridge\" failed: quota exceeded\ninbox: 1 change(s)\n  [8] created: Reply to Ana\n"
+        );
+        env.tasq()
+            .args(["sync", "--source", "nope"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no enabled source called \"nope\" (sources: bad, inbox)\n");
+        env.tasq()
+            .args(["sync", "--source", "inbox"])
+            .assert()
+            .success()
+            .stdout("inbox: up to date\n");
+    }
+
+    #[test]
+    fn without_sources() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .arg("sync")
+            .assert()
+            .code(1)
+            .stderr("tasq: no [[source]] is configured (see docs/config.md and docs/sources.md)\n");
+    }
+
+    fn gitlab_config(base: &str) -> String {
+        format!(
+            "[forge.gitlab]\nhost = \"gl.test\"\nurl = \"{base}/api/v4\"\n\n[[source]]\nname = \"gitlab-review-requests\"\nkind = \"gitlab-review-requests\"\nforge = \"gitlab\"\ntags = [\"gitlab\", \"review-request\"]\nstatus = \"ready\"\nflag = \"review-request\"\n"
+        )
+    }
+
+    #[test]
+    fn gitlab_review_requests_create_then_close() {
+        let env = TestEnv::fixture();
+        let open = FakeHttp::start(vec![
+            ("/api/v4/user", 200, USER),
+            (LIST, 200, &format!("[{MR7}]")),
+        ]);
+        env.write_project_config(&gitlab_config(&open.base));
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .env("GITLAB_TOKEN", "secret")
+            .arg("sync")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            "gitlab-review-requests: 1 change(s)\n  [8] created: Review MR !7: Add parser\n"
+        );
+        assert_eq!(open.requests(), vec!["/api/v4/user", LIST]);
+        assert_snapshot!(env.read_task("20261007093000.todo.md"));
+        // Later the MR is merged: the sweep no longer lists it and the
+        // individual check closes the task.
+        let merged = FakeHttp::start(vec![
+            ("/api/v4/user", 200, USER),
+            (LIST, 200, "[]"),
+            (MR7_API, 200, &MR7.replace("\"opened\"", "\"merged\"")),
+            (&format!("{MR7_API}/approvals"), 200, "{\"approved_by\":[]}"),
+        ]);
+        env.write_project_config(&gitlab_config(&merged.base));
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", "2026-10-08 10:00")
+            .env("GITLAB_TOKEN", "secret")
+            .arg("sync")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            "gitlab-review-requests: 1 change(s)\n  [8] done: sync(gitlab-review-requests): merged\n"
+        );
+        let file = env.read_task("20261007093000.todo.md");
+        assert!(
+            file.starts_with("# [x] Review MR !7: Add parser\n"),
+            "{file}"
+        );
+        assert!(
+            file.contains("- 2026-10-08 10:00: sync(gitlab-review-requests): merged\n"),
+            "{file}"
+        );
+        assert!(
+            file.contains("\n#gitlab #review-request #B\n"),
+            "status tag stripped: {file}"
+        );
+        // A third sweep: the done task is matched and left alone.
+        env.tasq()
+            .env("GITLAB_TOKEN", "secret")
+            .arg("sync")
+            .assert()
+            .success()
+            .stdout("gitlab-review-requests: up to date\n");
+    }
+
+    #[test]
+    fn missing_token_is_reported_per_source() {
+        let env = TestEnv::fixture();
+        env.write_project_config(&gitlab_config("http://127.0.0.1:9"));
+        env.tasq()
+            .arg("sync")
+            .assert()
+            .code(1)
+            .stdout("gitlab-review-requests: failed: authentication: no token for forge.gitlab: set forge.gitlab.token_cmd or the GITLAB_TOKEN environment variable\n");
+    }
+
+    #[test]
+    fn mr_titles_come_from_the_forge() {
+        let env = TestEnv::fixture();
+        let server = FakeHttp::start(vec![
+            ("/api/v4/user", 200, USER),
+            (
+                "/api/v4/projects/g%2Fp/merge_requests/9",
+                200,
+                "{\"iid\":9,\"title\":\"Real title\",\"web_url\":\"https://gl.test/g/p/-/merge_requests/9\",\"state\":\"opened\"}",
+            ),
+            (
+                "/api/v4/projects/g%2Fp/merge_requests/9/approvals",
+                200,
+                "{\"approved_by\":[]}",
+            ),
+        ]);
+        env.write_project_config(&format!(
+            "[forge.gitlab]\nhost = \"gl.test\"\nurl = \"{}/api/v4\"\n",
+            server.base
+        ));
+        env.tasq()
+            .env("GITLAB_TOKEN", "secret")
+            .args(["mr", "3", "https://gl.test/g/p/-/merge_requests/9"])
+            .assert()
+            .success()
+            .stdout("[3] MR: Real title\n");
+        // The lookup fails: warning and the short reference.
+        let out = env
+            .tasq()
+            .env("GITLAB_TOKEN", "secret")
+            .args(["mr", "3", "https://gl.test/g/p/-/merge_requests/10"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stdout(&out), "[3] MR: g/p!10\n");
+        assert_eq!(stderr(&out), "", "a gone MR is not an error");
+        // Another host: no forge, silent fallback.
+        env.tasq()
+            .args(["mr", "3", "https://other.test/g/p/-/merge_requests/1"])
+            .assert()
+            .success()
+            .stdout("[3] MR: g/p!1\n");
+        // Without a token the lookup fails loudly but the MR is still tracked.
+        let out = env
+            .tasq()
+            .args([
+                "create",
+                "Review it",
+                "--mr",
+                "https://gl.test/g/p/-/merge_requests/11",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(stderr(&out).starts_with("tasq: warning: could not look up the title of https://gl.test/g/p/-/merge_requests/11: authentication:"), "{}", stderr(&out));
     }
 }

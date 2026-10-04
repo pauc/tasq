@@ -1,0 +1,21 @@
+---
+source: crates/cli/tests/cli.rs
+expression: "env.read_task(\"20261007093000.todo.md\")"
+---
+# [ ] Review MR !7: Add parser
+
+## Source
+
+gitlab-review-requests: group/project!7 https://gl.test/group/project/-/merge_requests/7
+
+## Related
+
+- https://gl.test/group/project/-/merge_requests/7
+
+## Tags
+
+#gitlab #review-request #B #ready
+
+## Progress
+
+- 2026-10-07 09:30: sync(gitlab-review-requests): created

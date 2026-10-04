@@ -97,6 +97,11 @@ pub fn run(cli: Cli) -> Result<()> {
                     commands::mr::run(&app, &id, &url, title.as_deref())
                 }
                 Some(Command::Apply { file }) => commands::apply::run(&app, file.as_deref()),
+                Some(Command::Sync {
+                    source,
+                    dry_run,
+                    ids,
+                }) => commands::sync::run(&app, source.as_deref(), dry_run, &ids),
                 Some(Command::Store(cmd)) => commands::store::run(&app, cmd),
                 Some(Command::Config(cmd)) => commands::config::run(&app, cmd),
                 Some(Command::Doctor | Command::Completions { .. }) => {
@@ -122,6 +127,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::Session { .. } => "session",
         Command::Mr { .. } => "mr",
         Command::Apply { .. } => "apply",
+        Command::Sync { .. } => "sync",
         Command::Store(_) => "store",
         Command::Doctor => "doctor",
         Command::Config(_) => "config",

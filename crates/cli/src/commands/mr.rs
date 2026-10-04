@@ -1,13 +1,15 @@
 //! Merge request links: turning a URL (and maybe a title) into the
 //! `- [title](url)` entry the file wants.
 //!
-//! Title lookup through the forge clients is plan T-503/T-307. Until then,
-//! a GitLab or GitHub URL gets the short reference the script's `view`
-//! showed for it (`group/project!123`, `owner/repo#123`) as its label, and
-//! any other URL needs an explicit title.
+//! The title comes from the forge configured for the URL's host
+//! (`[forge.<name>] host`, plan T-307/T-503); without one, or when the
+//! lookup fails, a GitLab or GitHub URL gets the short reference the
+//! script's `view` showed for it (`group/project!123`, `owner/repo#123`)
+//! as its label, and any other URL needs an explicit title.
 
 use tasq_core::model::Link;
 use tasq_core::store::Store;
+use tasq_sources::{real_transport, resolve_title};
 
 use crate::app::App;
 use crate::commands::finish;
@@ -30,11 +32,29 @@ pub fn run(app: &App, id: &str, url: &str, title: Option<&str>) -> Result<()> {
             &format!("[{id}] MR already tracked: {url}\n"),
         );
     }
-    let link = link_for(url, title)?;
+    let link = resolve_link(app, url, title)?;
     let label = link.label.clone().unwrap_or_default();
     task.add_merge_request(link);
     store.update(&task)?;
     finish(app, &store, &id, &format!("[{id}] MR: {label}\n"))
+}
+
+/// The link for `url`: `title` when given, else the title the configured
+/// forge reports (a failed lookup is a warning), else [`link_for`]'s
+/// fallback.
+pub fn resolve_link(app: &App, url: &str, title: Option<&str>) -> Result<Link> {
+    if title.map(str::trim).is_some_and(|t| !t.is_empty()) {
+        return link_for(url, title);
+    }
+    match resolve_title(url, app.config(), &app.env_vec(), &real_transport) {
+        Ok(Some(resolved)) => Ok(Link::labelled(url, resolved)),
+        Ok(None) => link_for(url, None),
+        Err(e) => {
+            app.out
+                .warn(&format!("could not look up the title of {url}: {e}"));
+            link_for(url, None)
+        }
+    }
 }
 
 /// The link for `url`, labelled `title` when given, else with

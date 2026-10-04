@@ -27,6 +27,7 @@ Commands:
   worktree     Track a git worktree used for the task, or create one
   session      Track an agent session on a task (idempotent by session id)
   mr           Track a merge request on a task (idempotent by URL)
+  sync         Refresh tasks from the configured sources (merge requests to review, assigned issues, an LLM inbox)
   apply        Update a task from JSON (`tasq view --json` shape) on stdin or in FILE
   store        The store behind the tasks: where it is and how to sync it
   doctor       Check the configuration, the notebook, nb and optional tools

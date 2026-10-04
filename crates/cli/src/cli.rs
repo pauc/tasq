@@ -271,6 +271,20 @@ pub enum Command {
         title: Option<String>,
     },
 
+    /// Refresh tasks from the configured sources (merge requests to review, assigned issues, an LLM inbox).
+    #[command(after_help = SYNC_HELP)]
+    Sync {
+        /// Only this source (its `[[source]] name`).
+        #[arg(long, value_name = "NAME")]
+        source: Option<String>,
+        /// Print the changes and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Re-check only these tasks against their sources instead of a full sweep.
+        #[arg(value_name = "ID")]
+        ids: Vec<String>,
+    },
+
     /// Update a task from JSON (`tasq view --json` shape) on stdin or in FILE.
     ///
     /// The document is `{"schema": 1, "task": {...}}`; see docs/json.md.
@@ -346,6 +360,16 @@ $SHELL there; tmux opens a new window (inside tmux only); herdr opens a
 workspace with a Claude agent (inside herdr only); auto is herdr inside
 herdr, else claude. The session gets TASQ_TASK_ID, TASQ_NOTEBOOK and, when
 selected, TASQ_PROFILE.";
+
+const SYNC_HELP: &str = "\
+Every enabled [[source]] runs in order; one failing source is reported and
+does not stop the others (the exit code is 1 when any failed). For each
+source the items it reports are reconciled with the tasks: a new open item
+becomes a task (with the source's tags and status, and a `## Source` line
+for later matching), a tracked item that is done (merged, closed, approved
+by you, reassigned, gone) logs a note and marks the task done. Tracked
+tasks the sweep no longer lists are re-checked individually. With task ids,
+only those tasks are re-checked. See docs/sources.md.";
 
 /// `tasq create` arguments.
 #[derive(Debug, Clone, Args, Default)]

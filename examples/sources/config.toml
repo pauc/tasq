@@ -1,0 +1,29 @@
+# Example sources for `tasq sync`. Merge into ~/.config/tasq/config.toml.
+
+[forge.gitlab]
+host = "gitlab.example.com"
+token_cmd = "glab auth token"
+
+[[source]]
+name = "gitlab-review-requests"
+kind = "gitlab-review-requests"
+forge = "gitlab"
+tags = ["gitlab", "review-request"]
+status = "ready"
+flag = "review-request"
+
+[[source]]
+name = "gitlab-work-items"
+kind = "gitlab-work-items"
+forge = "gitlab"
+tags = ["gitlab"]
+status = "later"
+projects = ["my-group/"]
+exclude_labels = ["wontfix"]
+
+[[source]]
+name = "inbox"
+kind = "llm-bridge"
+command = "claude -p --output-format json"
+prompt_file = "~/.config/tasq/prompts/inbox.md"
+tags = ["inbox"]

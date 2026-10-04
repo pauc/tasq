@@ -51,13 +51,7 @@ pub fn run(app: &App, args: &CreateArgs) -> Result<()> {
         clock.today(),
     )?;
     for url in &args.mr {
-        let link = mr::link_for(url, None)?;
-        if let Some(label) = &link.label {
-            app.out.warn(&format!(
-                "no title lookup for {url} yet; tracked as {label:?} (fix it with tasq mr <id> {url} \"<title>\")"
-            ));
-        }
-        draft = draft.with_merge_request(link);
+        draft = draft.with_merge_request(mr::resolve_link(app, url, None)?);
     }
     let closed = draft.done;
     let mut store = app.open_store()?;

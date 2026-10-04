@@ -160,6 +160,66 @@ impl TestEnv {
     }
 }
 
+/// A loopback HTTP server answering GET requests from a fixed route table
+/// (exact request target → status and JSON body; anything else is 404),
+/// recording every request target. Lives until the test process exits.
+pub struct FakeHttp {
+    /// `http://127.0.0.1:<port>`.
+    pub base: String,
+    requests: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl FakeHttp {
+    /// Starts a server with `routes`.
+    pub fn start(routes: Vec<(&str, u16, &str)>) -> Self {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = std::sync::Arc::clone(&requests);
+        let routes: Vec<(String, u16, String)> = routes
+            .into_iter()
+            .map(|(p, s, b)| (p.to_owned(), s, b.to_owned()))
+            .collect();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    continue;
+                }
+                let mut header = String::new();
+                while reader.read_line(&mut header).is_ok_and(|n| n > 2) {
+                    header.clear();
+                }
+                let target = request_line
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or("")
+                    .to_owned();
+                log.lock().unwrap().push(target.clone());
+                let (status, body) = routes.iter().find(|(p, _, _)| *p == target).map_or(
+                    (404, "{\"message\":\"404 Not Found\"}".to_owned()),
+                    |(_, s, b)| (*s, b.clone()),
+                );
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        Self { base, requests }
+    }
+
+    /// The request targets seen so far, in order.
+    pub fn requests(&self) -> Vec<String> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
 /// Standard output as text.
 pub fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()

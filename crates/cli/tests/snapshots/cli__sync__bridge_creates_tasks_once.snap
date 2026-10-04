@@ -1,0 +1,25 @@
+---
+source: crates/cli/tests/cli.rs
+expression: "env.read_task(\"20261007093000.todo.md\")"
+---
+# [ ] Reply to Ana
+
+## Description
+
+Export format question.
+
+## Source
+
+inbox: slack:C1/1 https://slack.test/C1/1
+
+## Related
+
+- https://slack.test/C1/1
+
+## Tags
+
+#inbox #slack #A #ready
+
+## Progress
+
+- 2026-10-07 09:30: sync(inbox): created
