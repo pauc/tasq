@@ -9,10 +9,18 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# Dates and timestamps (`NaiveDate`, `NaiveDateTime`). `clock` is only needed
+# by `SystemClock`; `serde` so model types with dates derive Serialize.
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 # Provides the `#[mutants::skip]` attribute for cargo-mutants. It must be a
 # regular dependency (not dev) because the attribute sits on non-test code.
 # See the "Mutation testing" note in src/lib.rs.
 mutants = "0.0.4"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+serde_json = "1"
 
 [lints]
 workspace = true
