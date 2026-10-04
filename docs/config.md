@@ -48,7 +48,8 @@ glow_style = "dark"
 
 # [forge.gitlab]            # kind and host inferred from the name when omitted
 # host = "gitlab.example.com"
-# token_cmd = "glab auth token"
+# token_cmd = "glab auth token"      # else GITLAB_TOKEN / GITHUB_TOKEN
+# url = "https://gitlab.example.com/api/v4"   # API base; defaults from host
 
 # [[source]]
 # name = "gitlab-review-requests"

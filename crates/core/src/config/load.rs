@@ -379,6 +379,7 @@ fn template() -> Table {
         "<name>".to_owned(),
         super::ForgeConfig {
             kind: Some(ForgeKind::Gitlab),
+            url: Some(String::new()),
             host: Some(String::new()),
             token_cmd: Some(String::new()),
         },

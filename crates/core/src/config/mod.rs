@@ -306,6 +306,12 @@ pub struct ForgeConfig {
     /// `GITHUB_TOKEN` from the environment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_cmd: Option<String>,
+    /// API base URL, for self-hosted instances with an unusual layout or
+    /// for tests. Default: `https://<host>/api/v4` (GitLab),
+    /// `https://api.github.com` for `github.com`, else
+    /// `https://<host>/api/v3` (GitHub Enterprise).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 /// Forge APIs.

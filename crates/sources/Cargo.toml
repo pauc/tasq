@@ -1,6 +1,6 @@
 [package]
 name = "tasq-sources"
-description = "tasq Sources: GitLab, GitHub and LLM-bridge integrations (feature-gated)"
+description = "tasq Sources: GitLab and GitHub forge clients, review-request and work-item sources, and the LLM bridge"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,19 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+tasq-core = { path = "../core" }
+# `#[mutants::skip]` on the functions that only do network or process I/O.
+mutants = "0.0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# `token_cmd` is split into argv without a shell.
+shell-words = "1"
+thiserror = "2"
+# Blocking HTTP with rustls; the only network dependency of the workspace.
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints]
 workspace = true
