@@ -7,9 +7,9 @@ place for status, learnings, blockers and deviations from the plan.
 
 **Phase 3 (CLI parity) in progress, started 2026-10-04.** T-301 (skeleton, output modes, errors,
 completions, test harness), T-302 (`list`) and the CLI side of T-205 (`doctor`, `config show`) and
-T-204 (`store info`) are done; `tasq store sync` (T-206) too. 397 workspace tests. Next: T-303
-`create`, T-304 `set`/`log`/`done`, T-305 `view`, T-306 `project`/`worktree`, T-307
-`session`/`mr`, T-308 `apply`.
+T-204 (`store info`) are done; `tasq store sync` (T-206) too. T-303 `create` and T-304
+`set`/`log`/`done` done. 421 workspace tests. Next: T-305 `view`, T-306 `project`/`worktree`,
+T-307 `session`/`mr`, T-308 `apply`.
 
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
@@ -17,8 +17,8 @@ T-204 (`store info`) are done; `tasq store sync` (T-206) too. 397 workspace test
 | T-302 | `list` (default command) | done | grouped/single-status/tag/priority views, `--json` |
 | T-205 | `doctor` / `config show` commands | done | config failures are reported as a FAIL check, not a crash |
 | T-204 | `store info` | done | plus `store sync` from T-206 |
-| T-303 | `create` | todo | |
-| T-304 | `set`, `log`, `done` | todo | |
+| T-303 | `create` | done | `--due` words via `tasq_core::dates::parse_day` (mutants 8 tested, 0 missed); `--mr` falls back to a `group/project!123` label until T-307 |
+| T-304 | `set`, `log`, `done` | done | whole-task `Store::update`; `TASQ_NOW` fixes timestamps in tests |
 | T-305 | `view` | todo | |
 | T-306 | `project`, `worktree` | todo | |
 | T-307 | `session`, `mr` | todo | |
@@ -130,6 +130,14 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   root to `[ROOT]`; `INSTA_UPDATE=always cargo test -p tasq` accepts them (no `cargo insta`).
   `assert_cmd::Command::new(env!("CARGO_BIN_EXE_tasq"))` avoids the deprecated `cargo_bin`.
 - Manual TTY check with `script -qec` (not covered by tests): colour, pager, pager fallback.
+- `TASQ_NOW="YYYY-MM-DD HH:MM"` (env, not a config key) makes `App::clock()` a `FixedClock`
+  and is also handed to the store (`NbStore::with_clock`), so tests pin progress timestamps
+  and new filenames (`20261007093000.todo.md`, next second when taken). Documented in
+  `docs/testing.md`.
+- `create --mr <url>`: the store refuses unlabelled merge requests, and the forge title lookup
+  is T-307/T-503, so `commands::mr::link_for` labels GitLab/GitHub URLs with their short
+  reference (`group/project!77`, `owner/repo#7`) and warns; other URLs need an explicit
+  title. The lookup slots in front of the fallback later.
 
 ### Store decisions (T-201/T-202/T-204)
 

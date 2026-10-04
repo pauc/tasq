@@ -12,6 +12,12 @@ Quality gates run locally with `just check` (or the cargo commands it wraps) and
 - Snapshot tests use `insta`; property tests use `proptest`; HTTP adapters use `wiremock`; the CLI
   uses `assert_cmd`. Tests never touch the network.
 
+## Deterministic time
+
+`TASQ_NOW="YYYY-MM-DD HH:MM"` in the environment makes the binary use a fixed clock for every
+timestamp it writes (progress notes, sessions, new file names). The CLI integration tests set it
+so file contents can be compared exactly; it is also handy for reproducible demos.
+
 ## Mutation testing
 
 We use [cargo-mutants](https://mutants.rs/) to measure test quality rather than line coverage. It
