@@ -1,0 +1,16 @@
+---
+source: crates/tui/tests/render.rs
+expression: "screen(&mut model, 100, 12)"
+---
+"┌ Tasks (0/0) ───────────────────────────────────┐┌ Task ──────────────────────────────────────────┐"
+"│No open todos.                                  ││No task selected.                               │"
+"│                                                ││                                                │"
+"│                                                ││                                                │"
+"│                                                ││                                                │"
+"│                                                ││                                                │"
+"│                                                ││                                                │"
+"│                                                ││                                                │"
+"│                                                ││                                                │"
+"│                                                ││                                                │"
+"└────────────────────────────────────────────────┘└────────────────────────────────────────────────┘"
+"j/k move  / filter  s status  p prio  l log  d done  e edit  Enter open  S sync  ? help  q quit     "

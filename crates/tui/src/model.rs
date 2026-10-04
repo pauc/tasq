@@ -1,0 +1,420 @@
+//! The application state: what is on screen and what the keys mean right
+//! now. Pure data with pure helpers; [`crate::update()`] mutates it and
+//! [`crate::view()`] reads it.
+
+use tasq_core::model::{Priority, Status, Task, TaskId, Workflow};
+use tasq_core::query::{self, Filter, Group};
+use tasq_core::theme::Theme;
+
+/// Terminal width from which the list and the detail pane sit side by
+/// side (T-803: single pane below 100 columns).
+pub const TWO_PANE_MIN_WIDTH: u16 = 100;
+
+/// How many rows `PageUp`/`PageDown` move.
+pub const PAGE: usize = 10;
+
+/// What the keys do right now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mode {
+    /// Browsing the list.
+    Normal,
+    /// Typing a filter (`/`); the list follows every keystroke.
+    Filter {
+        /// Text typed so far.
+        input: String,
+    },
+    /// Choosing a status for the selected task (`s`).
+    Status {
+        /// Highlighted entry of the workflow's status list.
+        cursor: usize,
+    },
+    /// Choosing a priority for the selected task (`p`).
+    Priority {
+        /// Highlighted entry of `A`, `B`, `C`.
+        cursor: usize,
+    },
+    /// Typing a progress note (`l`) or the final note of `done` (`d`).
+    Note {
+        /// Text typed so far.
+        input: String,
+        /// What the note is for.
+        target: NoteTarget,
+    },
+    /// The key help overlay (`?`).
+    Help,
+}
+
+/// What a typed note is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteTarget {
+    /// `tasq log <id> <note>`.
+    Log,
+    /// `tasq done <id> [note]`; an empty note just closes the task.
+    Done,
+}
+
+/// The line shown in the status bar after an action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    /// The text.
+    pub text: String,
+    /// Whether it reports a failure (rendered in red).
+    pub is_error: bool,
+}
+
+impl Message {
+    /// An informational message.
+    pub fn info(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            is_error: false,
+        }
+    }
+
+    /// An error message.
+    pub fn error(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            is_error: true,
+        }
+    }
+}
+
+/// How the screen is split.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutKind {
+    /// List on the left, detail on the right.
+    TwoPane,
+    /// One pane: the list, or the detail of the selected task (`Tab`).
+    OnePane,
+}
+
+/// One line of the task list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Row<'a> {
+    /// A status group header (`None` is the no-status group).
+    Header(Option<Status>),
+    /// A task of the group above.
+    Task(&'a Task),
+}
+
+/// The whole state of the UI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Model {
+    /// Open tasks as last loaded from the store.
+    pub tasks: Vec<Task>,
+    /// The configured statuses, for grouping and the status picker.
+    pub workflow: Workflow,
+    /// Group colours (`[ui.colors]`).
+    pub theme: Theme,
+    /// Whether colours are used at all (`false` under `NO_COLOR`).
+    pub color: bool,
+    /// The applied filter text (see [`Model::filter`]).
+    pub filter: String,
+    /// The selected task, when any is visible.
+    pub selected: Option<TaskId>,
+    /// What the keys do.
+    pub mode: Mode,
+    /// Result of the last action.
+    pub message: Option<Message>,
+    /// Terminal width.
+    pub width: u16,
+    /// Terminal height.
+    pub height: u16,
+    /// In the one-pane layout: show the detail instead of the list.
+    pub show_detail: bool,
+    /// Set by `q`; the runtime stops.
+    pub quit: bool,
+}
+
+impl Model {
+    /// An empty model (no tasks loaded yet) for a terminal of unknown size.
+    pub fn new(workflow: Workflow, theme: Theme, color: bool) -> Self {
+        Self {
+            tasks: Vec::new(),
+            workflow,
+            theme,
+            color,
+            filter: String::new(),
+            selected: None,
+            mode: Mode::Normal,
+            message: None,
+            width: 0,
+            height: 0,
+            show_detail: false,
+            quit: false,
+        }
+    }
+
+    /// The layout for the current width.
+    pub fn layout(&self) -> LayoutKind {
+        if self.width >= TWO_PANE_MIN_WIDTH {
+            LayoutKind::TwoPane
+        } else {
+            LayoutKind::OnePane
+        }
+    }
+
+    /// The core filter for the filter text: `#word` is a status, priority
+    /// or tag like `tasq <word>` (an invalid word matches nothing),
+    /// anything else matches titles case-insensitively.
+    pub fn filter(&self) -> Filter {
+        let text = self.filter.trim();
+        match text.strip_prefix('#') {
+            // A lone `#` is not a word, so it falls back to a title search.
+            Some(word) => Filter::from_word(word, &self.workflow)
+                .unwrap_or_else(|_| Filter::default().text(text)),
+            None => Filter::default().text(text),
+        }
+    }
+
+    /// The status groups of the visible tasks, in CLI order.
+    pub fn groups(&self) -> Vec<Group<'_>> {
+        query::list(&self.tasks, &self.filter(), &self.workflow)
+    }
+
+    /// The list, headers included.
+    pub fn rows(&self) -> Vec<Row<'_>> {
+        let mut rows = Vec::new();
+        for group in self.groups() {
+            rows.push(Row::Header(group.status.clone()));
+            rows.extend(group.tasks.into_iter().map(Row::Task));
+        }
+        rows
+    }
+
+    /// The visible tasks in list order.
+    pub fn visible(&self) -> Vec<&Task> {
+        self.groups()
+            .into_iter()
+            .flat_map(|g| g.tasks.into_iter())
+            .collect()
+    }
+
+    /// Position of the selected task among [`Model::visible`].
+    pub fn selected_index(&self) -> Option<usize> {
+        let id = self.selected.as_ref()?;
+        self.visible().iter().position(|t| t.id == *id)
+    }
+
+    /// The selected task.
+    pub fn selected_task(&self) -> Option<&Task> {
+        let id = self.selected.as_ref()?;
+        self.visible().into_iter().find(|t| t.id == *id)
+    }
+
+    /// Position of the selected task's row among [`Model::rows`].
+    pub fn selected_row(&self) -> Option<usize> {
+        let id = self.selected.as_ref()?;
+        self.rows()
+            .iter()
+            .position(|row| matches!(row, Row::Task(t) if t.id == *id))
+    }
+
+    /// Replaces the tasks, keeping the selection when it is still visible
+    /// and otherwise selecting the first visible task.
+    pub fn set_tasks(&mut self, tasks: Vec<Task>) {
+        self.tasks = tasks;
+        self.fix_selection();
+    }
+
+    /// Replaces the filter text and keeps the selection visible.
+    pub fn set_filter(&mut self, filter: String) {
+        self.filter = filter;
+        self.fix_selection();
+    }
+
+    /// Makes sure the selection names a visible task when there is one.
+    pub fn fix_selection(&mut self) {
+        let visible = self.visible();
+        let still_there = self
+            .selected
+            .as_ref()
+            .is_some_and(|id| visible.iter().any(|t| t.id == *id));
+        if !still_there {
+            self.selected = visible.first().map(|t| t.id.clone());
+        }
+    }
+
+    /// Moves the selection by `delta` rows, clamped to the list.
+    pub fn select_offset(&mut self, delta: isize) {
+        let visible = self.visible();
+        if visible.is_empty() {
+            self.selected = None;
+            return;
+        }
+        let last = visible.len() - 1;
+        let current = self.selected_index().unwrap_or(0);
+        let target = current.saturating_add_signed(delta).min(last);
+        self.selected = Some(visible[target].id.clone());
+    }
+
+    /// Selects the first visible task.
+    pub fn select_first(&mut self) {
+        self.selected = self.visible().first().map(|t| t.id.clone());
+    }
+
+    /// Selects the last visible task.
+    pub fn select_last(&mut self) {
+        self.selected = self.visible().last().map(|t| t.id.clone());
+    }
+
+    /// The status picker entries: the workflow's statuses.
+    pub fn status_choices(&self) -> &[Status] {
+        &self.workflow.statuses
+    }
+
+    /// The priority picker entries.
+    pub fn priority_choices() -> [Priority; 3] {
+        [Priority::A, Priority::B, Priority::C]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tasq_core::model::Tag;
+
+    fn task(id: u64, title: &str, status: Option<Status>) -> Task {
+        let mut t = Task::new(TaskId::from(id), title);
+        t.status = status;
+        t
+    }
+
+    fn model() -> Model {
+        let mut m = Model::new(Workflow::default(), Theme::default(), true);
+        let mut tagged = task(3, "Tagged thing", Some(Status::READY));
+        tagged.add_tag(Tag::new("gitlab").unwrap());
+        m.set_tasks(vec![
+            task(1, "First", Some(Status::IN_PROGRESS)),
+            task(2, "Second", Some(Status::READY)),
+            tagged,
+            task(4, "Loose", None),
+        ]);
+        m
+    }
+
+    #[test]
+    fn layout_follows_the_width() {
+        let mut m = Model::new(Workflow::default(), Theme::default(), true);
+        assert_eq!(m.layout(), LayoutKind::OnePane);
+        m.width = 99;
+        assert_eq!(m.layout(), LayoutKind::OnePane);
+        m.width = 100;
+        assert_eq!(m.layout(), LayoutKind::TwoPane);
+    }
+
+    #[test]
+    fn rows_are_headers_and_tasks_in_cli_order() {
+        let m = model();
+        let rows = m.rows();
+        assert_eq!(rows.len(), 7);
+        assert_eq!(rows[0], Row::Header(Some(Status::IN_PROGRESS)));
+        assert!(matches!(rows[1], Row::Task(t) if t.id == TaskId::from(1)));
+        assert_eq!(rows[2], Row::Header(Some(Status::READY)));
+        assert!(matches!(rows[3], Row::Task(t) if t.id == TaskId::from(2)));
+        assert!(matches!(rows[4], Row::Task(t) if t.id == TaskId::from(3)));
+        assert_eq!(rows[5], Row::Header(None));
+        assert!(matches!(rows[6], Row::Task(t) if t.id == TaskId::from(4)));
+        let ids: Vec<&str> = m.visible().iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["1", "2", "3", "4"]);
+    }
+
+    #[test]
+    fn filter_text_matches_titles_and_hash_words_are_cli_words() {
+        let mut m = model();
+        m.set_filter("SEC".into());
+        assert_eq!(m.visible().len(), 1);
+        assert_eq!(m.visible()[0].id, TaskId::from(2));
+        m.set_filter("#ready".into());
+        let ids: Vec<&str> = m.visible().iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["2", "3"]);
+        m.set_filter("#gitlab".into());
+        assert_eq!(m.visible().len(), 1);
+        m.set_filter("#B".into());
+        assert_eq!(m.visible().len(), 4);
+        m.set_filter(" # ".into());
+        assert_eq!(m.visible().len(), 0, "a title containing '#'");
+        m.set_filter("##bad".into());
+        assert_eq!(m.visible().len(), 0);
+        m.set_filter(String::new());
+        assert_eq!(m.visible().len(), 4);
+        assert_eq!(m.filter(), Filter::default().text(""));
+    }
+
+    #[test]
+    fn selection_survives_reloads_and_filters() {
+        let mut m = model();
+        assert_eq!(m.selected, Some(TaskId::from(1)));
+        m.selected = Some(TaskId::from(3));
+        m.set_tasks(vec![
+            task(3, "Tagged thing", Some(Status::READY)),
+            task(9, "New", None),
+        ]);
+        assert_eq!(m.selected, Some(TaskId::from(3)));
+        assert_eq!(m.selected_index(), Some(0));
+        assert_eq!(m.selected_row(), Some(1));
+        m.set_filter("New".into());
+        assert_eq!(m.selected, Some(TaskId::from(9)));
+        m.set_filter("nothing matches".into());
+        assert_eq!(m.selected, None);
+        assert_eq!(m.selected_task(), None);
+        assert_eq!(m.selected_index(), None);
+        assert_eq!(m.selected_row(), None);
+        m.set_tasks(Vec::new());
+        assert_eq!(m.selected, None);
+    }
+
+    #[test]
+    fn movement_is_clamped() {
+        let mut m = model();
+        m.select_offset(1);
+        assert_eq!(m.selected, Some(TaskId::from(2)));
+        m.select_offset(-5);
+        assert_eq!(m.selected, Some(TaskId::from(1)));
+        m.select_offset(50);
+        assert_eq!(m.selected, Some(TaskId::from(4)));
+        m.select_first();
+        assert_eq!(m.selected, Some(TaskId::from(1)));
+        m.select_last();
+        assert_eq!(m.selected, Some(TaskId::from(4)));
+        m.selected = None;
+        m.select_offset(1);
+        assert_eq!(
+            m.selected,
+            Some(TaskId::from(2)),
+            "from the top when nothing is selected"
+        );
+        m.set_tasks(Vec::new());
+        m.select_offset(1);
+        assert_eq!(m.selected, None);
+        m.select_first();
+        assert_eq!(m.selected, None);
+        m.select_last();
+        assert_eq!(m.selected, None);
+    }
+
+    #[test]
+    fn picker_choices() {
+        let m = model();
+        assert_eq!(m.status_choices(), &Status::DEFAULTS);
+        assert_eq!(
+            Model::priority_choices(),
+            [Priority::A, Priority::B, Priority::C]
+        );
+        assert_eq!(
+            Message::info("x"),
+            Message {
+                text: "x".into(),
+                is_error: false
+            }
+        );
+        assert_eq!(
+            Message::error("x"),
+            Message {
+                text: "x".into(),
+                is_error: true
+            }
+        );
+    }
+}

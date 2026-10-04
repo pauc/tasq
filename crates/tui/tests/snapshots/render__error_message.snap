@@ -1,0 +1,16 @@
+---
+source: crates/tui/tests/render.rs
+expression: "screen(&mut model, 100, 12)"
+---
+"┌ Tasks (5/5) ───────────────────────────────────┐┌ [1] ───────────────────────────────────────────┐"
+"│IN PROGRESS                                     ││Fix the flaky build                             │"
+"│  [ 1] #A Fix the flaky build (due 2026-10-10)  ││[1]  #A  in-progress  due 2026-10-10            │"
+"│READY                                           ││ #ci                                            │"
+"│  [12] #B Review MR !88: paginate the export  #g││                                                │"
+"│  [ 3] #C Write the release notes               ││Project: /home/me/code/app                      │"
+"│LATER                                           ││                                                │"
+"│  [ 4] #B Try the new profiler                  ││Description                                     │"
+"│NO STATUS                                       ││The nightly job fails one time in three.        │"
+"│  [ 5] #B Call the bank                         ││Suspect the cache.                              │"
+"└────────────────────────────────────────────────┘└────────────────────────────────────────────────┘"
+"no task with id 9                                                                                   "
