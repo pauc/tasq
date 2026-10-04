@@ -1,0 +1,93 @@
+name: Mutants (nightly)
+
+on:
+  schedule:
+    # 03:17 UTC every day; off the hour to avoid the top-of-hour rush.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: mutants-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mutants:
+    name: full mutation run
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      - name: Run cargo-mutants on the whole workspace
+        id: mutants
+        # Do not fail the job on missed mutants; the issue below is the signal.
+        continue-on-error: true
+        run: cargo mutants --workspace --no-shuffle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants.out
+          path: mutants.out
+          if-no-files-found: ignore
+      - name: Report surviving mutants
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Surviving mutants (nightly)"
+          missed=mutants.out/missed.txt
+          existing="$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+            --jq ".[] | select(.title == \"$title\") | .number" | head -n1)"
+
+          if [ ! -s "$missed" ]; then
+            echo "No missed mutants."
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --body "Nightly run on $(date -u +%F) found no surviving mutants: $RUN_URL. Closing."
+              gh issue close "$existing"
+            fi
+            exit 0
+          fi
+
+          total="$(wc -l < "$missed")"
+          limit=400
+          {
+            echo "The nightly \`cargo mutants --workspace\` run on \`main\` found **$total** surviving mutant(s)."
+            echo
+            echo "Run: $RUN_URL (the full \`mutants.out\` directory is attached as an artifact)."
+            echo
+            echo "For each entry either add a test that kills it or document why it is equivalent."
+            echo
+            echo '```'
+            head -n "$limit" "$missed"
+            echo '```'
+            if [ "$total" -gt "$limit" ]; then
+              echo
+              echo "_Truncated: showing $limit of $total. See \`missed.txt\` in the artifact for the full list._"
+            fi
+            echo
+            echo "_Last updated $(date -u +'%F %R UTC') by the mutants-nightly workflow._"
+          } > issue-body.md
+
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file issue-body.md
+            echo "Updated issue #$existing"
+          else
+            gh issue create --title "$title" --body-file issue-body.md --label "mutants" \
+              || gh issue create --title "$title" --body-file issue-body.md
+          fi

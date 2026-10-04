@@ -1,5 +1,10 @@
 # tasq
 
+<!-- TODO: replace OWNER/tasq with the real GitHub repository once it exists. -->
+[![CI](https://github.com/OWNER/tasq/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/OWNER/tasq/actions/workflows/ci.yml)
+[![Mutants (nightly)](https://github.com/OWNER/tasq/actions/workflows/mutants-nightly.yml/badge.svg)](https://github.com/OWNER/tasq/actions/workflows/mutants-nightly.yml)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+
 A task manager for nb-style markdown todos, rewritten in Rust.
 
 `original/tasks` is a ~1200-line bash script that manages todos stored as nb
