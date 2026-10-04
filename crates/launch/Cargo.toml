@@ -1,6 +1,6 @@
 [package]
 name = "tasq-launch"
-description = "tasq Launchers: shell, Claude Code, tmux and herdr"
+description = "tasq Launchers (shell, Claude Code, tmux, herdr) and worktree managers (gwm, git)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,12 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+tasq-core = { path = "../core" }
+# `#[mutants::skip]` on the functions that only spawn processes.
+mutants = "0.0.4"
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints]
 workspace = true
