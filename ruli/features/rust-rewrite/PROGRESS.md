@@ -5,6 +5,23 @@ place for status, learnings, blockers and deviations from the plan.
 
 ## Status
 
+**Phase 7 (Claude Code plugin) complete (2026-10-04).** `plugins/claude` is a Claude Code plugin
+named `tasq` (so its skills are `/tasq:wrapup` and `/tasq:sync`) plus a status-line snippet;
+the repository root is a one-plugin marketplace (`.claude-plugin/marketplace.json`), so
+`claude plugin marketplace add <repo>` + `claude plugin install tasq@tasq` installs it and
+`claude --plugin-dir plugins/claude` loads it for one session. `claude plugin validate --strict`
+passes for both manifests and the skills directory; `crates/cli/tests/plugin.rs` pins the layout
+and checks that the launch prompt names only shipped skills. The existing `~/.claude` skills and
+`original/tasks` were not touched (nor read: they sit outside the working directory, so the
+skills were written from the plan, the script and the launcher prompt). Next: Phase 8 (TUI,
+T-801 to T-803).
+
+| Task | Title | Status | Notes |
+|------|-------|--------|-------|
+| T-701 | `plugins/claude` plugin scaffold | done | `.claude-plugin/plugin.json` (name `tasq`), `skills/{wrapup,sync}/SKILL.md` with `allowed-tools: Bash(tasq *)`, `statusline/tasq-statusline.sh`, `plugins/claude/README.md`; root `.claude-plugin/marketplace.json` |
+
+### Phase 6 status
+
 **Phase 6 (reports) complete (2026-10-04).** `tasq summary [DAY] [--raw]` collects the day's
 progress notes (open and done tasks, id order) and distils them through `report.summary.command`
 (default `claude -p`; the prompt template with the notes on stdin) or prints them raw;
@@ -139,6 +156,30 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 4. T-102+T-103 (one agent), T-104, T-106 in parallel, each owning one module directory.
 
 ## Learnings
+
+### Plugin decisions (T-701)
+
+- Layout follows the current plugin docs: `skills/<name>/SKILL.md` (not the legacy flat
+  `commands/`), frontmatter `name`, `description`, `argument-hint`, `arguments: [id]` (read as
+  `$id`), `allowed-tools: Bash(tasq *)` so the skills' CLI calls need no prompts. The plugin
+  `name` is the namespace; the repo root marketplace lists the plugin with `source =
+  "./plugins/claude"`.
+- `/tasq:sync` runs `tasq sync --json` **first** (the plan said it "ends with `tasq sync`"):
+  items the skill finds interactively through Slack/Gmail connectors cannot be handed to the
+  headless bridge, so the skill creates them itself with `tasq create --related <permalink>`,
+  and the reconciler's legacy URL match dedupes them against any later bridge or sync run.
+  Interactive triage only happens when no `llm-bridge` source is enabled. The skill ends with
+  a briefing and the `tasq` list.
+- `/tasq:wrapup` diffs against `tasq view --json` before writing (only untracked MRs,
+  worktrees, sessions), never invents a session id, and asks before `tasq done` unless the user
+  said the task is finished. Statuses come from `tasq config show --json`, not a hard-coded list.
+- Every write in both skills goes through the CLI; the plugin test rejects a `SKILL.md` that
+  mentions `.todo.md`.
+- The status line reads `TASQ_TASK_ID` from the environment (Claude Code passes its own
+  environment to the status-line command) and the title from `tasq view --raw` (no `jq` needed
+  for the task line; `jq` only for the directory fallback).
+- `claude plugin validate --strict` is the real validator but needs Claude Code, so it is run by
+  hand (documented in `docs/testing.md`); the Rust test covers what can be checked offline.
 
 ### Report decisions (T-601/T-602)
 
@@ -512,6 +553,10 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 - T-602: `this week` ends on Friday (the script ended on today, even on a weekend); explicit
   ranges are clamped to today and a start after today is an error; `--json` adds `days` and
   `working_days` lists, not in the plan, so the time-logs plugin needs no date arithmetic.
+- T-701: `claude plugin install` needs the repository registered as a marketplace first
+  (`claude plugin marketplace add <repo>`), so the repo root carries `.claude-plugin/
+  marketplace.json`; `claude --plugin-dir plugins/claude` is the no-install path. `/tasq:sync`
+  starts with `tasq sync` rather than ending with it (see Plugin decisions).
 - T-001: repository URL in `Cargo.toml` is a placeholder (`https://example.invalid/tasq`) until a
   GitHub repo exists. Extra just recipes `default` and `fmt-check`.
 
