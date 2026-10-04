@@ -1,0 +1,11 @@
+# Cargo build output
+/target/
+
+# cargo-mutants output
+mutants.out*/
+
+# insta snapshots pending review
+*.snap.new
+
+# The plan directory is tracked even though a global ignore may exclude `ruli`.
+!/ruli/

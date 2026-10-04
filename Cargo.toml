@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/store-nb",
+    "crates/sources",
+    "crates/launch",
+    "crates/cli",
+    "crates/tui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Edition 2024 needs 1.85; we keep a few minors of headroom below the pinned
+# stable (1.98) so distro toolchains can still build the workspace.
+rust-version = "1.90"
+license = "GPL-3.0-or-later"
+repository = "https://example.invalid/tasq" # TODO: replace with the real remote
+authors = ["Pau Compte"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Types like `model::Task` or `config::Config` are the natural names; the
+# module prefix is how the workspace is organised, not noise.
+module_name_repetitions = "allow"
+# Pure accessors and constructors would all need `#[must_use]`; the lint is
+# almost always noise on a domain library and we opt in per function instead.
+must_use_candidate = "allow"
+# Attaching an `# Errors` section to every fallible function is churn for
+# internal APIs; public surfaces document their errors where it matters.
+missing_errors_doc = "allow"
+# Same reasoning as `missing_errors_doc`: panics are rare and documented
+# where they are part of the contract.
+missing_panics_doc = "allow"
