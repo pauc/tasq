@@ -13,8 +13,15 @@ pub mod forge;
 pub mod github;
 pub mod gitlab;
 pub mod http;
+pub mod llm_bridge;
+pub mod registry;
+pub mod review_requests;
+pub mod title;
 pub mod url;
+pub mod work_items;
 
 pub use self::forge::{Forge, MergeRequest, MrState, User, WorkItem};
 pub use self::http::{Client, HttpError, HttpResponse, Transport, UreqTransport};
+pub use self::registry::{Built, TransportFactory, build_source, build_sources};
+pub use self::title::{real_transport, resolve_title};
 pub use self::url::{ForgeRef, RefKind, parse_ref};
