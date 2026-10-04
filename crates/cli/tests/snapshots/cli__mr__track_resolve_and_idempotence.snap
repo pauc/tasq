@@ -1,0 +1,24 @@
+---
+source: crates/cli/tests/cli.rs
+expression: "env.read_task(\"20260902100000.todo.md\")"
+---
+# [ ] Answer the support ticket
+
+## Description
+
+Customer asks about the export format.
+
+## Tags
+
+#support #B #ready
+
+## Related
+
+### Merge requests
+
+- [group/project!9](https://gitlab.example.invalid/group/project/-/merge_requests/9)
+- [Reviewed by hand](https://example.invalid/review/1)
+
+## Progress
+
+- 2026-10-02 10:00: created via tasks create

@@ -788,10 +788,12 @@ dependencies = [
  "clap_complete",
  "insta",
  "predicates",
+ "regex",
  "serde",
  "serde_json",
  "shell-words",
  "tasq-core",
+ "tasq-launch",
  "tasq-store-nb",
  "tempfile",
  "toml",
@@ -814,6 +816,11 @@ dependencies = [
 [[package]]
 name = "tasq-launch"
 version = "0.1.0"
+dependencies = [
+ "mutants",
+ "tasq-core",
+ "tempfile",
+]
 
 [[package]]
 name = "tasq-sources"

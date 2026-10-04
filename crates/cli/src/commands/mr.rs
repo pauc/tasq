@@ -7,8 +7,35 @@
 //! any other URL needs an explicit title.
 
 use tasq_core::model::Link;
+use tasq_core::store::Store;
 
+use crate::app::App;
+use crate::commands::finish;
 use crate::error::{CliError, Result};
+
+/// `tasq mr <id> <url> [title]`.
+pub fn run(app: &App, id: &str, url: &str, title: Option<&str>) -> Result<()> {
+    let id = App::task_id(id)?;
+    let url = url.trim();
+    if url.is_empty() {
+        return Err(CliError::user("the merge request URL must not be empty"));
+    }
+    let mut store = app.open_store()?;
+    let mut task = store.get(&id)?;
+    if task.merge_requests.iter().any(|mr| mr.url == url) {
+        return finish(
+            app,
+            &store,
+            &id,
+            &format!("[{id}] MR already tracked: {url}\n"),
+        );
+    }
+    let link = link_for(url, title)?;
+    let label = link.label.clone().unwrap_or_default();
+    task.add_merge_request(link);
+    store.update(&task)?;
+    finish(app, &store, &id, &format!("[{id}] MR: {label}\n"))
+}
 
 /// The link for `url`, labelled `title` when given, else with
 /// [`fallback_label`]; an error when neither yields a title.

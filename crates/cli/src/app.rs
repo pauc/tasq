@@ -66,6 +66,29 @@ pub fn run(cli: Cli) -> Result<()> {
                 Some(Command::Done { id, note }) => {
                     commands::edit::done(&app, &id, note.as_deref())
                 }
+                Some(Command::View { id, raw }) => commands::view::run(&app, &id, raw),
+                Some(Command::Project { id, path }) => {
+                    commands::project::run(&app, &id, path.as_deref())
+                }
+                Some(Command::Worktree { id, path, create }) => {
+                    commands::worktree::run(&app, &id, path.as_deref(), create.as_deref())
+                }
+                Some(Command::Session {
+                    id,
+                    session_id,
+                    description,
+                    launcher,
+                }) => commands::session::run(
+                    &app,
+                    &id,
+                    &session_id,
+                    description.as_deref(),
+                    launcher.as_deref(),
+                ),
+                Some(Command::Mr { id, url, title }) => {
+                    commands::mr::run(&app, &id, &url, title.as_deref())
+                }
+                Some(Command::Apply { file }) => commands::apply::run(&app, file.as_deref()),
                 Some(Command::Store(cmd)) => commands::store::run(&app, cmd),
                 Some(Command::Config(cmd)) => commands::config::run(&app, cmd),
                 Some(Command::Doctor | Command::Completions { .. }) => {
@@ -83,6 +106,12 @@ fn command_name(command: &Command) -> &'static str {
         Command::Set { .. } => "set",
         Command::Log { .. } => "log",
         Command::Done { .. } => "done",
+        Command::View { .. } => "view",
+        Command::Project { .. } => "project",
+        Command::Worktree { .. } => "worktree",
+        Command::Session { .. } => "session",
+        Command::Mr { .. } => "mr",
+        Command::Apply { .. } => "apply",
         Command::Store(_) => "store",
         Command::Doctor => "doctor",
         Command::Config(_) => "config",

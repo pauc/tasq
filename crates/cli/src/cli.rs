@@ -159,6 +159,104 @@ pub enum Command {
         note: Option<String>,
     },
 
+    /// Show a task: rendered with glow on a terminal, plain markdown otherwise.
+    ///
+    /// On a terminal with glow installed the markdown is rendered and links
+    /// become OSC 8 hyperlinks (label only, URL hidden; GitLab merge requests
+    /// and issues show as !123 / #123). Set ui.no_osc8 = true if your
+    /// terminal cannot follow them: long lines then list their URLs below.
+    /// Without glow, or when piped, the file is printed as is.
+    View {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Print the file verbatim, never render.
+        #[arg(long)]
+        raw: bool,
+    },
+
+    /// Show or set the task's project directory.
+    ///
+    /// Sessions start there when the task tracks no existing worktree.
+    /// Without PATH the tracked directory is printed, or
+    /// `no project tracked (default: ...)` with work.default_project.
+    Project {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Directory to track (must exist; stored as an absolute path).
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+    },
+
+    /// Track a git worktree used for the task, or create one.
+    ///
+    /// `tasq worktree <ID> <PATH>` records an existing directory and its
+    /// current branch (idempotent). `tasq worktree <ID> --create <BRANCH>`
+    /// makes the worktree with work.worktree_manager (gwm: inside the gwm
+    /// workspace above the task's project; git: `git worktree add` into
+    /// `<project>-<branch>` next to the project) and then tracks it.
+    Worktree {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Existing worktree directory to track.
+        #[arg(
+            value_name = "PATH",
+            required_unless_present = "create",
+            conflicts_with = "create"
+        )]
+        path: Option<PathBuf>,
+        /// Create a worktree for BRANCH (new or existing) and track it.
+        #[arg(long, value_name = "BRANCH")]
+        create: Option<String>,
+    },
+
+    /// Track an agent session on a task (idempotent by session id).
+    Session {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// The session id (what `claude --resume` takes).
+        #[arg(value_name = "SESSION_ID")]
+        session_id: String,
+        /// Free-text description.
+        #[arg(value_name = "DESC")]
+        description: Option<String>,
+        /// Launcher the session belongs to, for the resume hint [default: launch.default].
+        #[arg(long, value_name = "NAME")]
+        launcher: Option<String>,
+    },
+
+    /// Track a merge request on a task (idempotent by URL).
+    ///
+    /// The title is resolved from the URL when possible (today: the short
+    /// reference, `group/project!123` or `owner/repo#123`); pass TITLE to
+    /// set it explicitly.
+    Mr {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Merge request URL.
+        #[arg(value_name = "URL")]
+        url: String,
+        /// Title to record instead of resolving one.
+        #[arg(value_name = "TITLE")]
+        title: Option<String>,
+    },
+
+    /// Update a task from JSON (`tasq view --json` shape) on stdin or in FILE.
+    ///
+    /// The document is `{"schema": 1, "task": {...}}`; see docs/json.md.
+    /// The store applies the differences it can express (status, priority,
+    /// project, done, appended progress, worktrees, sessions, links) and
+    /// refuses anything else without writing.
+    Apply {
+        /// File to read instead of stdin.
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+    },
+
     /// The store behind the tasks: where it is and how to sync it.
     #[command(subcommand)]
     Store(StoreCommand),

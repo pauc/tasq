@@ -41,9 +41,12 @@ impl TestEnv {
 
     fn bare() -> Self {
         let root = tempfile::tempdir().expect("tempdir");
-        let nb_dir = root.path().join("nb");
-        let home = root.path().join("home");
-        let bin = root.path().join("bin");
+        // Canonical, so paths the binary canonicalizes (project, worktree)
+        // normalise the same way as the ones it is given.
+        let root_path = root.path().canonicalize().unwrap();
+        let nb_dir = root_path.join("nb");
+        let home = root_path.join("home");
+        let bin = root_path.join("bin");
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(
@@ -99,7 +102,61 @@ impl TestEnv {
 
     /// Replaces the temporary root with `[ROOT]` so output can be snapshotted.
     pub fn normalize(&self, text: &str) -> String {
-        text.replace(&self.root.path().display().to_string(), "[ROOT]")
+        let canonical = self.root.path().canonicalize().unwrap();
+        text.replace(&canonical.display().to_string(), "[ROOT]")
+            .replace(&self.root.path().display().to_string(), "[ROOT]")
+    }
+
+    /// Contents of a notebook file.
+    pub fn read_task(&self, name: &str) -> String {
+        std::fs::read_to_string(self.notebook().join(name)).unwrap()
+    }
+
+    /// Runs `git <args>` in `dir` with this environment; panics on failure.
+    pub fn git(&self, dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env_clear()
+            .env("HOME", &self.home)
+            .env("PATH", &self.bin)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// Makes `dir` a git repository with one commit on `main`.
+    pub fn git_repo(&self, dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        self.git(dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("README"), "hi\n").unwrap();
+        self.git(dir, &["add", "README"]);
+        self.git(dir, &["commit", "-q", "-m", "init"]);
+    }
+
+    /// Installs an executable script called `name` in `bin`.
+    pub fn fake_tool(&self, name: &str, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let script = self.bin.join(name);
+        std::fs::write(&script, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Probe until runnable (ETXTBSY when another test thread forks).
+        for _ in 0..200 {
+            if std::process::Command::new(&script)
+                .env("FAKE_PROBE", "1")
+                .output()
+                .is_ok()
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("fake {name} never became runnable");
     }
 }
 

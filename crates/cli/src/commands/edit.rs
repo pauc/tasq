@@ -4,13 +4,12 @@
 //! to [`Store::update`] (or [`Store::set_done`]); the store works out the
 //! file edits. `--json` prints the task as it is after the change.
 
-use tasq_core::model::{Priority, Status, Task, TaskId, Workflow};
+use tasq_core::model::{Priority, Status, Task, Workflow};
 use tasq_core::store::Store;
-use tasq_store_nb::NbStore;
 
 use crate::app::App;
+use crate::commands::finish;
 use crate::error::{CliError, Result};
-use crate::json;
 
 /// What `tasq set` was given.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,17 +106,6 @@ pub fn done(app: &App, id: &str, note: Option<&str>) -> Result<()> {
     }
     store.set_done(&id, true)?;
     finish(app, &store, &id, &format!("[{id}] done: {}\n", task.title))
-}
-
-/// Prints `line`, or the task as JSON.
-fn finish(app: &App, store: &NbStore, id: &TaskId, line: &str) -> Result<()> {
-    if app.out.json_mode() {
-        let task = store.get(id)?;
-        return app
-            .out
-            .json(&json::document([("task", json::to_value(&task))]));
-    }
-    app.out.print(line)
 }
 
 #[cfg(test)]

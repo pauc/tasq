@@ -21,6 +21,7 @@ path = "src/main.rs"
 
 [dependencies]
 tasq-core = { path = "../core" }
+tasq-launch = { path = "../launch" }
 tasq-store-nb = { path = "../store-nb" }
 anyhow = "1"
 # `--due` dates and the `TASQ_NOW` fixed clock.
@@ -29,6 +30,8 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `view` link rewriting (the script's awk passes) is regex-driven.
+regex = "1"
 # Splits `ui.pager` ("less -RFX") into argv without a shell.
 shell-words = "1"
 # `config show` walks the effective config as a TOML table to annotate each key.

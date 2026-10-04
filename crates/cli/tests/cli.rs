@@ -808,3 +808,401 @@ mod create {
         assert!(!env.notebook().join(NEW_FILE).exists());
     }
 }
+
+mod view {
+    use super::*;
+
+    const FULL: &str = "20260901090000.todo.md";
+
+    #[test]
+    fn piped_output_is_the_plain_file() {
+        let env = TestEnv::fixture();
+        let out = env.tasq().args(["view", "1"]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stdout(&out), env.read_task(FULL));
+    }
+
+    #[test]
+    fn raw_is_verbatim_even_with_glow_installed() {
+        let env = TestEnv::fixture();
+        env.fake_tool("glow", "echo rendered");
+        let out = env.tasq().args(["view", "1", "--raw"]).output().unwrap();
+        assert_eq!(stdout(&out), env.read_task(FULL));
+    }
+
+    #[test]
+    fn json_and_errors() {
+        let env = TestEnv::fixture();
+        let out = env.tasq().args(["view", "1", "--json"]).output().unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["schema"], 1);
+        assert_eq!(value["task"]["title"], "Rewrite the tasks script in Rust");
+        env.tasq()
+            .args(["view", "5"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 5\n");
+        env.tasq()
+            .args(["view", "2"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 2\n");
+    }
+}
+
+mod project {
+    use super::*;
+
+    #[test]
+    fn show_and_set() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["project", "1"])
+            .assert()
+            .success()
+            .stdout("/home/pau/code/tasks\n");
+        env.tasq()
+            .args(["project", "3"])
+            .assert()
+            .success()
+            .stdout("no project tracked (default: unset)\n");
+        env.tasq()
+            .env("TASQ_DEFAULT_PROJECT", "/srv/app")
+            .args(["project", "3"])
+            .assert()
+            .success()
+            .stdout("no project tracked (default: /srv/app)\n");
+        let dir = env.home.join("proj");
+        std::fs::create_dir(&dir).unwrap();
+        let out = env
+            .tasq()
+            .args(["project", "3", dir.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "[3] project: [ROOT]/home/proj\n"
+        );
+        assert_snapshot!(env.normalize(&env.read_task("20260902100000.todo.md")));
+        env.tasq()
+            .args(["project", "3"])
+            .assert()
+            .success()
+            .stdout(format!("{}\n", dir.display()));
+        env.tasq()
+            .args(["project", "3", "/definitely/not/here"])
+            .assert()
+            .code(1)
+            .stderr("tasq: project path not found: /definitely/not/here\n");
+    }
+
+    #[test]
+    fn show_json_includes_the_default() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", "/srv/app")
+            .args(["project", "3", "--json"])
+            .output()
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["task"]["project"], serde_json::Value::Null);
+        assert_eq!(value["default_project"], "/srv/app");
+    }
+}
+
+mod worktree {
+    use super::*;
+
+    #[test]
+    fn track_records_the_branch_and_is_idempotent() {
+        let env = TestEnv::fixture();
+        let wt = env.home.join("wt");
+        env.git_repo(&wt);
+        env.git(&wt, &["checkout", "-q", "-b", "feature/x"]);
+        let out = env
+            .tasq()
+            .args(["worktree", "3", wt.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "[3] worktree: [ROOT]/home/wt (feature/x)\n"
+        );
+        assert!(
+            env.read_task("20260902100000.todo.md")
+                .contains("\n## Worktrees\n\n- "),
+        );
+        assert!(
+            env.normalize(&env.read_task("20260902100000.todo.md"))
+                .contains("- [ROOT]/home/wt (`feature/x`)\n"),
+        );
+        let again = env
+            .tasq()
+            .args(["worktree", "3", wt.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert_eq!(
+            env.normalize(&stdout(&again)),
+            "[3] worktree already tracked: [ROOT]/home/wt\n"
+        );
+        // A plain directory has no branch.
+        let plain = env.home.join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        let out = env
+            .tasq()
+            .args(["worktree", "3", plain.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "[3] worktree: [ROOT]/home/plain\n"
+        );
+        env.tasq()
+            .args(["worktree", "3", "/definitely/not/here"])
+            .assert()
+            .code(1)
+            .stderr("tasq: worktree path not found: /definitely/not/here\n");
+        env.tasq().args(["worktree", "3"]).assert().code(2);
+    }
+
+    #[test]
+    fn create_with_git_manager() {
+        let env = TestEnv::fixture();
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        env.tasq()
+            .args(["project", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        let out = env
+            .tasq()
+            .env("TASQ_WORKTREE_MANAGER", "git")
+            .args(["worktree", "3", "--create", "feature/y"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "[3] worktree: [ROOT]/home/proj-feature-y (feature/y)\n"
+        );
+        assert!(env.home.join("proj-feature-y").join("README").is_file());
+    }
+
+    #[test]
+    fn create_with_gwm_manager_uses_the_workspace_above_the_project() {
+        let env = TestEnv::fixture();
+        let project = env.home.join("ws").join("proj");
+        env.git_repo(&project);
+        std::fs::write(env.home.join("ws").join("gwm.yml"), "name: ws\n").unwrap();
+        let log = env.home.join("gwm.log");
+        let target = env.home.join("ws").join("wt-z");
+        env.fake_tool(
+            "gwm",
+            &format!(
+                "[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\nprintf '%s\\n' \"$*\" > '{}'\n/bin/mkdir -p '{}'\necho 'Linked .envrc'\necho '{}'",
+                log.display(),
+                target.display(),
+                target.display()
+            ),
+        );
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
+            .args(["worktree", "3", "--create", "feature/z"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "Linked .envrc\n[3] worktree: [ROOT]/home/ws/wt-z (feature/z)\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "create -b feature/z --no-tmux -s\n"
+        );
+    }
+
+    #[test]
+    fn create_errors() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["worktree", "3", "--create", "b"])
+            .assert()
+            .code(1)
+            .stderr("tasq: task 3 tracks no project and work.default_project is unset; set one with tasq project 3 <path>\n");
+        let project = env.home.join("proj");
+        std::fs::create_dir(&project).unwrap();
+        env.tasq()
+            .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
+            .args(["worktree", "3", "--create", "b"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with(
+                "tasq: no gwm workspace found above",
+            ));
+    }
+}
+
+mod session {
+    use super::*;
+
+    #[test]
+    fn track_with_hint_and_idempotence() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["session", "3", "sess-1", "first look"])
+            .assert()
+            .success()
+            .stdout("[3] session: sess-1 (resume: claude --resume sess-1)\n");
+        assert!(
+            env.read_task("20260902100000.todo.md")
+                .contains("\n## Sessions\n\n- 2026-10-07 09:30: `sess-1` \u{2014} first look\n"),
+            "{}",
+            env.read_task("20260902100000.todo.md")
+        );
+        env.tasq()
+            .args(["session", "3", "sess-1"])
+            .assert()
+            .success()
+            .stdout("[3] session already tracked: sess-1\n");
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["session", "3", "sess-2", "--launcher", "shell"])
+            .assert()
+            .success()
+            .stdout("[3] session: sess-2\n");
+        env.tasq()
+            .args(["session", "3", "a`b"])
+            .assert()
+            .code(1)
+            .stderr("tasq: the session id must not be empty or contain backticks\n");
+    }
+}
+
+mod mr {
+    use super::*;
+
+    #[test]
+    fn track_resolve_and_idempotence() {
+        let env = TestEnv::fixture();
+        let url = "https://gitlab.example.invalid/group/project/-/merge_requests/9";
+        env.tasq()
+            .args(["mr", "3", url])
+            .assert()
+            .success()
+            .stdout("[3] MR: group/project!9\n");
+        env.tasq()
+            .args(["mr", "3", url, "Explicit title"])
+            .assert()
+            .success()
+            .stdout(format!("[3] MR already tracked: {url}\n"));
+        env.tasq()
+            .args([
+                "mr",
+                "3",
+                "https://example.invalid/review/1",
+                "Reviewed by hand",
+            ])
+            .assert()
+            .success()
+            .stdout("[3] MR: Reviewed by hand\n");
+        assert_snapshot!(env.read_task("20260902100000.todo.md"));
+        env.tasq()
+            .args(["mr", "3", "https://example.invalid/review/2"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with(
+                "tasq: could not resolve the merge request title",
+            ));
+        // The fixture's full task already tracks !123.
+        env.tasq()
+            .args([
+                "mr",
+                "1",
+                "https://gitlab.example.invalid/group/project/-/merge_requests/123",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::starts_with("[1] MR already tracked:"));
+    }
+}
+
+mod apply {
+    use super::*;
+
+    #[test]
+    fn view_json_piped_back_is_a_no_op() {
+        let env = TestEnv::fixture();
+        let file = env.notebook().join("20260901090000.todo.md");
+        let before = std::fs::read_to_string(&file).unwrap();
+        let mtime = std::fs::metadata(&file).unwrap().modified().unwrap();
+        let json = env.tasq().args(["view", "1", "--json"]).output().unwrap();
+        env.tasq()
+            .arg("apply")
+            .write_stdin(json.stdout)
+            .assert()
+            .success()
+            .stdout("[1] applied\n");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+        assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), mtime);
+    }
+
+    #[test]
+    fn edits_go_through_the_store() {
+        let env = TestEnv::fixture();
+        let json = env.tasq().args(["view", "3", "--json"]).output().unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        value["task"]["status"] = "blocked".into();
+        value["task"]["priority"] = "A".into();
+        value["task"]["progress"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"at": NOW, "note": "via apply"}));
+        let file = env.home.join("task.json");
+        std::fs::write(&file, value.to_string()).unwrap();
+        let out = env
+            .tasq()
+            .args(["apply", file.to_str().unwrap(), "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let back: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(back["task"]["status"], "blocked");
+        assert_snapshot!(env.read_task("20260902100000.todo.md"));
+    }
+
+    #[test]
+    fn unsupported_edits_and_bad_input_are_refused() {
+        let env = TestEnv::fixture();
+        let json = env.tasq().args(["view", "3", "--json"]).output().unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        value["task"]["title"] = "Renamed".into();
+        let before = env.read_task("20260902100000.todo.md");
+        env.tasq()
+            .arg("apply")
+            .write_stdin(value.to_string())
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with(
+                "tasq: unsupported: changing title of task 3",
+            ));
+        assert_eq!(env.read_task("20260902100000.todo.md"), before);
+        env.tasq()
+            .arg("apply")
+            .write_stdin("{\"schema\": 2, \"task\": {}}")
+            .assert()
+            .code(1)
+            .stderr("tasq: apply: unsupported schema 2 (expected 1)\n");
+        env.tasq()
+            .args(["apply", "/definitely/not/here.json"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with(
+                "tasq: apply: cannot read /definitely/not/here.json",
+            ));
+    }
+}

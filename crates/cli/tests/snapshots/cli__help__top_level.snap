@@ -20,6 +20,12 @@ Commands:
   set          Set the status or the priority of a task, optionally logging a note
   log          Append a dated progress note to a task
   done         Mark a task done (`# [x]`, status tag removed), optionally logging a final note
+  view         Show a task: rendered with glow on a terminal, plain markdown otherwise
+  project      Show or set the task's project directory
+  worktree     Track a git worktree used for the task, or create one
+  session      Track an agent session on a task (idempotent by session id)
+  mr           Track a merge request on a task (idempotent by URL)
+  apply        Update a task from JSON (`tasq view --json` shape) on stdin or in FILE
   store        The store behind the tasks: where it is and how to sync it
   doctor       Check the configuration, the notebook, nb and optional tools
   config       Show the effective configuration

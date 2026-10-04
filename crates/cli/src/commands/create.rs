@@ -113,12 +113,9 @@ pub fn draft_from(
         draft = draft.with_description(desc.as_str());
     }
     if let Some(project) = &args.project {
-        let dir = std::fs::canonicalize(project)
-            .ok()
-            .filter(|p| p.is_dir())
-            .ok_or_else(|| {
-                CliError::user(format!("project path not found: {}", project.display()))
-            })?;
+        let dir = crate::commands::existing_dir(project).ok_or_else(|| {
+            CliError::user(format!("project path not found: {}", project.display()))
+        })?;
         draft = draft.with_project(dir);
     }
     for tag in &args.tag {

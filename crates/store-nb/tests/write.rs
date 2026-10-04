@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use tasq_core::clock::FixedClock;
+use tasq_core::clock::{Clock, FixedClock};
 use tasq_core::model::{
     Link, Priority, ProgressEntry, Session, Status, TaskId, Workflow, Worktree,
 };
@@ -447,4 +447,26 @@ fn update_and_set_done_follow_the_configured_workflow() {
         nb.read(file_name(id::FULL))
             .contains("#gitlab #A #in-progress\n")
     );
+}
+
+#[test]
+fn update_with_a_clock_that_has_seconds_still_round_trips() {
+    // The file keeps minutes; model constructors truncate, so an entry
+    // stamped at 10:15:42 reads back as 10:15 and the write succeeds.
+    let nb = NbEnv::fixture();
+    let mut store = nb.open_with(tasq_core::config::Bookkeeper::Native);
+    let id = TaskId::from(id::SUPPORT);
+    let clock = FixedClock(at("2026-10-07 09:30") + chrono::Duration::seconds(42));
+    let mut task = store.get(&id).unwrap();
+    task.log("with seconds", &clock);
+    task.add_session(Session::new(clock.now(), "sid-1"));
+    store.update(&task).unwrap();
+    let back = store.get(&id).unwrap();
+    assert_eq!(back, task);
+    let text = nb.read(file_name(id::SUPPORT));
+    assert!(
+        text.contains("- 2026-10-07 09:30: with seconds\n"),
+        "{text}"
+    );
+    assert!(text.contains("- 2026-10-07 09:30: `sid-1`\n"), "{text}");
 }
