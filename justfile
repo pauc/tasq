@@ -26,10 +26,21 @@ test:
 doc:
     cargo doc --workspace --no-deps
 
-# Mutation testing on changed code (configured in T-004).
+# Mutation testing on code changed since `main` (what a PR would be judged on).
+# `--jobs` is left to cargo-mutants' auto-detection. The diff goes through a
+# temp file because `just` runs recipes with `sh`, which lacks `<(...)`.
 mutants:
-    @echo "configured in T-004"
+    #!/usr/bin/env sh
+    set -eu
+    diff_file="$(mktemp)"
+    trap 'rm -f "$diff_file"' EXIT
+    git diff main...HEAD > "$diff_file"
+    if [ ! -s "$diff_file" ]; then
+        echo "no changes relative to main; run 'just mutants-full' for everything"
+        exit 0
+    fi
+    cargo mutants --in-diff "$diff_file"
 
-# Mutation testing on the whole workspace (configured in T-004).
+# Mutation testing on the whole workspace (nightly / phase review).
 mutants-full:
-    @echo "configured in T-004"
+    cargo mutants --workspace

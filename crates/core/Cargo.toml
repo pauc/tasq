@@ -9,6 +9,10 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# Provides the `#[mutants::skip]` attribute for cargo-mutants. It must be a
+# regular dependency (not dev) because the attribute sits on non-test code.
+# See the "Mutation testing" note in src/lib.rs.
+mutants = "0.0.4"
 
 [lints]
 workspace = true

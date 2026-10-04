@@ -1,0 +1,59 @@
+# cargo-mutants configuration for the tasq workspace (see T-004 in the plan).
+#
+# Mutation testing rewrites each function (return a default value, flip a
+# condition, drop a statement, ...) and expects at least one test to fail.
+# A mutant that survives points at code no test actually checks.
+#
+# Usage:
+#   just mutants        # only mutants in code changed since `main` (PR-sized)
+#   just mutants-full   # every mutant in the examined crates (nightly / release)
+#   cargo mutants --list --workspace          # show what would be mutated
+#   cargo mutants -f crates/core/src/format   # one module (plan acceptance checks)
+#
+# Output lands in `mutants.out/` (git-ignored). `mutants.out/missed.txt` is the
+# survivors list to review at the end of every phase: add a test, or mark the
+# function with `#[mutants::skip]` and a one-line reason (see crates/core/src/lib.rs).
+#
+# Targets (plan section 10): zero missed mutants in tasq-core's format, query,
+# reconcile, config and dates modules; at most 5% missed across tasq-core.
+#
+# Supported keys were checked against `cargo mutants --emit-schema config`
+# for cargo-mutants 27.1.0; CLI flags combine with (not replace) these values.
+
+# Only generate mutants from the crates where the logic lives.
+# Globs containing a slash match against the whole path.
+examine_globs = [
+    "crates/core/**",
+    "crates/store-nb/**",
+    "crates/sources/**",
+    "crates/launch/**",
+]
+
+# Skip the TUI view code and the CLI argument plumbing: both are covered by
+# insta snapshot tests (rendered frames, `--help` output, command output) and
+# mutating them mostly yields "the screen looks slightly different" survivors
+# that are expensive to run and teach us nothing about the domain logic.
+exclude_globs = [
+    "crates/tui/**",
+    "crates/cli/**",
+]
+
+# Mutants whose full name (path, function, trait impl, mutation description, as
+# printed by `cargo mutants --list`) matches one of these regexes are skipped.
+# Formatting impls are either trivial or exercised by snapshot tests; mutating
+# them produces noise survivors.
+exclude_re = [
+    "impl Debug",
+    "impl Display",
+    "impl Default",
+]
+
+# Per-mutant test timeout = baseline `cargo test` time x this multiplier.
+# Mutants can turn fast loops into slow ones; a 3x margin avoids flagging
+# them as timeouts on a loaded CI machine while still killing real hangs.
+timeout_multiplier = 3.0
+
+# Floor (in seconds) for the automatically derived test timeout. The baseline
+# test run is very short on this workspace, so without a floor the computed
+# timeout could be small enough for ordinary scheduling jitter to look like a hang.
+minimum_test_timeout = 20
