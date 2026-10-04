@@ -751,10 +751,11 @@ mod create {
             .assert()
             .success()
             .stdout("[8] created: Minimal (#ready #B)\n");
+        // Without --project the task tracks the directory tasq ran in.
         let file = std::fs::read_to_string(env.notebook().join(NEW_FILE)).unwrap();
         assert_eq!(
-            file,
-            "# [ ] Minimal\n\n## Tags\n\n#B #ready\n\n## Progress\n\n- 2026-10-07 09:30: created via tasq create\n"
+            env.normalize(&file),
+            "# [ ] Minimal\n\n## Project\n\n[ROOT]/home\n\n## Tags\n\n#B #ready\n\n## Progress\n\n- 2026-10-07 09:30: created via tasq create\n"
         );
         // The new task shows up in the list under READY with its id.
         let out = env.tasq().arg("ready").output().unwrap();
@@ -821,7 +822,7 @@ mod create {
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(stderr(&out), "", "no forge configured: silent fallback");
         let file = std::fs::read_to_string(env.notebook().join(NEW_FILE)).unwrap();
-        assert_snapshot!(file);
+        assert_snapshot!(env.normalize(&file));
         env.tasq()
             .args(["create", "Other", "--mr", "https://example.invalid/x"])
             .assert()

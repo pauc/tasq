@@ -1,8 +1,12 @@
 ---
 source: crates/cli/tests/cli.rs
-expression: file
+expression: env.normalize(&file)
 ---
 # [ ] Review it
+
+## Project
+
+[ROOT]/home
 
 ## Tags
 

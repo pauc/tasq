@@ -2,6 +2,8 @@
 //! now. Pure data with pure helpers; [`crate::update()`] mutates it and
 //! [`crate::view()`] reads it.
 
+use std::path::PathBuf;
+
 use tasq_core::model::{Priority, Status, Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::{self, Filter, Group};
 use tasq_core::theme::Theme;
@@ -112,6 +114,9 @@ pub struct Model {
     pub workflow: Workflow,
     /// The status a task created with `c` starts in (`workflow.default_status`).
     pub default_status: Status,
+    /// The project a task created with `c` tracks (the CLI passes the
+    /// directory `tasq ui` runs in); `None` leaves the draft without one.
+    pub default_project: Option<PathBuf>,
     /// Group colours (`[ui.colors]`).
     pub theme: Theme,
     /// Whether colours are used at all (`false` under `NO_COLOR`).
@@ -143,6 +148,7 @@ impl Model {
             tasks: Vec::new(),
             workflow,
             default_status: Status::READY,
+            default_project: None,
             theme,
             color,
             filter: String::new(),
@@ -164,12 +170,23 @@ impl Model {
         self
     }
 
+    /// The project new tasks track (the current directory, from the CLI).
+    #[must_use]
+    pub fn with_default_project(mut self, project: Option<PathBuf>) -> Self {
+        self.default_project = project;
+        self
+    }
+
     /// The draft for a task created from the UI: `title`, the default
-    /// status, and the script's other defaults (priority `B`, no note).
-    /// Priority, tags and the rest are set afterwards with `s`, `p` or
-    /// the CLI.
+    /// status, the default project, and the script's other defaults
+    /// (priority `B`, no note). Priority, tags and the rest are set
+    /// afterwards with `s`, `p` or the CLI.
     pub fn draft(&self, title: &str) -> TaskDraft {
-        TaskDraft::new(title).with_status(Some(self.default_status.clone()))
+        let draft = TaskDraft::new(title).with_status(Some(self.default_status.clone()));
+        match &self.default_project {
+            Some(project) => draft.with_project(project.clone()),
+            None => draft,
+        }
     }
 
     /// The layout for the current width.
@@ -298,6 +315,8 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use tasq_core::model::Tag;
 
@@ -432,6 +451,11 @@ mod tests {
         assert!(!d.done);
         let m = m.with_default_status(Status::LATER);
         assert_eq!(m.draft("x").status, Some(Status::LATER));
+        assert_eq!(m.draft("x").project, None);
+        let m = m.with_default_project(Some(PathBuf::from("/work")));
+        assert_eq!(m.draft("x").project.as_deref(), Some(Path::new("/work")));
+        let m = m.with_default_project(None);
+        assert_eq!(m.draft("x").project, None);
     }
 
     #[test]

@@ -1,6 +1,8 @@
 //! `tasq create`: a [`TaskDraft`] from the flags, written by the store.
 
+use std::path::Path;
 use tasq_core::dates::parse_day;
+
 use tasq_core::model::{Link, Priority, Status, Tag, TaskDraft, Workflow};
 use tasq_core::store::Store;
 
@@ -45,11 +47,13 @@ impl InitialStatus {
 pub fn run(app: &App, args: &CreateArgs) -> Result<()> {
     let workflow = app.workflow();
     let clock = app.clock()?;
+    let cwd = crate::commands::existing_dir(&app.opts.cwd).unwrap_or_else(|| app.opts.cwd.clone());
     let mut draft = draft_from(
         args,
         &workflow,
         &app.config().workflow.default_status,
         clock.today(),
+        &cwd,
     )?;
     for url in &args.mr {
         draft = draft.with_merge_request(mr::resolve_link(app, url, None)?);
@@ -80,12 +84,14 @@ pub fn run(app: &App, args: &CreateArgs) -> Result<()> {
 }
 
 /// The draft for `args`, everything but merge requests (they need the
-/// title lookup, see [`run`]).
+/// title lookup, see [`run`]). The project is `--project`, else `cwd`:
+/// every task gets one, so `pick` always has somewhere to start.
 pub fn draft_from(
     args: &CreateArgs,
     workflow: &Workflow,
     default_status: &Status,
     today: chrono::NaiveDate,
+    cwd: &Path,
 ) -> Result<TaskDraft> {
     let title = args.title.trim();
     if title.is_empty() {
@@ -108,12 +114,13 @@ pub fn draft_from(
     if let Some(desc) = &args.desc {
         draft = draft.with_description(desc.as_str());
     }
-    if let Some(project) = &args.project {
-        let dir = crate::commands::existing_dir(project).ok_or_else(|| {
+    let project = match &args.project {
+        Some(project) => crate::commands::existing_dir(project).ok_or_else(|| {
             CliError::user(format!("project path not found: {}", project.display()))
-        })?;
-        draft = draft.with_project(dir);
-    }
+        })?,
+        None => cwd.to_path_buf(),
+    };
+    draft = draft.with_project(project);
     for tag in &args.tag {
         draft = draft.with_tag(tag.parse::<Tag>()?);
     }
@@ -146,9 +153,21 @@ mod tests {
     #[test]
     fn defaults_follow_the_workflow() {
         let wf = Workflow::default();
-        let d = draft_from(&args("  T  "), &wf, &Status::LATER, today()).unwrap();
+        let d = draft_from(
+            &args("  T  "),
+            &wf,
+            &Status::LATER,
+            today(),
+            Path::new("/cwd"),
+        )
+        .unwrap();
         assert_eq!(d.title, "T");
         assert_eq!(d.status, Some(Status::LATER));
+        assert_eq!(
+            d.project.as_deref(),
+            Some(Path::new("/cwd")),
+            "the current directory"
+        );
         assert_eq!(d.priority, Priority::B);
         assert!(!d.done);
         assert_eq!(d.note, None);
@@ -170,7 +189,7 @@ mod tests {
             mr: vec!["https://g/p/-/merge_requests/1".into()],
             note: Some("hello".into()),
         };
-        let d = draft_from(&a, &wf, &Status::READY, today()).unwrap();
+        let d = draft_from(&a, &wf, &Status::READY, today(), Path::new("/cwd")).unwrap();
         assert_eq!(d.description.as_deref(), Some("D"));
         assert_eq!(d.status, Some(Status::BLOCKED));
         assert_eq!(d.priority, Priority::A);
@@ -193,7 +212,7 @@ mod tests {
             status: Some("done".into()),
             ..args("T")
         };
-        let d = draft_from(&a, &wf, &Status::READY, today()).unwrap();
+        let d = draft_from(&a, &wf, &Status::READY, today(), Path::new("/cwd")).unwrap();
         assert!(d.done);
         assert_eq!(d.status, None);
     }
@@ -202,7 +221,7 @@ mod tests {
     fn errors() {
         let wf = Workflow::default();
         let err = |a: CreateArgs| {
-            draft_from(&a, &wf, &Status::READY, today())
+            draft_from(&a, &wf, &Status::READY, today(), Path::new("/cwd"))
                 .unwrap_err()
                 .to_string()
         };

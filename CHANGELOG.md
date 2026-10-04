@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Every task created with `tasq create` or the TUI's `c` key tracks a project: `--project`
+  when given, else the directory `tasq` runs in. `tasq pick` therefore always has somewhere
+  to start; `tasq project <id> <path>` changes it. The original script left the section out
+  unless `--project` was passed.
 - Work sessions in a new window: `tasq pick|next --detached [--no-focus]` opens the session
   with `launch.detached` (`herdr`, `tmux`, or `auto` for whichever the terminal runs in)
   instead of the current terminal, in the background with `--no-focus`. In `tasq ui`,

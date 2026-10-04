@@ -390,7 +390,9 @@ Status defaults to workflow.default_status and priority to B. The first
 progress note is --note, or `created via tasq create`.
 
 --due accepts YYYY-MM-DD, today, tomorrow and yesterday. --project must be
-an existing directory and is stored as an absolute path. --status done
+an existing directory and is stored as an absolute path; without it the
+task's project is the directory tasq runs in, so `pick` always has
+somewhere to start (change it later with `tasq project`). --status done
 creates the task already closed (`# [x]`, no status tag). Merge requests
 need a title; until a forge lookup exists the title falls back to
 `group/project!123` (GitLab) or `owner/repo#123` (GitHub).
@@ -511,7 +513,7 @@ pub struct CreateArgs {
     #[arg(long, value_name = "DATE")]
     pub due: Option<String>,
 
-    /// Project directory sessions start in (must exist).
+    /// Project directory sessions start in (must exist) [default: the current directory].
     #[arg(long, value_name = "DIR")]
     pub project: Option<PathBuf>,
 
