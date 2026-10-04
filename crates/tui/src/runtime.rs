@@ -53,9 +53,7 @@ pub fn dispatch(
         Cmd::Log(id, note) => edit::log(store, id, note, clock)
             .map(|_| format!("[{id}] logged: {note}"))
             .map_err(|e| e.to_string()),
-        Cmd::Done(id, note) => edit::done(store, id, note.as_deref(), clock)
-            .map(|task| format!("[{id}] done: {}", task.title))
-            .map_err(|e| e.to_string()),
+        Cmd::Done(id, note) => close(store, clock, host, id, note.as_deref()),
         Cmd::Edit(id) => edit_file(store, host, id),
         Cmd::Launch(id) => host.launch(id),
         Cmd::Sync => host.sync(),
@@ -65,6 +63,24 @@ pub fn dispatch(
         Err(text) => Msg::Failed(text),
     };
     vec![first, reload(store)]
+}
+
+/// `edit::done`, then the host's turn (the CLI's `post-done` hooks). A
+/// host warning does not undo the close: the task is reported done, with
+/// the warning, as a failure-styled message so it is noticed.
+fn close(
+    store: &mut dyn Store,
+    clock: &dyn Clock,
+    host: &mut dyn Host,
+    id: &TaskId,
+    note: Option<&str>,
+) -> Result<String, String> {
+    let task = edit::done(store, id, note, clock).map_err(|e| e.to_string())?;
+    let line = format!("[{id}] done: {}", task.title);
+    match host.after_done(&task) {
+        Ok(()) => Ok(line),
+        Err(warning) => Err(format!("{line} ({warning})")),
+    }
 }
 
 fn edit_file(store: &mut dyn Store, host: &mut dyn Host, id: &TaskId) -> Result<String, String> {
@@ -293,6 +309,43 @@ mod tests {
         );
         assert_eq!(msgs[0], Msg::Info("[2] done: B".into()));
         assert_eq!(open_ids(&msgs), Vec::<&str>::new());
+        // Only a close reaches the host, once per task, after the write.
+        assert_eq!(host.calls, vec!["after_done 1", "after_done 2"]);
+    }
+
+    #[test]
+    fn a_host_warning_after_a_close_is_shown_but_the_task_stays_closed() {
+        let mut store = store();
+        let mut host = RecordingHost {
+            answer: Some(Err("post-done hook \"x\" failed: exit status 4".into())),
+            ..RecordingHost::default()
+        };
+        let msgs = dispatch(
+            &Cmd::Done(TaskId::from(1), None),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(
+            msgs[0],
+            Msg::Failed("[1] done: A (post-done hook \"x\" failed: exit status 4)".into())
+        );
+        assert!(store.get(&TaskId::from(1)).unwrap().done);
+        assert_eq!(open_ids(&msgs), ["2"]);
+        assert_eq!(host.calls, vec!["after_done 1"]);
+    }
+
+    #[test]
+    fn a_failed_close_does_not_reach_the_host() {
+        let mut store = store();
+        let mut host = RecordingHost::default();
+        let msgs = dispatch(
+            &Cmd::Done(TaskId::from(9), None),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert!(matches!(msgs[0], Msg::Failed(_)), "{:?}", msgs[0]);
         assert_eq!(host.calls, Vec::<String>::new());
     }
 

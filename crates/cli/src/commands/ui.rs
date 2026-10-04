@@ -4,23 +4,26 @@
 //! builds its model from the config, hands it the open store and the
 //! clock, and implements the [`Host`]: the three actions that need the
 //! outside world run as child processes while the UI has released the
-//! terminal. The editor is `$VISUAL`, else `$EDITOR`, else `vi`; sessions
-//! and syncs run `tasq pick <id>` and `tasq sync` through this same
-//! binary, with the global flags passed on, so the TUI and the CLI cannot
-//! disagree about what those commands do.
+//! terminal, and the `post-done` hooks run in-process after the `d` key,
+//! their warnings handed back for the status bar (ADR-0010). The editor is
+//! `$VISUAL`, else `$EDITOR`, else `vi`; sessions and syncs run
+//! `tasq pick <id>` and `tasq sync` through this same binary, with the
+//! global flags passed on, so the TUI and the CLI cannot disagree about
+//! what those commands do.
 
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tasq_core::model::TaskId;
+use tasq_core::model::{Task, TaskId};
 use tasq_core::theme::Theme;
 use tasq_tui::{Host, HostResult, Model};
 
 use crate::app::App;
 use crate::cli::GlobalArgs;
 use crate::error::{CliError, Result};
+use crate::plugins::{self, Hook, HookEvent};
 
 /// Runs `ui`.
 pub fn run(app: &App) -> Result<()> {
@@ -37,6 +40,7 @@ pub fn run(app: &App) -> Result<()> {
     let exe = std::env::current_exe()
         .map_err(|e| CliError::Internal(anyhow::anyhow!("locating the tasq binary: {e}")))?;
     let mut host = CliHost {
+        app,
         exe,
         global_args: global_args(&app.global),
         editor: editor_command(&app.opts.env),
@@ -45,9 +49,12 @@ pub fn run(app: &App) -> Result<()> {
     Ok(())
 }
 
-/// The [`Host`] of the CLI: child processes on the released terminal.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CliHost {
+/// The [`Host`] of the CLI: child processes on the released terminal, and
+/// the hooks of `app` after a close.
+#[derive(Debug)]
+pub struct CliHost<'a> {
+    /// The configuration the hooks come from.
+    pub app: &'a App,
     /// This binary.
     pub exe: PathBuf,
     /// The global flags to pass on to it.
@@ -56,7 +63,7 @@ pub struct CliHost {
     pub editor: Vec<String>,
 }
 
-impl Host for CliHost {
+impl Host for CliHost<'_> {
     fn edit(&mut self, id: &TaskId, file: &Path) -> HostResult {
         let (program, leading) = self
             .editor
@@ -80,6 +87,25 @@ impl Host for CliHost {
         args.push("sync".to_owned());
         wait_for(Command::new(&self.exe).args(&args), "tasq sync")
             .map(|()| "sync finished".to_owned())
+    }
+
+    /// The same `post-done` hooks as `tasq done`, with the same document;
+    /// what `tasq done` would print as warnings comes back as the `Err`,
+    /// one per failed command, joined with `; `. A hook's stdout (`-v`
+    /// material on the CLI) has nowhere to go in the UI and is dropped.
+    fn after_done(&mut self, task: &Task) -> std::result::Result<(), String> {
+        let mut warnings = Vec::new();
+        plugins::run_hooks_with(self.app, Hook::PostDone, task, &[], &mut |event| {
+            if let HookEvent::Warning(text) = event {
+                warnings.push(text);
+            }
+        })
+        .map_err(|e| e.to_string())?;
+        if warnings.is_empty() {
+            Ok(())
+        } else {
+            Err(warnings.join("; "))
+        }
     }
 }
 
@@ -126,7 +152,106 @@ pub fn editor_command(env: &BTreeMap<String, String>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use tasq_core::config::{Config, LoadOptions};
+
     use super::*;
+    use crate::output::Output;
+
+    /// An app whose only configuration is `.tasq.toml` in `dir` with `text`.
+    fn app_in(dir: &Path, text: &str) -> App {
+        std::fs::write(dir.join(".tasq.toml"), text).unwrap();
+        let mut opts = LoadOptions::new(dir);
+        opts.home = Some(dir.to_path_buf());
+        let loaded = Config::load(&opts).unwrap();
+        let global = GlobalArgs::default();
+        let out = Output::new(&global, &loaded.config.ui, &opts.env, false);
+        App::new(global, opts, loaded, out)
+    }
+
+    fn host(app: &App) -> CliHost<'_> {
+        CliHost {
+            app,
+            exe: "/nonexistent/tasq".into(),
+            global_args: vec!["--profile".into(), "x".into()],
+            editor: vec!["/nonexistent/editor".into()],
+        }
+    }
+
+    fn closed_task() -> Task {
+        let mut task = Task::new(TaskId::from(8), "Hooked");
+        task.done = true;
+        task
+    }
+
+    #[test]
+    fn after_done_without_hooks_runs_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app_in(dir.path(), "");
+        assert_eq!(host(&app).after_done(&closed_task()), Ok(()));
+    }
+
+    #[test]
+    fn after_done_runs_the_post_done_hooks_and_returns_the_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("hooks.log");
+        let config = r#"[hooks]
+post-create = ["/nonexistent/other-hook"]
+post-done = [
+    "/bin/sh -c 'echo \"$TASQ_HOOK $TASQ_TASK_ID\" > @LOG@; cat >> @LOG@'",
+    "/bin/sh -c 'echo nope >&2; exit 4'",
+    "/bin/sh -c 'echo chatter'",
+    "/nonexistent/hook --flag",
+]
+"#
+        .replace("@LOG@", &log.display().to_string());
+        let app = app_in(dir.path(), &config);
+        let err = host(&app).after_done(&closed_task()).unwrap_err();
+        // Both failures, in order, the successful ones silent.
+        assert!(
+            err.starts_with(concat!(
+                "post-done hook \"/bin/sh -c 'echo nope >&2; exit 4'\" failed: exit status 4: nope; ",
+                "post-done hook \"/nonexistent/hook --flag\" failed: could not run /nonexistent/hook: "
+            )),
+            "{err}"
+        );
+        // The document and the environment are the ones `tasq done` sends.
+        let logged = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            logged.starts_with("post-done 8\n{\"hook\":\"post-done\",\"schema\":1,\"task\":{"),
+            "{logged}"
+        );
+        assert!(logged.contains("\"done\":true"), "{logged}");
+        assert!(logged.contains("\"title\":\"Hooked\""), "{logged}");
+
+        // Underneath, the runner reports in order: a silent success is no
+        // event, stdout is `Output`, a failure is `Warning`.
+        let mut events = Vec::new();
+        plugins::run_hooks_with(&app, Hook::PostDone, &closed_task(), &[], &mut |e| {
+            events.push(e);
+        })
+        .unwrap();
+        assert_eq!(events.len(), 3, "{events:?}");
+        assert!(matches!(&events[0], HookEvent::Warning(w) if w.ends_with("exit status 4: nope")));
+        assert_eq!(
+            events[1],
+            HookEvent::Output("post-done hook \"/bin/sh -c 'echo chatter'\": chatter".into())
+        );
+        assert!(matches!(&events[2], HookEvent::Warning(w) if w.contains("/nonexistent/hook")));
+    }
+
+    #[test]
+    fn after_done_reports_a_bad_hook_command_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app_in(
+            dir.path(),
+            "[hooks]\npost-done = [\"unterminated 'quote\"]\n",
+        );
+        let err = host(&app).after_done(&closed_task()).unwrap_err();
+        assert!(
+            err.starts_with("hook command \"unterminated 'quote\": "),
+            "{err}"
+        );
+    }
 
     #[test]
     fn config_flags_are_passed_on() {
@@ -168,11 +293,9 @@ mod tests {
 
     #[test]
     fn host_reports_missing_programs() {
-        let mut host = CliHost {
-            exe: "/nonexistent/tasq".into(),
-            global_args: vec!["--profile".into(), "x".into()],
-            editor: vec!["/nonexistent/editor".into()],
-        };
+        let dir = tempfile::tempdir().unwrap();
+        let app = app_in(dir.path(), "");
+        let mut host = host(&app);
         let err = host.edit(&TaskId::from(1), Path::new("/f")).unwrap_err();
         assert!(
             err.starts_with("could not run /nonexistent/editor: "),
@@ -191,7 +314,10 @@ mod tests {
 
     #[test]
     fn host_reports_exit_codes() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app_in(dir.path(), "");
         let mut host = CliHost {
+            app: &app,
             exe: "/bin/sh".into(),
             global_args: vec!["-c".into()],
             editor: vec!["/bin/sh".into(), "-c".into(), "exit 3".into(), "sh".into()],

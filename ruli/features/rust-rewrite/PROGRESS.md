@@ -22,7 +22,9 @@ publishing. 701 workspace tests; config module 107 mutants, 0 missed; `cargo doc
 placeholders), `cargo install tasq` is not possible until the crates are published, and
 T-904's one-week side-by-side run on the real notebook is the author's manual acceptance
 (procedure in `docs/migration.md`). Follow-up `tasq list --all` / `--done` done the same day. Commits ae29142, b5a649d, ef2bcce,
-b272893, f2f0fad, 50cb267 and the manifest follow-up.
+b272893, f2f0fad, 50cb267 and the manifest follow-up. Follow-up 2026-10-04: the TUI's `d` key
+now fires `post-done` through a fourth `Host` method (ADR 0010); commit sha below under
+"Plugin and release decisions".
 
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
@@ -212,6 +214,16 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 ## Learnings
 
 ### Plugin and release decisions (T-901 to T-904)
+
+- **`post-done` from the TUI (follow-up, ADR 0010).** `Host::after_done(&Task)` is called by
+  the TUI's `dispatch` after `edit::done` succeeded; the CLI's `CliHost` (now holding `&App`)
+  runs the `post-done` hooks in-process with the same document as `tasq done`. The hook
+  runner became `run_hooks_with(.., report: &mut dyn FnMut(HookEvent))` so the TUI can
+  collect warnings for the status bar instead of having them printed over the alternate
+  screen; `run_hooks` is the printing wrapper and CLI behaviour is unchanged. `CliHost`'s
+  unit tests build an `App` from a `.tasq.toml` in a temp dir and use `/bin/sh -c` hooks,
+  no fake tools needed. Message on a hook failure: `[1] done: A (post-done hook "x" failed:
+  ...)` in the error style; the task is closed either way. Commit: (pending).
 
 - **Dispatch happens before clap and before the config is loaded.** `tasq_cli::plugins::
   External::parse` scans argv for the first positional, skipping the global flags (the four
@@ -653,7 +665,8 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 - T-901: `TASQ_BIN` and `TASQ_SET` added to the plugin environment (the plan listed
   `TASQ_PROFILE` and `TASQ_CONFIG`); hooks are configured under `[hooks]` rather than
-  discovered, and only fire from the CLI; `tasq apply` closing a task fires no `post-done`.
+  discovered; `tasq apply` closing a task fires no `post-done` (the TUI's `d` key does since
+  ADR 0010).
   The reference plugin is a sketch of the author's tool (date range + per-day notes + even
   split), not the real HiBob/GitLab poster, which stays private.
 - T-902: no screenshot or gif (nothing to record with on this machine); README carries a TODO

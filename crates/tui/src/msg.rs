@@ -105,8 +105,9 @@ impl Cmd {
 pub type HostResult = Result<String, String>;
 
 /// The part of the outside world the TUI cannot reach through the
-/// [`tasq_core::store::Store`]: an editor, the launchers and `sync`. The
-/// CLI implements it by running itself; tests record the calls.
+/// [`tasq_core::store::Store`]: an editor, the launchers, `sync` and the
+/// `[hooks]` that follow a close. The CLI implements it by running itself
+/// (and its hooks in-process); tests record the calls.
 pub trait Host {
     /// Opens `file` (the task's file) in the user's editor and waits.
     fn edit(&mut self, id: &TaskId, file: &std::path::Path) -> HostResult;
@@ -116,6 +117,12 @@ pub trait Host {
 
     /// Runs the configured sources (`tasq sync`).
     fn sync(&mut self) -> HostResult;
+
+    /// Called after `task` was closed through the store (the `d` key), with
+    /// the task as written; the CLI runs its `post-done` hooks here. The
+    /// close already happened, so `Err` is a warning for the status bar,
+    /// not a failure of the close.
+    fn after_done(&mut self, task: &Task) -> Result<(), String>;
 }
 
 /// A [`Host`] that refuses everything, for front ends that only browse.
@@ -134,13 +141,18 @@ impl Host for NoHost {
     fn sync(&mut self) -> HostResult {
         Err("sync is not available here".to_owned())
     }
+
+    fn after_done(&mut self, _task: &Task) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// A [`Host`] that records what it was asked and answers with canned
 /// results; the test double of this crate and of the CLI.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecordingHost {
-    /// Every call, as `edit <id> <file>`, `launch <id>` or `sync`.
+    /// Every call, as `edit <id> <file>`, `launch <id>`, `sync` or
+    /// `after_done <id>`.
     pub calls: Vec<String>,
     /// The answer to every call (`Ok` by default: `"ok"`).
     pub answer: Option<HostResult>,
@@ -165,6 +177,10 @@ impl Host for RecordingHost {
 
     fn sync(&mut self) -> HostResult {
         self.reply("sync".to_owned())
+    }
+
+    fn after_done(&mut self, task: &Task) -> Result<(), String> {
+        self.reply(format!("after_done {}", task.id)).map(|_| ())
     }
 }
 
@@ -202,12 +218,28 @@ mod tests {
             "launching is not available here"
         );
         assert_eq!(none.sync().unwrap_err(), "sync is not available here");
+        // Nothing follows a close for a host that only browses.
+        assert_eq!(none.after_done(&Task::new(id.clone(), "T")), Ok(()));
 
         let mut rec = RecordingHost::default();
         assert_eq!(rec.edit(&id, std::path::Path::new("/f")).unwrap(), "ok");
         assert_eq!(rec.launch(&id).unwrap(), "ok");
+        assert_eq!(rec.after_done(&Task::new(id.clone(), "T")), Ok(()));
         rec.answer = Some(Err("boom".into()));
         assert_eq!(rec.sync().unwrap_err(), "boom");
-        assert_eq!(rec.calls, vec!["edit 4 /f", "launch 4", "sync"]);
+        assert_eq!(
+            rec.after_done(&Task::new(id.clone(), "T")).unwrap_err(),
+            "boom"
+        );
+        assert_eq!(
+            rec.calls,
+            vec![
+                "edit 4 /f",
+                "launch 4",
+                "after_done 4",
+                "sync",
+                "after_done 4"
+            ]
+        );
     }
 }

@@ -326,11 +326,39 @@ pub fn hook_document(hook: Hook, task: &Task, extra: &[(&str, Value)]) -> Value 
     json::document(fields)
 }
 
-/// Runs every command configured for `hook` with `document` on stdin.
+/// What a hook command had to say while [`run_hooks_with`] ran it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HookEvent {
+    /// A command exited 0 with something on stdout (`-v` material).
+    Output(String),
+    /// A non-blocking command failed or could not start; the event it was
+    /// attached to already happened, so this is a warning, not an error.
+    Warning(String),
+}
+
+/// Runs every command configured for `hook` with `document` on stdin,
+/// printing each command's output at `-v` and each failure as a warning.
 /// A command that fails (or cannot start) is a user error for a blocking
 /// hook and a warning otherwise; the remaining commands still run in the
 /// non-blocking case.
 pub fn run_hooks(app: &App, hook: Hook, task: &Task, extra: &[(&str, Value)]) -> Result<()> {
+    run_hooks_with(app, hook, task, extra, &mut |event| match event {
+        HookEvent::Output(text) => app.out.verbose(&text),
+        HookEvent::Warning(text) => app.out.warn(&text),
+    })
+}
+
+/// [`run_hooks`] with the reporting left to `report`, called in the order
+/// things happen. The TUI uses it: inside the alternate screen a warning
+/// printed on stderr would scribble over the UI, so it collects them for
+/// the status bar instead.
+pub fn run_hooks_with(
+    app: &App,
+    hook: Hook,
+    task: &Task,
+    extra: &[(&str, Value)],
+    report: &mut dyn FnMut(HookEvent),
+) -> Result<()> {
     let commands = hook.commands(app);
     if commands.is_empty() {
         return Ok(());
@@ -355,8 +383,11 @@ pub fn run_hooks(app: &App, hook: Hook, task: &Task, extra: &[(&str, Value)]) ->
         match run_hook_command(&argv, &document, &vars) {
             Ok(output) => {
                 if !output.trim().is_empty() {
-                    app.out
-                        .verbose(&format!("{} hook {line:?}: {}", hook.name(), output.trim()));
+                    report(HookEvent::Output(format!(
+                        "{} hook {line:?}: {}",
+                        hook.name(),
+                        output.trim()
+                    )));
                 }
             }
             Err(message) if hook.is_blocking() => {
@@ -365,9 +396,10 @@ pub fn run_hooks(app: &App, hook: Hook, task: &Task, extra: &[(&str, Value)]) ->
                     hook.name()
                 )));
             }
-            Err(message) => app
-                .out
-                .warn(&format!("{} hook {line:?} failed: {message}", hook.name())),
+            Err(message) => report(HookEvent::Warning(format!(
+                "{} hook {line:?} failed: {message}",
+                hook.name()
+            ))),
         }
     }
     Ok(())

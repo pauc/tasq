@@ -98,7 +98,7 @@ pre-launch = ["check-vpn --quiet"]
 | Hook | Runs | On failure |
 |---|---|---|
 | `post-create` | after `tasq create` wrote the task | warning on stderr; the task exists |
-| `post-done` | after `tasq done` closed the task | warning on stderr; the task is closed |
+| `post-done` | after `tasq done`, or the terminal UI's `d` key, closed the task | warning on stderr (in the UI: in the status bar); the task is closed |
 | `pre-launch` | in `tasq next`/`tasq pick`, after the task is set to in-progress and the working directory is resolved, right before the launcher runs | the launch is aborted with the hook's message (exit 1) |
 
 Each entry is split like a shell command line (quotes allowed, no shell, `~` expanded in the
@@ -126,12 +126,18 @@ quote) is a configuration error, not a warning.
 `examples/plugins/hooks/log-event.sh` is a complete hook: it appends
 `<time> <hook> [<id>] <title>` to `~/.local/share/tasq/hooks.log`.
 
+### Hooks and the terminal UI
+
+`tasq ui` fires the same hooks as the commands it stands in for: `Enter` runs `tasq pick`, so
+`pre-launch` fires there, and `d` runs the `post-done` hooks in-process after the close, with
+the same document and environment as `tasq done` (ADR-0010). A failing `post-done` hook shows
+in the UI's status bar after the `[id] done: ...` line; the task stays closed. A hook's stdout
+is not shown in the UI, `-v` or not.
+
 ### What does not fire a hook
 
-- The terminal UI's `d` key: it edits through `tasq_core::edit` directly, not through the CLI.
-  `Enter` runs `tasq pick`, so `pre-launch` fires there.
-- `tasq apply` with `"done": true`, and `tasq sync` closing a task: only `tasq done` fires
-  `post-done`.
+- `tasq apply` with `"done": true`, and `tasq sync` closing a task: only `tasq done` and the
+  UI's `d` key fire `post-done`.
 - `tasq create --status done`: `post-create` fires (a task was created), `post-done` does not.
 
 ## `tasq plugins list`
