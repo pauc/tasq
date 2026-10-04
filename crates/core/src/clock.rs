@@ -23,7 +23,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use chrono::{Local, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{Local, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -77,6 +77,15 @@ impl Clock for FixedClock {
     fn now(&self) -> NaiveDateTime {
         self.0
     }
+}
+
+/// `at` with seconds and sub-seconds dropped: the precision the file keeps.
+/// Model values built from a clock go through this so that a task written
+/// and read back compares equal to the one in memory.
+pub fn to_minute(at: NaiveDateTime) -> NaiveDateTime {
+    at.with_second(0)
+        .and_then(|t| t.with_nanosecond(0))
+        .unwrap_or(at)
 }
 
 /// Formats a timestamp as `YYYY-MM-DD HH:MM`, the shape the script wrote.
@@ -164,7 +173,8 @@ pub enum TimeError {
 pub enum When {
     /// Only the day is known (legacy entries).
     Date(NaiveDate),
-    /// Day and time, to the minute.
+    /// Day and time, to the minute ([`From<NaiveDateTime>`](When::from)
+    /// drops seconds; a value built directly may carry them).
     DateTime(NaiveDateTime),
 }
 
@@ -192,8 +202,9 @@ impl When {
 }
 
 impl From<NaiveDateTime> for When {
+    /// Truncates to the minute (see [`to_minute`]).
     fn from(dt: NaiveDateTime) -> Self {
-        Self::DateTime(dt)
+        Self::DateTime(to_minute(dt))
     }
 }
 
@@ -422,5 +433,15 @@ mod tests {
         );
         assert!(serde_json::from_str::<Stamped>("{\"at\":\"2026-10-04T10:15:00\"}").is_err());
         assert!(serde_json::from_str::<Stamped>("{\"at\":7}").is_err());
+    }
+
+    #[test]
+    fn to_minute_drops_seconds_and_nanoseconds() {
+        let base = FixedClock::at("2026-10-04 10:15").0;
+        let with_seconds = base + chrono::Duration::seconds(37) + chrono::Duration::nanoseconds(5);
+        assert_eq!(to_minute(with_seconds), base);
+        assert_eq!(to_minute(base), base);
+        assert_eq!(When::from(with_seconds), When::DateTime(base));
+        assert_eq!(format_timestamp(with_seconds), "2026-10-04 10:15");
     }
 }

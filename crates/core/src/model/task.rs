@@ -78,6 +78,19 @@ pub struct Session {
     pub description: Option<String>,
 }
 
+impl Session {
+    /// A session recorded at `at` (truncated to the minute, the precision
+    /// the file keeps) with no launcher or description.
+    pub fn new(at: NaiveDateTime, id: impl Into<String>) -> Self {
+        Self {
+            at: crate::clock::to_minute(at),
+            id: id.into(),
+            launcher: None,
+            description: None,
+        }
+    }
+}
+
 /// One dated progress note (`- 2026-10-04 10:15: note`).
 ///
 /// `at` is a [`When`] rather than a [`NaiveDateTime`] because entries written
@@ -93,10 +106,11 @@ pub struct ProgressEntry {
 }
 
 impl ProgressEntry {
-    /// An entry with a full timestamp.
+    /// An entry with a full timestamp, truncated to the minute (the
+    /// precision the file keeps, so a logged entry round-trips unchanged).
     pub fn new(at: NaiveDateTime, note: impl Into<String>) -> Self {
         Self {
-            at: When::DateTime(at),
+            at: When::from(at),
             note: note.into(),
         }
     }
@@ -778,5 +792,22 @@ mod tests {
         let back: TaskDraft =
             serde_json::from_str(&serde_json::to_string(&draft).unwrap()).unwrap();
         assert_eq!(back, draft);
+    }
+
+    #[test]
+    fn clock_stamps_are_truncated_to_the_minute() {
+        let base = clock().now();
+        let seconds = FixedClock(base + chrono::Duration::seconds(42));
+        let mut t = Task::new(TaskId::from(1), "T");
+        t.log("note", &seconds);
+        assert_eq!(t.progress[0].at, When::DateTime(base));
+        assert_eq!(
+            ProgressEntry::new(seconds.now(), "n").at,
+            When::DateTime(base)
+        );
+        let s = Session::new(seconds.now(), "sid");
+        assert_eq!(s.at, base);
+        assert_eq!(s.id, "sid");
+        assert_eq!((s.launcher, s.description), (None, None));
     }
 }
