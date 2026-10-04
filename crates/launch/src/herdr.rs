@@ -247,6 +247,11 @@ impl Launcher for HerdrLauncher {
         lines.push(format!(
             "herdr workspace create --label \"{label}\" --cwd {workdir} {env_args} --no-focus"
         ));
+        if ctx.focus {
+            lines.push("herdr workspace focus <workspace>".to_owned());
+        } else {
+            lines.push("(no focus change: the session opens in the background)".to_owned());
+        }
         lines.push(format!(
             "herdr agent start task-{} --kind claude --pane <pane> --timeout {AGENT_TIMEOUT_MS}",
             ctx.task.id
@@ -255,11 +260,6 @@ impl Launcher for HerdrLauncher {
             "herdr agent prompt task-{} \"<prompt below>\"",
             ctx.task.id
         ));
-        if ctx.focus {
-            lines.push("herdr workspace focus <workspace>".to_owned());
-        } else {
-            lines.push("(no focus change: the session opens in the background)".to_owned());
-        }
         lines.push(format!(
             "(if herdr cannot open a pane: {} launcher in the current pane)",
             self.fallback.name()
@@ -281,6 +281,17 @@ impl Launcher for HerdrLauncher {
             );
             return self.fallback.launch(ctx);
         };
+        // Switch the view as soon as the pane exists: `agent start` below
+        // waits for Claude to be ready (seconds), and the user should watch
+        // that happen rather than wait for it in the old workspace. Only
+        // `workspace focus` switches the view, landing on the workspace's
+        // active tab, hence the `tab focus` first.
+        if ctx.focus {
+            if let Some(tab) = &tab_id {
+                self.herdr(&["tab", "focus", tab]);
+            }
+            self.herdr(&["workspace", "focus", &ws_id]);
+        }
         // The pane is an interactive shell at the workdir, so its direnv
         // hook loads .envrc; warn when direnv would refuse.
         if let Some(warning) = envrc_warning(envrc_status(&ctx.workdir, &self.env), &ctx.workdir) {
@@ -299,13 +310,8 @@ impl Launcher for HerdrLauncher {
                 "Opened herdr workspace {ws_id} (\"{label}\") with agent {agent} in the background"
             )));
         }
-        // `agent focus` moves the server's focus; only `workspace focus`
-        // switches the view, landing on the workspace's active tab.
+        // `agent focus` moves the server's focus to the agent that now exists.
         self.herdr(&["agent", "focus", &agent]);
-        if let Some(tab) = &tab_id {
-            self.herdr(&["tab", "focus", tab]);
-        }
-        self.herdr(&["workspace", "focus", &ws_id]);
         Ok(LaunchOutcome::Opened(format!(
             "Opened herdr workspace {ws_id} (\"{label}\") with agent {agent}"
         )))

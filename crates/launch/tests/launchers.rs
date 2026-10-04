@@ -362,10 +362,11 @@ fn herdr_creates_a_workspace_and_starts_the_agent() {
             format!(
                 "workspace create --label Fix the login --cwd {work} --env TASQ_TASK_ID=3 --env TASQ_NOTEBOOK=home --no-focus"
             ),
+            // The view switches before the agent's readiness wait.
+            "workspace focus ws-new".to_owned(),
             "agent start task-3 --kind claude --pane pane-new --timeout 90000".to_owned(),
             "agent prompt task-3 prompt for 3".to_owned(),
             "agent focus task-3".to_owned(),
-            "workspace focus ws-new".to_owned(),
         ]
     );
     assert_eq!(calls.borrow().len(), 0, "no fallback");
@@ -402,12 +403,12 @@ fn herdr_reuses_the_holding_workspace_as_a_tab_and_retries_the_agent_name() {
             format!(
                 "tab create --workspace ws-held --cwd {work} --label Fix the login --env TASQ_TASK_ID=3 --env TASQ_NOTEBOOK=home --no-focus"
             ),
+            "tab focus tab-7".to_owned(),
+            "workspace focus ws-held".to_owned(),
             "agent start task-3 --kind claude --pane pane-7 --timeout 90000".to_owned(),
             format!("agent start {agent} --kind claude --pane pane-7 --timeout 90000"),
             format!("agent prompt {agent} prompt for 3"),
             format!("agent focus {agent}"),
-            "tab focus tab-7".to_owned(),
-            "workspace focus ws-held".to_owned(),
         ]
     );
 }
