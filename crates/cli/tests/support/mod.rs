@@ -251,7 +251,8 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-fn find_on_path(name: &str) -> Option<PathBuf> {
+/// The first `PATH` entry of the test process holding `name`.
+pub fn find_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|dir| dir.join(name))

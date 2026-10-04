@@ -1,0 +1,12 @@
+---
+source: crates/cli/tests/cli.rs
+expression: env.normalize(&stdout(&out))
+---
+Plugins on PATH (tasq-<name>):
+  tlogs  [ROOT]/bin/tasq-tlogs
+  zed    [ROOT]/bin/tasq-zed
+
+Hooks ([hooks] in the config):
+  post-create  tasq-notify
+  post-create  ~/bin/log-it --quiet
+  pre-launch   check-vpn

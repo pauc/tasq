@@ -31,7 +31,7 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0003](0003-store-source-launcher-traits.md) | Store, Source and Launcher extension traits | Accepted |
 | [0004](0004-adapter-decides-sync-strategy.md) | Each Source adapter decides its sync strategy | Accepted |
 | [0005](0005-cli-first-tui-second.md) | CLI first, TUI second | Accepted |
-| [0006](0006-plugin-mechanism.md) | Plugin mechanism | Proposed |
+| [0006](0006-plugin-mechanism.md) | Plugin mechanism: external executables for users, in-process adapters built in | Accepted |
 | [0007](0007-nb-under-the-hood.md) | nb under the hood: hybrid native/nb bookkeeping | Accepted |
 | [0008](0008-license.md) | GPL-3.0-or-later license | Accepted |
 | [0009](0009-tui-host-actions-through-the-cli.md) | TUI edits through core, host actions through the CLI binary | Accepted |

@@ -9,6 +9,7 @@ use crate::cli::CreateArgs;
 use crate::commands::mr;
 use crate::error::{CliError, Result};
 use crate::json;
+use crate::plugins::{self, Hook};
 
 /// The initial status: a workflow status, or `done` for a closed task.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +57,7 @@ pub fn run(app: &App, args: &CreateArgs) -> Result<()> {
     let closed = draft.done;
     let mut store = app.open_store()?;
     let task = store.create(draft)?;
+    plugins::run_hooks(app, Hook::PostCreate, &task, &[])?;
     if app.out.json_mode() {
         return app
             .out

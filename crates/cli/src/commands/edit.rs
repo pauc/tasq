@@ -6,10 +6,12 @@
 
 use tasq_core::edit::{self, EditError, Value};
 use tasq_core::model::{Status, Workflow};
+use tasq_core::store::Store;
 
 use crate::app::App;
 use crate::commands::finish;
 use crate::error::{CliError, Result};
+use crate::plugins::{self, Hook};
 
 /// Interprets VALUE: a priority letter (with or without `#`) or a status
 /// of `workflow`; anything else is a user error listing both.
@@ -60,6 +62,9 @@ pub fn done(app: &App, id: &str, note: Option<&str>) -> Result<()> {
     let mut store = app.open_store()?;
     let clock = app.clock()?;
     let task = edit::done(&mut store, &id, note, clock.as_ref())?;
+    if !app.config().hooks.post_done.is_empty() {
+        plugins::run_hooks(app, Hook::PostDone, &store.get(&id)?, &[])?;
+    }
     finish(app, &store, &id, &format!("[{id}] done: {}\n", task.title))
 }
 

@@ -40,7 +40,9 @@ Examples:
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
   tasq store info            where the tasks live
-  tasq doctor                check config, notebook, nb and optional tools";
+  tasq doctor                check config, notebook, nb and optional tools
+  tasq plugins list          tasq-<name> executables on PATH and the hooks
+  tasq <name> [args]         run the plugin tasq-<name> (see docs/plugins.md)";
 
 /// Top-level command line.
 #[derive(Debug, Parser)]
@@ -337,6 +339,10 @@ pub enum Command {
     #[command(subcommand)]
     Config(ConfigCommand),
 
+    /// Plugins: `tasq-<name>` executables on PATH and the configured hooks.
+    #[command(subcommand, after_help = PLUGINS_HELP)]
+    Plugins(PluginsCommand),
+
     /// Print a shell completion script to stdout
     ///
     /// bash:  tasq completions bash > ~/.local/share/bash-completion/completions/tasq
@@ -442,6 +448,21 @@ r reload, ? help, q quit. Edits are the same operations as `tasq set`,
 `log` and `done`. Group colours follow [ui.colors] (status name, or
 `no-status`); NO_COLOR or --color never gives a monochrome UI.";
 
+const PLUGINS_HELP: &str = "\
+`tasq <name> [args...]` runs the executable tasq-<name> found on PATH when
+<name> is not a built-in command, with the remaining arguments verbatim and
+TASQ_BIN (this binary), TASQ_PROFILE, TASQ_CONFIG and TASQ_SET (the --set
+flags, one per line) in its environment, so `$TASQ_BIN ... --json` inside
+the plugin sees the same configuration. Built-in commands always win; a
+plugin also wins over the bare `tasq <word>` filter, which stays available
+as `tasq list <word>`.
+
+Hooks are command lines under [hooks] in the config: post-create (after
+`tasq create`), post-done (after `tasq done`) and pre-launch (before
+`tasq next`/`pick` start a session; a failure aborts the launch). Each
+gets {\"schema\": 1, \"hook\": ..., \"task\": {...}} on stdin and TASQ_HOOK,
+TASQ_TASK_ID and TASQ_BIN in its environment. See docs/plugins.md.";
+
 /// `tasq create` arguments.
 #[derive(Debug, Clone, Args, Default)]
 pub struct CreateArgs {
@@ -526,6 +547,14 @@ pub enum ConfigCommand {
     /// Print the effective configuration as TOML, each key annotated with
     /// the layer that set it (defaults, a file, a profile, env or --set).
     Show,
+}
+
+/// `tasq plugins ...`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
+pub enum PluginsCommand {
+    /// List the `tasq-<name>` executables on PATH (first match per name)
+    /// and the hooks configured under `[hooks]`.
+    List,
 }
 
 /// Parses `KEY=VALUE` for `--set`.

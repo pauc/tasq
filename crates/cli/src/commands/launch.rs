@@ -18,6 +18,7 @@ use crate::app::App;
 use crate::commands::worktree::create_and_track;
 use crate::error::{CliError, Result};
 use crate::json;
+use crate::plugins::{self, Hook};
 
 /// `tasq next`: the first in-progress task, else the first ready one.
 pub fn next(app: &App, launcher: Option<&str>, dry_run: bool) -> Result<()> {
@@ -162,11 +163,19 @@ fn launch_or_describe(app: &App, ctx: &LaunchContext, name: &str, dry_run: bool)
     let settings = launch_settings(app)?;
     let resolved = resolve_name(name, &settings.env).to_owned();
     let launcher = launcher_for(name, &settings).map_err(|e| CliError::user(e.to_string()))?;
+    let hook_fields = [
+        ("workdir", json::to_value(&ctx.workdir)),
+        ("in_worktree", Value::from(ctx.in_worktree)),
+        ("launcher", Value::from(resolved.as_str())),
+    ];
 
     if dry_run {
-        let steps = launcher
+        let mut steps = launcher
             .describe(ctx)
             .map_err(|e| CliError::user(e.to_string()))?;
+        for hook in &app.config().hooks.pre_launch {
+            steps.insert(0, format!("pre-launch hook (skipped: dry run): {hook}"));
+        }
         if app.out.json_mode() {
             return app.out.json(&json::document([
                 ("task", json::to_value(&ctx.task)),
@@ -184,6 +193,7 @@ fn launch_or_describe(app: &App, ctx: &LaunchContext, name: &str, dry_run: bool)
         }
         return app.out.page(&text);
     }
+    plugins::run_hooks(app, Hook::PreLaunch, &ctx.task, &hook_fields)?;
     match launcher
         .launch(ctx)
         .map_err(|e| CliError::user(e.to_string()))?

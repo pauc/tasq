@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# tasq-tlogs: propose time-log entries from the progress notes of a day or a range.
+#
+# The reference external plugin of docs/plugins.md. Put it on PATH and run it as
+# `tasq tlogs [SPEC...]`: `tasq tlogs`, `tasq tlogs yesterday`, `tasq tlogs last week`
+# (SPEC is whatever `tasq dates` accepts). It talks to tasq only through
+# `$TASQ_BIN ... --json`, so it sees the same notebook, profile and --set overrides
+# as the `tasq` that ran it.
+#
+# For every working day of the range it lists the tasks that received a progress
+# note that day and splits TLOGS_HOURS (default 8) evenly between them, rounded to
+# the quarter hour: a starting point for whatever posts the time logs (GitLab
+# `/spend`, a timesheet). With --json the same data is printed as
+# {"schema": 1, "from", "to", "days": [{day, weekday, tasks: [{id, title, notes, hours}]}]}.
+#
+# Needs bash and jq.
+set -euo pipefail
+
+tasq=${TASQ_BIN:-tasq}
+hours=${TLOGS_HOURS:-8}
+json=0
+spec=()
+for arg in "$@"; do
+  case $arg in
+    --json) json=1 ;;
+    -h | --help)
+      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *) spec+=("$arg") ;;
+  esac
+done
+
+range=$("$tasq" dates --json ${spec[@]+"${spec[@]}"})
+days=$(jq -c '[.from, .to, .working_days]' <<<"$range")
+
+report='[]'
+for day in $(jq -r '.[2][]' <<<"$days"); do
+  summary=$("$tasq" summary --json --raw "$day")
+  entry=$(jq -c --arg day "$day" --argjson hours "$hours" '
+    (.tasks | length) as $n
+    | {
+        day: $day,
+        weekday: ($day | strptime("%Y-%m-%d") | strftime("%A")),
+        tasks: [
+          .tasks[]
+          | {id, title, notes: (.notes | length),
+             hours: (if $n == 0 then 0 else (($hours / $n) * 4 | round) / 4 end)}
+        ]
+      }' <<<"$summary")
+  report=$(jq -c --argjson e "$entry" '. + [$e]' <<<"$report")
+done
+
+if [ "$json" = 1 ]; then
+  jq --argjson days "$days" --argjson report "$report" -n \
+    '{schema: 1, from: $days[0], to: $days[1], days: $report}'
+else
+  jq -r '
+    .[]
+    | "\(.day) (\(.weekday))",
+      (if (.tasks | length) == 0 then "  nothing logged"
+       else .tasks[]
+         | "  [\(.id)] \(.title)  \(.hours)h  (\(.notes) note\(if .notes == 1 then "" else "s" end))"
+       end)' <<<"$report"
+fi

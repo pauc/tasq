@@ -35,6 +35,7 @@ Commands:
   store        The store behind the tasks: where it is and how to sync it
   doctor       Check the configuration, the notebook, nb and optional tools
   config       Show the effective configuration
+  plugins      Plugins: `tasq-<name>` executables on PATH and the configured hooks
   completions  Print a shell completion script to stdout
   help         Print this message or the help of the given subcommand(s)
 
@@ -95,3 +96,5 @@ Examples:
   tasq dates last week       the Monday and Friday, for scripts
   tasq store info            where the tasks live
   tasq doctor                check config, notebook, nb and optional tools
+  tasq plugins list          tasq-<name> executables on PATH and the hooks
+  tasq <name> [args]         run the plugin tasq-<name> (see docs/plugins.md)

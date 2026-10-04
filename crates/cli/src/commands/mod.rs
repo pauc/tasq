@@ -21,6 +21,7 @@ pub mod edit;
 pub mod launch;
 pub mod list;
 pub mod mr;
+pub mod plugins;
 pub mod project;
 pub mod session;
 pub mod store;

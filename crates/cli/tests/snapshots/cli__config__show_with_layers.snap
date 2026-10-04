@@ -42,3 +42,8 @@ pager = "cat"                                # [ROOT]/home/.config/tasq/config.t
 [report.summary]
 command = "claude -p"                        # defaults
 summarizer = "llm"                           # defaults
+
+[hooks]
+post-create = []                             # defaults
+post-done = []                               # defaults
+pre-launch = []                              # defaults

@@ -4,6 +4,8 @@
 
 mod support;
 
+use std::path::Path;
+
 use insta::assert_snapshot;
 use predicates::prelude::*;
 use support::{TestEnv, stderr, stdout};
@@ -2105,5 +2107,327 @@ mod ui {
         let out = env.tasq().args(["help", "ui"]).output().unwrap();
         assert!(out.status.success());
         assert_snapshot!(stdout(&out));
+    }
+}
+
+mod plugins {
+    use super::*;
+
+    const PROBE: &str = "[ -n \"${FAKE_PROBE:-}\" ] && exit 0";
+
+    fn tasq_bin() -> String {
+        std::fs::canonicalize(env!("CARGO_BIN_EXE_tasq"))
+            .unwrap()
+            .display()
+            .to_string()
+    }
+
+    #[test]
+    fn dispatches_to_tasq_dash_name_with_the_passthrough_env() {
+        let env = TestEnv::fixture();
+        env.fake_tool(
+            "tasq-echo",
+            &format!(
+                "{PROBE}\necho \"args=$*\"\necho \"bin=$TASQ_BIN\"\n\
+                 echo \"profile=${{TASQ_PROFILE-unset}} config=${{TASQ_CONFIG-unset}}\"\n\
+                 echo \"set=${{TASQ_SET-unset}}\"\nexit 3"
+            ),
+        );
+        std::fs::write(env.home.join("c.toml"), "").unwrap();
+        // Dispatch happens before the config is loaded: the profile need not exist.
+        let out = env
+            .tasq()
+            .env("TASQ_SET", "ui.no_osc8=true")
+            .args([
+                "--json",
+                "-v",
+                "--profile",
+                "p",
+                "--config",
+                "c.toml",
+                "--set",
+                "a=1",
+                "--set=b=2",
+                "echo",
+                "one",
+                "--set",
+                "two",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(3));
+        assert_eq!(stderr(&out), "");
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            format!(
+                "args=one --set two\nbin={}\nprofile=p config=[ROOT]/home/c.toml\nset=ui.no_osc8=true\na=1\nb=2\n",
+                env.normalize(&tasq_bin())
+            )
+        );
+        // Nothing in effect: none of the variables is set (TASQ_BIN always is).
+        let out = env.tasq().arg("echo").output().unwrap();
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            format!(
+                "args=\nbin={}\nprofile=unset config=unset\nset=unset\n",
+                env.normalize(&tasq_bin())
+            )
+        );
+    }
+
+    #[test]
+    fn plugin_wins_over_the_filter_word_but_never_over_a_builtin() {
+        let env = TestEnv::fixture();
+        env.fake_tool("tasq-ready", &format!("{PROBE}\necho plugin ready"));
+        env.fake_tool("tasq-list", &format!("{PROBE}\necho plugin list"));
+        // The ready plugin shadows the bare `tasq ready` filter...
+        env.tasq()
+            .arg("ready")
+            .assert()
+            .success()
+            .stdout("plugin ready\n");
+        // ...but `tasq list ready` is still the filter view.
+        let out = env.tasq().args(["list", "ready"]).output().unwrap();
+        assert!(stdout(&out).starts_with("ready\n"), "{}", stdout(&out));
+        // A built-in name is never dispatched.
+        let out = env.tasq().arg("list").output().unwrap();
+        assert!(
+            stdout(&out).starts_with("IN PROGRESS\n"),
+            "{}",
+            stdout(&out)
+        );
+        // Without an executable the word is a tag filter as before.
+        env.tasq()
+            .arg("nope-plugin")
+            .assert()
+            .success()
+            .stdout("No open todos tagged #nope-plugin.\n");
+        // A plugin file that is not executable does not count.
+        std::fs::write(env.bin.join("tasq-plain"), "#!/bin/sh\necho ran\n").unwrap();
+        env.tasq()
+            .arg("plain")
+            .assert()
+            .success()
+            .stdout("No open todos tagged #plain.\n");
+    }
+
+    #[test]
+    fn list_shows_plugins_and_hooks() {
+        let env = TestEnv::fixture();
+        env.fake_tool("tasq-tlogs", PROBE);
+        env.fake_tool("tasq-zed", PROBE);
+        env.fake_tool("unrelated", PROBE);
+        env.write_project_config(
+            "[hooks]\npost-create = [\"tasq-notify\", \"~/bin/log-it --quiet\"]\npre-launch = [\"check-vpn\"]\n",
+        );
+        let out = env.tasq().args(["plugins", "list"]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_snapshot!(env.normalize(&stdout(&out)));
+
+        let out = env
+            .tasq()
+            .args(["--json", "plugins", "list"])
+            .output()
+            .unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+        assert_eq!(doc["schema"], 1);
+        assert_eq!(doc["plugins"][0]["name"], "tlogs");
+        assert_eq!(
+            env.normalize(doc["plugins"][0]["path"].as_str().unwrap()),
+            "[ROOT]/bin/tasq-tlogs"
+        );
+        assert_eq!(doc["plugins"][1]["name"], "zed");
+        assert_eq!(doc["plugins"].as_array().unwrap().len(), 2);
+        assert_eq!(doc["hooks"]["post-create"][1], "~/bin/log-it --quiet");
+        assert_eq!(doc["hooks"]["post-done"], serde_json::json!([]));
+        assert_eq!(doc["hooks"]["pre-launch"][0], "check-vpn");
+
+        let env = TestEnv::fixture();
+        env.tasq().args(["plugins", "list"]).assert().success().stdout(
+            "Plugins on PATH (tasq-<name>):\n  (none)\n\nHooks ([hooks] in the config):\n  (none)\n",
+        );
+    }
+
+    #[test]
+    fn hooks_get_the_document_on_stdin_and_the_event_in_the_environment() {
+        let env = TestEnv::fixture();
+        let log = env.home.join("hooks.log");
+        env.fake_tool(
+            "hook-log",
+            &format!(
+                "{PROBE}\n{{ echo \"hook=$TASQ_HOOK id=$TASQ_TASK_ID bin=$TASQ_BIN\"; /bin/cat; echo; }} >> '{}'",
+                log.display()
+            ),
+        );
+        env.fake_tool("claude", &format!("{PROBE}\necho \"claude $TASQ_TASK_ID\""));
+        env.write_project_config(
+            "[hooks]\npost-create = [\"hook-log\"]\npost-done = [\"hook-log\"]\npre-launch = [\"hook-log\"]\n",
+        );
+        let read_log = || env.normalize(&std::fs::read_to_string(&log).unwrap_or_default());
+
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", "2026-10-07 09:30")
+            .args(["create", "Hooked", "--tag", "x"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stderr(&out), "");
+        let logged = read_log();
+        let bin = env.normalize(&tasq_bin());
+        assert!(
+            logged.starts_with(&format!("hook=post-create id=8 bin={bin}\n{{\"hook\":\"post-create\",\"schema\":1,\"task\":{{")),
+            "{logged}"
+        );
+        assert!(logged.contains("\"title\":\"Hooked\""), "{logged}");
+
+        std::fs::remove_file(&log).unwrap();
+        env.tasq()
+            .args(["done", "8", "shipped"])
+            .assert()
+            .success()
+            .stderr("");
+        let logged = read_log();
+        assert!(logged.starts_with("hook=post-done id=8 "), "{logged}");
+        assert!(logged.contains("\"done\":true"), "{logged}");
+        assert!(logged.contains("\"note\":\"shipped\""), "{logged}");
+
+        // A dry run lists the hook as a skipped step and runs nothing.
+        std::fs::remove_file(&log).unwrap();
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["pick", "3", "--dry-run", "--launcher", "shell"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(
+            stdout(&out).contains(
+                "Launcher: shell (dry run)\npre-launch hook (skipped: dry run): hook-log\n"
+            ),
+            "{}",
+            stdout(&out)
+        );
+        assert!(!log.exists());
+
+        // The real launch runs it with the resolved directory and launcher.
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .env("TASQ_LAUNCH_ENV", "inherit")
+            .args(["pick", "3"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(stdout(&out).ends_with("claude 3\n"), "{}", stdout(&out));
+        let logged = read_log();
+        assert!(logged.starts_with("hook=pre-launch id=3 "), "{logged}");
+        assert!(logged.contains("\"in_worktree\":false"), "{logged}");
+        assert!(logged.contains("\"launcher\":\"claude\""), "{logged}");
+        assert!(logged.contains("\"workdir\":\"[ROOT]/home\""), "{logged}");
+    }
+
+    #[test]
+    fn failing_hooks_warn_or_abort() {
+        let env = TestEnv::fixture();
+        env.fake_tool("hook-fail", &format!("{PROBE}\necho nope >&2\nexit 4"));
+        env.fake_tool("claude", &format!("{PROBE}\necho \"claude $TASQ_TASK_ID\""));
+        env.write_project_config(
+            "[hooks]\npost-create = [\"hook-fail\", \"missing-hook --flag\"]\npre-launch = [\"hook-fail\"]\n",
+        );
+        // post-*: the task is created, each failure is a warning.
+        let out = env
+            .tasq()
+            .args(["create", "Still created"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(
+            stdout(&out).starts_with("[8] created: Still created"),
+            "{}",
+            stdout(&out)
+        );
+        let err = stderr(&out);
+        assert!(
+            err.starts_with("tasq: warning: post-create hook \"hook-fail\" failed: exit status 4: nope\ntasq: warning: post-create hook \"missing-hook --flag\" failed: could not run missing-hook: "),
+            "{err}"
+        );
+        // pre-launch: the launch is aborted with the hook's message.
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .env("TASQ_LAUNCH_ENV", "inherit")
+            .args(["pick", "3"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            stderr(&out),
+            "tasq: pre-launch hook \"hook-fail\" failed: exit status 4: nope\n"
+        );
+        assert!(!stdout(&out).contains("claude 3"), "{}", stdout(&out));
+        // A bad command line is an error, not a warning: it is a config mistake.
+        env.write_project_config("[hooks]\npost-create = [\"unterminated 'quote\"]\n");
+        let out = env.tasq().args(["create", "Bad hook"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert!(
+            stderr(&out).starts_with("tasq: hook command \"unterminated 'quote\": "),
+            "{}",
+            stderr(&out)
+        );
+    }
+
+    /// The reference plugin under `examples/plugins` runs through dispatch.
+    /// Needs `bash` and `jq`; skipped (with a note) when either is missing.
+    #[test]
+    fn example_tlogs_plugin_runs_through_dispatch() {
+        let env = TestEnv::fixture();
+        for tool in ["bash", "jq"] {
+            let Some(path) = support::find_on_path(tool) else {
+                eprintln!("skipping: {tool} not installed");
+                return;
+            };
+            std::os::unix::fs::symlink(path, env.bin.join(tool)).unwrap();
+        }
+        let examples = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/plugins")
+            .canonicalize()
+            .unwrap();
+        let path = std::env::join_paths([env.bin.clone(), examples]).unwrap();
+        let out = env
+            .tasq()
+            .env("PATH", &path)
+            .args(["tlogs", "2026-10-02", "2026-10-04"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            "2026-10-02 (Friday)\n  [3] Answer the support ticket  8h  (1 note)\n"
+        );
+        let out = env
+            .tasq()
+            .env("PATH", &path)
+            .env("TLOGS_HOURS", "6")
+            .args([
+                "--set",
+                "store.notebook=home",
+                "tlogs",
+                "--json",
+                "2026-10-02",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let doc: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+        assert_eq!(doc["schema"], 1);
+        assert_eq!(doc["days"][0]["tasks"][0]["hours"], 6);
+        let out = env
+            .tasq()
+            .env("PATH", &path)
+            .args(["plugins", "list"])
+            .output()
+            .unwrap();
+        assert!(stdout(&out).contains("  tlogs  "), "{}", stdout(&out));
     }
 }

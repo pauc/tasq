@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 authors.workspace = true
 
 # The library holds every command so unit tests can exercise rendering and
@@ -20,11 +23,11 @@ name = "tasq"
 path = "src/main.rs"
 
 [dependencies]
-tasq-core = { path = "../core" }
-tasq-launch = { path = "../launch" }
-tasq-sources = { path = "../sources" }
-tasq-store-nb = { path = "../store-nb" }
-tasq-tui = { path = "../tui" }
+tasq-core = { path = "../core", version = "0.1.0" }
+tasq-launch = { path = "../launch", version = "0.1.0" }
+tasq-sources = { path = "../sources", version = "0.1.0" }
+tasq-store-nb = { path = "../store-nb", version = "0.1.0" }
+tasq-tui = { path = "../tui", version = "0.1.0" }
 anyhow = "1"
 # `--due` dates and the `TASQ_NOW` fixed clock.
 chrono = { version = "0.4", default-features = false }

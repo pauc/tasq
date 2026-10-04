@@ -19,7 +19,9 @@ pub mod commands;
 pub mod error;
 pub mod json;
 pub mod output;
+pub mod plugins;
 
+use std::ffi::OsString;
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -29,8 +31,20 @@ use crate::cli::Cli;
 /// Parses the process arguments, runs the command and maps the outcome to an
 /// exit code. Clap's help and version requests exit `0`; its usage errors
 /// print clap's message and exit `2`.
+///
+/// Before parsing, a first positional argument that is not a built-in
+/// command and names an executable `tasq-<name>` on `PATH` hands the
+/// process over to that plugin (ADR-0006).
 #[must_use]
 pub fn main() -> ExitCode {
+    let argv: Vec<OsString> = std::env::args_os().collect();
+    if let Some(external) = plugins::External::parse(&argv)
+        && let Some(path) = plugins::find(&external.name, std::env::var_os("PATH").as_deref())
+    {
+        let error = plugins::exec(&path, &external);
+        error.report();
+        return ExitCode::from(error.exit_code());
+    }
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => {
