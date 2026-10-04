@@ -10,6 +10,7 @@
 //!   it was read, and then hand over to a [`Bookkeeper`] (index and commits).
 //! - [`Store::create`] writes a new `YYYYMMDDHHMMSS.todo.md`, registers it
 //!   through the bookkeeper and reads the id back from `.index`.
+//! - [`doctor::checks`] produces the store part of `tasq doctor`.
 //!
 //! `nb` is only ever run with the environment the caller injects through
 //! [`NbStoreOptions`], so tests can point it at a temporary notebook.
@@ -21,6 +22,7 @@
 pub mod bookkeeper;
 pub mod create;
 pub mod diff;
+pub mod doctor;
 pub mod git;
 pub mod index;
 pub mod native;
@@ -35,6 +37,7 @@ pub use self::bookkeeper::{
     Bookkeeper, NativeBookkeeper, NbCliBookkeeper, NoopBookkeeper, SyncOutcome, Verification,
     select_bookkeeper,
 };
+pub use self::doctor::{Check, CheckStatus};
 pub use self::index::{Index, TODO_SUFFIX};
 pub use self::nb::{Nb, NbError};
 pub use self::revision::Revision;
