@@ -21,7 +21,12 @@ publishing. 701 workspace tests; config module 107 mutants, 0 missed; `cargo doc
 **Not verifiable here:** the release pipeline has never run (no GitHub repository yet, `OWNER`
 placeholders), `cargo install tasq` is not possible until the crates are published, and
 T-904's one-week side-by-side run on the real notebook is the author's manual acceptance
-(procedure in `docs/migration.md`). Follow-up `tasq list --all` / `--done` done the same day. Commits ae29142, b5a649d, ef2bcce,
+(procedure in `docs/migration.md`). Phase 9 housekeeping 2026-10-05: `cargo deny check` green
+locally after allowing `CDLA-Permissive-2.0` (`webpki-roots`, the CA bundle behind `ureq`;
+it was the only rejection, so CI's `deny` job would have failed on first run); full mutants
+run over the examined crates, 1454 mutants in 8 min, 1212 caught, 242 unviable, 0 missed,
+0 timeouts; PLAN section 9 tooling corrected (`ureq`, no `wiremock`/`reqwest`). Follow-up
+`tasq list --all` / `--done` done the same day. Commits ae29142, b5a649d, ef2bcce,
 b272893, f2f0fad, 50cb267 and the manifest follow-up. Follow-up 2026-10-04: the TUI's `d` key
 now fires `post-done` through a fourth `Host` method (ADR 0010); commit sha below under
 "Plugin and release decisions".
@@ -683,8 +688,10 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   comment. `cargo install tasq` cannot be followed yet because nothing is published.
 - T-903: hand-written workflow instead of cargo-dist/release-plz; all six crates are
   published, not two; the GitHub release and crates.io steps have never run. `CHANGELOG.md`
-  stays hand-maintained for now, with `cliff.toml` ready to regenerate it from the
-  conventional commits once `git-cliff` is installed or in CI.
+  is prepend-only: the `0.1.0` notes are hand-written; from the first tag on, each release
+  section is rendered by `git cliff --unreleased --prepend` and then edited by hand into
+  user-facing notes (decided 2026-10-05, `docs/release.md`). `git-cliff` 2.14.2 is installed
+  locally; the full-file regeneration (77 commit subjects) was rendered once and discarded.
 - T-904: the one-week side-by-side verification is a manual acceptance left to the author;
   `docs/migration.md` gives the daily procedure.
 - T-801: the README gif was not recorded (`vhs`/`asciinema` are not installed); the terminal

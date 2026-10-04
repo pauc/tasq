@@ -714,9 +714,9 @@ command = "claude -p --model sonnet"
 ## 9. Technical Considerations
 
 - Toolchain present: cargo/rustc 1.98.1, nb 7.25.4, glow, claude, herdr, gwm, glab, direnv.
-- Test tooling: `cargo-mutants` (mutation testing), `cargo-llvm-cov` (coverage), `insta` (snapshots), `proptest` (round trips), `wiremock` (HTTP), `assert_cmd` (CLI). Mutation testing is why the plan keeps logic in pure functions with injected `Clock`, filesystem views and fake processes: mutants only reveal weak tests when the code under test is cheap to run thousands of times.
-- Key crates: `clap` (derive), `serde`/`toml`/`serde_json`, `thiserror`/`anyhow`, `chrono`, `ratatui`/`crossterm`, `reqwest` (blocking, rustls) or `ureq`, `wiremock`, `assert_cmd`, `insta`, `proptest`, `tempfile`, `tracing`.
-- Keep `tasq-core` free of `reqwest`, `ratatui` and process spawning; adapters own those dependencies.
+- Test tooling: `cargo-mutants` (mutation testing), `cargo-llvm-cov` (coverage), `insta` (snapshots), `proptest` (round trips), `assert_cmd` (CLI). HTTP is tested through an injected `Transport` and a loopback test server, not `wiremock` (see PROGRESS.md deviations, T-503). Mutation testing is why the plan keeps logic in pure functions with injected `Clock`, filesystem views and fake processes: mutants only reveal weak tests when the code under test is cheap to run thousands of times.
+- Key crates: `clap` (derive), `serde`/`toml`/`serde_json`, `thiserror`/`anyhow`, `chrono`, `ratatui`/`crossterm`, `ureq` (blocking, rustls; the only network dependency), `assert_cmd`, `insta`, `proptest`, `tempfile`, `tracing`.
+- Keep `tasq-core` free of `ureq`, `ratatui` and process spawning; adapters own those dependencies.
 - nb specifics to verify early (T-201/T-203/T-206): `.index` is one filename per line, id = line number; `nb index add` appends; `nb index reconcile` fixes drift; `nb git checkpoint` commits and honors `auto_sync`; `nb todo do` edits only the title line. nb says using `index` manually "will probably corrupt the index": we only ever call `add` and `verify`, never `rebuild`.
 - nb is AGPLv3 and is invoked as a separate program, never linked or vendored, so our GPL-3.0-or-later license is independent of it.
 - Positional ids (nb) can shift after deletions; `Store::describe` exposes this so the UI can warn, and future stores can offer stable ids.

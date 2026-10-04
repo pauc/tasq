@@ -16,22 +16,25 @@ Release notes come from the conventional commits through
 ## Cutting a release
 
 1. Make sure `main` is green and the working tree is clean.
-2. Regenerate `CHANGELOG.md` for the version you are about to tag. Either
-   rewrite the whole file:
-
-   ```sh
-   git cliff --tag vX.Y.Z -o CHANGELOG.md
-   ```
-
-   or prepend only the new section to the hand-written history:
+2. Add the new section to `CHANGELOG.md`. The file is prepend-only: git-cliff
+   renders the unreleased conventional commits as a new section above the
+   existing ones, and a hand pass turns that commit list into release notes.
+   Never regenerate the whole file (`git cliff -o CHANGELOG.md`); that would
+   overwrite the edited sections below.
 
    ```sh
    git cliff --unreleased --tag vX.Y.Z --prepend CHANGELOG.md
    ```
 
-   Read the result. Commits that are not conventional are dropped
-   (`filter_unconventional = true`); `test` and `chore(release)` commits are
-   skipped on purpose.
+   Then edit the new section: merge the commits that make up one feature into
+   one bullet, drop internal churn a user never saw, and word each bullet for
+   someone who runs `tasq`, not for someone who reads the crates. The generated
+   list is the checklist of what must be mentioned; it is not the final text.
+   Commits that are not conventional are dropped (`filter_unconventional =
+   true`); `test` and `chore(release)` commits are skipped on purpose. The
+   `0.1.0` notes were written by hand before the first tag and are the model
+   for the level of detail.
+
 3. Bump `version` in the root `Cargo.toml` (`[workspace.package]`; every crate
    inherits it). Do not touch the `version = "0.1.0"` on the path dependencies
    in `crates/*/Cargo.toml` separately: they must equal the workspace version,
