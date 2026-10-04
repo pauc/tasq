@@ -286,6 +286,28 @@ fn from_task_minimal_done_and_source() {
     assert_eq!(parsed.task.description, None);
 }
 
+#[test]
+fn source_line_omits_a_url_equal_to_the_id() {
+    // `gitlab: <url>` parses as id = url = <url>; writing the url twice would
+    // still read back equal, so the rendered line is checked exactly.
+    let wf = workflow();
+    let mut task = Task::new(TaskId::from(1), "From a url");
+    task.origin = Some(Origin {
+        source: "gitlab".into(),
+        external_id: "https://gl.invalid/g/p/-/issues/7".into(),
+        url: Some("https://gl.invalid/g/p/-/issues/7".into()),
+    });
+    assert_eq!(
+        format::render(&Document::from_task(&task, &wf)),
+        "# [ ] From a url\n\n## Source\n\ngitlab: https://gl.invalid/g/p/-/issues/7\n\n## Tags\n\n#B\n\n## Progress\n"
+    );
+    task.origin.as_mut().unwrap().url = None;
+    assert_eq!(
+        format::render(&Document::from_task(&task, &wf)),
+        "# [ ] From a url\n\n## Source\n\ngitlab: https://gl.invalid/g/p/-/issues/7\n\n## Tags\n\n#B\n\n## Progress\n"
+    );
+}
+
 fn is_title_line(text: &str) -> bool {
     [format::OPEN_PREFIX, format::DONE_PREFIX]
         .iter()

@@ -37,11 +37,11 @@ fn heading(name: &str) -> String {
 pub fn append_to_section(doc: &mut Document, name: &str, entry: &str) {
     let hdr = heading(name);
     if doc.find_first(&hdr).is_none() {
+        // When `name` is Progress itself this lookup is the one that just
+        // failed, so a missing Progress section always lands at the end.
         match doc.find_first(&heading(section::PROGRESS)) {
-            Some(progress) if name != section::PROGRESS => {
-                doc.insert_all(progress, [hdr.as_str(), ""]);
-            }
-            _ => doc.append_block([hdr.as_str()]),
+            Some(progress) => doc.insert_all(progress, [hdr.as_str(), ""]),
+            None => doc.append_block([hdr.as_str()]),
         }
     }
     let (h, last) = list_positions(doc, |line| line == hdr, |line| heading_name(line).is_some());
@@ -179,13 +179,18 @@ pub fn append_related(doc: &mut Document, link: &Link) -> bool {
         }
     }
     let h = doc.find_last(&hdr).expect("ensured above");
-    let end = (h + 1..doc.section_end(h))
+    let body = doc.body_range(h);
+    let end = body
+        .clone()
         .find(|&i| doc.line(i).starts_with("### "))
-        .unwrap_or_else(|| doc.section_end(h));
+        .unwrap_or(body.end);
     let entry = entry::format_link(link);
-    match (h + 1..end).rev().find(|&i| doc.line(i).starts_with("- ")) {
+    match (body.start..end)
+        .rev()
+        .find(|&i| doc.line(i).starts_with("- "))
+    {
         Some(last) => doc.insert(last + 1, &entry),
-        None => doc.insert_all(h + 1, ["", entry.as_str()]),
+        None => doc.insert_all(body.start, ["", entry.as_str()]),
     }
     true
 }
@@ -196,28 +201,19 @@ pub fn append_related(doc: &mut Document, link: &Link) -> bool {
 pub fn set_project(doc: &mut Document, path: &Path) {
     let hdr = heading(section::PROJECT);
     let path = path.display().to_string();
-    let mut found = false;
-    let mut i = 0;
-    while i < doc.line_count() {
-        if doc.line(i) != hdr {
-            i += 1;
-            continue;
-        }
-        found = true;
-        // Drop the old body up to the next `## ` heading, then write the new one.
-        let end = doc.section_end(i);
-        for _ in i + 1..end {
-            doc.remove(i + 1);
-        }
-        doc.insert_all(i + 1, ["", path.as_str()]);
-        i += 3;
-        if i < doc.line_count() {
-            doc.insert(i, "");
-            i += 1;
+    // Every `## Project` heading gets the new body (the awk loop never reset
+    // its match), followed by a blank line when another `## ` heading follows.
+    // Going backwards keeps the earlier indices valid while later sections
+    // change length.
+    let headings = doc.find_all(&hdr);
+    for &h in headings.iter().rev() {
+        doc.set_body(h, ["", path.as_str()]);
+        let next = doc.section_end(h);
+        if next < doc.line_count() {
+            doc.insert(next, "");
         }
     }
-    if found {
-        doc.terminate();
+    if !headings.is_empty() {
         return;
     }
     let first = (0..doc.line_count()).find(|&i| heading_name(doc.line(i)).is_some());
@@ -272,39 +268,41 @@ fn rewrite_tag_lines(
     drop_empty: bool,
 ) -> bool {
     let hdr = heading(section::TAGS);
-    let mut added = false;
-    let mut seen = false;
-    let mut i = 0;
+    // First the lines to rewrite: those with a `#` under a `## Tags` heading
+    // (up to the next `## ` heading). Then rewrite them back to front, so a
+    // dropped line never shifts an index still to be visited.
     let mut in_tags = false;
-    while i < doc.line_count() {
-        let line = doc.line(i);
-        if heading_name(line).is_some() {
-            in_tags = line == hdr;
-            i += 1;
-            continue;
-        }
-        if !in_tags || !line.contains('#') {
-            i += 1;
-            continue;
-        }
-        seen = true;
-        let mut out: Vec<&str> = line
+    let targets: Vec<usize> = (0..doc.line_count())
+        .filter(|&i| {
+            let line = doc.line(i);
+            if heading_name(line).is_some() {
+                in_tags = line == hdr;
+                return false;
+            }
+            in_tags && line.contains('#')
+        })
+        .collect();
+    let first = targets.first().copied();
+    for &i in targets.iter().rev() {
+        let mut out: Vec<&str> = doc
+            .line(i)
             .split_whitespace()
             .filter(|t| !is_kind(t, kind, workflow))
             .collect();
-        if let Some(tag) = add.filter(|_| !added) {
+        if let Some(tag) = add
+            && first == Some(i)
+        {
             out.push(tag);
-            added = true;
         }
         if out.is_empty() && drop_empty {
             doc.remove(i);
-            continue;
+        } else {
+            let line = out.join(" ");
+            doc.replace(i, line);
         }
-        doc.replace(i, out.join(" "));
-        i += 1;
     }
     doc.terminate();
-    seen
+    !targets.is_empty()
 }
 
 /// `cmd_set` with a status or priority: with a `## Tags` section, removes the

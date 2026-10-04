@@ -12,6 +12,7 @@
 //! every string that parses.
 
 use std::fmt;
+use std::ops::Range;
 
 use thiserror::Error;
 
@@ -196,11 +197,10 @@ impl Document {
                 first_line: first_line.to_owned(),
             });
         }
-        let newline = if trailing_newline || lines.len() > 1 {
-            lines[0].ending
-        } else {
-            Newline::Lf
-        };
+        // The first line exists (it is a title) and, when it is the only line
+        // and unterminated, it was given `Lf` above; so its ending is always
+        // the style new lines should use.
+        let newline = lines[0].ending;
         Ok(Self {
             lines,
             newline,
@@ -260,26 +260,22 @@ impl Document {
     /// to the next line starting with `## ` (so `### ` lines belong to the
     /// body of the enclosing section).
     pub fn sections(&self) -> Vec<Section<'_>> {
-        let mut out = Vec::new();
-        let mut i = 0;
-        while i < self.lines.len() {
-            if let Some(name) = heading_name(&self.lines[i].text) {
-                let end = self.section_end(i);
-                out.push(Section {
+        // Every `## ` line opens a section and the body of one ends at the
+        // next `## ` line, so the sections are exactly the heading lines.
+        (0..self.lines.len())
+            .filter_map(|i| {
+                let name = heading_name(&self.lines[i].text)?;
+                Some(Section {
                     level: 2,
                     name,
                     heading: i,
-                    body: self.lines[i + 1..end]
+                    body: self.lines[self.body_range(i)]
                         .iter()
                         .map(|l| l.text.as_str())
                         .collect(),
-                });
-                i = end;
-            } else {
-                i += 1;
-            }
-        }
-        out
+                })
+            })
+            .collect()
     }
 
     /// The sections named exactly `name`, in file order.
@@ -303,6 +299,24 @@ impl Document {
         (heading + 1..self.lines.len())
             .find(|&i| heading_name(&self.lines[i].text).is_some())
             .unwrap_or(self.lines.len())
+    }
+
+    /// The line indices of the body of the section whose heading is at
+    /// `heading`: from the line after it up to [`Self::section_end`].
+    pub(super) fn body_range(&self, heading: usize) -> Range<usize> {
+        heading + 1..self.section_end(heading)
+    }
+
+    /// Replaces the body of the section whose heading is at `heading` with
+    /// `texts`; the heading stays, every line ends up terminated.
+    pub(super) fn set_body<S: Into<String>>(
+        &mut self,
+        heading: usize,
+        texts: impl IntoIterator<Item = S>,
+    ) {
+        self.lines.drain(self.body_range(heading));
+        self.insert_all(heading + 1, texts);
+        self.trailing_newline = true;
     }
 
     /// Indices of every line equal to `text`.

@@ -288,6 +288,14 @@ const SCENARIOS: &[(&str, Op, Option<bool>)] = &[
         None,
     ),
     (
+        "project_replaces_duplicates",
+        |d, _| {
+            ops::set_project(d, Path::new("/new/path"));
+            None
+        },
+        None,
+    ),
+    (
         "project_replaces_multiline",
         |d, _| {
             ops::set_project(d, Path::new("/new/path"));
@@ -614,6 +622,16 @@ fn strip_status_tag_without_tags_section_is_a_no_op_even_for_unterminated_files(
     ops::strip_status_tag(&mut doc, &Workflow::default());
     assert_eq!(format::render(&doc), "# [ ] T\n\n## Other\n\n#ready");
     assert!(!doc.ends_with_newline());
+}
+
+#[test]
+fn strip_status_tag_terminates_the_file_even_when_no_tag_line_changes() {
+    // The awk rewrite reprints every line terminated, whether or not a line
+    // matched: the heading alone is enough for the file to be rewritten.
+    let mut doc = Document::parse("# [ ] T\n\n## Tags\n\nno tags here").unwrap();
+    ops::strip_status_tag(&mut doc, &Workflow::default());
+    assert_eq!(format::render(&doc), "# [ ] T\n\n## Tags\n\nno tags here\n");
+    assert!(doc.ends_with_newline());
 }
 
 #[test]
