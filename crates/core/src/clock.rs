@@ -110,6 +110,36 @@ pub fn parse_date(text: &str) -> Result<NaiveDate, TimeError> {
         .map_err(|_| TimeError::InvalidDate(text.to_owned()))
 }
 
+/// Serde adapter for a [`NaiveDateTime`] field written as `YYYY-MM-DD HH:MM`
+/// (`#[serde(with = "tasq_core::clock::timestamp_serde")]`), so that every
+/// timestamp in a JSON document has the same shape as in the file. A bare
+/// date is rejected: the fields using this always carry a time.
+pub mod timestamp_serde {
+    use chrono::NaiveDateTime;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use super::{When, format_timestamp, parse_timestamp};
+
+    /// Writes `YYYY-MM-DD HH:MM`.
+    pub fn serialize<S: Serializer>(at: &NaiveDateTime, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&format_timestamp(*at))
+    }
+
+    /// Reads `YYYY-MM-DD HH:MM`; anything else, including a date without a
+    /// time, is an error.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<NaiveDateTime, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        match parse_timestamp(&text) {
+            Ok(When::DateTime(at)) => Ok(at),
+            Ok(When::Date(_)) | Err(_) => Err(serde::de::Error::custom(format!(
+                "invalid timestamp {text:?} (expected YYYY-MM-DD HH:MM)"
+            ))),
+        }
+    }
+}
+
 /// Errors from the timestamp helpers.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TimeError {
@@ -362,5 +392,35 @@ mod tests {
             date
         );
         assert!(serde_json::from_str::<When>("\"later\"").is_err());
+    }
+
+    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct Stamped {
+        #[serde(with = "super::timestamp_serde")]
+        at: NaiveDateTime,
+    }
+
+    #[test]
+    fn timestamp_serde_uses_the_file_shape() {
+        let stamped = Stamped {
+            at: FixedClock::at("2026-10-04 10:15").0,
+        };
+        let json = serde_json::to_string(&stamped).unwrap();
+        assert_eq!(json, "{\"at\":\"2026-10-04 10:15\"}");
+        let back: Stamped = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, stamped);
+        let back: Stamped = serde_json::from_str("{\"at\":\" 2026-10-04 10:15 \"}").unwrap();
+        assert_eq!(back, stamped);
+    }
+
+    #[test]
+    fn timestamp_serde_rejects_dates_and_garbage() {
+        let err = serde_json::from_str::<Stamped>("{\"at\":\"2026-10-04\"}").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "invalid timestamp \"2026-10-04\" (expected YYYY-MM-DD HH:MM) at line 1 column 19"
+        );
+        assert!(serde_json::from_str::<Stamped>("{\"at\":\"2026-10-04T10:15:00\"}").is_err());
+        assert!(serde_json::from_str::<Stamped>("{\"at\":7}").is_err());
     }
 }

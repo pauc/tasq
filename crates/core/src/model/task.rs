@@ -65,7 +65,9 @@ impl Worktree {
 /// A recorded agent session on the task (`- 2026-10-04 10:15: `id` — desc`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Session {
-    /// When it was recorded (local time, see [`crate::clock`]).
+    /// When it was recorded (local time, see [`crate::clock`]). Serialises
+    /// as `YYYY-MM-DD HH:MM`, like a progress entry's `at`.
+    #[serde(with = "crate::clock::timestamp_serde")]
     pub at: NaiveDateTime,
     /// The launcher's session id (what `claude --resume` takes).
     pub id: String,
@@ -766,6 +768,10 @@ mod tests {
         assert!(json.contains("\"tags\":[\"gitlab\"]"), "{json}");
         assert!(json.contains("\"at\":\"2026-10-04 10:15\""), "{json}");
         assert!(json.contains("\"at\":\"2026-10-04\""), "{json}");
+        assert!(
+            !json.contains("T10:"),
+            "session timestamps use the file shape: {json}"
+        );
         let back: Task = serde_json::from_str(&json).unwrap();
         assert_eq!(back, t);
         let draft = TaskDraft::new("T").with_tag(tag("x"));
