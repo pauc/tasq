@@ -32,7 +32,8 @@
 //!
 //! Serialising [`Config::default`] yields the reference document below.
 //! Keys whose default is "unset" (`work.default_project`,
-//! `launch.claude.prompt_file`, `report.summary.model`) are simply absent.
+//! `launch.claude.prompt_file`, `report.summary.model`,
+//! `report.summary.prompt_file`) are simply absent.
 //!
 //! ```toml
 //! [store]
@@ -467,13 +468,17 @@ pub struct SummaryConfig {
     /// `raw` prints the progress notes; `llm` pipes them through `command`.
     /// Default: `llm`.
     pub summarizer: Summarizer,
-    /// Command that reads the notes on stdin and prints the summary.
-    /// Default: `claude -p`.
+    /// Command that reads the rendered prompt (instructions plus the notes)
+    /// on stdin and prints the summary. Default: `claude -p`.
     pub command: String,
     /// Model passed to the command as `--model <model>` when set.
     /// Default: unset (the command's own default).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Prompt template overriding the built-in one (`{{day}}`, `{{date}}`
+    /// and `{{notes}}` placeholders). `~` is expanded. Default: unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_file: Option<PathBuf>,
 }
 
 impl Default for SummaryConfig {
@@ -482,6 +487,7 @@ impl Default for SummaryConfig {
             summarizer: Summarizer::Llm,
             command: "claude -p".to_owned(),
             model: None,
+            prompt_file: None,
         }
     }
 }

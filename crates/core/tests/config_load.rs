@@ -628,6 +628,8 @@ fn env_overrides_files() {
         ("TASQ_GLOW_STYLE", "light"),
         ("TASQ_SUMMARIZER", "raw"),
         ("TASQ_SUMMARY_MODEL", "opus"),
+        ("TASQ_SUMMARY_COMMAND", "llm -m gpt"),
+        ("TASQ_SUMMARY_PROMPT_FILE", "~/prompts/standup.md"),
         ("UNRELATED", "ignored"),
     ]);
     let loaded = Config::load(&opts).unwrap();
@@ -644,11 +646,16 @@ fn env_overrides_files() {
     assert_eq!(c.ui.glow_style, "light");
     assert_eq!(c.report.summary.summarizer, Summarizer::Raw);
     assert_eq!(c.report.summary.model, Some("opus".to_owned()));
+    assert_eq!(c.report.summary.command, "llm -m gpt");
+    assert_eq!(
+        c.report.summary.prompt_file,
+        Some(sb.home.join("prompts/standup.md"))
+    );
     assert_eq!(loaded.explain("store.notebook"), Some(&Origin::Env));
     assert_eq!(loaded.explain("ui.pager"), Some(&Origin::Env));
     let env_layer = loaded.layers.last().unwrap();
     assert_eq!(env_layer.origin, Origin::Env);
-    assert_eq!(env_layer.keys.len(), 12);
+    assert_eq!(env_layer.keys.len(), 14);
     assert_eq!(Origin::Env.to_string(), "env");
 }
 

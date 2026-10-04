@@ -34,6 +34,8 @@ pub const ENV_PROFILE: &str = "TASQ_PROFILE";
 /// | `TASQ_GLOW_STYLE` | `ui.glow_style` |
 /// | `TASQ_SUMMARIZER` | `report.summary.summarizer` |
 /// | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
+/// | `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
+/// | `TASQ_SUMMARY_PROMPT_FILE` | `report.summary.prompt_file` |
 ///
 /// Values are converted like `--set` values (see [`LoadOptions::overrides`]).
 /// A variable set to the empty string is treated as unset. [`ENV_CONFIG`]
@@ -51,6 +53,8 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_GLOW_STYLE", "ui.glow_style"),
     ("TASQ_SUMMARIZER", "report.summary.summarizer"),
     ("TASQ_SUMMARY_MODEL", "report.summary.model"),
+    ("TASQ_SUMMARY_COMMAND", "report.summary.command"),
+    ("TASQ_SUMMARY_PROMPT_FILE", "report.summary.prompt_file"),
 ];
 
 /// Everything [`Config::load`] needs, injected so loading is pure.
@@ -374,6 +378,7 @@ fn template() -> Table {
     config.work.worktree_command = Some(String::new());
     config.launch.claude.prompt_file = Some(PathBuf::from("~"));
     config.report.summary.model = Some(String::new());
+    config.report.summary.prompt_file = Some(PathBuf::from("~"));
     config.ui.colors.insert("<name>".to_owned(), String::new());
     config.forge.insert(
         "<name>".to_owned(),
@@ -618,6 +623,9 @@ fn finalize(loaded: &mut Loaded, home: Option<&Path>) -> Result<(), ConfigError>
     }
     if let Some(p) = &config.launch.claude.prompt_file {
         config.launch.claude.prompt_file = Some(expand_tilde(p, home));
+    }
+    if let Some(p) = &config.report.summary.prompt_file {
+        config.report.summary.prompt_file = Some(expand_tilde(p, home));
     }
     for source in &mut config.source {
         if let Some(p) = &source.prompt_file {

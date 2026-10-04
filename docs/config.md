@@ -69,8 +69,9 @@ glow_style = "dark"
 
 [report.summary]
 summarizer = "llm"           # raw | llm
-command = "claude -p"
-# model = "sonnet"
+command = "claude -p"        # reads the prompt (instructions + notes) on stdin
+# model = "sonnet"           # appended as --model <model>
+# prompt_file = "~/.config/tasq/prompts/summary.md"  # {{day}} {{date}} {{notes}}
 ```
 
 ## Environment variables
@@ -91,6 +92,8 @@ command = "claude -p"
 | `TASQ_GLOW_STYLE` | `ui.glow_style` |
 | `TASQ_SUMMARIZER` | `report.summary.summarizer` |
 | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
+| `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
+| `TASQ_SUMMARY_PROMPT_FILE` | `report.summary.prompt_file` |
 
 Empty values count as unset. `XDG_CONFIG_HOME` is honoured for the global file location.
 
