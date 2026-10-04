@@ -16,7 +16,32 @@ place for status, learnings, blockers and deviations from the plan.
 | T-102 | Markdown parser | done | commits 5ed472e, 7bd3ff5, dce1403, e9c8779; mutants 269 tested, 0 missed, 0 timeouts |
 | T-103 | Markdown writer and round trip | done | commits 5ed472e, 7bd3ff5, dce1403, e9c8779; mutants 269 tested, 0 missed, 0 timeouts |
 | T-104 | Queries and grouping | done | commit 72790ee; 29 tests; 0 missed mutants |
-| T-106 | Configuration loading | acceptance review + mutants running | commit ce8a7d9; 41 tests |
+| T-106 | Configuration loading | done | commits ce8a7d9, 6171567; 45 tests; mutants 88 tested, 0 missed, 0 timeouts |
+
+## Phase 0 and Phase 1: complete (2026-10-04)
+
+| Metric | Value |
+|---|---|
+| Commits | 19 on `main` |
+| Workspace tests | 196 (core unit 90, config 43, format 63), all passing |
+| Mutation testing | model+clock 121, query 161 (crate sweep), format 269, config 88: **0 missed, 0 timeouts** |
+| Skips | `SystemClock::now`, `LoadOptions::from_process` (process state only) |
+| Gates | fmt, clippy `-D warnings` (pedantic), test, doc with `missing_docs`: clean |
+
+Next: Phase 2 (nb-compatible store, T-201 to T-206). Rules for every future agent: one agent at a
+time for anything that compiles; every cargo call through `scripts/guard`; mutants via
+`just mutants-in <path>` (or the equivalent `--no-config` command) with `--jobs 2`.
+
+### Config decisions (T-106)
+
+- Layers are partial TOML tables deep-merged key by key (scalars/arrays replace), then
+  deserialised once into `Config`; each file is also checked on its own with
+  `deny_unknown_fields` to get file:line:column errors.
+- Walk-up for `.tasq.toml` stops at the home directory. Profiles are partial configs applied from
+  every loaded file in order, only when selected. `Loaded::file_for("store.notebook")` gives
+  the file T-201's missing-notebook error must name.
+- Additions beyond plan 4.6: `[ui]`, `enabled` on sources, `report.summary.model`, XDG and
+  `TASQ_CONFIG` support. Reference: `docs/config.md`.
 
 ## Wave plan
 
