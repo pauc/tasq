@@ -24,6 +24,7 @@ tasq-core = { path = "../core" }
 tasq-launch = { path = "../launch" }
 tasq-sources = { path = "../sources" }
 tasq-store-nb = { path = "../store-nb" }
+tasq-tui = { path = "../tui" }
 anyhow = "1"
 # `--due` dates and the `TASQ_NOW` fixed clock.
 chrono = { version = "0.4", default-features = false }

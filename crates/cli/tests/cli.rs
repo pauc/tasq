@@ -2078,3 +2078,32 @@ mod dates {
             .stdout("2026-10-01 2026-10-07\n");
     }
 }
+
+mod ui {
+    use super::*;
+
+    #[test]
+    fn needs_a_terminal() {
+        let env = TestEnv::fixture();
+        let out = env.tasq().arg("ui").output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(stdout(&out), "");
+        assert_eq!(stderr(&out), "tasq: tasq ui needs a terminal\n");
+    }
+
+    #[test]
+    fn has_no_json_mode() {
+        let env = TestEnv::fixture();
+        let out = env.tasq().args(["ui", "--json"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(stderr(&out), "tasq: tasq ui has no --json output\n");
+    }
+
+    #[test]
+    fn help_lists_the_keys() {
+        let env = TestEnv::fixture();
+        let out = env.tasq().args(["help", "ui"]).output().unwrap();
+        assert!(out.status.success());
+        assert_snapshot!(stdout(&out));
+    }
+}

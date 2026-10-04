@@ -31,6 +31,7 @@ Commands:
   apply        Update a task from JSON (`tasq view --json` shape) on stdin or in FILE
   summary      Standup summary of what you worked on during a day, from the progress notes
   dates        Resolve a day or a date range to `FROM TO`, for scripts and plugins
+  ui           Browse and edit the open tasks in a full-screen terminal UI
   store        The store behind the tasks: where it is and how to sync it
   doctor       Check the configuration, the notebook, nb and optional tools
   config       Show the effective configuration
@@ -89,6 +90,7 @@ Examples:
   tasq set 12 in-progress    change status (or A/B/C for priority)
   tasq log 12 "found the cause"
   tasq done 12 "merged"
+  tasq ui                    full-screen UI over the same tasks
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
   tasq store info            where the tasks live

@@ -36,6 +36,7 @@ Examples:
   tasq set 12 in-progress    change status (or A/B/C for priority)
   tasq log 12 \"found the cause\"
   tasq done 12 \"merged\"
+  tasq ui                    full-screen UI over the same tasks
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
   tasq store info            where the tasks live
@@ -318,6 +319,10 @@ pub enum Command {
         spec: Vec<String>,
     },
 
+    /// Browse and edit the open tasks in a full-screen terminal UI.
+    #[command(after_help = UI_HELP)]
+    Ui,
+
     /// The store behind the tasks: where it is and how to sync it.
     #[command(subcommand)]
     Store(StoreCommand),
@@ -425,6 +430,17 @@ SPEC is case-insensitive and may be split across arguments:
 
 A range never extends past today. Output is `FROM TO` (YYYY-MM-DD); with
 --json: {spec, from, to, days: [...], working_days: [...]}.";
+
+const UI_HELP: &str = "\
+The list is the grouped view of `tasq`, with the selected task's detail
+beside it (or, below 100 columns, behind Tab). Keys: j/k move, g/G first
+and last, / filter (text matches titles; #word is a status, tag or
+priority as for `tasq <word>`), s status, p priority, l log a note, d mark
+done (with an optional final note), e open the file in $VISUAL or $EDITOR,
+Enter open a work session (`tasq pick`), S run the sources (`tasq sync`),
+r reload, ? help, q quit. Edits are the same operations as `tasq set`,
+`log` and `done`. Group colours follow [ui.colors] (status name, or
+`no-status`); NO_COLOR or --color never gives a monochrome UI.";
 
 /// `tasq create` arguments.
 #[derive(Debug, Clone, Args, Default)]

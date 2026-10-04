@@ -1,0 +1,52 @@
+---
+source: crates/cli/tests/cli.rs
+expression: stdout(&out)
+---
+Browse and edit the open tasks in a full-screen terminal UI
+
+Usage: tasq ui [OPTIONS]
+
+Options:
+      --profile <NAME>
+          Apply the `[profile.<NAME>]` block of the config files (also TASQ_PROFILE)
+
+      --config <FILE>
+          Use FILE instead of the global config file (also TASQ_CONFIG)
+
+      --set <KEY=VALUE>
+          Override one config key, e.g. --set store.notebook=work. Repeatable
+
+      --json
+          Print machine-readable JSON (every document carries "schema": 1)
+
+      --color <WHEN>
+          When to colour the output: auto (only on a terminal, unless NO_COLOR is set), always or never
+
+          Possible values:
+          - auto:   Colour when stdout is a terminal and NO_COLOR is unset
+          - always: Always emit colour escapes
+          - never:  Never emit colour escapes
+          
+          [default: auto]
+
+      --no-color
+          Never colour the output (same as --color never)
+
+      --no-pager
+          Print long output directly instead of through the pager (`ui.pager`)
+
+  -v, --verbose...
+          Show more detail (bookkeeping output, resolved paths). Repeatable
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+The list is the grouped view of `tasq`, with the selected task's detail
+beside it (or, below 100 columns, behind Tab). Keys: j/k move, g/G first
+and last, / filter (text matches titles; #word is a status, tag or
+priority as for `tasq <word>`), s status, p priority, l log a note, d mark
+done (with an optional final note), e open the file in $VISUAL or $EDITOR,
+Enter open a work session (`tasq pick`), S run the sources (`tasq sync`),
+r reload, ? help, q quit. Edits are the same operations as `tasq set`,
+`log` and `done`. Group colours follow [ui.colors] (status name, or
+`no-status`); NO_COLOR or --color never gives a monochrome UI.
