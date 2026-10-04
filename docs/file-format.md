@@ -1,8 +1,10 @@
 # Task file format
 
-**Status:** first normative draft (2026-10-04). Derived from plan section 4.4
-and from what `original/tasks` reads and writes. Points marked **TBD** are not
-yet decided; do not infer behaviour for them from this document.
+**Status:** normative (2026-10-04). Derived from plan section 4.4 and from what
+`original/tasks` reads and writes; the open points of the first draft were
+settled while implementing the format (T-102/T-103), the store (T-203) and the
+sources (T-501), and are recorded here. The two points still marked **TBD** are
+not implemented; do not infer behaviour for them from this document.
 
 A task is one markdown file in an nb notebook. nb, the old `tasks` script and
 `tasq` all read and write the same files. `tasq` must preserve anything it does
@@ -11,14 +13,15 @@ not understand (see "Lossless editing").
 ## File and identity
 
 - Filename: `<stamp>.todo.md`, where `<stamp>` is nb's timestamp
-  (`YYYYMMDDHHMMSS`). **TBD:** collision rule when two files are created in the
-  same second; T-203 verifies against nb's `_add` implementation.
+  (`YYYYMMDDHHMMSS`). When that name is taken the stamp is bumped one second at
+  a time, as nb does; after 60 attempts `create` fails with nothing written.
 - Id: the 1-based line number of the filename in the notebook's `.index` file.
   Ids are positional and can change after deletions or `nb index reconcile`.
 - Index lines that are not `*.todo.md`, or whose file no longer exists, are
   skipped when listing.
-- Encoding UTF-8, LF line endings when writing. Files with CRLF must parse;
-  **TBD** whether they are rewritten with LF or preserved.
+- Encoding UTF-8. New files use LF. In an existing file every line keeps its
+  own ending when the file is rewritten, and lines `tasq` adds use the ending
+  of the first line, so CRLF and even mixed endings survive an edit.
 - Related ADRs: [0002](adr/0002-nb-compatible-markdown-store.md),
   [0007](adr/0007-nb-under-the-hood.md).
 
@@ -101,15 +104,18 @@ path.
 
 ### Due
 
-Reading takes the first non-empty line. The plan requires `tasq` to write ISO
-dates `YYYY-MM-DD` (and accept `today`, `tomorrow` on input). The old script
-stored whatever string it was given, so existing files may contain other
-shapes; **TBD** how non-ISO values are reported.
+Reading takes the first non-empty line. `tasq` writes ISO dates `YYYY-MM-DD`
+(and accepts `today`, `tomorrow`, `yesterday` on input). The old script stored
+whatever string it was given, so existing files may contain other shapes: a
+value that is not an ISO date gives `due = None` in the model, and the raw line
+is preserved in the document, so a round trip does not touch it.
 
 ### Related
 
-A list of `- <url>` lines, one link per line. **TBD** whether `- [label](url)`
-is accepted in the top-level list; the script only writes bare URLs there.
+A list of `- <url>` lines, one link per line. `- [label](url)` is accepted
+here too (the same link parser serves both lists); `tasq` writes bare URLs in
+the top-level list, as the script did, and labelled links only under
+`### Merge requests`.
 
 #### `### Merge requests`
 
@@ -130,8 +136,9 @@ and split on whitespace when reading. Three kinds of tag share the line:
 
 Create writes topic tags first, then priority, then status: `#gitlab #A #ready`.
 Status and priority are not tags in the `tasq` model; the format layer maps
-them. **TBD:** behaviour when two status tags or two priority tags are present
-(the script keeps the last one seen).
+them. When two status tags or two priority tags are present the last one seen
+wins, as in the script. A tag with two leading hashes (`##A`, `##ready`) is a
+topic tag, because the script's patterns required exactly one `#`.
 
 ### Progress
 
@@ -155,15 +162,19 @@ when `` `session-id` `` occurs anywhere in the file.
 ### Source (new, optional)
 
 Written only by `tasq`, ignored by nb and the script. Records the external
-origin used for reconciliation, one line per origin: `<source-name>: <url>`,
-for example `gitlab: https://host/group/project/-/merge_requests/123`.
-**TBD:** external ids without a URL, and more than one origin per task.
+origin `tasq sync` uses for reconciliation, as one line
+`<source-name>: <external-id> [<url>]`, for example
+`gitlab-review-requests: group/project!123 https://host/group/project/-/merge_requests/123`.
+When the only value after the colon is an `http(s)://` URL it serves as both
+id and URL. `Document::from_task` writes the section after `## Due`. One origin
+per task is read; **TBD:** more than one origin per task.
 
 ### HTML comments (new, optional)
 
-`<!-- tasq: {...} -->` carries metadata the model needs but humans should not
-see. **TBD:** placement and JSON shape. Renderers hide it; the old script and
-nb ignore it.
+`<!-- tasq: {...} -->` is reserved for metadata the model needs but humans
+should not see. **TBD:** placement and JSON shape; nothing writes or reads such
+comments today, and like any unknown line they are preserved verbatim.
+Renderers hide them; the old script and nb ignore them.
 
 ## Editing rules
 
@@ -211,9 +222,8 @@ Used for Progress, Worktrees and Sessions.
   remove every tag of the same kind (all status tags, or all of `#A #B #C`),
   then append the new tag at the end of the line. Topic tags keep their order.
 - Without a `## Tags` section: append a blank line, `## Tags`, a blank line and
-  `#value` at the end of the file. Note this does not insert before Progress;
-  **TBD** whether `tasq` keeps this exact behaviour or uses the general
-  insertion rule.
+  `#value` at the end of the file. This does not insert before Progress; `tasq`
+  keeps the script's behaviour so both tools produce the same file.
 
 ### Marking done (`cmd_done`)
 
@@ -232,11 +242,11 @@ for every file. Unknown sections are never reordered or reformatted.
 
 ## Open points
 
-- Filename collision rule (see "File and identity").
-- CRLF handling on write.
-- Non-ISO due values in existing files.
-- Labelled links in the top-level Related list.
-- Duplicate status or priority tags.
-- Exact `## Source` grammar for id-only origins and multiple origins.
-- Placement and schema of `<!-- tasq: ... -->` comments.
-- Whether `set` without a Tags section inserts before Progress or at the end.
+- More than one origin per task in `## Source`.
+- Placement and schema of `<!-- tasq: ... -->` comments (reserved, unused).
+
+Settled while implementing (see the sections above): same-second filename
+collisions bump the stamp; line endings are preserved per line; non-ISO due
+values read as no due date and are kept verbatim; labelled links parse in the
+top-level Related list; the last status or priority tag wins; `## Source` is
+`name: id [url]`; `set` without a Tags section appends at the end of the file.

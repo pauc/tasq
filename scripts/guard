@@ -5,7 +5,7 @@
 #        scripts/guard cargo test --workspace
 #
 # The command and everything it spawns are placed in a transient cgroup with a
-# hard memory ceiling (default 16G, override with --mem or GUARD_MEM). When the
+# hard memory ceiling (default 12G, override with --mem or GUARD_MEM). When the
 # ceiling is hit the kernel kills processes inside the scope only, so a runaway
 # compile or test fails loudly instead of taking the desktop session down.
 # Falls back to running the command directly when systemd-run is unavailable

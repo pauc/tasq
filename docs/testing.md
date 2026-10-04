@@ -6,11 +6,49 @@ Quality gates run locally with `just check` (or the cargo commands it wraps) and
 
 ## Conventions
 
-- Logic lives in pure functions with injected `Clock`, filesystem views and fake processes, so it
-  is cheap to run thousands of times. That is what makes mutation testing affordable.
-- Fixtures for the markdown format live under `crates/core/tests/fixtures/`.
-- Snapshot tests use `insta`; property tests use `proptest`; HTTP adapters use `wiremock`; the CLI
-  uses `assert_cmd`. Tests never touch the network.
+- Logic lives in pure functions with injected `Clock`, filesystem views, environment and fake
+  processes, so it is cheap to run thousands of times. That is what makes mutation testing
+  affordable.
+- Fixtures for the markdown format live under `crates/core/tests/fixtures/*.md`; round trips
+  must be byte-identical (`crates/core/tests/format_fixtures.rs`). Property tests use
+  `proptest` (`format_props.rs`).
+- Snapshot tests use `insta`. Accept changes with `INSTA_UPDATE=always scripts/guard cargo test
+  -p <crate>` (no `cargo insta` needed), then review the snapshot diff.
+- The CLI is tested end to end with `assert_cmd` (`crates/cli/tests/cli.rs`) against the
+  harness below.
+- Tests never touch the network. HTTP in `tasq-sources` goes through the
+  `tasq_sources::http::Transport` trait: `UreqTransport` is the real one (the only
+  `#[mutants::skip]` in that module), unit tests use `ScriptedTransport`, a queue of canned
+  responses that records every request's URL and headers (`crates/sources/src/http.rs`), and
+  the CLI end-to-end sync test uses `FakeHttp`, a loopback `TcpListener` server with a route
+  table (`crates/cli/tests/support/mod.rs`) reached through `forge.<name>.url`. No `wiremock`
+  and no tokio in the dependency tree.
+
+## Testing nb without touching the real notebook
+
+`crates/store-nb/tests/support/mod.rs` builds an `NbEnv`: a temporary copy of
+`crates/store-nb/tests/fixtures/nb/home` with `NB_DIR` and `NBRC_PATH` pointing inside it,
+`HOME` set to a temp directory holding a `.gitconfig` (nb refuses to work without a git
+identity), and `NB_AUTO_SYNC=0`. Every `nb` invocation in a test receives only that
+environment, so the real `~/.nb` is never read or written. Fixture ids are the constants in
+`support::id` (`FULL`, `NOTE`, `SUPPORT`, `DONE`, `MISSING`, `WAITING`, `NO_TAGS`); use them,
+not literals.
+
+Tests that need the real `nb` start with `nb_or_skip("<test name>")`: when `nb` is not on
+`PATH` they print a notice and pass vacuously, unless `TASQ_REQUIRE_NB=1` is set, in which case
+the skip is a failure. CI sets it (after installing nb), so run `TASQ_REQUIRE_NB=1 scripts/guard
+cargo test -p tasq-store-nb` before pushing anything that touches the store. The nb behaviours
+the tests rely on (asynchronous checkpoints, exit codes of `nb git dirty`, renumbering on
+`nb index reconcile`, the git-identity requirement) are recorded under "nb facts" in
+`ruli/features/rust-rewrite/PROGRESS.md`; check there before assuming how nb behaves.
+
+The CLI harness (`crates/cli/tests/support/mod.rs`, `TestEnv`) copies the same fixture
+notebook, sets `HOME` to an isolated directory and `PATH` to a directory holding only a `git`
+symlink, so the binary never sees the real config or a real `nb` and its output is identical
+whether or not nb is installed (doctor's `nb` check is always `WARN` there). `fake_tool(name,
+body)` installs a script on that `PATH` to stand in for `claude`, `glow`, `tmux`, `herdr` or
+`gwm`; fakes must use absolute paths for anything that is not a shell builtin. Snapshots
+normalise the temp root to `[ROOT]`.
 
 ## Claude Code plugin
 
@@ -80,15 +118,17 @@ missed across `tasq-core`, full run under 20 minutes in CI.
 ## Memory safety when building
 
 Every recipe in the `justfile` runs cargo through `scripts/guard`, a transient systemd user scope
-with a hard memory ceiling (16G by default, `GUARD_MEM=8G just test` to lower it). If a build or
-test run exceeds it, only the processes inside the scope are killed. `.cargo/config.toml` also caps
-parallel `rustc` jobs at eight, and dev profiles carry reduced debuginfo.
+with a hard memory ceiling and no swap (12G by default; `GUARD_MEM=8G just test` or
+`scripts/guard --mem 8G cargo test` to lower it). If a build or test run exceeds it, only the
+processes inside the scope are killed. `.cargo/config.toml` also caps parallel `rustc` jobs at
+eight, and dev profiles carry reduced debuginfo.
 
 Why: on a 32-core machine a cold build with the default job count, run three times concurrently
-alongside cargo-mutants, exhausted 62 GB of RAM and killed the desktop session. On Linux, cargo also runs every test binary through `scripts/test-runner`, which caps the
-process address space at 4 GiB (`TASQ_TEST_AS_KB` overrides). A test, or a mutant, that
-allocates without bound then aborts on its own and is counted as a failure, instead of
-outrunning cargo-mutants' timeout. Rules of thumb:
+alongside cargo-mutants, exhausted 62 GB of RAM and killed the desktop session. On Linux, cargo
+also runs every test binary through `scripts/test-runner`, which caps the process address space
+at 4 GiB (`TASQ_TEST_AS_KB` overrides). A test, or a mutant, that allocates without bound then
+aborts on its own and is counted as a failure, instead of outrunning cargo-mutants' timeout.
+Rules of thumb:
 
 - Run cargo through the guard (`scripts/guard cargo ...`) whenever you are not using `just`.
 - Never run more than one cargo-mutants at a time, and keep `--jobs 2` (each job builds a full copy of the tree).

@@ -1,0 +1,79 @@
+# The author's setup: nb for bookkeeping, a self-hosted GitLab, gwm worktrees,
+# Claude Code sessions (herdr when inside herdr), an LLM-summarised standup
+# and a time-log plugin fed by hooks. Plan section 4.6, with the key names
+# the tool actually has. Full reference: docs/config.md.
+#
+# Secrets never live here: the GitLab token comes from `glab auth token`.
+
+[store]
+kind = "nb"
+notebook = "home"
+bookkeeper = "auto"          # nb is installed, so nb maintains .index and git commits
+
+[workflow]
+statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
+default_status = "ready"
+
+[work]
+default_project = "~/code/silverfin"       # sessions start here when a task tracks nothing
+worktree_manager = "command"               # gwm provisions worktrees (linked files, .envrc)
+worktree_command = "gwm create {new} {branch} --no-tmux -s"
+# {new} becomes -b when the branch does not exist yet; gwm prints the worktree path last.
+
+[launch]
+default = "auto"             # herdr workspace when HERDR_ENV is set, else Claude Code
+env = "direnv"               # `direnv exec <dir>` so the session gets the project's .envrc
+
+[launch.claude]
+# prompt_file = "~/.config/tasq/prompts/claude.md"   # built-in template when unset
+
+[ui]
+pager = "less -RFX"
+no_osc8 = false
+glow_style = "dark"
+
+[ui.colors]
+# ready = "208"
+
+[forge.gitlab]               # kind "gitlab" inferred from the block name
+host = "gitlab.silverfin.com"
+token_cmd = "glab auth token"
+
+[[source]]
+name = "gitlab-review-requests"
+kind = "gitlab-review-requests"
+forge = "gitlab"
+tags = ["gitlab", "review-request"]
+status = "ready"
+flag = "review-request"      # older tasks that match an MR get the tag too
+
+[[source]]
+name = "gitlab-work-items"
+kind = "gitlab-work-items"
+forge = "gitlab"
+tags = ["gitlab"]
+status = "later"
+projects = ["silverfin/"]    # only this group; a trailing / matches every project under it
+exclude_labels = ["wontfix"]
+
+[[source]]
+name = "inbox"
+kind = "llm-bridge"
+command = "claude -p --output-format json"
+prompt_file = "~/.config/tasq/prompts/inbox.md"   # see examples/sources/inbox.md
+tags = ["inbox"]
+
+[report.summary]
+summarizer = "llm"
+command = "claude -p"
+model = "sonnet"             # passed as --model sonnet
+
+[hooks]
+# Each entry is a command line (split without a shell, ~ expanded). The command
+# reads {"schema":1,"hook":"<name>","task":{...}} on stdin and gets TASQ_HOOK,
+# TASQ_TASK_ID and TASQ_BIN in its environment. A post hook that fails is a
+# warning; a failing pre-launch hook aborts the launch. The example hook under
+# examples/plugins/hooks/ appends one line per event to a log file.
+post-create = []
+post-done = ["~/code/tasq/examples/plugins/hooks/log-event.sh"]
+pre-launch = []

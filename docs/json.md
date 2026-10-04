@@ -9,6 +9,7 @@ refuse anything else; a future shape change bumps the number.
 | `tasq [list ...]` | `"tasks": [Task, ...]` in display order (group order, then priority, due, id) |
 | `tasq create`, `set`, `log`, `done`, `view`, `project`, `worktree`, `session`, `mr`, `apply` | `"task": Task` as stored after the command |
 | `tasq project <id>` (show) | `"task": Task`, `"default_project": path or null` |
+| `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool`, `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
 | `tasq store info` | `"store": {name, location, task_count, id_scheme, ids_may_change_on_reconcile}`, `"bookkeeper": "nb" \| "native" \| "none"` |
 | `tasq store sync` | `"synced": bool`, `"detail": string` |
 | `tasq doctor` | `"checks": [{name, status: "ok" \| "warn" \| "fail", detail, fix}]`, `"ok": bool` |
@@ -16,6 +17,10 @@ refuse anything else; a future shape change bumps the number.
 | `tasq summary` | `"day"`, `"header"` (`Friday 2026-10-02`), `"summarizer": "raw" \| "llm"`, `"tasks": [{id, title, done, notes: [string]}]`, `"notes"` (the raw text), `"summary"` (the distilled text, `null` when raw) |
 | `tasq dates` | `"spec"`, `"from"`, `"to"` (`YYYY-MM-DD`), `"days": [...]`, `"working_days": [...]` (Monday to Friday only) |
 | `tasq config show` | `"config": the effective config`, `"profile"`, `"profiles"`, `"layers": [{origin, keys}]` |
+| `tasq plugins list` | `"plugins": [{name, path}]` (executables `tasq-<name>` found on `PATH`), `"hooks": {"post-create": [string], "post-done": [string], "pre-launch": [string]}` |
+
+`tasq <plugin> [args...]` is not covered by this table: its output is the plugin's own, `--json`
+included, and `tasq` passes the arguments through verbatim (see `docs/plugins.md`).
 
 ## Task
 
@@ -63,3 +68,20 @@ naming the fields, and nothing is written. Piping `tasq view --json <id>` straig
 
 Validation errors name the field: `apply: missing field \`task\``, `apply: unsupported schema
 2 (expected 1)`, `apply: invalid task: missing field \`title\``.
+
+## Hook documents
+
+Commands configured under `[hooks]` (`docs/config.md`) receive one JSON object on stdin, with
+the same `schema` as everything else:
+
+| Hook | Document |
+|---|---|
+| `post-create` | `{"schema": 1, "hook": "post-create", "task": Task}` |
+| `post-done` | `{"schema": 1, "hook": "post-done", "task": Task}` |
+| `pre-launch` | `{"schema": 1, "hook": "pre-launch", "task": Task, "workdir": path, "launcher": name}` |
+
+`task` is the task as stored when the hook runs (after the create or done write; before the
+launch). The hook's environment carries `TASQ_HOOK`, `TASQ_TASK_ID` and `TASQ_BIN`, so a hook
+that needs more can run `$TASQ_BIN view --json $TASQ_TASK_ID` or `$TASQ_BIN apply`. Hook stdout
+is not parsed; a `post-*` hook that exits non-zero is a warning, a `pre-launch` one aborts the
+launch.

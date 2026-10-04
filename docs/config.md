@@ -4,22 +4,30 @@
 
 1. Built-in defaults (below).
 2. Global file: `$XDG_CONFIG_HOME/tasq/config.toml`, else `~/.config/tasq/config.toml`.
-   `TASQ_CONFIG=<file>` or `--config <file>` replaces it.
+   `TASQ_CONFIG=<file>` or `--config <file>` replaces it (the file must then exist).
 3. Project file: the nearest `.tasq.toml` walking up from the current directory (stopping at
    your home directory; nothing above home is read).
 4. `[profile.<name>]` blocks from the loaded files, when selected with `--profile` or `TASQ_PROFILE`.
-5. Environment variables (table below).
+5. Environment variables (table below), including `TASQ_SET`.
 6. `--set key=value` overrides.
 
 Tables deep-merge; scalars and arrays replace (a later `[[source]]` list replaces the whole list).
 Unknown keys are errors naming the file, line and column. `tasq config show` prints the effective
 config and which layer set each value.
 
+Values given through the environment or `--set` are converted to the key's type:
+`true`/`false`/`yes`/`no`/`1`/`0`/`on`/`off` for booleans, a comma-separated list for arrays,
+text otherwise. A key that does not exist is an error.
+
 ## Defaults
+
+Serialising the default configuration gives this document. Keys whose default is unset
+(`work.default_project`, `work.worktree_command`, `launch.claude.prompt_file`,
+`report.summary.model`, `report.summary.prompt_file`) are shown commented out.
 
 ```toml
 [store]
-kind = "nb"
+kind = "nb"                  # the only store today
 notebook = "home"
 bookkeeper = "auto"          # auto | nb | native
 
@@ -29,7 +37,7 @@ default_status = "ready"
 
 [work]
 worktree_manager = "git"     # git | command
-# worktree_command = "gwm create {new} {branch} --no-tmux -s"
+# worktree_command = "gwm create {new} {branch} --no-tmux -s"   # required with "command"
 # default_project = "~/code/..."
 
 [launch]
@@ -47,6 +55,7 @@ glow_style = "dark"
 [ui.colors]                  # status name (or "no-status") = colour, see "Colours"
 
 # [forge.gitlab]            # kind and host inferred from the name when omitted
+# kind = "gitlab"           # gitlab | github; required when the block name is neither
 # host = "gitlab.example.com"
 # token_cmd = "glab auth token"      # else GITLAB_TOKEN / GITHUB_TOKEN
 # url = "https://gitlab.example.com/api/v4"   # API base; defaults from host
@@ -55,7 +64,9 @@ glow_style = "dark"
 # name = "gitlab-review-requests"
 # kind = "gitlab-review-requests"   # gitlab-review-requests | gitlab-work-items |
 #                                   # github-review-requests | github-work-items | llm-bridge
-# forge = "gitlab"
+# forge = "gitlab"                  # forge-backed kinds
+# command = "claude -p --output-format json"   # llm-bridge only
+# prompt_file = "~/.config/tasq/prompts/inbox.md"  # llm-bridge only
 # tags = ["gitlab", "review-request"]
 # status = "ready"
 # enabled = true
@@ -72,7 +83,61 @@ summarizer = "llm"           # raw | llm
 command = "claude -p"        # reads the prompt (instructions + notes) on stdin
 # model = "sonnet"           # appended as --model <model>
 # prompt_file = "~/.config/tasq/prompts/summary.md"  # {{day}} {{date}} {{notes}}
+
+[hooks]
+post-create = []             # command lines, see "Hooks"
+post-done = []
+pre-launch = []
 ```
+
+## Every key
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `store.kind` | `nb` | `nb` | Store implementation. Only nb-compatible notebooks exist. |
+| `store.notebook` | string | `home` | nb notebook name: `$NB_DIR/<name>` (default `~/.nb/<name>`) when that directory exists, else `nb notebooks show <name> --path`. |
+| `store.bookkeeper` | `auto` \| `nb` \| `native` | `auto` | Who maintains `.index` and git commits after a write. `auto` is `nb` when it is on `PATH`, else `native`. |
+| `workflow.statuses` | array of strings | `["in-progress", "ready", "waiting", "blocked", "later"]` | Statuses in display and `next` search order. Lowercase kebab-case. |
+| `workflow.default_status` | string | `ready` | Status of new tasks. Must be one of `statuses`. |
+| `work.default_project` | path | unset | Directory a session starts in when the task tracks neither a worktree nor a project. `~` expanded. |
+| `work.worktree_manager` | `git` \| `command` | `git` | How `tasq worktree --create` makes a worktree. |
+| `work.worktree_command` | string | unset | Template run by the `command` manager; required with it. See "Worktree managers". |
+| `launch.default` | string | `claude` | Launcher for `next`/`pick`: `auto`, `claude`, `shell`, `tmux`, `herdr`. Not validated at load time. |
+| `launch.env` | `inherit` \| `direnv` | `direnv` | Where the session's environment comes from. |
+| `launch.claude.prompt_file` | path | unset | Prompt template replacing the built-in `crates/launch/templates/claude.md`. `~` expanded. |
+| `ui.pager` | string | `less -RFX` | Pager for long output on a terminal, split without a shell. `cat` or empty disables it. |
+| `ui.no_osc8` | bool | `false` | Disable OSC 8 hyperlinks in `tasq view`. |
+| `ui.glow_style` | string | `dark` | Style passed to `glow -s`. |
+| `ui.colors.<name>` | string | empty table | Colour per status name, plus `no-status`. See "Colours". |
+| `forge.<name>.kind` | `gitlab` \| `github` | inferred from `<name>` | API the host speaks. Required when the block is not called `gitlab` or `github`. |
+| `forge.<name>.host` | string | `gitlab.com` / `github.com` by kind | Host without scheme. |
+| `forge.<name>.token_cmd` | string | unset | Command whose stdout is the token. Unset: `GITLAB_TOKEN` / `GITHUB_TOKEN`. |
+| `forge.<name>.url` | string | `https://<host>/api/v4` (GitLab), `https://api.github.com` (github.com), `https://<host>/api/v3` (other GitHub) | API base URL override. |
+| `source[].name` | string | required | Unique name, recorded in each task's `## Source` line. |
+| `source[].kind` | string | required | `gitlab-review-requests`, `gitlab-work-items`, `github-review-requests`, `github-work-items`, `llm-bridge`. |
+| `source[].forge` | string | unset | `[forge.<name>]` to use. Required by the forge-backed kinds; its kind must match. |
+| `source[].command` | string | unset | Command run by `llm-bridge`. Required by it. |
+| `source[].prompt_file` | path | unset | File fed to the `llm-bridge` command on stdin. `~` expanded. |
+| `source[].tags` | array of strings | `[]` | Tags added to every task the source creates. |
+| `source[].status` | string | `workflow.default_status` | Status of tasks the source creates. |
+| `source[].enabled` | bool | `true` | Whether `tasq sync` runs it. |
+| `source[].create_new` | bool | `true` | Create tasks for new items. `false`: only update existing tasks. |
+| `source[].close_when_done` | bool | `true` | Log a note and mark the task done when its item is merged, closed, approved or reassigned. |
+| `source[].flag` | string | unset | Tag added to matched open tasks that lack it. |
+| `source[].title` | string | per kind | Title template: `{title}`, `{iid}`, `{project}`. Defaults `Review MR !{iid}: {title}`, `Review PR #{iid}: {title}`, `#{iid}: {title}`. |
+| `source[].labels` | array of strings | `[]` | Work items: only those carrying one of these labels. |
+| `source[].exclude_labels` | array of strings | `[]` | Work items: skip those carrying one of these labels. |
+| `source[].projects` | array of strings | `[]` (every project) | `group/project`, a group prefix with a trailing `/`, or `owner/repo`. |
+| `report.summary.summarizer` | `raw` \| `llm` | `llm` | Print the notes, or distil them with `command`. |
+| `report.summary.command` | string | `claude -p` | Reads the rendered prompt on stdin, prints the summary. |
+| `report.summary.model` | string | unset | Appended as `--model <model>`. |
+| `report.summary.prompt_file` | path | unset | Template replacing the built-in `crates/launch/templates/summary.md`; `{{day}}`, `{{date}}`, `{{notes}}`. `~` expanded. |
+| `hooks.post-create` | array of strings | `[]` | Command lines run after `tasq create`. |
+| `hooks.post-done` | array of strings | `[]` | Command lines run after `tasq done`. |
+| `hooks.pre-launch` | array of strings | `[]` | Command lines run before `tasq next`/`tasq pick` start a session. |
+| `profile.<name>.*` | table | none | A partial configuration (any key above) applied when the profile is selected. Profiles do not nest. |
+
+Source of truth: `crates/core/src/config/mod.rs`.
 
 ## Environment variables
 
@@ -80,6 +145,7 @@ command = "claude -p"        # reads the prompt (instructions + notes) on stdin
 |---|---|
 | `TASQ_CONFIG` | replaces the global file (must exist) |
 | `TASQ_PROFILE` | selects `[profile.<name>]` |
+| `TASQ_SET` | newline-separated `key=value` overrides, applied like `--set` (any key); part of the env layer, wins over the `TASQ_*` variables below for the same key, loses to `--set` flags. `tasq` sets it for the plugins and hooks it runs, so they see the same `--set` overrides |
 | `TASQ_NOTEBOOK` | `store.notebook` |
 | `TASQ_BOOKKEEPER` | `store.bookkeeper` |
 | `TASQ_DEFAULT_PROJECT` | `work.default_project` |
@@ -97,9 +163,16 @@ command = "claude -p"        # reads the prompt (instructions + notes) on stdin
 
 Empty values count as unset. `XDG_CONFIG_HOME` is honoured for the global file location.
 
+Variables that are not configuration: `NO_COLOR` turns colour off; `NB_DIR` is where notebooks
+live (nb's own variable); `TASQ_NOW="YYYY-MM-DD HH:MM"` fixes the clock (see
+`docs/testing.md`); `TASQ_TASK_ID`, `TASQ_NOTEBOOK` and `TASQ_PROFILE` are set in launched
+sessions; `TASQ_BIN`, `TASQ_HOOK` and `TASQ_TASK_ID` are set for plugins and hooks (see
+`docs/plugins.md`).
+
 ## Validation
 
 - `workflow.default_status` must be one of `workflow.statuses`.
+- `work.worktree_manager = "command"` needs a non-empty `work.worktree_command`.
 - A `[forge.<name>]` named `gitlab` or `github` infers `kind` and `host`; any other name needs `kind`.
 - Forge-backed sources need `forge` pointing at a forge of the matching kind; `llm-bridge` needs `command`.
 - `~` is expanded in paths.
@@ -141,7 +214,33 @@ tracked worktree that exists, else the task's `## Project`, else `work.default_p
 
 The session's environment carries `TASQ_TASK_ID`, `TASQ_NOTEBOOK` and, when a profile is
 selected, `TASQ_PROFILE`. `--dry-run` prints the directory, the commands and the prompt
-without launching (with `--json`: `task`, `workdir`, `in_worktree`, `launcher`, `env`, `steps`).
+without launching (with `--json`: `task`, `workdir`, `in_worktree`, `launcher`, `env`, `steps`)
+and skips the `pre-launch` hooks.
+
+## Hooks
+
+`[hooks]` holds three arrays of command lines, run by the CLI around task events. Each command
+is split like a shell command line (quotes allowed, no shell), `~` is expanded, and the command
+reads a JSON document on stdin:
+
+| Hook | When | Stdin | Failure |
+|---|---|---|---|
+| `post-create` | after `tasq create` wrote the task | `{"schema":1,"hook":"post-create","task":{...}}` | warning on stderr |
+| `post-done` | after `tasq done` closed the task | `{"schema":1,"hook":"post-done","task":{...}}` | warning on stderr |
+| `pre-launch` | before `tasq next`/`tasq pick` start a session | the same plus `"workdir"` and `"launcher"` | a non-zero exit aborts the launch |
+
+`task` is the `Task` object of `docs/json.md`. The environment carries `TASQ_HOOK` (the hook
+name), `TASQ_TASK_ID`, `TASQ_BIN` (the `tasq` binary to call back) and, when in effect,
+`TASQ_PROFILE`, `TASQ_CONFIG` and `TASQ_SET`, so a hook that runs `$TASQ_BIN` sees the same
+configuration. `--dry-run` skips hooks. Hooks run from the CLI only: the terminal UI's `d` key
+edits through the core and fires no hook, while its `Enter` runs `tasq pick`, so `pre-launch`
+fires. Plugins and a worked example: `docs/plugins.md`.
+
+```toml
+[hooks]
+post-done = ["~/bin/tasq-tlogs"]
+pre-launch = ["~/bin/check-vpn --quiet"]
+```
 
 ## Colours
 
@@ -168,3 +267,9 @@ otherwise one pane with `Tab` switching between them). Its edits are the same op
 else `vi`; `Enter` and `S` run `tasq pick <id>` and `tasq sync` as child processes with the
 same `--profile`, `--config` and `--set` flags, while the UI has released the terminal. `?`
 lists every key.
+
+## Examples
+
+Complete, commented files in `examples/config/`: `plain-markdown.toml` for a setup without nb
+(native bookkeeper, shell launcher, raw summaries, no sources) and `author.toml` for a GitLab
+plus worktree plus Claude Code plus hooks setup. Sources alone: `examples/sources/config.toml`.

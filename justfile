@@ -1,7 +1,7 @@
 # Common development commands for tasq. Run `just` to list them.
 #
 # Every cargo invocation goes through `scripts/guard`, which runs it in a
-# memory-limited systemd scope (16G by default, GUARD_MEM to override). A
+# memory-limited systemd scope (12G by default, GUARD_MEM to override). A
 # runaway build then fails on its own instead of exhausting the machine.
 # `.cargo/config.toml` additionally caps parallel rustc jobs.
 

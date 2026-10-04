@@ -1,0 +1,56 @@
+# tasq configuration for a machine WITHOUT nb installed.
+#
+# Copy to ~/.config/tasq/config.toml (or $XDG_CONFIG_HOME/tasq/config.toml).
+# Every key below is a real key; an unknown key is an error naming the file,
+# line and column. Keys left at their default are shown anyway so the file
+# documents itself. Full reference: docs/config.md.
+#
+# The notebook is a directory of `*.todo.md` files plus a `.index` file,
+# exactly what nb would create. Make it once:
+#
+#     mkdir -p ~/.nb/home          # or $NB_DIR/home
+#     git init -q ~/.nb/home       # optional: the native bookkeeper then commits every write
+#
+# `tasq create` writes the first task; a missing `.index` is created from the
+# files on first use. Check with `tasq doctor`; `nb` will be reported as
+# missing, which is expected here.
+
+[store]
+kind = "nb"                  # the nb-compatible markdown store, the only one today
+notebook = "home"            # ~/.nb/home, or $NB_DIR/home
+bookkeeper = "native"        # never run nb: append to .index and commit with git directly.
+                             # "auto" would do the same when nb is absent; "native" makes it
+                             # explicit, so installing nb later changes nothing.
+
+[workflow]
+statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
+default_status = "ready"     # status of `tasq create` without --status
+
+[work]
+worktree_manager = "git"     # `tasq worktree <id> --create <branch>` uses `git worktree add`
+# default_project = "~/code/myproject"   # where sessions start for tasks without a project
+
+[launch]
+default = "shell"            # `tasq next` / `tasq pick` exec $SHELL in the task's directory
+env = "inherit"              # the session gets this shell's environment; no direnv needed
+
+[launch.claude]
+# prompt_file = "~/.config/tasq/prompts/claude.md"   # only used by the claude launcher
+
+[ui]
+pager = "less -RFX"          # long output on a terminal; "cat" disables paging
+no_osc8 = false              # set true if your terminal prints OSC 8 hyperlinks as garbage
+glow_style = "dark"          # `tasq view` renders with glow when it is installed
+
+[ui.colors]                  # optional overrides, status name = colour; see docs/config.md
+
+# No [forge.*] and no [[source]]: `tasq sync` has nothing to do and says so.
+
+[report.summary]
+summarizer = "raw"           # `tasq summary` prints the day's notes grouped per task, no LLM
+command = "claude -p"        # unused while summarizer = "raw"
+
+[hooks]
+post-create = []
+post-done = []
+pre-launch = []

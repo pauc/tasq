@@ -37,8 +37,9 @@ gone. Default title `Review MR !{iid}: {title}` (`Review PR #{iid}: {title}` on 
 `/`). `check` reports done when the issue is closed, no longer assigned to you, or gone. Default
 title `#{iid}: {title}`.
 
-Both need a `[forge.<name>]` block with `host` and a token: `token_cmd` (`glab auth token`,
-`gh auth token`) or `GITLAB_TOKEN` / `GITHUB_TOKEN`. Tokens are never printed. Requests retry on
+Both need a `[forge.<name>]` block with `host` (inferred as `gitlab.com` / `github.com` when
+the block is called `gitlab` or `github` and `host` is omitted) and a token: `token_cmd`
+(`glab auth token`, `gh auth token`) or `GITLAB_TOKEN` / `GITHUB_TOKEN`. Tokens are never printed. Requests retry on
 429 and 5xx with backoff, follow `Link` pagination, and never run during `cargo test`.
 
 ## The LLM bridge
