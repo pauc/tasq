@@ -1,0 +1,9 @@
+---
+source: crates/cli/tests/cli.rs
+expression: stdout(&out)
+---
+Sunday 2026-10-04
+- [1] Rewrite the tasks script in Rust
+    - created via tasks create
+    - parser done
+- [6] Wait for the security review — created via tasks create

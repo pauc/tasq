@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them when merged, approved, closed or reassigned), an LLM bridge for anything unstructured,
   `--source`, `--dry-run`, `--json` and per-task re-checks. `tasq mr` resolves titles through
   the configured forge.
+- `tasq summary [DAY] [--raw]`: the day's progress notes grouped per task (default: the last
+  working day; weekday names and `last <weekday>` look back), distilled by
+  `report.summary.command` reading a prompt template on stdin, or printed raw. `tasq dates
+  [SPEC]`: `this|last week`, `this|last month`, `last N days`, days and day pairs resolved to
+  `FROM TO`, with `--json` for scripts and plugins.
 - nb-compatible store (`tasq-store-nb`) with nb and native bookkeepers.
 - Core domain model, lossless markdown format, queries and layered TOML config.
 - Cargo workspace with the `tasq-core`, `tasq-store-nb`, `tasq-sources`,

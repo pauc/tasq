@@ -4,7 +4,9 @@ use std::fmt;
 
 use tasq_core::clock::TimeError;
 use tasq_core::config::ConfigError;
+use tasq_core::dates::DateError;
 use tasq_core::model::ModelError;
+use tasq_core::report::ReportError;
 use tasq_core::store::StoreError;
 
 /// What a command can fail with.
@@ -84,6 +86,18 @@ impl From<TimeError> for CliError {
     }
 }
 
+impl From<DateError> for CliError {
+    fn from(e: DateError) -> Self {
+        Self::User(e.to_string())
+    }
+}
+
+impl From<ReportError> for CliError {
+    fn from(e: ReportError) -> Self {
+        Self::User(e.to_string())
+    }
+}
+
 impl From<std::io::Error> for CliError {
     fn from(e: std::io::Error) -> Self {
         Self::Internal(e.into())
@@ -127,6 +141,10 @@ mod tests {
         assert!(matches!(e, CliError::User(ref m) if m == "no task with id 9"));
         let e: CliError = ModelError::EmptyId.into();
         assert!(matches!(e, CliError::User(_)));
+        let e: CliError = DateError::UnknownRange("x".into()).into();
+        assert!(matches!(e, CliError::User(ref m) if m.starts_with("unrecognized date range")));
+        let e: CliError = ReportError::Template("t".into()).into();
+        assert!(matches!(e, CliError::User(ref m) if m == "summary prompt template: t"));
         let e: CliError = std::io::Error::other("disk").into();
         assert!(matches!(e, CliError::Internal(_)));
     }

@@ -1764,3 +1764,317 @@ mod sync {
         assert!(stderr(&out).starts_with("tasq: warning: could not look up the title of https://gl.test/g/p/-/merge_requests/11: authentication:"), "{}", stderr(&out));
     }
 }
+
+mod summary {
+    use super::*;
+
+    /// A Monday; the last working day is Friday 2026-10-02.
+    const MONDAY: &str = "2026-10-05 09:00";
+    /// A Wednesday.
+    const WEDNESDAY: &str = "2026-10-07 09:00";
+
+    /// A fake `claude` that records its arguments and stdin under `home`
+    /// and prints a canned summary.
+    fn install_claude(env: &TestEnv) {
+        let home = env.home.display().to_string();
+        env.fake_tool(
+            "claude",
+            &format!(
+                "[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\necho \"$*\" > {home}/claude-args\n/bin/cat > {home}/claude-stdin\necho '- Parser done, in review ([!123](https://gitlab.example.invalid/group/project/-/merge_requests/123))'\necho 'Also:'\necho '- Waiting on the security review'"
+            ),
+        );
+    }
+
+    #[test]
+    fn raw_groups_the_days_notes_per_task() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", MONDAY)
+            .args(["summary", "2026-10-04", "--raw"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_snapshot!(stdout(&out));
+        // Done tasks are included and marked; weekday names look back.
+        env.tasq()
+            .env("TASQ_NOW", WEDNESDAY)
+            .args(["summary", "saturday", "--raw"])
+            .assert()
+            .success()
+            .stdout(
+                "Saturday 2026-10-03\n- [4] Ship the release notes (done)\n    - created via tasks create\n    - shipped\n",
+            );
+        env.tasq()
+            .env("TASQ_NOW", WEDNESDAY)
+            .args(["summary", "last sunday", "--raw", "--color", "always"])
+            .assert()
+            .success()
+            .stdout(predicate::str::starts_with(
+                "\x1b[1mSunday 2026-10-04\x1b[0m\n- [1] Rewrite the tasks script in Rust\n",
+            ));
+    }
+
+    #[test]
+    fn defaults_to_the_last_working_day() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env("TASQ_NOW", MONDAY)
+            .args(["summary", "--raw"])
+            .assert()
+            .success()
+            .stdout(
+                "Friday 2026-10-02\n- [3] Answer the support ticket — created via tasks create\n",
+            );
+    }
+
+    #[test]
+    fn nothing_logged_is_not_an_error() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env("TASQ_NOW", MONDAY)
+            .args(["summary", "2026-09-01"])
+            .assert()
+            .success()
+            .stdout("Nothing logged on Tuesday 2026-09-01.\n");
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", MONDAY)
+            .args(["summary", "2026-09-01", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["schema"], 1);
+        assert_eq!(value["day"], "2026-09-01");
+        assert_eq!(value["tasks"], serde_json::json!([]));
+        assert_eq!(value["notes"], "");
+        assert_eq!(value["summary"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn raw_json() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", MONDAY)
+            .args(["summary", "2026-10-04", "--raw", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_snapshot!(stdout(&out));
+    }
+
+    #[test]
+    fn llm_runs_the_command_with_the_prompt_on_stdin() {
+        let env = TestEnv::fixture();
+        install_claude(&env);
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", MONDAY)
+            .args(["summary", "sunday", "--set", "report.summary.model=sonnet"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            "## Sunday 2026-10-04\n\n- Parser done, in review ([!123](https://gitlab.example.invalid/group/project/-/merge_requests/123))\nAlso:\n- Waiting on the security review\n"
+        );
+        assert_eq!(stderr(&out), "");
+        assert_eq!(
+            std::fs::read_to_string(env.home.join("claude-args")).unwrap(),
+            "-p --model sonnet\n"
+        );
+        let prompt = std::fs::read_to_string(env.home.join("claude-stdin")).unwrap();
+        assert!(
+            prompt.starts_with(
+                "Below are the raw progress notes from my task tracker for Sunday 2026-10-04, "
+            ),
+            "{prompt}"
+        );
+        assert!(
+            prompt.ends_with(
+                "The notes:\n\n- [1] Rewrite the tasks script in Rust\n    - created via tasks create\n    - parser done\n- [6] Wait for the security review — created via tasks create\n"
+            ),
+            "{prompt}"
+        );
+        // --json carries both the notes and the distilled text.
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", MONDAY)
+            .args(["summary", "sunday", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["summarizer"], "llm");
+        assert_eq!(value["header"], "Sunday 2026-10-04");
+        assert_eq!(value["tasks"][1]["id"], "6");
+        assert!(value["notes"].as_str().unwrap().starts_with("- [1] "));
+        assert!(
+            value["summary"]
+                .as_str()
+                .unwrap()
+                .starts_with("- Parser done")
+        );
+        assert_eq!(
+            std::fs::read_to_string(env.home.join("claude-args")).unwrap(),
+            "-p\n"
+        );
+    }
+
+    #[test]
+    fn custom_prompt_file_and_command() {
+        let env = TestEnv::fixture();
+        std::fs::write(env.home.join("standup.md"), "{{date}}|{{day}}\n{{notes}}\n").unwrap();
+        env.fake_tool("llm", "[ -n \"${FAKE_PROBE:-}\" ] && exit 0\n/bin/cat");
+        env.write_project_config(
+            "[report.summary]\ncommand = \"llm\"\nprompt_file = \"~/standup.md\"\n",
+        );
+        env.tasq()
+            .env("TASQ_NOW", MONDAY)
+            .args(["summary", "2026-10-03"])
+            .assert()
+            .success()
+            .stdout(
+                "## Saturday 2026-10-03\n\n2026-10-03|Saturday 2026-10-03\n- [4] Ship the release notes (done)\n    - created via tasks create\n    - shipped\n",
+            );
+        env.write_project_config(
+            "[report.summary]\ncommand = \"llm\"\nprompt_file = \"~/missing.md\"\n",
+        );
+        env.tasq()
+            .env("TASQ_NOW", MONDAY)
+            .args(["summary", "2026-10-03"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with(
+                "tasq: report.summary.prompt_file [ROOT]"
+                    .replace("[ROOT]", &env.home.display().to_string()),
+            ));
+    }
+
+    #[test]
+    fn raw_never_runs_the_command() {
+        let env = TestEnv::fixture();
+        install_claude(&env);
+        env.tasq()
+            .env("TASQ_NOW", MONDAY)
+            .args(["summary", "--raw"])
+            .assert()
+            .success();
+        assert!(!env.home.join("claude-args").exists());
+        env.tasq()
+            .env("TASQ_NOW", MONDAY)
+            .env("TASQ_SUMMARIZER", "raw")
+            .arg("summary")
+            .assert()
+            .success()
+            .stdout(predicate::str::starts_with("Friday 2026-10-02\n"));
+        assert!(!env.home.join("claude-args").exists());
+    }
+
+    #[test]
+    fn errors() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env("TASQ_NOW", MONDAY)
+            .arg("summary")
+            .assert()
+            .code(1)
+            .stderr("tasq: summarizer llm: claude is not on PATH (install it, use --raw for the notes themselves, or set report.summary.summarizer = \"raw\")\n");
+        env.fake_tool(
+            "claude",
+            "[ -n \"${FAKE_PROBE:-}\" ] && exit 0\necho 'quota exceeded' >&2\nexit 2",
+        );
+        env.tasq()
+            .env("TASQ_NOW", MONDAY)
+            .arg("summary")
+            .assert()
+            .code(1)
+            .stderr("tasq: summarizer llm failed: claude -p failed: quota exceeded\n");
+        env.tasq()
+            .args(["summary", "someday"])
+            .assert()
+            .code(1)
+            .stderr("tasq: unrecognized date \"someday\" (expected YYYY-MM-DD, today, yesterday, a weekday name or last <weekday>)\n");
+        env.tasq()
+            .args(["summary", "tomorrow", "--raw"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with(
+                "tasq: unrecognized date \"tomorrow\"",
+            ));
+    }
+}
+
+mod dates {
+    use super::*;
+
+    /// A Wednesday.
+    const WEDNESDAY: &str = "2026-10-07 09:00";
+
+    #[test]
+    fn resolves_specs_split_across_arguments() {
+        let env = TestEnv::fixture();
+        let cases: &[(&[&str], &str)] = &[
+            (&[], "2026-10-07 2026-10-07"),
+            (&["today"], "2026-10-07 2026-10-07"),
+            (&["yesterday"], "2026-10-06 2026-10-06"),
+            (&["last", "week"], "2026-09-28 2026-10-02"),
+            (&["Last Week"], "2026-09-28 2026-10-02"),
+            (&["this", "week"], "2026-10-05 2026-10-07"),
+            (&["last", "month"], "2026-09-01 2026-09-30"),
+            (&["last", "7", "days"], "2026-10-01 2026-10-07"),
+            (&["monday"], "2026-10-05 2026-10-05"),
+            (&["last", "monday"], "2026-10-05 2026-10-05"),
+            (&["2026-10-02", "2026-09-28"], "2026-09-28 2026-10-02"),
+        ];
+        for (args, expected) in cases {
+            let out = env
+                .tasq()
+                .env("TASQ_NOW", WEDNESDAY)
+                .arg("dates")
+                .args(*args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+            assert_eq!(stdout(&out), format!("{expected}\n"), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn json() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", WEDNESDAY)
+            .args(["dates", "last", "week", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_snapshot!(stdout(&out));
+    }
+
+    #[test]
+    fn errors() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env("TASQ_NOW", WEDNESDAY)
+            .args(["dates", "next", "week"])
+            .assert()
+            .code(1)
+            .stderr("tasq: unrecognized date range \"next week\" (expected a day, two days, this|last week, this|last month or last N days)\n");
+        env.tasq()
+            .env("TASQ_NOW", WEDNESDAY)
+            .args(["dates", "2026-10-08"])
+            .assert()
+            .code(1)
+            .stderr("tasq: 2026-10-08 is after today (2026-10-07); reports never look ahead\n");
+        env.tasq()
+            .env("TASQ_NOW", WEDNESDAY)
+            .args(["dates", "2026-10-01", "2026-12-31"])
+            .assert()
+            .success()
+            .stdout("2026-10-01 2026-10-07\n");
+    }
+}

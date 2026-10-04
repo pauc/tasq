@@ -102,6 +102,10 @@ pub fn run(cli: Cli) -> Result<()> {
                     dry_run,
                     ids,
                 }) => commands::sync::run(&app, source.as_deref(), dry_run, &ids),
+                Some(Command::Summary { day, raw }) => {
+                    commands::summary::run(&app, day.as_deref(), raw)
+                }
+                Some(Command::Dates { spec }) => commands::dates::run(&app, &spec),
                 Some(Command::Store(cmd)) => commands::store::run(&app, cmd),
                 Some(Command::Config(cmd)) => commands::config::run(&app, cmd),
                 Some(Command::Doctor | Command::Completions { .. }) => {
@@ -128,6 +132,8 @@ fn command_name(command: &Command) -> &'static str {
         Command::Mr { .. } => "mr",
         Command::Apply { .. } => "apply",
         Command::Sync { .. } => "sync",
+        Command::Summary { .. } => "summary",
+        Command::Dates { .. } => "dates",
         Command::Store(_) => "store",
         Command::Doctor => "doctor",
         Command::Config(_) => "config",

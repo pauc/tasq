@@ -1,0 +1,31 @@
+---
+source: crates/cli/tests/cli.rs
+expression: stdout(&out)
+---
+{
+  "day": "2026-10-04",
+  "header": "Sunday 2026-10-04",
+  "notes": "- [1] Rewrite the tasks script in Rust\n    - created via tasks create\n    - parser done\n- [6] Wait for the security review — created via tasks create\n",
+  "schema": 1,
+  "summarizer": "raw",
+  "summary": null,
+  "tasks": [
+    {
+      "done": false,
+      "id": "1",
+      "notes": [
+        "created via tasks create",
+        "parser done"
+      ],
+      "title": "Rewrite the tasks script in Rust"
+    },
+    {
+      "done": false,
+      "id": "6",
+      "notes": [
+        "created via tasks create"
+      ],
+      "title": "Wait for the security review"
+    }
+  ]
+}

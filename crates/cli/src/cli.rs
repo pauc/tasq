@@ -36,6 +36,8 @@ Examples:
   tasq set 12 in-progress    change status (or A/B/C for priority)
   tasq log 12 \"found the cause\"
   tasq done 12 \"merged\"
+  tasq summary               standup notes for the last working day
+  tasq dates last week       the Monday and Friday, for scripts
   tasq store info            where the tasks live
   tasq doctor                check config, notebook, nb and optional tools";
 
@@ -297,6 +299,25 @@ pub enum Command {
         file: Option<PathBuf>,
     },
 
+    /// Standup summary of what you worked on during a day, from the progress notes.
+    #[command(after_help = SUMMARY_HELP)]
+    Summary {
+        /// The day: YYYY-MM-DD, today, yesterday, a weekday name or `last <weekday>` [default: the last working day].
+        #[arg(value_name = "DAY")]
+        day: Option<String>,
+        /// Print the notes themselves, grouped per task, without summarizing.
+        #[arg(long)]
+        raw: bool,
+    },
+
+    /// Resolve a day or a date range to `FROM TO`, for scripts and plugins.
+    #[command(after_help = DATES_HELP)]
+    Dates {
+        /// The spec, as one or several words (see below) [default: today].
+        #[arg(value_name = "SPEC")]
+        spec: Vec<String>,
+    },
+
     /// The store behind the tasks: where it is and how to sync it.
     #[command(subcommand)]
     Store(StoreCommand),
@@ -370,6 +391,40 @@ for later matching), a tracked item that is done (merged, closed, approved
 by you, reassigned, gone) logs a note and marks the task done. Tracked
 tasks the sweep no longer lists are re-checked individually. With task ids,
 only those tasks are re-checked. See docs/sources.md.";
+
+const SUMMARY_HELP: &str = "\
+Every progress note logged on DAY is collected, one bullet per task
+(`- [id] Title (done) — note`, or one indented bullet per note), including
+done tasks. Without DAY the last working day is used, so on a Monday you
+get Friday. A weekday name means the most recent one, today included;
+`last friday` means the one before today.
+
+The notes are then distilled by report.summary.command (default
+`claude -p`), which reads the prompt and the notes on stdin; the prompt is
+the built-in template or report.summary.prompt_file, and
+report.summary.model is passed as --model. The result is shown like `tasq
+view` (glow on a terminal). --raw prints the notes themselves under a bold
+header and never runs the command; report.summary.summarizer = \"raw\"
+makes that the default. Nothing logged prints `Nothing logged on <day>.`.
+
+--json: {day, header, summarizer, tasks: [{id, title, done, notes}],
+notes, summary (null when raw)}.";
+
+const DATES_HELP: &str = "\
+SPEC is case-insensitive and may be split across arguments:
+  (nothing), today            today
+  yesterday, YYYY-MM-DD       that day
+  monday ... sunday, mon ...  the most recent one, today included
+  last <weekday>              the most recent one before today
+  week, this week             Monday of this week to Friday (or today)
+  last week                   Monday to Friday of the previous week
+  month, this month           the 1st to today
+  last month                  the whole previous month
+  last N days                 the N days ending today
+  <day> <day>                 both days and everything between
+
+A range never extends past today. Output is `FROM TO` (YYYY-MM-DD); with
+--json: {spec, from, to, days: [...], working_days: [...]}.";
 
 /// `tasq create` arguments.
 #[derive(Debug, Clone, Args, Default)]

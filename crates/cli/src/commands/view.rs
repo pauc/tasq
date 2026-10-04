@@ -70,6 +70,14 @@ pub fn run(app: &App, id: &str, raw: bool) -> Result<()> {
     if raw {
         return app.out.print(&text);
     }
+    show_markdown(app, &text)
+}
+
+/// Shows `markdown` the way `view` does: rendered by `glow` with OSC 8
+/// links when stdout is a terminal and glow is on the `PATH`, otherwise
+/// as is; paged either way. `tasq summary` uses it for the distilled
+/// summary. A glow failure is a warning and the plain markdown is shown.
+pub fn show_markdown(app: &App, markdown: &str) -> Result<()> {
     let env = app.env_vec();
     let path_var = env
         .iter()
@@ -81,14 +89,14 @@ pub fn run(app: &App, id: &str, raw: bool) -> Result<()> {
         None
     };
     let Some(glow) = glow else {
-        return app.out.page(&text);
+        return app.out.page(markdown);
     };
     let width = terminal_width(&env);
     let ui = &app.config().ui;
     let rendered = if ui.no_osc8 {
-        render_with_glow(&glow, &unwrap_urls(&text, width), &ui.glow_style, width)
+        render_with_glow(&glow, &unwrap_urls(markdown, width), &ui.glow_style, width)
     } else {
-        let (marked, urls) = linkify_pre(&text);
+        let (marked, urls) = linkify_pre(markdown);
         render_with_glow(&glow, &marked, &ui.glow_style, width).map(|r| linkify_post(&r, &urls))
     };
     match rendered {
@@ -96,7 +104,7 @@ pub fn run(app: &App, id: &str, raw: bool) -> Result<()> {
         Err(e) => {
             app.out
                 .warn(&format!("glow failed ({e}); showing the plain markdown"));
-            app.out.page(&text)
+            app.out.page(markdown)
         }
     }
 }
