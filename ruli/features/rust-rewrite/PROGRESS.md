@@ -1,9 +1,30 @@
-# Progress: tasq rewrite — Phases 0 and 1
+# Progress: tasq rewrite
 
 Plan: [PLAN.md](PLAN.md). Started 2026-10-04. Agents work per task; this file is the single
 place for status, learnings, blockers and deviations from the plan.
 
 ## Status
+
+**Phase 3 (CLI parity) in progress, started 2026-10-04.** T-301 (skeleton, output modes, errors,
+completions, test harness), T-302 (`list`) and the CLI side of T-205 (`doctor`, `config show`) and
+T-204 (`store info`) are done; `tasq store sync` (T-206) too. 397 workspace tests. Next: T-303
+`create`, T-304 `set`/`log`/`done`, T-305 `view`, T-306 `project`/`worktree`, T-307
+`session`/`mr`, T-308 `apply`.
+
+| Task | Title | Status | Notes |
+|------|-------|--------|-------|
+| T-301 | CLI skeleton, output modes, errors | done | 27 unit + 37 integration tests (`crates/cli/tests/cli.rs`, insta snapshots) |
+| T-302 | `list` (default command) | done | grouped/single-status/tag/priority views, `--json` |
+| T-205 | `doctor` / `config show` commands | done | config failures are reported as a FAIL check, not a crash |
+| T-204 | `store info` | done | plus `store sync` from T-206 |
+| T-303 | `create` | todo | |
+| T-304 | `set`, `log`, `done` | todo | |
+| T-305 | `view` | todo | |
+| T-306 | `project`, `worktree` | todo | |
+| T-307 | `session`, `mr` | todo | |
+| T-308 | `apply` | todo | |
+
+### Phase 2 status
 
 **Phase 2 complete (2026-10-04).** 29 commits; 331 workspace tests (nb-gated ones enforced with
 `TASQ_REQUIRE_NB=1`); store-nb mutants 270 tested, 0 missed, 0 timeouts (skips only on the four
@@ -72,6 +93,43 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 4. T-102+T-103 (one agent), T-104, T-106 in parallel, each owning one module directory.
 
 ## Learnings
+
+### CLI decisions (T-301/T-302/T-205)
+
+- Crate layout: `src/lib.rs` (`tasq_cli`, named so `cargo doc` does not collide with the binary)
+  holds `cli` (clap derive), `app` (config → store wiring), `output` (colour, pager, JSON),
+  `error`, `json` and one module per command under `commands/`. `main.rs` is one line.
+- Exit codes: 0; 1 for user errors (`tasq: <message>`); **2 for clap usage errors and internal
+  errors** (clap prints its own message with usage). `tasq doctor` with a FAIL returns
+  `CliError::Silent(1)` so the checks are the only output.
+- `tasq <word>` is a root positional; `tasq list <word>` and the explicit `--status/--tag/--prio/
+  --text` flags combine with it. `args_conflicts_with_subcommands` cannot be used: it also
+  conflicts the global flags (`tasq --json store info` fails), so a word plus a subcommand is
+  rejected in `app::run` instead.
+- Every `--json` document is an object carrying `"schema": 1` (`{"schema":1,"tasks":[...]}` for
+  `list`, not the bare array the plan sketched), so one envelope serves `apply` too. Tasks are
+  serialised as the core `Task`; `Session.at` now serialises as `YYYY-MM-DD HH:MM` like progress
+  entries (`clock::timestamp_serde`), so every timestamp in a document has the file's shape.
+- `list` parity details kept from the script: `[%2s]` id padding, chips with a space of padding
+  (a trailing space without colour), a bare blank line after each group, and the one-status view
+  printing the lowercase status as its header, uncoloured. Deviation: an empty single-status or
+  priority view prints `No open todos with status x.` / `with priority #A.` where the script
+  printed nothing. Header colours come from the five defaults (blue/green/yellow/red/magenta),
+  cyan for any other configured status, dim for `NO STATUS`, overridable under `[ui.colors]`
+  by status name (`no-status` for the last group), values `red`...`white`, `dim`, or `0`-`255`.
+- Colour: `--color auto|always|never`, `--no-color`, `NO_COLOR`; auto only on a TTY. Pager: only
+  on a TTY, `ui.pager` split with `shell-words` (no shell), `cat`/empty disables, a pager that
+  fails to spawn is a warning and the text prints directly. Only `list`, `doctor` and
+  `config show` page.
+- `config show` prints the effective config as TOML with a `# <origin>` comment on every leaf
+  (`Loaded::explain`) and the layer list as a header; the text is valid TOML that reads back
+  into the same `Config` (unit-tested). Top-level tables follow the struct order.
+- Test harness (`tests/support`): a temp copy of the store-nb fixture notebook, `HOME` with a
+  `.gitconfig`, and `PATH` = a dir holding only a `git` symlink, so output is identical whether
+  or not nb is installed (doctor's `nb` check is always WARN there). Snapshots normalise the temp
+  root to `[ROOT]`; `INSTA_UPDATE=always cargo test -p tasq` accepts them (no `cargo insta`).
+  `assert_cmd::Command::new(env!("CARGO_BIN_EXE_tasq"))` avoids the deprecated `cargo_bin`.
+- Manual TTY check with `script -qec` (not covered by tests): colour, pager, pager fallback.
 
 ### Store decisions (T-201/T-202/T-204)
 
@@ -252,6 +310,9 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ## Deviations from the plan
 
+- T-301: usage errors exit 2 (clap convention), not 1; only domain errors exit 1 with `tasq: ...`.
+- T-302: `--json` emits `{"schema":1,"tasks":[...]}` rather than a bare array (FR-4 asks for a
+  versioned schema on every command).
 - T-001: repository URL in `Cargo.toml` is a placeholder (`https://example.invalid/tasq`) until a
   GitHub repo exists. Extra just recipes `default` and `fmt-check`.
 
