@@ -5,12 +5,29 @@ place for status, learnings, blockers and deviations from the plan.
 
 ## Status
 
+**Phase 5 (sources and sync) complete (2026-10-04).** `tasq sync` runs the configured sources
+(GitLab/GitHub review requests and work items, the LLM bridge), reconciles and applies; `tasq mr`
+and `create --mr` resolve titles through the configured forge. The script's `update` is now
+`sync` with deterministic forge sources plus an LLM bridge for Slack/Gmail; `update-support`
+(Freshdesk) is out of scope for v1 (plan Non-Goals). Mutants: core `source` 32/0 missed;
+sources crate 240 tested, 0 missed (`UreqTransport::get`, `auth::run`, `run_command` skipped).
+Next: Phase 6 (reports, T-601/T-602).
+
+| Task | Title | Status | Notes |
+|------|-------|--------|-------|
+| T-501 | Source trait, items, reconcile | done | `tasq_core::source`: `reconcile` + `apply`, matched by origin or legacy URL; `Policy { create_new, close_when_done, flag }` |
+| T-502 | `sync` command | done | sweep + per-item `check` of tracked tasks the sweep dropped; `<id>...` re-check; `--source`, `--dry-run`, `--json`; exit 1 if any source failed |
+| T-503 | Forge client | done | `tasq_sources::{http, auth, url, forge, gitlab, github}`; injectable `Transport`, retry/backoff, `Link` pagination; `forge.<name>.url` override |
+| T-504 | Review-request sources | done | one `ReviewRequests` over any `Forge`; check: merged/closed/approved by you/gone |
+| T-504b | Work-item sources | done | `WorkItems` with label/project filters; check: closed/reassigned/gone |
+| T-505 | LLM bridge | done | command + prompt on stdin, `TASQ_SYNC_KNOWN`, claude result envelope, dedupe; `docs/sources.md`, `examples/sources/` |
+
+### Phase 4 status
+
 **Phase 4 (launchers) complete (2026-10-04).** `tasq next` and `tasq pick` open sessions through
-the `claude`, `shell`, `tmux` and `herdr` launchers (`auto` picks herdr inside herdr). Every
-command of the script except `update`/`update-support` (Phase 5 `sync`), `summary` (Phase 6) and
-`tlogs` (external plugin) now exists under `tasq`. 511 workspace tests. Mutants: core `launch`
-12/0 missed; launch crate 192 tested, 0 missed (`process::run`, `process::exec` and the
-feature-off `herdr` stub skipped). Next: Phase 5 (sources and `sync`, T-501 to T-505).
+the `claude`, `shell`, `tmux` and `herdr` launchers (`auto` picks herdr inside herdr). 511
+workspace tests at the time. Mutants: core `launch` 12/0 missed; launch crate 192 tested, 0 missed
+(`process::run`, `process::exec` and the feature-off `herdr` stub skipped).
 
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
@@ -152,6 +169,31 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   is T-307/T-503, so `commands::mr::link_for` labels GitLab/GitHub URLs with their short
   reference (`group/project!77`, `owner/repo#7`) and warns; other URLs need an explicit
   title. The lookup slots in front of the fallback later.
+
+### Source decisions (T-501 to T-505)
+
+- Reconciliation sees **all** tasks, done ones included (`Filter::default().any_done()`), so a
+  merged MR that reappears in a sweep matches its done task and is not re-created; done tasks
+  never receive changes. New items use the item's `status`/`priority` when set, else the
+  source's `status`/`workflow.default_status` and the source's `tags` plus the item's.
+- A sweep that no longer lists a tracked open item does not close it by itself: the sync command
+  calls `check` for exactly those origins and only a `Done` state closes (merged, closed, approved
+  by you, reassigned, gone = HTTP 404). Other HTTP errors fail the source (reported, others run).
+- **No wiremock.** HTTP goes through `tasq_sources::http::Transport`; unit tests use
+  `ScriptedTransport` (a response script plus recorded requests) and the CLI end-to-end test uses
+  `tests/support::FakeHttp`, a 60-line loopback `TcpListener` server with a route table, reached
+  through `forge.<name>.url`. Nothing in `cargo test` touches the network.
+- `ureq` 3 with rustls is the only network dependency; `http_status_as_error(false)` so 4xx/5xx
+  come back as responses and the retry logic owns them. 401/403 never retry; 429/5xx retry twice
+  with 1s/2s backoff or `Retry-After`.
+- GitHub review requests come from the search API (`is:pr is:open review-requested:<login>`, one
+  page of 100); `/issues?filter=assigned` includes pull requests, which are skipped.
+- The LLM bridge accepts a bare array, `{"items": [...]}` or claude's `{"result": "..."}`
+  envelope (with a code fence) and never closes tasks; its `check` reports every origin as open
+  so a configured `flag` still applies (that shape also exists because a function whose body is
+  `Ok(Vec::new())` cannot be mutation-tested).
+- `tasq mr` / `create --mr`: title from the forge whose `host` matches the URL; a failed lookup
+  is a warning and the short reference (`g/p!10`) is used; a gone MR (404) silently falls back.
 
 ### Launcher decisions (T-401 to T-405)
 
@@ -416,6 +458,10 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   the window is named `<id> <short label>`.
 - T-404: `launch.default = "auto"` added (not in the plan's value list) to keep the script's
   "herdr when inside herdr" behaviour configurable rather than implicit.
+- T-503: `wiremock` replaced by an injected `Transport` plus a loopback test server (no tokio in
+  the dev-dependency tree). `forge.<name>.url` added for self-hosted layouts and tests.
+- T-504b: `title`, `labels`, `exclude_labels`, `projects`, `create_new`, `close_when_done` and
+  `flag` are `[[source]]` keys (the plan left their spelling open).
 - T-001: repository URL in `Cargo.toml` is a placeholder (`https://example.invalid/tasq`) until a
   GitHub repo exists. Extra just recipes `default` and `fmt-check`.
 

@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exists, else the project, else `work.default_project`, with `--launcher` and `--dry-run`.
   Launchers: `claude` (prompt from a template, `direnv exec` when the `.envrc` is allowed),
   `shell`, `tmux`, `herdr` (workspace or tab, Claude agent, prompt pasted in) and `auto`.
+- `tasq sync`: GitLab and GitHub review-request and work-item sources (create tasks, close
+  them when merged, approved, closed or reassigned), an LLM bridge for anything unstructured,
+  `--source`, `--dry-run`, `--json` and per-task re-checks. `tasq mr` resolves titles through
+  the configured forge.
 - nb-compatible store (`tasq-store-nb`) with nb and native bookkeepers.
 - Core domain model, lossless markdown format, queries and layered TOML config.
 - Cargo workspace with the `tasq-core`, `tasq-store-nb`, `tasq-sources`,
