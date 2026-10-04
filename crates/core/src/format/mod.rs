@@ -38,7 +38,7 @@ mod read;
 mod write;
 
 pub use self::document::{DONE_PREFIX, Document, FormatError, Newline, OPEN_PREFIX, Section};
-pub use self::entry::SESSION_SEPARATOR;
+pub use self::entry::{SESSION_SEPARATOR, format_session, format_worktree};
 pub use self::read::section;
 
 use crate::model::{Task, TaskId, Workflow};
