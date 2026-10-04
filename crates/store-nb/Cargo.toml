@@ -9,6 +9,17 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+tasq-core = { path = "../core" }
+# `#[mutants::skip]` for the functions that only spawn processes; a regular
+# dependency because the attribute sits on non-test code (see tasq-core).
+mutants = "0.0.4"
+# Atomic writes: `NamedTempFile::persist` in the task's own directory.
+tempfile = "3"
+thiserror = "2"
+
+[dev-dependencies]
+chrono = { version = "0.4", default-features = false }
+tempfile = "3"
 
 [lints]
 workspace = true

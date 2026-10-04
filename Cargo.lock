@@ -521,6 +521,13 @@ version = "0.1.0"
 [[package]]
 name = "tasq-store-nb"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "mutants",
+ "tasq-core",
+ "tempfile",
+ "thiserror",
+]
 
 [[package]]
 name = "tasq-tui"
