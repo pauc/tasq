@@ -13,8 +13,8 @@ place for status, learnings, blockers and deviations from the plan.
 | T-004 | cargo-mutants setup | done | commit 07d3203; cargo-mutants 27.1.0 |
 | T-101 | Domain model | done | commit f9e606c; 59 tests; mutants 121 total, 0 missed, 1 skip (SystemClock::now) |
 | T-105 | Clock and progress logging | done | commit f9e606c; `When` enum keeps date-only entries lossless |
-| T-102 | Markdown parser | acceptance tests done, mutants running | commits 5ed472e, 7bd3ff5; 308 mutants in progress |
-| T-103 | Markdown writer and round trip | acceptance tests done, mutants running | commits 5ed472e, 7bd3ff5; 308 mutants in progress |
+| T-102 | Markdown parser | killing survivors | commits 5ed472e, 7bd3ff5, dce1403; first full run: 301 tested, 261 caught, 23 unviable, 7 timeouts, 10 missed |
+| T-103 | Markdown writer and round trip | killing survivors | commits 5ed472e, 7bd3ff5, dce1403; first full run: 301 tested, 261 caught, 23 unviable, 7 timeouts, 10 missed |
 | T-104 | Queries and grouping | done | commit 72790ee; 29 tests; 0 missed mutants |
 | T-106 | Configuration loading | gates green, mutants pending | wave 4; agent killed by OOM before mutants pass and commit |
 
@@ -81,6 +81,10 @@ place for status, learnings, blockers and deviations from the plan.
   (`NEXT_STATUSES = 2`); `next_from(&[Status])` is the explicit form.
 
 ### Mutation-testing learnings
+
+- A full format-module run (301 mutants) takes 3 minutes with `--jobs 2` under the guard: fast
+  enough to run per task. Timeouts come from `i += 1` → `i -= 1` style loops; bounded `for`
+  iteration turns those into caught mutants.
 
 - **`-f` never narrows while `.cargo/mutants.toml` is loaded**: cargo-mutants 27.1 unions the CLI
   filter with `examine_globs` (557 mutants with or without `-f`). Use `--no-config -f <glob>` plus
