@@ -297,7 +297,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   handled like a result (does not clear the message) and ignored when a filter hides the new
   task. `Host::after_create` mirrors `after_done`; `CliHost::hooks(hook, task)` is the shared
   runner. Status-bar `HINTS` lost the word "move" to stay under 100 columns (97) with
-  `c new` added; the `hints()` test now pins both lengths. Commit: (pending).
+  `c new` added; the `hints()` test now pins both lengths. Commit: 39b81e5.
 
 ### Plugin decisions (T-701)
 
