@@ -1,0 +1,23 @@
+---
+source: crates/launch/tests/launchers.rs
+expression: normalized
+---
+Work with me on my next task: todo [3] from my nb notebook (file: /nb/home/20260902100000.todo.md).
+
+# [ ] Fix the login form validation
+
+## Tags
+
+#B #ready
+
+Working directory: [WORK]
+
+Tracked development worktrees for this task (we start in the first one that exists):
+- /wt/feature-a (`feature-a`)
+
+Previous Claude sessions on this task — if earlier context would help, suggest resuming one with: claude --resume <session-id>
+- 2026-10-04 10:20: `abc-123`
+
+Start by reading the task and its Related links to build context (use the glab CLI for GitLab URLs — run it from this repo so it authenticates). Give me a short summary of where the task stands and propose a first step, then help me work on it.
+
+As we make progress, record it: tasq log 3 "<note>". If the status changes: tasq set 3 <in-progress|ready|waiting> [note]; priority: tasq set 3 <A|B|C>. Track the task's project directory with: tasq project 3 <path> (sessions start in the first tracked worktree that exists, otherwise there). Track development worktrees with: tasq worktree 3 <path>; to create a new worktree use: tasq worktree 3 --create <branch>, which runs the configured worktree manager and tracks the result. Track Claude sessions with: tasq session 3 <session-id> [desc], and merge requests with: tasq mr 3 <mr-url> [title]. When the task is finished, mark it done: tasq done 3 [note]. At the end of the session, run the /tasq:wrapup skill to record progress and final status.

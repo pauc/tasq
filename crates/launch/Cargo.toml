@@ -8,14 +8,24 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = ["herdr"]
+# The herdr launcher (the author's terminal workspace manager); parses
+# herdr's JSON replies, hence the serde_json dependency.
+herdr = ["dep:serde_json"]
+
 [dependencies]
 tasq-core = { path = "../core" }
 # `#[mutants::skip]` on the functions that only spawn processes.
 mutants = "0.0.4"
+# Prompt template placeholders and sections.
+regex = "1"
+serde_json = { version = "1", optional = true }
 # Splits `work.worktree_command` into argv without a shell.
 shell-words = "1"
 
 [dev-dependencies]
+insta = "1"
 tempfile = "3"
 
 [lints]

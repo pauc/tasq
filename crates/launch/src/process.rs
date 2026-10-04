@@ -1,6 +1,6 @@
 //! Running external programs with an injected environment.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 /// The outcome of a finished process, with its streams as text.
@@ -32,6 +32,22 @@ impl Finished {
             err.to_owned()
         }
     }
+}
+
+/// The value of `name` in `env`, when set and non-empty.
+pub fn env_var<'a>(env: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    env.iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
+        .filter(|v| !v.is_empty())
+}
+
+/// The first `PATH` entry of `env` holding an executable file called `name`.
+pub fn which(env: &[(String, String)], name: &str) -> Option<PathBuf> {
+    let path = env_var(env, "PATH")?;
+    std::env::split_paths(path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
 }
 
 /// Runs `program` with `args` in `cwd`, with exactly `env` (plus `extra`)
@@ -68,6 +84,43 @@ pub fn run(
     }
 }
 
+/// Replaces the current process with `argv[0] argv[1..]` in `cwd`, with
+/// `env` plus `extra` as the environment. Returns only when the exec fails.
+/// On non-Unix hosts the program is run as a child and waited for.
+///
+/// Reason: wraps `exec`; a test cannot observe a replaced process.
+#[mutants::skip]
+pub fn exec(
+    argv: &[String],
+    cwd: &Path,
+    env: &[(String, String)],
+    extra: &[(String, String)],
+) -> std::io::Error {
+    let Some((program, rest)) = argv.split_first() else {
+        return std::io::Error::other("empty command");
+    };
+    let mut command = Command::new(program);
+    command.args(rest).current_dir(cwd).env_clear();
+    for (k, v) in env {
+        command.env(k, v);
+    }
+    for (k, v) in extra {
+        command.env(k, v);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.exec()
+    }
+    #[cfg(not(unix))]
+    {
+        match command.status() {
+            Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+            Err(e) => e,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,5 +139,30 @@ mod tests {
             stderr: "  \n".into(),
         };
         assert_eq!(f.message(), "out");
+    }
+
+    #[test]
+    fn env_lookup_ignores_empty_values() {
+        let env = vec![
+            ("A".to_owned(), "1".to_owned()),
+            ("EMPTY".to_owned(), String::new()),
+        ];
+        assert_eq!(env_var(&env, "A"), Some("1"));
+        assert_eq!(env_var(&env, "EMPTY"), None);
+        assert_eq!(env_var(&env, "B"), None);
+    }
+
+    #[test]
+    fn which_searches_the_injected_path_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = dir.path().join("tool");
+        std::fs::write(&tool, "").unwrap();
+        let env = vec![(
+            "PATH".to_owned(),
+            format!("/nonexistent:{}", dir.path().display()),
+        )];
+        assert_eq!(which(&env, "tool"), Some(tool));
+        assert_eq!(which(&env, "other"), None);
+        assert_eq!(which(&[], "tool"), None);
     }
 }
