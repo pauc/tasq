@@ -127,6 +127,7 @@ index in [`docs/adr/README.md`](docs/adr/README.md). Template and process in tha
 |---|---|
 | Plan, tasks and acceptance criteria | `ruli/features/rust-rewrite/PLAN.md` |
 | Status per task, learnings, blockers, deviations | `ruli/features/rust-rewrite/PROGRESS.md` (update it when you finish a task) |
+| Crates, their roles and dependencies (with diagrams) | `docs/architecture.md` |
 | Markdown task format (normative) | `docs/file-format.md` |
 | Configuration keys and defaults | `docs/config.md` |
 | Sources and `tasq sync` | `docs/sources.md` |
