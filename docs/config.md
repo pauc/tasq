@@ -230,7 +230,9 @@ usual. `--no-focus` opens the window in the background: herdr skips the focus st
 passes `-d`. The TUI binds these to `Ctrl+Enter` (new window, switch to it) and `Shift+Enter`
 (new window, stay), keeping the screen and showing the launcher's result in the status bar;
 plain `Enter` stays "here, with `launch.default`". The two chords need a terminal that speaks
-the kitty keyboard protocol; elsewhere they arrive as a plain `Enter`.
+the kitty keyboard protocol and does not keep the chord for itself; elsewhere they arrive as a
+plain `Enter`. Ghostty binds `Ctrl+Enter` to fullscreen on Linux: `keybind = ctrl+enter=unbind`
+in its config frees it.
 
 The session's environment carries `TASQ_TASK_ID`, `TASQ_NOTEBOOK` and, when a profile is
 selected, `TASQ_PROFILE`. `--dry-run` prints the directory, the commands and the prompt
