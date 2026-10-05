@@ -40,7 +40,7 @@ pub const HELP: &[(&[Action], &str)] = &[
     ),
     (
         &[Action::Create],
-        "create a task from a title (then s, p to refine)",
+        "create a task from a title (then t, p to refine)",
     ),
     (
         &[Action::Status],
@@ -59,7 +59,14 @@ pub const HELP: &[(&[Action], &str)] = &[
         &[Action::LaunchDetachedStay],
         "open it in a new window without switching to it",
     ),
-    (&[Action::Sync], "run the configured sources (tasq sync)"),
+    (
+        &[Action::Sync],
+        "run the sources that run by default (tasq sync)",
+    ),
+    (
+        &[Action::Sources],
+        "pick the sources to run: Space toggles, Enter runs",
+    ),
     (&[Action::Reload], "reload"),
     (
         &[Action::ToggleDetail],
@@ -99,9 +106,14 @@ fn hint_lines(keys: &KeyMap) -> [String; 3] {
         (down, up) => down.or(up),
     };
     let labelled = |action, label: &str| k(action).map(|key| format!("{key} {label}"));
+    let sync = match (k(Action::Sync), k(Action::Sources)) {
+        (Some(all), Some(pick)) => Some(format!("{all}/{pick} sync")),
+        (Some(key), None) | (None, Some(key)) => Some(format!("{key} sync")),
+        (None, None) => None,
+    };
     let tail = [
         labelled(Action::Launch, "open"),
-        labelled(Action::Sync, "sync"),
+        sync,
         labelled(Action::Help, "help"),
         labelled(Action::Quit, "quit"),
     ];
@@ -187,8 +199,42 @@ pub fn view(model: &Model, frame: &mut Frame) {
                 .collect::<Vec<_>>(),
             *cursor,
         ),
+        Mode::Sources { cursor } => render_picker(
+            model,
+            frame,
+            main,
+            "Sync sources: Space toggles, Enter runs",
+            &source_entries(model),
+            *cursor,
+        ),
         Mode::Normal | Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => {}
     }
+}
+
+/// The rows of the source picker: `[x] 1 name  kind`, names padded to
+/// the longest so the kinds line up.
+pub fn source_entries(model: &Model) -> Vec<String> {
+    let width = model
+        .sources
+        .iter()
+        .map(|s| s.name.len())
+        .max()
+        .unwrap_or(0);
+    model
+        .sources
+        .iter()
+        .zip(&model.checked)
+        .enumerate()
+        .map(|(i, (source, checked))| {
+            let mark = if *checked { 'x' } else { ' ' };
+            format!(
+                "[{mark}] {} {:<width$}  {}",
+                i + 1,
+                source.name,
+                source.kind
+            )
+        })
+        .collect()
 }
 
 /// The style for a theme colour: plain when colours are off (only `Dim`
@@ -608,15 +654,15 @@ mod tests {
     #[test]
     fn hints_shrink_with_the_terminal() {
         let keys = KeyMap::default();
-        let full = "j/k  / filter  c new  s status  p prio  l log  d done  e edit  Enter open  S sync  ? help  q quit";
-        let short = "j/k  /  c s p l d e  Enter open  S sync  ? help  q quit";
-        assert_eq!(full.len(), 97, "the full hints must fit 100 columns");
-        assert_eq!(short.len(), 55);
+        let full = "j/k  / filter  c new  t status  p prio  l log  d done  E edit  Enter open  s/S sync  ? help  q quit";
+        let short = "j/k  /  c t p l d E  Enter open  s/S sync  ? help  q quit";
+        assert_eq!(full.len(), 99, "the full hints must fit 100 columns");
+        assert_eq!(short.len(), 57);
         assert_eq!(hints(&keys, 200), full);
-        assert_eq!(hints(&keys, 97), full);
-        assert_eq!(hints(&keys, 96), short);
-        assert_eq!(hints(&keys, 55), short);
-        assert_eq!(hints(&keys, 54), "? help  q quit");
+        assert_eq!(hints(&keys, 99), full);
+        assert_eq!(hints(&keys, 98), short);
+        assert_eq!(hints(&keys, 57), short);
+        assert_eq!(hints(&keys, 56), "? help  q quit");
         assert_eq!(hints(&keys, 0), "? help  q quit");
     }
 
@@ -643,11 +689,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             hints(&keys, 200),
-            "n/k  F3 filter  c new  p prio  l log  d done  e edit  C-o open  ? help  q quit"
+            "n/k  F3 filter  c new  p prio  l log  d done  E edit  C-o open  S sync  ? help  q quit",
+            "with `sync` unbound the picker's key alone labels sync"
         );
         assert_eq!(
             hints(&keys, 60),
-            "n/k  F3  c p l d e  C-o open  ? help  q quit"
+            "n/k  F3  c p l d E  C-o open  S sync  ? help  q quit"
         );
         let keys = KeyMap::from_config(&table(&[
             ("down", &[]),
@@ -662,13 +709,23 @@ mod tests {
             ("edit", &[]),
         ]))
         .unwrap();
-        assert_eq!(hints(&keys, 200), "k  Enter open  S sync  ? help");
-        assert_eq!(hints(&keys, 29), "k  Enter open  S sync  ? help");
-        assert_eq!(hints(&keys, 28), "? help", "full and short coincide");
+        assert_eq!(hints(&keys, 200), "k  Enter open  s/S sync  ? help");
+        assert_eq!(hints(&keys, 31), "k  Enter open  s/S sync  ? help");
+        assert_eq!(hints(&keys, 30), "? help", "full and short coincide");
         let keys = KeyMap::from_config(&table(&[("down", &[]), ("up", &[])])).unwrap();
         assert_eq!(
             hints(&keys, 200),
-            "/ filter  c new  s status  p prio  l log  d done  e edit  Enter open  S sync  ? help  q quit"
+            "/ filter  c new  t status  p prio  l log  d done  E edit  Enter open  s/S sync  ? help  q quit"
+        );
+        let keys = KeyMap::from_config(&table(&[("sources", &[])])).unwrap();
+        assert_eq!(
+            hints(&keys, 200),
+            "j/k  / filter  c new  t status  p prio  l log  d done  E edit  Enter open  s sync  ? help  q quit"
+        );
+        let keys = KeyMap::from_config(&table(&[("sources", &[]), ("sync", &[])])).unwrap();
+        assert_eq!(
+            hints(&keys, 200),
+            "j/k  / filter  c new  t status  p prio  l log  d done  E edit  Enter open  ? help  q quit"
         );
     }
 
@@ -682,15 +739,29 @@ mod tests {
         assert_eq!(rows[12].0, "C-Enter");
         assert_eq!(rows[13].0, "S-Enter");
         assert_eq!(
-            rows[17],
+            rows[14],
+            (
+                "s".to_owned(),
+                "run the sources that run by default (tasq sync)"
+            )
+        );
+        assert_eq!(
+            rows[15],
+            (
+                "S".to_owned(),
+                "pick the sources to run: Space toggles, Enter runs"
+            )
+        );
+        assert_eq!(
+            rows[18],
             ("Enter".to_owned(), "in a picker: apply the choice")
         );
-        assert_eq!(rows[19], ("q, C-c".to_owned(), "quit"));
+        assert_eq!(rows[20], ("q, C-c".to_owned(), "quit"));
         let mut table = BTreeMap::new();
         table.insert("quit".to_owned(), KeySpec::Many(Vec::new()));
         table.insert("sync".to_owned(), KeySpec::One("f5".to_owned()));
         let rows = help_rows(&KeyMap::from_config(&table).unwrap());
-        assert_eq!(rows[19], ("none, C-c".to_owned(), "quit"));
+        assert_eq!(rows[20], ("none, C-c".to_owned(), "quit"));
         assert_eq!(rows[14].0, "F5");
     }
 

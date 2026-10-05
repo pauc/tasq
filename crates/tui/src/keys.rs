@@ -52,8 +52,10 @@ pub enum Action {
     LaunchDetached,
     /// Open a work session in a new window and stay.
     LaunchDetachedStay,
-    /// Run the configured sources.
+    /// Run the sources that run by default (`auto = true`).
     Sync,
+    /// Choose the sources to run.
+    Sources,
     /// Reload from the store.
     Reload,
     /// Show the help overlay.
@@ -87,6 +89,7 @@ pub const NORMAL: &[Action] = &[
     Action::LaunchDetached,
     Action::LaunchDetachedStay,
     Action::Sync,
+    Action::Sources,
     Action::Reload,
     Action::Help,
     Action::ToggleDetail,
@@ -123,6 +126,7 @@ impl Action {
         Action::LaunchDetached,
         Action::LaunchDetachedStay,
         Action::Sync,
+        Action::Sources,
         Action::Reload,
         Action::Help,
         Action::ToggleDetail,
@@ -151,6 +155,7 @@ impl Action {
             Self::LaunchDetached => "launch-detached",
             Self::LaunchDetachedStay => "launch-detached-stay",
             Self::Sync => "sync",
+            Self::Sources => "sources",
             Self::Reload => "reload",
             Self::Help => "help",
             Self::ToggleDetail => "toggle-detail",
@@ -175,16 +180,17 @@ impl Action {
             Self::Top => &["g", "home"],
             Self::Bottom => &["G", "end"],
             Self::Filter => &["/"],
-            Self::Status => &["s"],
+            Self::Status => &["t"],
             Self::Priority => &["p"],
             Self::Log => &["l"],
             Self::Done => &["d"],
             Self::Create => &["c"],
-            Self::Edit => &["e"],
+            Self::Edit => &["E"],
             Self::Launch | Self::Confirm => &["enter"],
             Self::LaunchDetached => &["ctrl+enter"],
             Self::LaunchDetachedStay => &["shift+enter"],
-            Self::Sync => &["S"],
+            Self::Sync => &["s"],
+            Self::Sources => &["S"],
             Self::Reload => &["r"],
             Self::Help => &["?"],
             Self::ToggleDetail => &["tab"],
@@ -213,6 +219,7 @@ impl Action {
             Self::LaunchDetached => Msg::LaunchDetached { focus: true },
             Self::LaunchDetachedStay => Msg::LaunchDetached { focus: false },
             Self::Sync => Msg::Sync,
+            Self::Sources => Msg::BeginSources,
             Self::Reload => Msg::Reload,
             Self::Help => Msg::Help,
             Self::ToggleDetail => Msg::ToggleDetail,
@@ -605,7 +612,7 @@ pub fn translate(keys: &KeyMap, mode: &Mode, key: &KeyEvent) -> Option<Msg> {
     match mode {
         Mode::Normal => keys.lookup(NORMAL, key).map(Action::msg),
         Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => text(key.code, ctrl),
-        Mode::Status { .. } | Mode::Priority { .. } => picker(keys, key),
+        Mode::Status { .. } | Mode::Priority { .. } | Mode::Sources { .. } => picker(keys, key),
         Mode::Help => Some(Msg::Escape),
     }
 }
@@ -621,7 +628,8 @@ fn text(code: KeyCode, ctrl: bool) -> Option<Msg> {
 }
 
 /// Navigation from the map (`quit` closes the picker), any other
-/// character picks by number or letter.
+/// character picks by number or letter (in the source picker: toggles,
+/// `Space` included).
 fn picker(keys: &KeyMap, key: &KeyEvent) -> Option<Msg> {
     match keys.lookup(PICKER, key) {
         Some(Action::Quit) => Some(Msg::Escape),
@@ -691,12 +699,12 @@ mod tests {
             ),
             (key(KeyCode::End), Msg::Bottom),
             (ch('/'), Msg::BeginFilter),
-            (ch('s'), Msg::BeginStatus),
+            (ch('t'), Msg::BeginStatus),
             (ch('p'), Msg::BeginPriority),
             (ch('l'), Msg::BeginNote),
             (ch('d'), Msg::BeginDone),
             (ch('c'), Msg::BeginCreate),
-            (ch('e'), Msg::Edit),
+            (ch('E'), Msg::Edit),
             (key(KeyCode::Enter), Msg::Launch),
             (
                 KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
@@ -706,7 +714,8 @@ mod tests {
                 KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
                 Msg::LaunchDetached { focus: false },
             ),
-            (ch('S'), Msg::Sync),
+            (ch('s'), Msg::Sync),
+            (ch('S'), Msg::BeginSources),
             (ch('r'), Msg::Reload),
             (ch('?'), Msg::Help),
             (key(KeyCode::Tab), Msg::ToggleDetail),
@@ -821,8 +830,8 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), Action::ALL.len(), "names are unique");
-        assert_eq!(Action::ALL.len(), 23);
-        assert_eq!(NORMAL.len(), 22);
+        assert_eq!(Action::ALL.len(), 24);
+        assert_eq!(NORMAL.len(), 23);
         assert!(!NORMAL.contains(&Action::Confirm));
         assert_eq!(
             PICKER,
@@ -1025,19 +1034,20 @@ mod tests {
         assert_eq!(keys.keys(Action::Top), [chord("g"), chord("home")]);
         assert_eq!(keys.keys(Action::Bottom), [chord("G"), chord("end")]);
         assert_eq!(keys.keys(Action::Filter), [chord("/")]);
-        assert_eq!(keys.keys(Action::Status), [chord("s")]);
+        assert_eq!(keys.keys(Action::Status), [chord("t")]);
         assert_eq!(keys.keys(Action::Priority), [chord("p")]);
         assert_eq!(keys.keys(Action::Log), [chord("l")]);
         assert_eq!(keys.keys(Action::Done), [chord("d")]);
         assert_eq!(keys.keys(Action::Create), [chord("c")]);
-        assert_eq!(keys.keys(Action::Edit), [chord("e")]);
+        assert_eq!(keys.keys(Action::Edit), [chord("E")]);
         assert_eq!(keys.keys(Action::Launch), [chord("enter")]);
         assert_eq!(keys.keys(Action::LaunchDetached), [chord("ctrl+enter")]);
         assert_eq!(
             keys.keys(Action::LaunchDetachedStay),
             [chord("shift+enter")]
         );
-        assert_eq!(keys.keys(Action::Sync), [chord("S")]);
+        assert_eq!(keys.keys(Action::Sync), [chord("s")]);
+        assert_eq!(keys.keys(Action::Sources), [chord("S")]);
         assert_eq!(keys.keys(Action::Reload), [chord("r")]);
         assert_eq!(keys.keys(Action::Help), [chord("?")]);
         assert_eq!(keys.keys(Action::ToggleDetail), [chord("tab")]);
@@ -1098,7 +1108,12 @@ mod tests {
             )),
             Some(Msg::LaunchDetached { focus: false })
         );
-        assert_eq!(t(&ch('S')), None, "unbound");
+        assert_eq!(t(&ch('s')), None, "unbound");
+        assert_eq!(
+            t(&ch('S')),
+            Some(Msg::BeginSources),
+            "its neighbour keeps its default"
+        );
         assert_eq!(t(&ch('x')), Some(Msg::Quit));
         assert_eq!(t(&ch('q')), None);
         assert_eq!(t(&ctrl('c')), Some(Msg::Quit), "Ctrl+C is not configurable");

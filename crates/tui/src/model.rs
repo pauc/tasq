@@ -27,7 +27,7 @@ pub enum Mode {
         /// Text typed so far.
         input: String,
     },
-    /// Choosing a status for the selected task (`s`).
+    /// Choosing a status for the selected task (`t`).
     Status {
         /// Highlighted entry of the workflow's status list.
         cursor: usize,
@@ -35,6 +35,12 @@ pub enum Mode {
     /// Choosing a priority for the selected task (`p`).
     Priority {
         /// Highlighted entry of `A`, `B`, `C`.
+        cursor: usize,
+    },
+    /// Choosing the sources to run (`S`); which ones are checked lives in
+    /// [`Model::checked`], so it survives closing the picker.
+    Sources {
+        /// Highlighted entry of [`Model::sources`].
         cursor: usize,
     },
     /// Typing a progress note (`l`) or the final note of `done` (`d`).
@@ -51,6 +57,19 @@ pub enum Mode {
     },
     /// The key help overlay (`?`).
     Help,
+}
+
+/// A source the picker (`S`) can run: an enabled `[[source]]` of the
+/// configuration, handed over by the front end.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceChoice {
+    /// `[[source]] name`, what `tasq sync --source` takes.
+    pub name: String,
+    /// `[[source]] kind`, shown next to the name.
+    pub kind: String,
+    /// `[[source]] auto`: whether a bare sync runs it. The picker starts
+    /// with these checked.
+    pub auto: bool,
 }
 
 /// What a typed note is for.
@@ -125,6 +144,12 @@ pub struct Model {
     pub color: bool,
     /// What the keys are (`[ui.keys]` over the defaults).
     pub keys: KeyMap,
+    /// The enabled sources, for the source picker; empty when the front
+    /// end passed none.
+    pub sources: Vec<SourceChoice>,
+    /// Which of [`Model::sources`] are checked, kept across openings of
+    /// the picker; starts as each source's `auto`.
+    pub checked: Vec<bool>,
     /// The applied filter text (see [`Model::filter`]).
     pub filter: String,
     /// The selected task, when any is visible.
@@ -156,6 +181,8 @@ impl Model {
             theme,
             color,
             keys: KeyMap::default(),
+            sources: Vec::new(),
+            checked: Vec::new(),
             filter: String::new(),
             selected: None,
             mode: Mode::Normal,
@@ -189,10 +216,29 @@ impl Model {
         self
     }
 
+    /// The sources the picker offers (the enabled `[[source]]` blocks, from
+    /// the CLI); the `auto` ones start checked.
+    #[must_use]
+    pub fn with_sources(mut self, sources: Vec<SourceChoice>) -> Self {
+        self.checked = sources.iter().map(|s| s.auto).collect();
+        self.sources = sources;
+        self
+    }
+
+    /// The names of the checked sources, in config order.
+    pub fn checked_sources(&self) -> Vec<String> {
+        self.sources
+            .iter()
+            .zip(&self.checked)
+            .filter(|(_, checked)| **checked)
+            .map(|(source, _)| source.name.clone())
+            .collect()
+    }
+
     /// The draft for a task created from the UI: `title`, the default
     /// status, the default project, and the script's other defaults
     /// (priority `B`, no note). Priority, tags and the rest are set
-    /// afterwards with `s`, `p` or the CLI.
+    /// afterwards with `t`, `p` or the CLI.
     pub fn draft(&self, title: &str) -> TaskDraft {
         let draft = TaskDraft::new(title).with_status(Some(self.default_status.clone()));
         match &self.default_project {

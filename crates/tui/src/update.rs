@@ -41,6 +41,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 Mode::Filter { input } => filter(model, input, key),
                 Mode::Status { cursor } => status_picker(model, cursor, &key),
                 Mode::Priority { cursor } => priority_picker(model, cursor, &key),
+                Mode::Sources { cursor } => sources_picker(model, cursor, &key),
                 Mode::Note { input, target } => note(model, input, target, key),
                 Mode::Create { input } => create(model, input, key),
                 Mode::Help => {
@@ -119,7 +120,14 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
                 Cmd::Launch(id, LaunchTarget::Detached { focus: *focus })
             });
         }
-        Msg::Sync => return vec![Cmd::Sync],
+        Msg::Sync => return vec![Cmd::Sync(Vec::new())],
+        Msg::BeginSources => {
+            if model.sources.is_empty() {
+                model.message = Some(Message::error(NO_SOURCES));
+            } else {
+                model.mode = Mode::Sources { cursor: 0 };
+            }
+        }
         Msg::Backspace | Msg::Char(_) | Msg::Paste(_) => {}
         Msg::Resize(..) | Msg::Loaded(_) | Msg::Select(_) | Msg::Info(_) | Msg::Failed(_) => {
             unreachable!("handled before the mode dispatch")
@@ -129,6 +137,8 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
 }
 
 const NO_SELECTION: &str = "no task selected";
+const NO_SOURCES: &str = "no [[source]] is configured (see docs/sources.md)";
+const NO_SOURCE_CHECKED: &str = "no source checked (Space toggles, Esc closes)";
 
 fn begin_note(model: &mut Model, target: NoteTarget) {
     if model.selected_task().is_some() {
@@ -255,6 +265,53 @@ fn priority_picker(model: &mut Model, cursor: usize, msg: &Msg) -> Vec<Cmd> {
     with_selection(model, |id| Cmd::SetPriority(id, chosen))
 }
 
+/// The source picker: `Space` or a digit toggles, `Enter` runs the checked
+/// sources (at least one), `Esc` closes. The checked set stays in the
+/// model for the next opening.
+fn sources_picker(model: &mut Model, cursor: usize, msg: &Msg) -> Vec<Cmd> {
+    let count = model.sources.len();
+    match msg {
+        Msg::Quit => model.quit = true,
+        Msg::Escape => model.mode = Mode::Normal,
+        Msg::Down => {
+            model.mode = Mode::Sources {
+                cursor: (cursor + 1).min(count.saturating_sub(1)),
+            };
+        }
+        Msg::Up => {
+            model.mode = Mode::Sources {
+                cursor: cursor.saturating_sub(1),
+            };
+        }
+        Msg::Char(' ') => toggle_source(model, cursor),
+        Msg::Char(c) => {
+            if let Some(n) = c.to_digit(10)
+                && n >= 1
+                && (n as usize) <= count
+            {
+                toggle_source(model, n as usize - 1);
+            }
+        }
+        Msg::Enter => {
+            let names = model.checked_sources();
+            if names.is_empty() {
+                model.message = Some(Message::error(NO_SOURCE_CHECKED));
+            } else {
+                model.mode = Mode::Normal;
+                return vec![Cmd::Sync(names)];
+            }
+        }
+        _ => {}
+    }
+    Vec::new()
+}
+
+fn toggle_source(model: &mut Model, index: usize) {
+    if let Some(checked) = model.checked.get_mut(index) {
+        *checked = !*checked;
+    }
+}
+
 fn note(model: &mut Model, mut input: String, target: NoteTarget, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Quit => model.quit = true,
@@ -339,6 +396,7 @@ pub fn one_line(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::SourceChoice;
     use tasq_core::model::{Status, Task, TaskDraft, Workflow};
     use tasq_core::theme::Theme;
 
@@ -552,6 +610,106 @@ mod tests {
         update(&mut m, Msg::Bottom);
         update(&mut m, Msg::BeginStatus);
         assert_eq!(m.mode, Mode::Status { cursor: 0 });
+    }
+
+    fn sources() -> Vec<SourceChoice> {
+        let choice = |name: &str, kind: &str, auto| SourceChoice {
+            name: name.to_owned(),
+            kind: kind.to_owned(),
+            auto,
+        };
+        vec![
+            choice("gitlab", "gitlab-review-requests", true),
+            choice("issues", "gitlab-work-items", true),
+            choice("inbox", "llm-bridge", false),
+        ]
+    }
+
+    #[test]
+    fn source_picker_flow() {
+        let mut m = model().with_sources(sources());
+        assert_eq!(
+            m.checked,
+            vec![true, true, false],
+            "auto sources start checked"
+        );
+        update(&mut m, Msg::BeginSources);
+        assert_eq!(m.mode, Mode::Sources { cursor: 0 });
+        feed(&mut m, [Msg::Down, Msg::Down, Msg::Down]);
+        assert_eq!(m.mode, Mode::Sources { cursor: 2 }, "clamped at the end");
+        assert_eq!(update(&mut m, Msg::Char(' ')), Vec::new());
+        assert_eq!(
+            m.checked,
+            vec![true, true, true],
+            "Space toggles under the cursor"
+        );
+        feed(&mut m, [Msg::Up, Msg::Up, Msg::Up]);
+        assert_eq!(m.mode, Mode::Sources { cursor: 0 });
+        update(&mut m, Msg::Char('1'));
+        assert_eq!(
+            m.checked,
+            vec![false, true, true],
+            "digits toggle by position"
+        );
+        feed(
+            &mut m,
+            [
+                Msg::Char('3'),
+                Msg::Char('4'),
+                Msg::Char('0'),
+                Msg::Char('x'),
+            ],
+        );
+        assert_eq!(
+            m.checked,
+            vec![false, true, false],
+            "the last digit works; out-of-range digits and letters do nothing"
+        );
+        assert_eq!(update(&mut m, Msg::Launch), Vec::new(), "ignored keys stay");
+        assert!(matches!(m.mode, Mode::Sources { .. }));
+        assert_eq!(
+            update(&mut m, Msg::Enter),
+            vec![Cmd::Sync(vec!["issues".to_owned()])]
+        );
+        assert_eq!(m.mode, Mode::Normal);
+
+        // The checked set is remembered; Escape keeps the toggles made meanwhile.
+        update(&mut m, Msg::BeginSources);
+        assert_eq!(m.checked, vec![false, true, false]);
+        update(&mut m, Msg::Char(' '));
+        assert_eq!(update(&mut m, Msg::Escape), Vec::new());
+        assert_eq!(m.mode, Mode::Normal);
+        assert_eq!(m.checked, vec![true, true, false]);
+
+        // Enter with nothing checked says so and stays open; Ctrl-C quits.
+        update(&mut m, Msg::BeginSources);
+        feed(&mut m, [Msg::Char('1'), Msg::Char('2')]);
+        assert_eq!(update(&mut m, Msg::Enter), Vec::new());
+        assert_eq!(m.mode, Mode::Sources { cursor: 0 });
+        assert_eq!(
+            m.message,
+            Some(Message::error(
+                "no source checked (Space toggles, Esc closes)"
+            ))
+        );
+        update(&mut m, Msg::Quit);
+        assert!(m.quit);
+
+        // Without sources the picker does not open.
+        let mut m = model();
+        assert_eq!(update(&mut m, Msg::BeginSources), Vec::new());
+        assert_eq!(m.mode, Mode::Normal);
+        assert_eq!(
+            m.message,
+            Some(Message::error(
+                "no [[source]] is configured (see docs/sources.md)"
+            ))
+        );
+        // `s` is a bare sync whatever is checked.
+        let mut m = model().with_sources(sources());
+        update(&mut m, Msg::BeginSources);
+        feed(&mut m, [Msg::Char('1'), Msg::Escape]);
+        assert_eq!(update(&mut m, Msg::Sync), vec![Cmd::Sync(Vec::new())]);
     }
 
     #[test]
@@ -789,7 +947,7 @@ mod tests {
             );
             assert_eq!(m.mode, Mode::Normal);
         }
-        assert_eq!(update(&mut m, Msg::Sync), vec![Cmd::Sync]);
+        assert_eq!(update(&mut m, Msg::Sync), vec![Cmd::Sync(Vec::new())]);
         update(&mut m, Msg::Loaded(Vec::new()));
         for msg in [
             Msg::Edit,
@@ -809,7 +967,7 @@ mod tests {
                 "{msg:?}"
             );
         }
-        assert_eq!(update(&mut m, Msg::Sync), vec![Cmd::Sync]);
+        assert_eq!(update(&mut m, Msg::Sync), vec![Cmd::Sync(Vec::new())]);
     }
 
     #[test]

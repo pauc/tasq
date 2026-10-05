@@ -11,7 +11,7 @@ use tasq_core::clock::FixedClock;
 use tasq_core::config::UiConfig;
 use tasq_core::model::{Link, Priority, Session, Status, Tag, Task, TaskId, Workflow, Worktree};
 use tasq_core::theme::Theme;
-use tasq_tui::{Model, Msg, update, view};
+use tasq_tui::{Model, Msg, SourceChoice, update, view};
 
 fn date(text: &str) -> NaiveDate {
     NaiveDate::parse_from_str(text, "%Y-%m-%d").unwrap()
@@ -132,6 +132,20 @@ fn overlays() {
     update(&mut model, Msg::BeginPriority);
     assert_snapshot!("priority_picker", screen(&mut model, 120, 20));
     update(&mut model, Msg::Escape);
+    let choice = |name: &str, kind: &str, auto| SourceChoice {
+        name: name.to_owned(),
+        kind: kind.to_owned(),
+        auto,
+    };
+    let mut model = model.with_sources(vec![
+        choice("gitlab-review-requests", "gitlab-review-requests", true),
+        choice("issues", "gitlab-work-items", true),
+        choice("inbox", "llm-bridge", false),
+    ]);
+    update(&mut model, Msg::BeginSources);
+    update(&mut model, Msg::Down);
+    assert_snapshot!("sources_picker", screen(&mut model, 120, 20));
+    update(&mut model, Msg::Escape);
     update(&mut model, Msg::BeginNote);
     for c in "found the cause".chars() {
         update(&mut model, Msg::Char(c));
@@ -185,6 +199,121 @@ fn long_lists_scroll_to_the_selection() {
     update(&mut model, Msg::Loaded(many));
     update(&mut model, Msg::Bottom);
     assert_snapshot!(screen(&mut model, 80, 12));
+}
+
+/// Where `text` first appears on screen, scanning rows from column
+/// `from_x`; panics when it is not there.
+fn find(terminal: &Terminal<TestBackend>, text: &str, from_x: u16) -> (u16, u16) {
+    let buffer = terminal.backend().buffer();
+    for y in 0..buffer.area.height {
+        let row: String = (from_x..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect();
+        if let Some(i) = row.find(text) {
+            let x = u16::try_from(row[..i].chars().count()).unwrap();
+            return (from_x + x, y);
+        }
+    }
+    panic!("{text:?} is not on screen");
+}
+
+#[test]
+fn detail_head_and_progress_heading() {
+    use tasq_tui::view::detail_lines;
+    let model = fixture(true);
+    let text = |task: &Task| -> Vec<String> {
+        detail_lines(&model, task)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    };
+    // A done task without a status says so in the head; an open one does not.
+    let mut done = Task::new(TaskId::from(7), "Shipped");
+    done.done = true;
+    assert_eq!(text(&done)[1], "[7]  #B  done");
+    assert_eq!(
+        text(&Task::new(TaskId::from(5), "Call the bank"))[1],
+        "[5]  #B"
+    );
+    // The progress heading counts only when notes were left out.
+    let clock = FixedClock::at("2026-10-04 09:30");
+    let mut few = Task::new(TaskId::from(8), "Few");
+    few.log("one", &clock);
+    assert!(
+        text(&few).contains(&"Progress".to_owned()),
+        "{:?}",
+        text(&few)
+    );
+    let mut many = Task::new(TaskId::from(9), "Many");
+    for i in 1..=10 {
+        many.log(format!("note {i}"), &clock);
+    }
+    let lines = text(&many);
+    assert!(
+        lines.contains(&"Progress (last 8 of 10)".to_owned()),
+        "{lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|l| l.ends_with("note 1")),
+        "the first two notes are left out: {lines:?}"
+    );
+    assert!(lines.iter().any(|l| l.ends_with("note 3")), "{lines:?}");
+}
+
+#[test]
+fn styles_the_character_snapshots_cannot_see() {
+    // Detail headings are bold; the tag chip has the CLI's colours.
+    let mut model = fixture(true);
+    let terminal = render(&mut model, 120, 28);
+    let (x, y) = find(&terminal, "Merge requests", 60);
+    assert!(
+        terminal.backend().buffer()[(x, y)]
+            .modifier
+            .contains(Modifier::BOLD)
+    );
+    let (x, y) = find(&terminal, "#ci", 60);
+    let chip = &terminal.backend().buffer()[(x, y)];
+    assert_eq!(chip.bg, Color::Indexed(24));
+    assert_eq!(chip.fg, Color::Indexed(231));
+    let mut plain = fixture(false);
+    let terminal = render(&mut plain, 120, 28);
+    let (x, y) = find(&terminal, "#ci", 60);
+    assert_eq!(terminal.backend().buffer()[(x, y)].bg, Color::Reset);
+
+    // An error in the status bar is red and bold; an info line is plain.
+    update(&mut model, Msg::Failed("boom".into()));
+    let terminal = render(&mut model, 120, 28);
+    let cell = &terminal.backend().buffer()[(0, 27)];
+    assert_eq!(cell.symbol(), "b");
+    assert_eq!(cell.fg, Color::Red);
+    assert!(cell.modifier.contains(Modifier::BOLD));
+    update(&mut model, Msg::Info("fine".into()));
+    let terminal = render(&mut model, 120, 28);
+    let cell = &terminal.backend().buffer()[(0, 27)];
+    assert_eq!(cell.symbol(), "f");
+    assert_eq!(cell.fg, Color::Reset);
+    assert!(!cell.modifier.contains(Modifier::BOLD));
+
+    // Only the picker's cursor row is reversed.
+    update(&mut model, Msg::BeginStatus);
+    let terminal = render(&mut model, 120, 28);
+    let (x, y) = find(&terminal, "1 in-progress", 0);
+    assert!(
+        terminal.backend().buffer()[(x, y)]
+            .modifier
+            .contains(Modifier::REVERSED)
+    );
+    let (x, y) = find(&terminal, "2 ready", 0);
+    assert!(
+        !terminal.backend().buffer()[(x, y)]
+            .modifier
+            .contains(Modifier::REVERSED)
+    );
 }
 
 #[test]

@@ -71,7 +71,7 @@ pub fn dispatch(
         }
         Cmd::Edit(id) => edit_file(store, host, id),
         Cmd::Launch(id, target) => host.launch(id, *target),
-        Cmd::Sync => host.sync(),
+        Cmd::Sync(sources) => host.sync(sources),
     };
     let first = match outcome {
         Ok(text) => Msg::Info(text),
@@ -539,7 +539,10 @@ mod tests {
             );
             assert_eq!(msgs[0], Msg::Info("ok".into()));
         }
-        let msgs = dispatch(&Cmd::Sync, &mut store, &clock(), &mut host);
+        let msgs = dispatch(&Cmd::Sync(Vec::new()), &mut store, &clock(), &mut host);
+        assert_eq!(msgs[0], Msg::Info("ok".into()));
+        let picked = Cmd::Sync(vec!["gitlab".to_owned(), "inbox".to_owned()]);
+        let msgs = dispatch(&picked, &mut store, &clock(), &mut host);
         assert_eq!(msgs[0], Msg::Info("ok".into()));
         // The memory store keeps no files, so there is nothing to edit.
         let msgs = dispatch(&Cmd::Edit(TaskId::from(1)), &mut store, &clock(), &mut host);
@@ -555,7 +558,8 @@ mod tests {
                 "launch 1",
                 "launch 1 detached",
                 "launch 1 detached no-focus",
-                "sync"
+                "sync",
+                "sync gitlab inbox"
             ]
         );
 

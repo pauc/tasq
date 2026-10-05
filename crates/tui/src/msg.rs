@@ -33,7 +33,7 @@ pub enum Msg {
     Paste(String),
     /// `/`: start typing a filter.
     BeginFilter,
-    /// `s`: open the status picker.
+    /// `t`: open the status picker.
     BeginStatus,
     /// `p`: open the priority picker.
     BeginPriority,
@@ -43,7 +43,7 @@ pub enum Msg {
     BeginDone,
     /// `c`: start typing the title of a new task.
     BeginCreate,
-    /// `e`: open the task's file in the editor.
+    /// `E`: open the task's file in the editor.
     Edit,
     /// `Enter` in normal mode: open a work session in this terminal.
     Launch,
@@ -53,8 +53,10 @@ pub enum Msg {
         /// Whether to switch to the new window.
         focus: bool,
     },
-    /// `S`: run the configured sources.
+    /// `s`: run the sources that run by default.
     Sync,
+    /// `S`: open the source picker.
+    BeginSources,
     /// `r`: reload from the store.
     Reload,
     /// `?`: toggle the help overlay.
@@ -97,8 +99,9 @@ pub enum Cmd {
     /// Open a work session on the task: in this terminal (released
     /// meanwhile) or in a new window (the UI keeps the screen).
     Launch(TaskId, LaunchTarget),
-    /// `tasq sync` (terminal released meanwhile).
-    Sync,
+    /// `tasq sync`, or `tasq sync --source <name>...` for a non-empty list
+    /// (terminal released meanwhile).
+    Sync(Vec<String>),
 }
 
 /// Where a work session opens.
@@ -119,14 +122,14 @@ impl Cmd {
     pub fn releases_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Edit(_) | Self::Launch(_, LaunchTarget::Here) | Self::Sync
+            Self::Edit(_) | Self::Launch(_, LaunchTarget::Here) | Self::Sync(_)
         )
     }
 
     /// Whether the runtime should wait for a key before redrawing, so the
     /// command's output can be read (an editor needs no such pause).
     pub fn pauses_after(&self) -> bool {
-        matches!(self, Self::Launch(_, LaunchTarget::Here) | Self::Sync)
+        matches!(self, Self::Launch(_, LaunchTarget::Here) | Self::Sync(_))
     }
 }
 
@@ -148,8 +151,9 @@ pub trait Host {
     /// the result.
     fn launch(&mut self, id: &TaskId, target: LaunchTarget) -> HostResult;
 
-    /// Runs the configured sources (`tasq sync`).
-    fn sync(&mut self) -> HostResult;
+    /// Runs the sources: `tasq sync` for an empty `sources`, else
+    /// `tasq sync --source <name>` for each name.
+    fn sync(&mut self, sources: &[String]) -> HostResult;
 
     /// Called after `task` was closed through the store (the `d` key), with
     /// the task as written; the CLI runs its `post-done` hooks here. The
@@ -177,7 +181,7 @@ impl Host for NoHost {
         Err("launching is not available here".to_owned())
     }
 
-    fn sync(&mut self) -> HostResult {
+    fn sync(&mut self, _sources: &[String]) -> HostResult {
         Err("sync is not available here".to_owned())
     }
 
@@ -195,8 +199,8 @@ impl Host for NoHost {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecordingHost {
     /// Every call, as `edit <id> <file>`, `launch <id>`, `launch <id>
-    /// detached` / `launch <id> detached no-focus`, `sync`, `after_done
-    /// <id>` or `after_create <id>`.
+    /// detached` / `launch <id> detached no-focus`, `sync` / `sync <name>...`,
+    /// `after_done <id>` or `after_create <id>`.
     pub calls: Vec<String>,
     /// The answer to every call (`Ok` by default: `"ok"`).
     pub answer: Option<HostResult>,
@@ -224,8 +228,13 @@ impl Host for RecordingHost {
         self.reply(format!("launch {id}{suffix}"))
     }
 
-    fn sync(&mut self) -> HostResult {
-        self.reply("sync".to_owned())
+    fn sync(&mut self, sources: &[String]) -> HostResult {
+        let mut call = "sync".to_owned();
+        for name in sources {
+            call.push(' ');
+            call.push_str(name);
+        }
+        self.reply(call)
     }
 
     fn after_done(&mut self, task: &Task) -> Result<(), String> {
@@ -246,7 +255,7 @@ mod tests {
         let id = TaskId::from(1);
         assert!(Cmd::Edit(id.clone()).releases_terminal());
         assert!(Cmd::Launch(id.clone(), LaunchTarget::Here).releases_terminal());
-        assert!(Cmd::Sync.releases_terminal());
+        assert!(Cmd::Sync(Vec::new()).releases_terminal());
         for focus in [true, false] {
             let detached = Cmd::Launch(id.clone(), LaunchTarget::Detached { focus });
             assert!(!detached.releases_terminal(), "{detached:?}");
@@ -259,7 +268,7 @@ mod tests {
         assert!(!Cmd::Done(id.clone(), None).releases_terminal());
         assert!(!Cmd::Create(Box::new(TaskDraft::new("x"))).releases_terminal());
         assert!(Cmd::Launch(id.clone(), LaunchTarget::Here).pauses_after());
-        assert!(Cmd::Sync.pauses_after());
+        assert!(Cmd::Sync(vec!["inbox".to_owned()]).pauses_after());
         assert!(!Cmd::Edit(id.clone()).pauses_after());
         assert!(!Cmd::Load.pauses_after());
         assert!(!Cmd::Create(Box::new(TaskDraft::new("x"))).pauses_after());
@@ -277,7 +286,7 @@ mod tests {
             none.launch(&id, LaunchTarget::Here).unwrap_err(),
             "launching is not available here"
         );
-        assert_eq!(none.sync().unwrap_err(), "sync is not available here");
+        assert_eq!(none.sync(&[]).unwrap_err(), "sync is not available here");
         // Nothing follows a close or a create for a host that only browses.
         assert_eq!(none.after_done(&Task::new(id.clone(), "T")), Ok(()));
         assert_eq!(none.after_create(&Task::new(id.clone(), "T")), Ok(()));
@@ -288,7 +297,7 @@ mod tests {
         assert_eq!(rec.after_done(&Task::new(id.clone(), "T")), Ok(()));
         assert_eq!(rec.after_create(&Task::new(id.clone(), "T")), Ok(()));
         rec.answer = Some(Err("boom".into()));
-        assert_eq!(rec.sync().unwrap_err(), "boom");
+        assert_eq!(rec.sync(&[]).unwrap_err(), "boom");
         assert_eq!(
             rec.after_done(&Task::new(id.clone(), "T")).unwrap_err(),
             "boom"
