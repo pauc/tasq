@@ -251,7 +251,8 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   Mutants on `tui/{keys,view}.rs`: 181 tested, 8 missed, all pre-existing style/guard
   mutants in render code not touched here (`bold`, `chip`, `detail_lines`, `status_bar`
   colour, `render_picker` cursor), invisible to the text snapshots; `keys.rs` and the new
-  `help_rows`/`hints` have 0 missed. Not yet committed.
+  `help_rows`/`hints` have 0 missed. Commits 69ac1d2 (core), 344b05a (tui), bfcea54 (cli),
+  9abefea (docs).
 
 - **`post-done` from the TUI (follow-up, ADR 0010).** `Host::after_done(&Task)` is called by
   the TUI's `dispatch` after `edit::done` succeeded; the CLI's `CliHost` (now holding `&App`)
