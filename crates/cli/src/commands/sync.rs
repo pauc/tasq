@@ -21,7 +21,7 @@ struct Report {
 }
 
 /// Runs `sync`.
-pub fn run(app: &App, only: Option<&str>, dry_run: bool, ids: &[String]) -> Result<()> {
+pub fn run(app: &App, only: &[String], dry_run: bool, ids: &[String]) -> Result<()> {
     let env = app.env_vec();
     let mut built = build_sources(app.config(), &env, &real_transport);
     if built.is_empty() {
@@ -29,15 +29,36 @@ pub fn run(app: &App, only: Option<&str>, dry_run: bool, ids: &[String]) -> Resu
             "no [[source]] is configured (see docs/config.md and docs/sources.md)",
         ));
     }
-    if let Some(name) = only {
-        if !built.iter().any(|(n, _)| n == name) {
-            let names: Vec<&str> = built.iter().map(|(n, _)| n.as_str()).collect();
+    let names = built
+        .iter()
+        .map(|(n, _)| n.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if only.is_empty() {
+        // A bare `sync` is the `auto` sources; `enabled` was applied above.
+        let auto: Vec<&str> = app
+            .config()
+            .source
+            .iter()
+            .filter(|s| s.auto)
+            .map(|s| s.name.as_str())
+            .collect();
+        built.retain(|(n, _)| auto.contains(&n.as_str()));
+        if built.is_empty() {
             return Err(CliError::user(format!(
-                "no enabled source called {name:?} (sources: {})",
-                names.join(", ")
+                "every enabled source has auto = false; name one with --source (sources: {names})"
             )));
         }
-        built.retain(|(n, _)| n == name);
+    } else {
+        if let Some(name) = only
+            .iter()
+            .find(|name| !built.iter().any(|(n, _)| n == *name))
+        {
+            return Err(CliError::user(format!(
+                "no enabled source called {name:?} (sources: {names})"
+            )));
+        }
+        built.retain(|(n, _)| only.contains(n));
     }
     let ids = ids
         .iter()

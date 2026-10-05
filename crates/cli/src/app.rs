@@ -112,7 +112,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     source,
                     dry_run,
                     ids,
-                }) => commands::sync::run(&app, source.as_deref(), dry_run, &ids),
+                }) => commands::sync::run(&app, &source, dry_run, &ids),
                 Some(Command::Summary { day, raw }) => {
                     commands::summary::run(&app, day.as_deref(), raw)
                 }

@@ -20,9 +20,10 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use tasq_core::config::Config;
 use tasq_core::model::{Task, TaskId};
 use tasq_core::theme::Theme;
-use tasq_tui::{Host, HostResult, KeyMap, LaunchTarget, Model};
+use tasq_tui::{Host, HostResult, KeyMap, LaunchTarget, Model, SourceChoice};
 
 use crate::app::App;
 use crate::cli::GlobalArgs;
@@ -49,7 +50,8 @@ pub fn run(app: &App) -> Result<()> {
         .with_default_status(app.config().workflow.default_status.clone())
         .with_default_project(Some(
             crate::commands::existing_dir(&app.opts.cwd).unwrap_or_else(|| app.opts.cwd.clone()),
-        ));
+        ))
+        .with_sources(source_choices(app.config()));
     let mut store = app.open_store()?;
     let clock = app.clock()?;
     let exe = std::env::current_exe()
@@ -62,6 +64,21 @@ pub fn run(app: &App) -> Result<()> {
     };
     tasq_tui::run(model, &mut store, clock.as_ref(), &mut host)?;
     Ok(())
+}
+
+/// The enabled `[[source]]` blocks as the entries of the TUI's source
+/// picker (`S`): name, kind and whether a bare `tasq sync` runs them.
+pub fn source_choices(config: &Config) -> Vec<SourceChoice> {
+    config
+        .source
+        .iter()
+        .filter(|s| s.enabled)
+        .map(|s| SourceChoice {
+            name: s.name.clone(),
+            kind: s.kind.as_str().to_owned(),
+            auto: s.auto,
+        })
+        .collect()
 }
 
 /// The [`Host`] of the CLI: child processes on the released terminal, and
@@ -106,9 +123,12 @@ impl Host for CliHost<'_> {
         }
     }
 
-    fn sync(&mut self) -> HostResult {
+    fn sync(&mut self, sources: &[String]) -> HostResult {
         let mut args = self.global_args.clone();
         args.push("sync".to_owned());
+        for name in sources {
+            args.extend(["--source".to_owned(), name.clone()]);
+        }
         wait_for(Command::new(&self.exe).args(&args), "tasq sync")
             .map(|()| "sync finished".to_owned())
     }
@@ -238,6 +258,63 @@ mod tests {
             global_args: vec!["--profile".into(), "x".into()],
             editor: vec!["/nonexistent/editor".into()],
         }
+    }
+
+    #[test]
+    fn source_choices_are_the_enabled_sources_with_their_auto_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app_in(
+            dir.path(),
+            "[[source]]\nname = \"a\"\nkind = \"llm-bridge\"\ncommand = \"a\"\n\
+             [[source]]\nname = \"b\"\nkind = \"gitlab-work-items\"\nforge = \"gl\"\nauto = false\n\
+             [[source]]\nname = \"c\"\nkind = \"llm-bridge\"\ncommand = \"c\"\nenabled = false\n\
+             [forge.gl]\nkind = \"gitlab\"\nhost = \"gl.test\"\n",
+        );
+        let choices = source_choices(app.config());
+        assert_eq!(
+            choices,
+            vec![
+                SourceChoice {
+                    name: "a".into(),
+                    kind: "llm-bridge".into(),
+                    auto: true
+                },
+                SourceChoice {
+                    name: "b".into(),
+                    kind: "gitlab-work-items".into(),
+                    auto: false
+                },
+            ],
+            "disabled sources are not offered"
+        );
+        assert_eq!(source_choices(app_in(dir.path(), "").config()), Vec::new());
+    }
+
+    #[test]
+    fn sync_passes_the_picked_sources_as_source_flags() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let app = app_in(dir.path(), "");
+        let log = dir.path().join("args.log");
+        let exe = dir.path().join("tasq");
+        std::fs::write(
+            &exe,
+            format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", log.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut host = host(&app);
+        host.exe = exe;
+        assert_eq!(host.sync(&[]).unwrap(), "sync finished");
+        assert_eq!(
+            host.sync(&["gitlab".to_owned(), "inbox".to_owned()])
+                .unwrap(),
+            "sync finished"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "--profile x sync\n--profile x sync --source gitlab --source inbox\n"
+        );
     }
 
     fn closed_task() -> Task {
@@ -402,7 +479,7 @@ post-create = [
             .launch(&TaskId::from(1), LaunchTarget::Detached { focus: true })
             .unwrap_err();
         assert!(err.starts_with("could not run tasq pick: "), "{err}");
-        let err = host.sync().unwrap_err();
+        let err = host.sync(&["inbox".to_owned()]).unwrap_err();
         assert!(err.starts_with("could not run tasq sync: "), "{err}");
         host.editor.clear();
         assert_eq!(

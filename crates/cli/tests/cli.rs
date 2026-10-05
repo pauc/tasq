@@ -1794,6 +1794,79 @@ mod sync {
             .assert()
             .success()
             .stdout("inbox: up to date\n");
+        // `--source` repeats; the first unknown name is the error, and the
+        // named sources still run in config order.
+        env.tasq()
+            .args(["sync", "--source", "inbox", "--source", "nope"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no enabled source called \"nope\" (sources: bad, inbox)\n");
+        let out = env
+            .tasq()
+            .args(["sync", "--source", "inbox", "--source", "bad"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            stdout(&out),
+            "bad: failed: command \"bad-bridge\" failed: quota exceeded\ninbox: up to date\n"
+        );
+    }
+
+    #[test]
+    fn auto_false_sources_run_only_when_named() {
+        let env = TestEnv::fixture();
+        install_bridge(&env);
+        env.fake_tool(
+            "quiet-bridge",
+            "[ -n \"${FAKE_PROBE:-}\" ] && exit 0\necho '[]'",
+        );
+        let config = format!(
+            "{}{}",
+            bridge_config(&env, "inbox", "inbox-bridge", "auto = false"),
+            bridge_config(&env, "quiet", "quiet-bridge", "")
+        );
+        env.write_project_config(&config);
+        // A bare sync skips `inbox`: the only line is the auto source's.
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .arg("sync")
+            .assert()
+            .success()
+            .stdout("quiet: up to date\n");
+        // Named, it runs, auto or not, and the auto source is left out.
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["sync", "--source", "inbox"])
+            .assert()
+            .success()
+            .stdout("inbox: 1 change(s)\n  [8] created: Reply to Ana\n");
+        // Nothing runs by default when every enabled source is on demand.
+        env.write_project_config(&bridge_config(
+            &env,
+            "inbox",
+            "inbox-bridge",
+            "auto = false",
+        ));
+        env.tasq()
+            .arg("sync")
+            .assert()
+            .code(1)
+            .stderr(
+                "tasq: every enabled source has auto = false; name one with --source (sources: inbox)\n",
+            );
+        // `enabled = false` is still "cannot run", even when named.
+        env.write_project_config(&bridge_config(
+            &env,
+            "inbox",
+            "inbox-bridge",
+            "enabled = false\nauto = false",
+        ));
+        env.tasq()
+            .args(["sync", "--source", "inbox"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no [[source]] is configured (see docs/config.md and docs/sources.md)\n");
     }
 
     #[test]

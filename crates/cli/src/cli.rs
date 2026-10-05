@@ -292,9 +292,9 @@ pub enum Command {
     /// Refresh tasks from the configured sources (merge requests to review, assigned issues, an LLM inbox).
     #[command(after_help = SYNC_HELP)]
     Sync {
-        /// Only this source (its `[[source]] name`).
+        /// Only these sources (`[[source]] name`, repeatable). Without it, every enabled source with `auto = true`.
         #[arg(long, value_name = "NAME")]
-        source: Option<String>,
+        source: Vec<String>,
         /// Print the changes and write nothing.
         #[arg(long)]
         dry_run: bool,
@@ -417,8 +417,12 @@ window is a workspace or a tab. The session gets TASQ_TASK_ID,
 TASQ_NOTEBOOK and, when selected, TASQ_PROFILE.";
 
 const SYNC_HELP: &str = "\
-Every enabled [[source]] runs in order; one failing source is reported and
-does not stop the others (the exit code is 1 when any failed). For each
+Every enabled [[source]] with `auto = true` (the default) runs in config
+order; `--source NAME` (repeatable) runs exactly the named ones instead,
+`auto` or not, which is how a source with `auto = false` (an LLM bridge
+that costs a full session, say) is run on purpose. One failing source is
+reported and does not stop the others (the exit code is 1 when any
+failed). For each
 source the items it reports are reconciled with the tasks: a new open item
 becomes a task (with the source's tags and status, and a `## Source` line
 for later matching), a tracked item that is done (merged, closed, approved
@@ -464,12 +468,14 @@ const UI_HELP: &str = "\
 The list is the grouped view of `tasq`, with the selected task's detail
 beside it (or, below 100 columns, behind Tab). Keys: j/k move, g/G first
 and last, / filter (text matches titles; #word is a status, tag or
-priority as for `tasq <word>`), s status, p priority, l log a note, d mark
-done (with an optional final note), e open the file in $VISUAL or $EDITOR,
+priority as for `tasq <word>`), t status, p priority, l log a note, d mark
+done (with an optional final note), E open the file in $VISUAL or $EDITOR,
 Enter open a work session here (`tasq pick`), Ctrl+Enter open it in a new
 window and switch to it, Shift+Enter open it in a new window and stay
-(`tasq pick --detached [--no-focus]`, launch.detached), S run the sources
-(`tasq sync`), r reload, ? help, q quit. Edits are the same operations as
+(`tasq pick --detached [--no-focus]`, launch.detached), s run the sources
+that run by default (`tasq sync`), S pick the sources to run (Space
+toggles, Enter runs `tasq sync --source ...`), r reload, ? help, q quit.
+Edits are the same operations as
 `tasq set`, `log` and `done`. Group colours follow [ui.colors] (status
 name, or `no-status`); NO_COLOR or --color never gives a monochrome UI.
 Ctrl+Enter and Shift+Enter need a terminal with the kitty keyboard
