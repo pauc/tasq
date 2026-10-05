@@ -18,42 +18,132 @@ use tasq_core::clock::{format_date, format_timestamp};
 use tasq_core::model::{Priority, Task};
 use tasq_core::theme::{self, group_label};
 
+use crate::keys::{Action, KeyMap};
 use crate::model::{LayoutKind, Mode, Model, NoteTarget, Row};
 
 /// How many progress notes the detail pane shows (the most recent ones).
 pub const PROGRESS_SHOWN: usize = 8;
 
-/// The key hints of the status bar in normal mode.
-pub const HINTS: &str = "j/k  / filter  c new  s status  p prio  l log  d done  e edit  Enter open  S sync  ? help  q quit";
-
-/// The hints for terminals too narrow for [`HINTS`].
-pub const SHORT_HINTS: &str = "j/k  /  c s p l d e  Enter open  S sync  ? help  q quit";
-
-/// The help overlay, one `(keys, action)` per line.
-pub const HELP: &[(&str, &str)] = &[
-    ("j/k, Up/Down", "move the selection"),
-    ("g/G, Home/End", "first / last task"),
-    ("PgUp/PgDn, C-u/C-d", "move ten tasks"),
+/// The help overlay, one `(actions, what they do)` per line; the keys
+/// come from the model's [`KeyMap`] (see [`help_rows`]).
+pub const HELP: &[(&[Action], &str)] = &[
+    (&[Action::Up, Action::Down], "move the selection"),
+    (&[Action::Top, Action::Bottom], "first / last task"),
+    (&[Action::PageUp, Action::PageDown], "move ten tasks"),
     (
-        "/",
+        &[Action::Filter],
         "filter: text matches titles, #word a status, tag or priority",
     ),
-    ("Esc", "clear the filter, close the detail or a dialog"),
-    ("c", "create a task from a title (then s, p to refine)"),
-    ("s", "set the status (workflow statuses, pick by number)"),
-    ("p", "set the priority (A, B, C)"),
-    ("l", "log a progress note"),
-    ("d", "mark done, with an optional final note"),
-    ("e", "open the task file in $EDITOR"),
-    ("Enter", "open a work session here (tasq pick)"),
-    ("C-Enter", "open it in a new window (tasq pick --detached)"),
-    ("S-Enter", "open it in a new window without switching to it"),
-    ("S", "run the configured sources (tasq sync)"),
-    ("r", "reload"),
-    ("Tab", "narrow terminals: switch between list and detail"),
-    ("?", "this help"),
-    ("q, C-c", "quit"),
+    (
+        &[Action::Cancel],
+        "clear the filter, close the detail or a dialog",
+    ),
+    (
+        &[Action::Create],
+        "create a task from a title (then s, p to refine)",
+    ),
+    (
+        &[Action::Status],
+        "set the status (workflow statuses, pick by number)",
+    ),
+    (&[Action::Priority], "set the priority (A, B, C)"),
+    (&[Action::Log], "log a progress note"),
+    (&[Action::Done], "mark done, with an optional final note"),
+    (&[Action::Edit], "open the task file in $EDITOR"),
+    (&[Action::Launch], "open a work session here (tasq pick)"),
+    (
+        &[Action::LaunchDetached],
+        "open it in a new window (tasq pick --detached)",
+    ),
+    (
+        &[Action::LaunchDetachedStay],
+        "open it in a new window without switching to it",
+    ),
+    (&[Action::Sync], "run the configured sources (tasq sync)"),
+    (&[Action::Reload], "reload"),
+    (
+        &[Action::ToggleDetail],
+        "narrow terminals: switch between list and detail",
+    ),
+    (&[Action::Confirm], "in a picker: apply the choice"),
+    (&[Action::Help], "this help"),
+    (&[Action::Quit], "quit"),
 ];
+
+/// The help overlay's rows for `keys`: the keys of each action of a
+/// [`HELP`] row joined by `, ` (`k/Up, j/Down`), and `Ctrl+C` next to
+/// `quit` since it always quits.
+pub fn help_rows(keys: &KeyMap) -> Vec<(String, &'static str)> {
+    HELP.iter()
+        .map(|(actions, what)| {
+            let mut shown = actions
+                .iter()
+                .map(|a| keys.display(*a))
+                .collect::<Vec<_>>()
+                .join(", ");
+            if *actions == [Action::Quit] {
+                shown.push_str(", C-c");
+            }
+            (shown, *what)
+        })
+        .collect()
+}
+
+/// The key hints of the status bar in normal mode, for `keys`: the first
+/// key of each action, unbound actions left out. Three lengths, picked by
+/// [`hints`].
+fn hint_lines(keys: &KeyMap) -> [String; 3] {
+    let k = |action| keys.hint(action);
+    let moves = match (k(Action::Down), k(Action::Up)) {
+        (Some(down), Some(up)) => Some(format!("{down}/{up}")),
+        (down, up) => down.or(up),
+    };
+    let labelled = |action, label: &str| k(action).map(|key| format!("{key} {label}"));
+    let tail = [
+        labelled(Action::Launch, "open"),
+        labelled(Action::Sync, "sync"),
+        labelled(Action::Help, "help"),
+        labelled(Action::Quit, "quit"),
+    ];
+    let full = [
+        moves.clone(),
+        labelled(Action::Filter, "filter"),
+        labelled(Action::Create, "new"),
+        labelled(Action::Status, "status"),
+        labelled(Action::Priority, "prio"),
+        labelled(Action::Log, "log"),
+        labelled(Action::Done, "done"),
+        labelled(Action::Edit, "edit"),
+    ]
+    .into_iter()
+    .chain(tail.iter().cloned());
+    let letters = [
+        Action::Create,
+        Action::Status,
+        Action::Priority,
+        Action::Log,
+        Action::Done,
+        Action::Edit,
+    ]
+    .into_iter()
+    .filter_map(k)
+    .collect::<Vec<_>>()
+    .join(" ");
+    let short = [
+        moves,
+        k(Action::Filter),
+        (!letters.is_empty()).then_some(letters),
+    ]
+    .into_iter()
+    .chain(tail.iter().cloned());
+    let tiny = tail[2..].iter().cloned();
+    [join(full), join(short), join(tiny)]
+}
+
+/// Joins the present hints with two spaces.
+fn join(parts: impl Iterator<Item = Option<String>>) -> String {
+    parts.flatten().collect::<Vec<_>>().join("  ")
+}
 
 /// Draws `model` onto `frame`.
 pub fn view(model: &Model, frame: &mut Frame) {
@@ -396,21 +486,22 @@ pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
                 colored(model, theme::Color::Red).add_modifier(Modifier::BOLD),
             ),
             Some(message) => Line::raw(message.text.as_str()),
-            None => Line::styled(hints(width), dim()),
+            None => Line::styled(hints(&model.keys, width), dim()),
         },
     };
     Paragraph::new(line)
 }
 
-/// The longest hint line that fits in `width` columns.
-pub fn hints(width: u16) -> &'static str {
+/// The longest hint line for `keys` that fits in `width` columns.
+pub fn hints(keys: &KeyMap, width: u16) -> String {
     let width = usize::from(width);
-    if width >= HINTS.len() {
-        HINTS
-    } else if width >= SHORT_HINTS.len() {
-        SHORT_HINTS
+    let [full, short, tiny] = hint_lines(keys);
+    if width >= full.len() {
+        full
+    } else if width >= short.len() {
+        short
     } else {
-        "? help  q quit"
+        tiny
     }
 }
 
@@ -433,8 +524,9 @@ fn narrow(n: usize) -> u16 {
 }
 
 fn render_help(model: &Model, frame: &mut Frame, area: Rect) {
-    let key_width = HELP.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
-    let lines: Vec<Line<'_>> = HELP
+    let rows = help_rows(&model.keys);
+    let key_width = rows.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+    let lines: Vec<Line<'_>> = rows
         .iter()
         .map(|(keys, action)| {
             Line::from(vec![
@@ -497,6 +589,10 @@ fn render_picker(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use tasq_core::config::KeySpec;
+
     use super::*;
 
     #[test]
@@ -511,14 +607,91 @@ mod tests {
 
     #[test]
     fn hints_shrink_with_the_terminal() {
-        assert_eq!(HINTS.len(), 97, "the full hints must fit 100 columns");
-        assert_eq!(SHORT_HINTS.len(), 55);
-        assert_eq!(hints(200), HINTS);
-        assert_eq!(hints(97), HINTS);
-        assert_eq!(hints(96), SHORT_HINTS);
-        assert_eq!(hints(55), SHORT_HINTS);
-        assert_eq!(hints(54), "? help  q quit");
-        assert_eq!(hints(0), "? help  q quit");
+        let keys = KeyMap::default();
+        let full = "j/k  / filter  c new  s status  p prio  l log  d done  e edit  Enter open  S sync  ? help  q quit";
+        let short = "j/k  /  c s p l d e  Enter open  S sync  ? help  q quit";
+        assert_eq!(full.len(), 97, "the full hints must fit 100 columns");
+        assert_eq!(short.len(), 55);
+        assert_eq!(hints(&keys, 200), full);
+        assert_eq!(hints(&keys, 97), full);
+        assert_eq!(hints(&keys, 96), short);
+        assert_eq!(hints(&keys, 55), short);
+        assert_eq!(hints(&keys, 54), "? help  q quit");
+        assert_eq!(hints(&keys, 0), "? help  q quit");
+    }
+
+    #[test]
+    fn hints_follow_the_map() {
+        let table = |entries: &[(&str, &[&str])]| {
+            entries
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        (*k).to_owned(),
+                        KeySpec::Many(v.iter().map(|s| (*s).to_owned()).collect()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
+        let keys = KeyMap::from_config(&table(&[
+            ("launch", &["ctrl+o"]),
+            ("down", &["n"]),
+            ("sync", &[]),
+            ("status", &[]),
+            ("filter", &["f3"]),
+        ]))
+        .unwrap();
+        assert_eq!(
+            hints(&keys, 200),
+            "n/k  F3 filter  c new  p prio  l log  d done  e edit  C-o open  ? help  q quit"
+        );
+        assert_eq!(
+            hints(&keys, 60),
+            "n/k  F3  c p l d e  C-o open  ? help  q quit"
+        );
+        let keys = KeyMap::from_config(&table(&[
+            ("down", &[]),
+            ("up", &["k"]),
+            ("quit", &[]),
+            ("filter", &[]),
+            ("create", &[]),
+            ("status", &[]),
+            ("priority", &[]),
+            ("log", &[]),
+            ("done", &[]),
+            ("edit", &[]),
+        ]))
+        .unwrap();
+        assert_eq!(hints(&keys, 200), "k  Enter open  S sync  ? help");
+        assert_eq!(hints(&keys, 29), "k  Enter open  S sync  ? help");
+        assert_eq!(hints(&keys, 28), "? help", "full and short coincide");
+        let keys = KeyMap::from_config(&table(&[("down", &[]), ("up", &[])])).unwrap();
+        assert_eq!(
+            hints(&keys, 200),
+            "/ filter  c new  s status  p prio  l log  d done  e edit  Enter open  S sync  ? help  q quit"
+        );
+    }
+
+    #[test]
+    fn help_rows_follow_the_map() {
+        let rows = help_rows(&KeyMap::default());
+        assert_eq!(rows.len(), HELP.len());
+        assert_eq!(rows[0], ("k/Up, j/Down".to_owned(), "move the selection"));
+        assert_eq!(rows[1], ("g/Home, G/End".to_owned(), "first / last task"));
+        assert_eq!(rows[2], ("C-u/PgUp, C-d/PgDn".to_owned(), "move ten tasks"));
+        assert_eq!(rows[12].0, "C-Enter");
+        assert_eq!(rows[13].0, "S-Enter");
+        assert_eq!(
+            rows[17],
+            ("Enter".to_owned(), "in a picker: apply the choice")
+        );
+        assert_eq!(rows[19], ("q, C-c".to_owned(), "quit"));
+        let mut table = BTreeMap::new();
+        table.insert("quit".to_owned(), KeySpec::Many(Vec::new()));
+        table.insert("sync".to_owned(), KeySpec::One("f5".to_owned()));
+        let rows = help_rows(&KeyMap::from_config(&table).unwrap());
+        assert_eq!(rows[19], ("none, C-c".to_owned(), "quit"));
+        assert_eq!(rows[14].0, "F5");
     }
 
     #[test]

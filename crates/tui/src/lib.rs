@@ -22,6 +22,7 @@ pub mod runtime;
 pub mod update;
 pub mod view;
 
+pub use keys::{Action, Chord, Key, KeyError, KeyMap};
 pub use model::{Mode, Model, NoteTarget};
 pub use msg::{Cmd, Host, HostResult, LaunchTarget, Msg, NoHost, RecordingHost};
 pub use runtime::{dispatch, run};

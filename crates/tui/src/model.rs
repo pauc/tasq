@@ -8,6 +8,8 @@ use tasq_core::model::{Priority, Status, Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::{self, Filter, Group};
 use tasq_core::theme::Theme;
 
+use crate::keys::KeyMap;
+
 /// Terminal width from which the list and the detail pane sit side by
 /// side (T-803: single pane below 100 columns).
 pub const TWO_PANE_MIN_WIDTH: u16 = 100;
@@ -121,6 +123,8 @@ pub struct Model {
     pub theme: Theme,
     /// Whether colours are used at all (`false` under `NO_COLOR`).
     pub color: bool,
+    /// What the keys are (`[ui.keys]` over the defaults).
+    pub keys: KeyMap,
     /// The applied filter text (see [`Model::filter`]).
     pub filter: String,
     /// The selected task, when any is visible.
@@ -151,6 +155,7 @@ impl Model {
             default_project: None,
             theme,
             color,
+            keys: KeyMap::default(),
             filter: String::new(),
             selected: None,
             mode: Mode::Normal,
@@ -167,6 +172,13 @@ impl Model {
     #[must_use]
     pub fn with_default_status(mut self, status: Status) -> Self {
         self.default_status = status;
+        self
+    }
+
+    /// The key bindings (`[ui.keys]` laid over the defaults).
+    #[must_use]
+    pub fn with_keys(mut self, keys: KeyMap) -> Self {
+        self.keys = keys;
         self
     }
 

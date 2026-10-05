@@ -158,7 +158,7 @@ pub fn run(
     while !model.quit {
         terminal.draw(|frame| view(&model, frame))?;
         let msg = match event::read()? {
-            Event::Key(key) => translate(&model.mode, &key),
+            Event::Key(key) => translate(&model.keys, &model.mode, &key),
             Event::Paste(text) => Some(Msg::Paste(text)),
             Event::Resize(width, height) => Some(Msg::Resize(width, height)),
             Event::FocusGained | Event::FocusLost | Event::Mouse(_) => None,
