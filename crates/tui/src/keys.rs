@@ -44,8 +44,10 @@ pub enum Action {
     Done,
     /// Start typing the title of a new task.
     Create,
-    /// Open the task's file in the editor.
+    /// Open the edit form on the selected task.
     Edit,
+    /// Open the task's file in the editor.
+    Editor,
     /// Open a work session in this terminal.
     Launch,
     /// Open a work session in a new window and switch to it.
@@ -85,6 +87,7 @@ pub const NORMAL: &[Action] = &[
     Action::Done,
     Action::Create,
     Action::Edit,
+    Action::Editor,
     Action::Launch,
     Action::LaunchDetached,
     Action::LaunchDetachedStay,
@@ -122,6 +125,7 @@ impl Action {
         Action::Done,
         Action::Create,
         Action::Edit,
+        Action::Editor,
         Action::Launch,
         Action::LaunchDetached,
         Action::LaunchDetachedStay,
@@ -151,6 +155,7 @@ impl Action {
             Self::Done => "done",
             Self::Create => "create",
             Self::Edit => "edit",
+            Self::Editor => "editor",
             Self::Launch => "launch",
             Self::LaunchDetached => "launch-detached",
             Self::LaunchDetachedStay => "launch-detached-stay",
@@ -185,7 +190,8 @@ impl Action {
             Self::Log => &["l"],
             Self::Done => &["d"],
             Self::Create => &["c"],
-            Self::Edit => &["E"],
+            Self::Edit => &["e"],
+            Self::Editor => &["E"],
             Self::Launch | Self::Confirm => &["enter"],
             Self::LaunchDetached => &["ctrl+enter"],
             Self::LaunchDetachedStay => &["shift+enter"],
@@ -215,6 +221,7 @@ impl Action {
             Self::Done => Msg::BeginDone,
             Self::Create => Msg::BeginCreate,
             Self::Edit => Msg::Edit,
+            Self::Editor => Msg::Editor,
             Self::Launch => Msg::Launch,
             Self::LaunchDetached => Msg::LaunchDetached { focus: true },
             Self::LaunchDetachedStay => Msg::LaunchDetached { focus: false },
@@ -613,8 +620,21 @@ pub fn translate(keys: &KeyMap, mode: &Mode, key: &KeyEvent) -> Option<Msg> {
         Mode::Normal => keys.lookup(NORMAL, key).map(Action::msg),
         Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => text(key.code, ctrl),
         Mode::Status { .. } | Mode::Priority { .. } | Mode::Sources { .. } => picker(keys, key),
+        Mode::Form(_) => form(key.code, ctrl),
         Mode::Help => Some(Msg::Escape),
     }
+}
+
+/// The form's fixed keys: typing like a prompt, `Up`/`Down`/`Tab`/
+/// `Shift+Tab` between the rows, `Left`/`Right` on a choice row.
+fn form(code: KeyCode, ctrl: bool) -> Option<Msg> {
+    Some(match code {
+        KeyCode::Up | KeyCode::BackTab => Msg::Up,
+        KeyCode::Down | KeyCode::Tab => Msg::Down,
+        KeyCode::Left => Msg::Left,
+        KeyCode::Right => Msg::Right,
+        _ => return text(code, ctrl),
+    })
 }
 
 fn text(code: KeyCode, ctrl: bool) -> Option<Msg> {
@@ -704,7 +724,8 @@ mod tests {
             (ch('l'), Msg::BeginNote),
             (ch('d'), Msg::BeginDone),
             (ch('c'), Msg::BeginCreate),
-            (ch('E'), Msg::Edit),
+            (ch('e'), Msg::Edit),
+            (ch('E'), Msg::Editor),
             (key(KeyCode::Enter), Msg::Launch),
             (
                 KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
@@ -783,6 +804,35 @@ mod tests {
     }
 
     #[test]
+    fn form_mode_keys_are_fixed() {
+        let keys = KeyMap::from_config(&config(&[("up", one("x")), ("down", many(&[]))])).unwrap();
+        let task = tasq_core::model::Task::new(tasq_core::model::TaskId::from(1), "T");
+        let mode = Mode::Form(Box::new(crate::form::Form::of(
+            &task,
+            &tasq_core::model::Workflow::default(),
+        )));
+        for (event, expected) in [
+            (key(KeyCode::Up), Msg::Up),
+            (key(KeyCode::BackTab), Msg::Up),
+            (key(KeyCode::Down), Msg::Down),
+            (key(KeyCode::Tab), Msg::Down),
+            (key(KeyCode::Left), Msg::Left),
+            (key(KeyCode::Right), Msg::Right),
+            (key(KeyCode::Enter), Msg::Enter),
+            (key(KeyCode::Esc), Msg::Escape),
+            (key(KeyCode::Backspace), Msg::Backspace),
+            (ch('x'), Msg::Char('x')),
+            (ch('j'), Msg::Char('j')),
+            (ch(' '), Msg::Char(' ')),
+            (ctrl('c'), Msg::Quit),
+        ] {
+            assert_eq!(translate(&keys, &mode, &event), Some(expected), "{event:?}");
+        }
+        assert_eq!(translate(&keys, &mode, &ctrl('u')), None);
+        assert_eq!(translate(&keys, &mode, &key(KeyCode::F(1))), None);
+    }
+
+    #[test]
     fn picker_modes() {
         let keys = KeyMap::default();
         for mode in [Mode::Status { cursor: 0 }, Mode::Priority { cursor: 0 }] {
@@ -830,8 +880,8 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), Action::ALL.len(), "names are unique");
-        assert_eq!(Action::ALL.len(), 24);
-        assert_eq!(NORMAL.len(), 23);
+        assert_eq!(Action::ALL.len(), 25);
+        assert_eq!(NORMAL.len(), 24);
         assert!(!NORMAL.contains(&Action::Confirm));
         assert_eq!(
             PICKER,
@@ -1039,7 +1089,8 @@ mod tests {
         assert_eq!(keys.keys(Action::Log), [chord("l")]);
         assert_eq!(keys.keys(Action::Done), [chord("d")]);
         assert_eq!(keys.keys(Action::Create), [chord("c")]);
-        assert_eq!(keys.keys(Action::Edit), [chord("E")]);
+        assert_eq!(keys.keys(Action::Edit), [chord("e")]);
+        assert_eq!(keys.keys(Action::Editor), [chord("E")]);
         assert_eq!(keys.keys(Action::Launch), [chord("enter")]);
         assert_eq!(keys.keys(Action::LaunchDetached), [chord("ctrl+enter")]);
         assert_eq!(

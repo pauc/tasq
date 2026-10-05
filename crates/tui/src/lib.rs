@@ -15,6 +15,7 @@
 
 #![warn(missing_docs)]
 
+pub mod form;
 pub mod keys;
 pub mod model;
 pub mod msg;
@@ -22,6 +23,7 @@ pub mod runtime;
 pub mod update;
 pub mod view;
 
+pub use form::{Field, Form, FormError};
 pub use keys::{Action, Chord, Key, KeyError, KeyMap};
 pub use model::{Mode, Model, NoteTarget, SourceChoice};
 pub use msg::{Cmd, Host, HostResult, LaunchTarget, Msg, NoHost, RecordingHost};

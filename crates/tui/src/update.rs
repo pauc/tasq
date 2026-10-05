@@ -3,6 +3,7 @@
 
 use tasq_core::model::{Priority, TaskId};
 
+use crate::form::Form;
 use crate::model::{Message, Mode, Model, NoteTarget, PAGE};
 use crate::msg::{Cmd, LaunchTarget, Msg};
 
@@ -44,6 +45,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 Mode::Sources { cursor } => sources_picker(model, cursor, &key),
                 Mode::Note { input, target } => note(model, input, target, key),
                 Mode::Create { input } => create(model, input, key),
+                Mode::Form(form) => form_mode(model, *form, key),
                 Mode::Help => {
                     if key == Msg::Quit {
                         model.quit = true;
@@ -111,7 +113,14 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
                 input: String::new(),
             };
         }
-        Msg::Edit => return with_selection(model, Cmd::Edit),
+        Msg::Edit => {
+            if let Some(task) = model.selected_task() {
+                model.mode = Mode::Form(Box::new(Form::of(task, &model.workflow)));
+            } else {
+                model.message = Some(Message::error(NO_SELECTION));
+            }
+        }
+        Msg::Editor => return with_selection(model, Cmd::Editor),
         Msg::Launch | Msg::Enter => {
             return with_selection(model, |id| Cmd::Launch(id, LaunchTarget::Here));
         }
@@ -128,7 +137,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
                 model.mode = Mode::Sources { cursor: 0 };
             }
         }
-        Msg::Backspace | Msg::Char(_) | Msg::Paste(_) => {}
+        Msg::Backspace | Msg::Char(_) | Msg::Paste(_) | Msg::Left | Msg::Right => {}
         Msg::Resize(..) | Msg::Loaded(_) | Msg::Select(_) | Msg::Info(_) | Msg::Failed(_) => {
             unreachable!("handled before the mode dispatch")
         }
@@ -385,6 +394,42 @@ fn create(model: &mut Model, mut input: String, msg: Msg) -> Vec<Cmd> {
     Vec::new()
 }
 
+/// The edit form (`e`): rows are typed or cycled in place; `Enter` saves
+/// through [`Cmd::Revise`] when every row validates, else the focus moves
+/// to the first bad row and the form stays open; `Esc` discards.
+fn form_mode(model: &mut Model, mut form: Form, msg: Msg) -> Vec<Cmd> {
+    match msg {
+        Msg::Quit => {
+            model.quit = true;
+            return Vec::new();
+        }
+        Msg::Escape => {
+            model.mode = Mode::Normal;
+            return Vec::new();
+        }
+        Msg::Up => form.focus_prev(),
+        Msg::Down => form.focus_next(),
+        Msg::Left => form.cycle(-1, &model.workflow),
+        Msg::Right => form.cycle(1, &model.workflow),
+        Msg::Char(c) => form.type_char(c),
+        Msg::Paste(text) => form.paste(&one_line(&text)),
+        Msg::Backspace => form.backspace(),
+        Msg::Enter => match form.fields(&model.workflow, model.today) {
+            Ok(fields) => {
+                model.mode = Mode::Normal;
+                return vec![Cmd::Revise(form.id, Box::new(fields))];
+            }
+            Err(e) => {
+                form.focus = e.field;
+                model.message = Some(Message::error(e.message));
+            }
+        },
+        _ => {}
+    }
+    model.mode = Mode::Form(Box::new(form));
+    Vec::new()
+}
+
 /// A progress entry is one line in the file: pasted line breaks become
 /// spaces (a trailing newline from the clipboard disappears).
 pub fn one_line(text: &str) -> String {
@@ -396,8 +441,10 @@ pub fn one_line(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::form::Field;
     use crate::model::SourceChoice;
-    use tasq_core::model::{Status, Task, TaskDraft, Workflow};
+    use tasq_core::edit::Fields;
+    use tasq_core::model::{Status, Tag, Task, TaskDraft, Workflow};
     use tasq_core::theme::Theme;
 
     fn task(id: u64, title: &str, status: Option<Status>) -> Task {
@@ -925,10 +972,126 @@ mod tests {
         assert_eq!(m.selected, Some(TaskId::from(1)));
     }
 
+    fn today() -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 5).unwrap()
+    }
+
+    fn form_of(m: &Model) -> Form {
+        match &m.mode {
+            Mode::Form(form) => (**form).clone(),
+            other => panic!("not in the form: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn form_flow() {
+        let mut m = model().with_today(today());
+        m.set_filter("nothing".into());
+        assert_eq!(update(&mut m, Msg::Edit), Vec::new());
+        assert_eq!(m.mode, Mode::Normal);
+        assert_eq!(m.message, Some(Message::error(NO_SELECTION)));
+        m.set_filter(String::new());
+        assert_eq!(update(&mut m, Msg::Edit), Vec::new());
+        let form = form_of(&m);
+        assert_eq!(form.id, TaskId::from(1));
+        assert_eq!(form.title, "First");
+        assert_eq!(form.focus, Field::Title);
+        assert_eq!(m.message, None);
+
+        assert_eq!(feed(&mut m, chars(" bis")), Vec::new());
+        assert_eq!(form_of(&m).title, "First bis");
+        assert_eq!(feed(&mut m, [Msg::Down, Msg::Right]), Vec::new());
+        let form = form_of(&m);
+        assert_eq!(form.focus, Field::Status);
+        assert_eq!(form.chosen_status(&m.workflow), Some(Status::READY));
+        assert_eq!(feed(&mut m, [Msg::Down, Msg::Left]), Vec::new());
+        assert_eq!(form_of(&m).chosen_priority(), Priority::A);
+        assert_eq!(update(&mut m, Msg::Down), Vec::new());
+        assert_eq!(feed(&mut m, chars("tomorrow")), Vec::new());
+        assert_eq!(
+            feed(&mut m, [Msg::Down, Msg::Paste("/p\n".into())]),
+            Vec::new()
+        );
+        assert_eq!(form_of(&m).project, "/p");
+        assert_eq!(update(&mut m, Msg::Down), Vec::new());
+        assert_eq!(feed(&mut m, chars("a #b")), Vec::new());
+        assert_eq!(feed(&mut m, [Msg::Down, Msg::Top]), Vec::new());
+        assert_eq!(form_of(&m).focus, Field::Tags, "the bottom row stays");
+
+        let cmds = update(&mut m, Msg::Enter);
+        assert_eq!(m.mode, Mode::Normal);
+        assert_eq!(
+            cmds,
+            vec![Cmd::Revise(
+                TaskId::from(1),
+                Box::new(Fields {
+                    title: "First bis".into(),
+                    status: Some(Status::READY),
+                    priority: Priority::A,
+                    due: Some(chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap()),
+                    project: Some("/p".into()),
+                    tags: vec![Tag::new("a").unwrap(), Tag::new("b").unwrap()],
+                })
+            )]
+        );
+    }
+
+    #[test]
+    fn form_stays_open_on_bad_input_and_closes_on_escape() {
+        let mut m = model().with_today(today());
+        update(&mut m, Msg::Edit);
+        assert_eq!(feed(&mut m, [Msg::Down, Msg::Down, Msg::Down]), Vec::new());
+        assert_eq!(form_of(&m).focus, Field::Due);
+        feed(&mut m, chars("soon"));
+        assert_eq!(update(&mut m, Msg::Up), Vec::new());
+        assert_eq!(form_of(&m).focus, Field::Priority);
+        assert_eq!(update(&mut m, Msg::Enter), Vec::new());
+        let form = form_of(&m);
+        assert_eq!(form.focus, Field::Due, "the focus goes to the bad row");
+        assert_eq!(form.due, "soon");
+        let message = m.message.clone().expect("an error");
+        assert!(message.is_error);
+        assert!(message.text.starts_with("due: "), "{}", message.text);
+        for _ in 0..4 {
+            update(&mut m, Msg::Backspace);
+        }
+        assert_eq!(m.message, None, "typing clears the message");
+        feed(&mut m, [Msg::Up, Msg::Up, Msg::Up, Msg::Up]);
+        assert_eq!(form_of(&m).focus, Field::Title, "the top row stays");
+        for _ in 0..5 {
+            update(&mut m, Msg::Backspace);
+        }
+        assert_eq!(form_of(&m).title, "");
+        assert_eq!(feed(&mut m, [Msg::Left, Msg::Right]), Vec::new());
+        assert_eq!(form_of(&m).title, "", "a text row does not cycle");
+        assert_eq!(update(&mut m, Msg::Enter), Vec::new());
+        assert_eq!(
+            m.message,
+            Some(Message::error("the title must not be empty"))
+        );
+        assert_eq!(form_of(&m).focus, Field::Title);
+        assert_eq!(update(&mut m, Msg::Escape), Vec::new());
+        assert_eq!(m.mode, Mode::Normal);
+        assert_eq!(m.message, None);
+        assert_eq!(
+            m.tasks[0].title, "First",
+            "the form never touches the model's tasks"
+        );
+        update(&mut m, Msg::Edit);
+        assert_eq!(update(&mut m, Msg::Quit), Vec::new());
+        assert!(m.quit);
+        let mut m = model();
+        assert_eq!(feed(&mut m, [Msg::Left, Msg::Right]), Vec::new());
+        assert_eq!(m.mode, Mode::Normal, "nothing in normal mode");
+    }
+
     #[test]
     fn host_actions_need_a_selection() {
         let mut m = model();
-        assert_eq!(update(&mut m, Msg::Edit), vec![Cmd::Edit(TaskId::from(1))]);
+        assert_eq!(
+            update(&mut m, Msg::Editor),
+            vec![Cmd::Editor(TaskId::from(1))]
+        );
         assert_eq!(
             update(&mut m, Msg::Launch),
             vec![Cmd::Launch(TaskId::from(1), LaunchTarget::Here)]
@@ -950,7 +1113,7 @@ mod tests {
         assert_eq!(update(&mut m, Msg::Sync), vec![Cmd::Sync(Vec::new())]);
         update(&mut m, Msg::Loaded(Vec::new()));
         for msg in [
-            Msg::Edit,
+            Msg::Editor,
             Msg::Launch,
             Msg::LaunchDetached { focus: true },
             Msg::LaunchDetached { focus: false },

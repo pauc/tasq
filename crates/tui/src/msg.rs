@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use tasq_core::edit::Fields;
 use tasq_core::model::{Priority, Status, Task, TaskDraft, TaskId};
 
 /// Something that happened: a key, translated by [`crate::keys`] for the
@@ -13,6 +14,10 @@ pub enum Msg {
     Up,
     /// Move the selection or the picker cursor down one.
     Down,
+    /// In the form: cycle the focused choice row backwards.
+    Left,
+    /// In the form: cycle the focused choice row forwards.
+    Right,
     /// Move the selection [`crate::model::PAGE`] rows up.
     PageUp,
     /// Move the selection [`crate::model::PAGE`] rows down.
@@ -43,8 +48,10 @@ pub enum Msg {
     BeginDone,
     /// `c`: start typing the title of a new task.
     BeginCreate,
-    /// `E`: open the task's file in the editor.
+    /// `e`: open the edit form on the selected task.
     Edit,
+    /// `E`: open the task's file in the editor.
+    Editor,
     /// `Enter` in normal mode: open a work session in this terminal.
     Launch,
     /// `Ctrl+Enter` / `Shift+Enter` in normal mode: open a work session in
@@ -94,8 +101,10 @@ pub enum Cmd {
     /// `tasq create <title>`: [`tasq_core::store::Store::create`] with the
     /// model's draft, then the host's `after_create`.
     Create(Box<TaskDraft>),
+    /// The form's save: [`tasq_core::edit::revise`] with the fields.
+    Revise(TaskId, Box<Fields>),
     /// Open the task's file in the editor (terminal released meanwhile).
-    Edit(TaskId),
+    Editor(TaskId),
     /// Open a work session on the task: in this terminal (released
     /// meanwhile) or in a new window (the UI keeps the screen).
     Launch(TaskId, LaunchTarget),
@@ -122,7 +131,7 @@ impl Cmd {
     pub fn releases_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Edit(_) | Self::Launch(_, LaunchTarget::Here) | Self::Sync(_)
+            Self::Editor(_) | Self::Launch(_, LaunchTarget::Here) | Self::Sync(_)
         )
     }
 
@@ -253,7 +262,7 @@ mod tests {
     #[test]
     fn commands_that_need_the_terminal() {
         let id = TaskId::from(1);
-        assert!(Cmd::Edit(id.clone()).releases_terminal());
+        assert!(Cmd::Editor(id.clone()).releases_terminal());
         assert!(Cmd::Launch(id.clone(), LaunchTarget::Here).releases_terminal());
         assert!(Cmd::Sync(Vec::new()).releases_terminal());
         for focus in [true, false] {
@@ -267,9 +276,12 @@ mod tests {
         assert!(!Cmd::Log(id.clone(), "x".into()).releases_terminal());
         assert!(!Cmd::Done(id.clone(), None).releases_terminal());
         assert!(!Cmd::Create(Box::new(TaskDraft::new("x"))).releases_terminal());
+        let fields = Box::new(Fields::of(&Task::new(id.clone(), "x")));
+        assert!(!Cmd::Revise(id.clone(), fields.clone()).releases_terminal());
+        assert!(!Cmd::Revise(id.clone(), fields).pauses_after());
         assert!(Cmd::Launch(id.clone(), LaunchTarget::Here).pauses_after());
         assert!(Cmd::Sync(vec!["inbox".to_owned()]).pauses_after());
-        assert!(!Cmd::Edit(id.clone()).pauses_after());
+        assert!(!Cmd::Editor(id.clone()).pauses_after());
         assert!(!Cmd::Load.pauses_after());
         assert!(!Cmd::Create(Box::new(TaskDraft::new("x"))).pauses_after());
     }

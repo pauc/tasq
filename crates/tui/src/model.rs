@@ -4,10 +4,12 @@
 
 use std::path::PathBuf;
 
+use chrono::NaiveDate;
 use tasq_core::model::{Priority, Status, Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::{self, Filter, Group};
 use tasq_core::theme::Theme;
 
+use crate::form::Form;
 use crate::keys::KeyMap;
 
 /// Terminal width from which the list and the detail pane sit side by
@@ -55,6 +57,8 @@ pub enum Mode {
         /// Text typed so far.
         input: String,
     },
+    /// Editing the selected task's fields in the form (`e`).
+    Form(Box<Form>),
     /// The key help overlay (`?`).
     Help,
 }
@@ -150,6 +154,9 @@ pub struct Model {
     /// Which of [`Model::sources`] are checked, kept across openings of
     /// the picker; starts as each source's `auto`.
     pub checked: Vec<bool>,
+    /// The day a due date typed as `today` in the form resolves to; the
+    /// front end sets it from its clock.
+    pub today: NaiveDate,
     /// The applied filter text (see [`Model::filter`]).
     pub filter: String,
     /// The selected task, when any is visible.
@@ -183,6 +190,7 @@ impl Model {
             keys: KeyMap::default(),
             sources: Vec::new(),
             checked: Vec::new(),
+            today: NaiveDate::default(),
             filter: String::new(),
             selected: None,
             mode: Mode::Normal,
@@ -206,6 +214,13 @@ impl Model {
     #[must_use]
     pub fn with_keys(mut self, keys: KeyMap) -> Self {
         self.keys = keys;
+        self
+    }
+
+    /// The day the form's `today` means (from the front end's clock).
+    #[must_use]
+    pub fn with_today(mut self, today: NaiveDate) -> Self {
+        self.today = today;
         self
     }
 
@@ -514,6 +529,14 @@ mod tests {
         assert_eq!(m.draft("x").project.as_deref(), Some(Path::new("/work")));
         let m = m.with_default_project(None);
         assert_eq!(m.draft("x").project, None);
+    }
+
+    #[test]
+    fn today_comes_from_the_front_end() {
+        let m = Model::new(Workflow::default(), Theme::default(), true);
+        assert_eq!(m.today, NaiveDate::default());
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).unwrap();
+        assert_eq!(m.with_today(day).today, day);
     }
 
     #[test]

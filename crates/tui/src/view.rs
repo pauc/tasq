@@ -18,6 +18,7 @@ use tasq_core::clock::{format_date, format_timestamp};
 use tasq_core::model::{Priority, Task};
 use tasq_core::theme::{self, group_label};
 
+use crate::form::{Field, Form};
 use crate::keys::{Action, KeyMap};
 use crate::model::{LayoutKind, Mode, Model, NoteTarget, Row};
 
@@ -49,7 +50,11 @@ pub const HELP: &[(&[Action], &str)] = &[
     (&[Action::Priority], "set the priority (A, B, C)"),
     (&[Action::Log], "log a progress note"),
     (&[Action::Done], "mark done, with an optional final note"),
-    (&[Action::Edit], "open the task file in $EDITOR"),
+    (
+        &[Action::Edit],
+        "edit the task in a form (title, status, priority, due, project, tags)",
+    ),
+    (&[Action::Editor], "open the task file in $EDITOR"),
     (&[Action::Launch], "open a work session here (tasq pick)"),
     (
         &[Action::LaunchDetached],
@@ -207,6 +212,7 @@ pub fn view(model: &Model, frame: &mut Frame) {
             &source_entries(model),
             *cursor,
         ),
+        Mode::Form(form) => render_form(model, frame, main, form),
         Mode::Normal | Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => {}
     }
 }
@@ -526,6 +532,7 @@ pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
             Span::raw(input.as_str()),
             Span::styled("\u{2581}", dim()),
         ]),
+        Mode::Form(_) if model.message.is_none() => Line::styled(FORM_HINTS, dim()),
         _ => match &model.message {
             Some(message) if message.is_error => Line::styled(
                 message.text.as_str(),
@@ -537,6 +544,9 @@ pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
     };
     Paragraph::new(line)
 }
+
+/// The status-bar hints while the form is open (its keys are fixed).
+pub const FORM_HINTS: &str = "Up/Down, Tab: next row  Left/Right: change  Enter: save  Esc: cancel";
 
 /// The longest hint line for `keys` that fits in `width` columns.
 pub fn hints(keys: &KeyMap, width: u16) -> String {
@@ -593,6 +603,55 @@ fn render_help(model: &Model, frame: &mut Frame, area: Rect) {
     frame.render_widget(block, popup);
     frame.render_widget(Paragraph::new(lines), inner);
 }
+
+/// The edit form: one row per field, the focused row's label reversed; a
+/// text row shows the cursor after its text, a choice row shows its value
+/// between `<` and `>`.
+fn render_form(model: &Model, frame: &mut Frame, area: Rect, form: &Form) {
+    let lines: Vec<Line<'_>> = Field::ALL
+        .into_iter()
+        .map(|field| {
+            let label = format!(" {:<9}", field.label());
+            let value = form.value(field, &model.workflow);
+            let focused = field == form.focus;
+            let label_style = if focused {
+                Style::new().add_modifier(Modifier::REVERSED)
+            } else {
+                bold()
+            };
+            let mut spans = vec![Span::styled(label, label_style), Span::raw(" ")];
+            match (field.is_text(), focused) {
+                (true, true) => {
+                    spans.push(Span::raw(value));
+                    spans.push(Span::styled("\u{2581}", dim()));
+                }
+                (false, true) => spans.push(Span::raw(format!("< {value} >"))),
+                (_, false) => spans.push(Span::raw(value)),
+            }
+            Line::from(spans)
+        })
+        .collect();
+    let width = narrow(
+        lines
+            .iter()
+            .map(Line::width)
+            .max()
+            .unwrap_or(0)
+            .max(FORM_MIN_WIDTH)
+            + 3,
+    );
+    let height = narrow(lines.len() + 2);
+    let popup = centered(area, width, height);
+    frame.render_widget(Clear, popup);
+    let block = Block::bordered().title(format!(" Edit [{}] ", form.id));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The form is at least this wide inside its border, so short values
+/// leave room to type (and the title always fits).
+const FORM_MIN_WIDTH: usize = 50;
 
 fn render_picker(
     model: &Model,
@@ -654,8 +713,8 @@ mod tests {
     #[test]
     fn hints_shrink_with_the_terminal() {
         let keys = KeyMap::default();
-        let full = "j/k  / filter  c new  t status  p prio  l log  d done  E edit  Enter open  s/S sync  ? help  q quit";
-        let short = "j/k  /  c t p l d E  Enter open  s/S sync  ? help  q quit";
+        let full = "j/k  / filter  c new  t status  p prio  l log  d done  e edit  Enter open  s/S sync  ? help  q quit";
+        let short = "j/k  /  c t p l d e  Enter open  s/S sync  ? help  q quit";
         assert_eq!(full.len(), 99, "the full hints must fit 100 columns");
         assert_eq!(short.len(), 57);
         assert_eq!(hints(&keys, 200), full);
@@ -689,12 +748,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             hints(&keys, 200),
-            "n/k  F3 filter  c new  p prio  l log  d done  E edit  C-o open  S sync  ? help  q quit",
+            "n/k  F3 filter  c new  p prio  l log  d done  e edit  C-o open  S sync  ? help  q quit",
             "with `sync` unbound the picker's key alone labels sync"
         );
         assert_eq!(
             hints(&keys, 60),
-            "n/k  F3  c p l d E  C-o open  S sync  ? help  q quit"
+            "n/k  F3  c p l d e  C-o open  S sync  ? help  q quit"
         );
         let keys = KeyMap::from_config(&table(&[
             ("down", &[]),
@@ -715,17 +774,17 @@ mod tests {
         let keys = KeyMap::from_config(&table(&[("down", &[]), ("up", &[])])).unwrap();
         assert_eq!(
             hints(&keys, 200),
-            "/ filter  c new  t status  p prio  l log  d done  E edit  Enter open  s/S sync  ? help  q quit"
+            "/ filter  c new  t status  p prio  l log  d done  e edit  Enter open  s/S sync  ? help  q quit"
         );
         let keys = KeyMap::from_config(&table(&[("sources", &[])])).unwrap();
         assert_eq!(
             hints(&keys, 200),
-            "j/k  / filter  c new  t status  p prio  l log  d done  E edit  Enter open  s sync  ? help  q quit"
+            "j/k  / filter  c new  t status  p prio  l log  d done  e edit  Enter open  s sync  ? help  q quit"
         );
         let keys = KeyMap::from_config(&table(&[("sources", &[]), ("sync", &[])])).unwrap();
         assert_eq!(
             hints(&keys, 200),
-            "j/k  / filter  c new  t status  p prio  l log  d done  E edit  Enter open  ? help  q quit"
+            "j/k  / filter  c new  t status  p prio  l log  d done  e edit  Enter open  ? help  q quit"
         );
     }
 
@@ -736,33 +795,41 @@ mod tests {
         assert_eq!(rows[0], ("k/Up, j/Down".to_owned(), "move the selection"));
         assert_eq!(rows[1], ("g/Home, G/End".to_owned(), "first / last task"));
         assert_eq!(rows[2], ("C-u/PgUp, C-d/PgDn".to_owned(), "move ten tasks"));
-        assert_eq!(rows[12].0, "C-Enter");
-        assert_eq!(rows[13].0, "S-Enter");
         assert_eq!(
-            rows[14],
+            rows[10],
+            (
+                "e".to_owned(),
+                "edit the task in a form (title, status, priority, due, project, tags)"
+            )
+        );
+        assert_eq!(rows[11], ("E".to_owned(), "open the task file in $EDITOR"));
+        assert_eq!(rows[13].0, "C-Enter");
+        assert_eq!(rows[14].0, "S-Enter");
+        assert_eq!(
+            rows[15],
             (
                 "s".to_owned(),
                 "run the sources that run by default (tasq sync)"
             )
         );
         assert_eq!(
-            rows[15],
+            rows[16],
             (
                 "S".to_owned(),
                 "pick the sources to run: Space toggles, Enter runs"
             )
         );
         assert_eq!(
-            rows[18],
+            rows[19],
             ("Enter".to_owned(), "in a picker: apply the choice")
         );
-        assert_eq!(rows[20], ("q, C-c".to_owned(), "quit"));
+        assert_eq!(rows[21], ("q, C-c".to_owned(), "quit"));
         let mut table = BTreeMap::new();
         table.insert("quit".to_owned(), KeySpec::Many(Vec::new()));
         table.insert("sync".to_owned(), KeySpec::One("f5".to_owned()));
         let rows = help_rows(&KeyMap::from_config(&table).unwrap());
-        assert_eq!(rows[20], ("none, C-c".to_owned(), "quit"));
-        assert_eq!(rows[14].0, "F5");
+        assert_eq!(rows[21], ("none, C-c".to_owned(), "quit"));
+        assert_eq!(rows[15].0, "F5");
     }
 
     #[test]

@@ -163,6 +163,24 @@ fn overlays() {
 }
 
 #[test]
+fn edit_form() {
+    let mut model = fixture(true).with_today(date("2026-10-05"));
+    update(&mut model, Msg::Edit);
+    assert_snapshot!("edit_form", screen(&mut model, 120, 20));
+    update(&mut model, Msg::Down);
+    update(&mut model, Msg::Right);
+    assert_snapshot!("edit_form_choice_row", screen(&mut model, 120, 20));
+    update(&mut model, Msg::Down);
+    update(&mut model, Msg::Down);
+    for c in "x".chars() {
+        update(&mut model, Msg::Char(c));
+    }
+    update(&mut model, Msg::Enter);
+    assert_snapshot!("edit_form_bad_due", screen(&mut model, 120, 20));
+    assert_snapshot!("edit_form_narrow", screen(&mut model, 60, 12));
+}
+
+#[test]
 fn creating_from_an_empty_list() {
     let mut model =
         Model::new(Workflow::default(), Theme::default(), true).with_default_status(Status::LATER);

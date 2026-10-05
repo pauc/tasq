@@ -69,7 +69,8 @@ pub fn dispatch(
             created = id;
             result
         }
-        Cmd::Edit(id) => edit_file(store, host, id),
+        Cmd::Revise(id, fields) => revise(store, id, fields),
+        Cmd::Editor(id) => edit_file(store, host, id),
         Cmd::Launch(id, target) => host.launch(id, *target),
         Cmd::Sync(sources) => host.sync(sources),
     };
@@ -118,6 +119,17 @@ fn close(
     match host.after_done(&task) {
         Ok(()) => Ok(line),
         Err(warning) => Err(format!("{line} ({warning})")),
+    }
+}
+
+/// `edit::revise`: the status line names the changed fields, or says
+/// `unchanged` when the form was saved as it was opened.
+fn revise(store: &mut dyn Store, id: &TaskId, fields: &edit::Fields) -> Result<String, String> {
+    let revised = edit::revise(store, id, fields).map_err(|e| e.to_string())?;
+    if revised.changed.is_empty() {
+        Ok(format!("[{id}] unchanged"))
+    } else {
+        Ok(format!("[{id}] updated: {}", revised.changed.join(", ")))
     }
 }
 
@@ -371,6 +383,62 @@ mod tests {
     }
 
     #[test]
+    fn revise_writes_the_fields_and_names_the_changed_ones() {
+        let mut store = store();
+        let mut host = RecordingHost::default();
+        let id = TaskId::from(1);
+        let task = store.get(&id).unwrap();
+        let same = Box::new(edit::Fields::of(&task));
+        let msgs = dispatch(
+            &Cmd::Revise(id.clone(), same),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(msgs[0], Msg::Info("[1] unchanged".into()));
+        assert_eq!(msgs.len(), 2);
+        let changed = Box::new(edit::Fields {
+            title: "Renamed".into(),
+            priority: Priority::A,
+            ..edit::Fields::of(&task)
+        });
+        let msgs = dispatch(
+            &Cmd::Revise(id.clone(), changed),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(msgs[0], Msg::Info("[1] updated: title, priority".into()));
+        assert!(matches!(&msgs[1], Msg::Loaded(tasks) if tasks[0].title == "Renamed"));
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(store.get(&id).unwrap().priority, Priority::A);
+        let blank = Box::new(edit::Fields {
+            title: String::new(),
+            ..edit::Fields::of(&task)
+        });
+        let msgs = dispatch(
+            &Cmd::Revise(id.clone(), blank),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(msgs[0], Msg::Failed("the title must not be empty".into()));
+        let gone = Box::new(edit::Fields::of(&task));
+        let msgs = dispatch(
+            &Cmd::Revise(TaskId::from(9), gone),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(msgs[0], Msg::Failed("no task with id 9".into()));
+        assert_eq!(
+            host.calls,
+            Vec::<String>::new(),
+            "no host action follows an edit"
+        );
+    }
+
+    #[test]
     fn create_writes_the_draft_tells_the_host_and_selects_the_task() {
         let mut store = store();
         let mut host = RecordingHost::default();
@@ -545,12 +613,22 @@ mod tests {
         let msgs = dispatch(&picked, &mut store, &clock(), &mut host);
         assert_eq!(msgs[0], Msg::Info("ok".into()));
         // The memory store keeps no files, so there is nothing to edit.
-        let msgs = dispatch(&Cmd::Edit(TaskId::from(1)), &mut store, &clock(), &mut host);
+        let msgs = dispatch(
+            &Cmd::Editor(TaskId::from(1)),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
         assert_eq!(
             msgs[0],
             Msg::Failed("task 1 has no file to edit in this store".into())
         );
-        let msgs = dispatch(&Cmd::Edit(TaskId::from(9)), &mut store, &clock(), &mut host);
+        let msgs = dispatch(
+            &Cmd::Editor(TaskId::from(9)),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
         assert_eq!(msgs[0], Msg::Failed("no task with id 9".into()));
         assert_eq!(
             host.calls,
@@ -613,7 +691,12 @@ mod tests {
         }
         let mut store = FileStore(store());
         let mut host = RecordingHost::default();
-        let msgs = dispatch(&Cmd::Edit(TaskId::from(2)), &mut store, &clock(), &mut host);
+        let msgs = dispatch(
+            &Cmd::Editor(TaskId::from(2)),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
         assert_eq!(msgs[0], Msg::Info("ok".into()));
         assert_eq!(host.calls, vec!["edit 2 /nb/2.todo.md"]);
         assert_eq!(open_ids(&msgs), ["1", "2"]);

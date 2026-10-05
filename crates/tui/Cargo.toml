@@ -18,9 +18,10 @@ tasq-core = { path = "../core", version = "0.1.0" }
 ratatui = "0.30"
 # `#[mutants::skip]` on the functions that only drive the terminal.
 mutants = "0.0.4"
+# `NaiveDate` for the form's `today` (the same chrono core already uses).
+chrono = { version = "0.4", default-features = false }
 
 [dev-dependencies]
-chrono = { version = "0.4", default-features = false }
 insta = "1"
 
 [lints]

@@ -1,0 +1,16 @@
+---
+source: crates/tui/tests/render.rs
+expression: "screen(&mut model, 60, 12)"
+---
+"┌ Tasks (5/5) ─────────────────────────────────────────────┐"
+"│IN┌ Edit [1] ─────────────────────────────────────────┐   │"
+"│  │ Title     Fix the flaky build                     │   │"
+"│RE│ Status    ready                                   │   │"
+"│  │ Priority  A                                       │ #r│"
+"│  │ Due       2026-10-10x▁                            │   │"
+"│LA│ Project   /home/me/code/app                       │   │"
+"│  │ Tags      ci                                      │   │"
+"│NO└───────────────────────────────────────────────────┘   │"
+"│  [ 5] #B Call the bank                                   │"
+"└──────────────────────────────────────────────────────────┘"
+"due: invalid date or timestamp "2026-10-10x" (expected YYYY-"

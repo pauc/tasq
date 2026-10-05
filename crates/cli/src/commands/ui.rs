@@ -45,15 +45,16 @@ pub fn run(app: &App) -> Result<()> {
         return Err(CliError::user("tasq ui needs a terminal"));
     }
     let theme = Theme::from_config(&app.config().ui);
+    let clock = app.clock()?;
     let model = Model::new(app.workflow(), theme, app.out.color())
         .with_keys(keys)
+        .with_today(clock.today())
         .with_default_status(app.config().workflow.default_status.clone())
         .with_default_project(Some(
             crate::commands::existing_dir(&app.opts.cwd).unwrap_or_else(|| app.opts.cwd.clone()),
         ))
         .with_sources(source_choices(app.config()));
     let mut store = app.open_store()?;
-    let clock = app.clock()?;
     let exe = std::env::current_exe()
         .map_err(|e| CliError::Internal(anyhow::anyhow!("locating the tasq binary: {e}")))?;
     let mut host = CliHost {
