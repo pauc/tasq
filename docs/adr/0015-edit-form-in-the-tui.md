@@ -1,6 +1,6 @@
 # ADR-0015: Editing a task in a form inside the TUI (`e`)
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-05
 
 ## Context

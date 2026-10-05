@@ -235,6 +235,28 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   Follow-up 8be3253: the herdr launcher focuses the workspace right after creating the pane,
   before `agent start` waits for Claude to be ready; the switch felt slow when it came last.
 
+- **Edit form in the TUI (follow-up 2026-10-05, ADR 0015, todo 13).** `e` opens
+  `Mode::Form(Box<Form>)` (`crates/tui/src/form.rs`): six rows, Title, Status, Priority,
+  Due, Project, Tags; `Up`/`Down`/`Tab`/`Shift+Tab` move the focus, text rows take typing
+  and paste, `Left`/`Right` cycle the status (workflow statuses then `none`) and the
+  priority, `Enter` validates (`Form::fields`: trimmed non-empty title, `dates::parse_day`
+  against `Model::today`, `Tag::from_str`, empty due/project clear) and sends
+  `Cmd::Revise(id, Box<Fields>)`; a bad row keeps the form open with the focus on it.
+  `dispatch` runs `edit::revise` and reports `[id] updated: title, due` or `[id] unchanged`
+  (no write). Prerequisite the todo did not mention: the store could not write a title,
+  a due date or a tag set (no awk pass to mirror), so `format::ops` gained `set_title`,
+  `set_due`, `clear_due`, `clear_project`, `set_tags` with `tasq`'s own rules
+  (`docs/file-format.md`, "Edits the script never made", 29 fixture pairs), and
+  `diff.rs` applies them; `tasq apply` benefits (`docs/json.md`). Keys: action `edit` is
+  now the form on `e`, the external editor is the new action `editor` on `E`
+  (`docs/config.md`, README). `Model::with_today` is set by the CLI from its clock.
+  Mutants: core `ops.rs` + `edit.rs` + store-nb `diff.rs` 173 tested, 0 missed; tui
+  `form/update/keys/view/model/msg/runtime` 419 tested, 9 missed on the first pass (all in
+  the new code: two unreachable fallbacks reshaped, the form key translation tested, the
+  title term of the popup width dropped), 0 missed after. Observed once: the two
+  `plugins::` CLI integration tests failed together under a full `cargo test --workspace`
+  and passed alone and on the next full run; unrelated to this change, not investigated.
+  Commits 10f8212 (core), 81d1e1b (store-nb), 86558e6 (ADR) and the tui/docs commits below.
 - **Sync sources on demand (follow-up 2026-10-05, ADR 0014, todo 12).** `source[].auto`
   (default `true`): a bare `tasq sync` and the TUI's sync-all run the `auto` sources only;
   `--source NAME` is now repeatable and runs exactly the named enabled sources, `auto` or not;
