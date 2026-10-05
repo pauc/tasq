@@ -12,7 +12,8 @@ use tasq_core::launch::{LaunchContext, LaunchError, LaunchOutcome, Launcher};
 use tasq_core::model::{Session, Task, TaskId, Worktree};
 use tasq_launch::prompt::DEFAULT_TEMPLATE;
 use tasq_launch::{
-    ClaudeLauncher, EnvrcStatus, HerdrLauncher, TmuxLauncher, envrc_status, wrap_command,
+    ClaudeLauncher, EnvrcStatus, HerdrLauncher, TmuxLauncher, command_in, envrc_status,
+    wrap_command,
 };
 use tempfile::TempDir;
 
@@ -221,6 +222,35 @@ fn claude_command_wraps_with_direnv_only_when_allowed() {
     let inherit = claude(&sb, EnvStrategy::Inherit);
     let (argv, _) = inherit.command(&ctx).unwrap();
     assert_eq!(argv[0], "claude");
+    // The task-less form the CLI uses for `sync --interactive`: the same
+    // wrapping around a literal prompt.
+    assert_eq!(
+        command_in(
+            &sb.work,
+            "/tasq:sync".to_owned(),
+            EnvStrategy::Direnv,
+            &sb.env(&[])
+        ),
+        (
+            vec![
+                "direnv".to_owned(),
+                "exec".to_owned(),
+                sb.work.display().to_string(),
+                "claude".to_owned(),
+                "/tasq:sync".to_owned(),
+            ],
+            None
+        )
+    );
+    assert_eq!(
+        command_in(
+            &sb.work,
+            "/tasq:sync".to_owned(),
+            EnvStrategy::Inherit,
+            &sb.env(&[])
+        ),
+        (vec!["claude".to_owned(), "/tasq:sync".to_owned()], None)
+    );
     assert_eq!(
         wrap_command(
             EnvStrategy::Inherit,

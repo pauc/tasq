@@ -1,6 +1,8 @@
 //! The Claude Code launcher: `claude "<prompt>"` in the working directory,
 //! through `direnv exec` when the strategy and the `.envrc` allow it.
 
+use std::path::Path;
+
 use tasq_core::config::EnvStrategy;
 use tasq_core::launch::{LaunchContext, LaunchError, LaunchOutcome, Launcher};
 
@@ -36,15 +38,24 @@ impl ClaudeLauncher {
         ctx: &LaunchContext,
     ) -> Result<(Vec<String>, Option<String>), LaunchError> {
         let prompt = self.prompt(ctx)?;
-        let status = envrc_status(&ctx.workdir, &self.env);
-        let argv = wrap_command(
-            self.strategy,
-            status,
-            &ctx.workdir,
-            vec!["claude".to_owned(), prompt],
-        );
-        Ok((argv, envrc_warning(status, &ctx.workdir)))
+        Ok(command_in(&ctx.workdir, prompt, self.strategy, &self.env))
     }
+}
+
+/// `claude "<prompt>"` in `workdir`, through `direnv exec` when the
+/// strategy and the directory's `.envrc` allow it, plus the warning to show
+/// first when the `.envrc` is not allowed. This is the whole of a Claude
+/// session that is not about one task (`tasq sync --interactive`); the
+/// launcher adds the task prompt on top.
+pub fn command_in(
+    workdir: &Path,
+    prompt: String,
+    strategy: EnvStrategy,
+    env: &[(String, String)],
+) -> (Vec<String>, Option<String>) {
+    let status = envrc_status(workdir, env);
+    let argv = wrap_command(strategy, status, workdir, vec!["claude".to_owned(), prompt]);
+    (argv, envrc_warning(status, workdir))
 }
 
 impl Launcher for ClaudeLauncher {

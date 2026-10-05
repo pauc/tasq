@@ -58,7 +58,7 @@ of the file) and its `tasq` counterpart.
 | `tasks worktree <id> --create <branch>` (gwm) | `tasq worktree <ID> --create <BRANCH>` | Default manager is `git` (`git worktree add` into `<project>-<branch>`); for gwm set `work.worktree_manager`/`work.worktree_command` (below). |
 | `tasks session <id> <session-id> [desc]` | `tasq session <ID> <SESSION_ID> [DESC] [--launcher L]` | |
 | `tasks mr <id> <mr-url> [title]` | `tasq mr <ID> <URL> [TITLE]` | Title resolved through the configured `[forge.*]`; without one it records the short reference (`group/project!123`). The script used `glab api` from `TASKS_DEFAULT_WORKTREE`. |
-| `tasks update [args]` (Claude `/update-tasks` session) | `tasq sync [--source NAME] [--dry-run] [--json]`; `/tasq:sync` for the Claude briefing | Sources are `[[source]]` blocks: GitLab/GitHub review requests and work items, plus an LLM bridge for Slack/Gmail-style inboxes ([`docs/sources.md`](sources.md)). The bridge was verified headless on 2026-10-05 (same connectors, ~90 s and ~$2 per run), so Slack/Gmail triage no longer needs an interactive session. |
+| `tasks update [args]` (Claude `/update-tasks` session) | `tasq sync --interactive` (the same session, running `/tasq:sync` in `work.default_project`); `tasq sync [--source NAME] [--dry-run] [--json]` headless | Sources are `[[source]]` blocks: GitLab/GitHub review requests and work items, plus an LLM bridge for Slack/Gmail-style inboxes ([`docs/sources.md`](sources.md)). The bridge was verified headless on 2026-10-05 (same connectors, ~90 s and ~$2 per run), so Slack/Gmail triage no longer needs an interactive session. |
 | `tasks update <id> [<id>...]` | `tasq sync <ID>...` | Re-checks only those tasks. |
 | `tasks update-support [args]` (Freshdesk) | none | Freshdesk is a plan Non-Goal for v1. Keep using the script and its `/update-support-tasks` skill; the `support`-tagged tasks it creates list fine with `tasq support`. |
 | `tasks summary [date] [--raw]` | `tasq summary [DAY] [--raw]` | Also weekday names and `last <weekday>`; summarizer from `[report.summary]`. |
@@ -186,6 +186,9 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
       `GITLAB_TOKEN`). Never paste the token into the config file.
 - [ ] `tasq sync --dry-run`: read the planned creates/closes/notes against the
       tasks `tasks update` created; nothing is written. Then `tasq sync`.
+- [ ] `tasq sync --interactive --dry-run` prints the `claude "/tasq:sync"` command
+      that replaces `tasks update` (same `direnv exec` wrapping, run in
+      `work.default_project`); `tasq sync --interactive` opens it.
 - [ ] Inbox bridge: copy `examples/sources/inbox.md` to `~/.config/tasq/prompts/` and add
       the `inbox` `[[source]]` from `examples/sources/config.toml`. Each run is one headless
       Claude session (~90 s, ~$2), so keep its `auto = false` and run it on purpose with

@@ -1,15 +1,24 @@
-//! `tasq sync`: run the sources, reconcile, apply (plan T-502).
+//! `tasq sync`: run the sources, reconcile, apply (plan T-502), or with
+//! `--interactive` open the Claude briefing session that does it.
 
 use serde_json::Value;
+use tasq_core::config::ENV_PROFILE;
+use tasq_core::launch::ENV_NOTEBOOK;
 use tasq_core::model::{Origin, Status, Task, TaskId};
 use tasq_core::query::Filter;
 use tasq_core::source::{self, Applied, Change, Defaults, SyncContext};
 use tasq_core::store::Store;
+use tasq_launch::command_in;
+use tasq_launch::process::exec;
+use tasq_launch::shell::assignments;
 use tasq_sources::{Built, build_sources, real_transport};
 
 use crate::app::App;
 use crate::error::{CliError, Result};
 use crate::json;
+
+/// What the briefing session is asked to do: the plugin's sync skill.
+pub const BRIEFING_PROMPT: &str = "/tasq:sync";
 
 /// What happened for one source.
 #[derive(Debug, Default)]
@@ -20,8 +29,17 @@ struct Report {
     error: Option<String>,
 }
 
-/// Runs `sync`.
-pub fn run(app: &App, only: &[String], dry_run: bool, ids: &[String]) -> Result<()> {
+/// Runs `sync`; with `interactive` it opens the briefing session instead.
+pub fn run(
+    app: &App,
+    only: &[String],
+    dry_run: bool,
+    interactive: bool,
+    ids: &[String],
+) -> Result<()> {
+    if interactive {
+        return self::interactive(app, dry_run);
+    }
     let env = app.env_vec();
     let mut built = build_sources(app.config(), &env, &real_transport);
     if built.is_empty() {
@@ -97,6 +115,77 @@ pub fn run(app: &App, only: &[String], dry_run: bool, ids: &[String]) -> Result<
         reports.push(report);
     }
     render(app, &reports, dry_run)
+}
+
+/// `tasq sync --interactive`: the script's `tasks update`. Replaces this
+/// process with `claude "/tasq:sync"` in `work.default_project` (through
+/// `direnv exec` when `launch.env` and the `.envrc` allow it), with the
+/// notebook and profile in the environment so the session's `tasq` sees
+/// the same tasks. With `dry_run` the command is printed instead.
+pub fn interactive(app: &App, dry_run: bool) -> Result<()> {
+    let Some(workdir) = app.config().work.default_project.clone() else {
+        return Err(CliError::user(
+            "work.default_project is unset; the briefing session needs a directory to run in",
+        ));
+    };
+    if !workdir.is_dir() {
+        return Err(CliError::user(format!(
+            "work.default_project not found: {}",
+            workdir.display()
+        )));
+    }
+    let env = app.env_vec();
+    let (argv, warning) = command_in(
+        &workdir,
+        BRIEFING_PROMPT.to_owned(),
+        app.config().launch.env,
+        &env,
+    );
+    let mut extra = vec![(ENV_NOTEBOOK.to_owned(), app.config().store.notebook.clone())];
+    if let Some(profile) = &app.loaded.profile {
+        extra.push((ENV_PROFILE.to_owned(), profile.clone()));
+    }
+
+    if dry_run {
+        let mut steps = Vec::new();
+        if let Some(warning) = &warning {
+            steps.push(format!("warning: {warning}"));
+        }
+        steps.push(format!("cd {}", workdir.display()));
+        steps.push(format!(
+            "{} exec {}",
+            assignments(&extra),
+            argv.iter()
+                .map(|arg| if arg == BRIEFING_PROMPT {
+                    format!("{arg:?}")
+                } else {
+                    arg.clone()
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
+        if app.out.json_mode() {
+            return app.out.json(&json::document([
+                ("dry_run", Value::from(true)),
+                ("workdir", json::to_value(&workdir)),
+                ("launcher", Value::from("claude")),
+                ("command", json::to_value(&argv)),
+                ("env", json::to_value(&extra)),
+                ("steps", json::to_value(&steps)),
+            ]));
+        }
+        let mut text = "Launcher: claude (dry run)\n".to_owned();
+        for step in steps {
+            text.push_str(&step);
+            text.push('\n');
+        }
+        return app.out.print(&text);
+    }
+    if let Some(warning) = warning {
+        app.out.warn(&warning);
+    }
+    let err = exec(&argv, &workdir, &env, &extra);
+    Err(CliError::user(format!("{}: {err}", argv[0])))
 }
 
 /// The changes one source asks for: a full sweep (fetch, then check the

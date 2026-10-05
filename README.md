@@ -113,6 +113,7 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    ```sh
    tasq sync --dry-run
    tasq sync
+   tasq sync --interactive    # the morning briefing: a Claude session running /tasq:sync
    ```
 
 6. Yesterday's standup, from the progress notes:
@@ -216,6 +217,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq session ID SESSION_ID [DESC] [--launcher NAME]` | Track an agent session |
 | `tasq mr ID URL [TITLE]` | Track a merge request |
 | `tasq sync [--source NAME] [--dry-run] [ID]...` | Refresh tasks from the configured sources, or re-check the given tasks |
+| `tasq sync --interactive [--dry-run]` | Open the Claude Code briefing session (`/tasq:sync`) in `work.default_project` |
 | `tasq apply [FILE]` | Update a task from `{"schema":1,"task":{...}}` on stdin or in a file |
 | `tasq summary [DAY] [--raw]` | Standup summary of a day's progress notes |
 | `tasq dates [SPEC]...` | Resolve `today`, `last week`, `last 7 days`, ... to `FROM TO` |

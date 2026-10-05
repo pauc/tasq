@@ -109,7 +109,7 @@ Next: Phase 6 (reports, T-601/T-602).
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
 | T-501 | Source trait, items, reconcile | done | `tasq_core::source`: `reconcile` + `apply`, matched by origin or legacy URL; `Policy { create_new, close_when_done, flag }` |
-| T-502 | `sync` command | done | sweep + per-item `check` of tracked tasks the sweep dropped; `<id>...` re-check; `--source`, `--dry-run`, `--json`; exit 1 if any source failed |
+| T-502 | `sync` command | done | sweep + per-item `check` of tracked tasks the sweep dropped; `<id>...` re-check; `--source`, `--dry-run`, `--json`; exit 1 if any source failed; `--interactive` opens the `/tasq:sync` Claude session (2026-10-05, replaces `tasks update`) |
 | T-503 | Forge client | done | `tasq_sources::{http, auth, url, forge, gitlab, github}`; injectable `Transport`, retry/backoff, `Link` pagination; `forge.<name>.url` override |
 | T-504 | Review-request sources | done | one `ReviewRequests` over any `Forge`; check: merged/closed/approved by you/gone |
 | T-504b | Work-item sources | done | `WorkItems` with label/project filters; check: closed/reassigned/gone |
@@ -755,6 +755,16 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   `tasq` ran in (`LoadOptions.cwd`, canonicalised; the TUI gets it as `Model::default_project`
   from the CLI). The script left `## Project` out, and `pick` then failed on
   `work.default_project` unset. `tasq sync` tasks are unchanged.
+- `sync --interactive` (2026-10-05, not in the plan): the script's `tasks update` opened an
+  interactive Claude session; the plan replaced it with headless `tasq sync` plus the
+  `/tasq:sync` skill, which left the morning entry point as two steps. `tasq sync
+  --interactive` execs `claude "/tasq:sync"` in `work.default_project` through
+  `tasq_launch::command_in` (the `ClaudeLauncher` wrapping without a task: `envrc_status`,
+  `wrap_command`, `envrc_warning`), with `TASQ_NOTEBOOK`/`TASQ_PROFILE` set. A flag on `sync`
+  rather than a `briefing` command because the skill is already called sync; a shell alias was
+  rejected because it loses `work.default_project`, `launch.env` and the `direnv allow` warning
+  and has no `--dry-run`. `--interactive` conflicts with `--source` and ids (clap); the skill
+  decides which sources run.
 - T-904: the one-week side-by-side verification is a manual acceptance left to the author;
   `docs/migration.md` gives the daily procedure.
 - T-801: the README gif was recorded with VHS in docker rather than a local `vhs`/`asciinema`

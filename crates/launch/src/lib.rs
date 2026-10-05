@@ -23,7 +23,7 @@ pub mod summarizer;
 pub mod tmux;
 pub mod worktree;
 
-pub use self::claude::ClaudeLauncher;
+pub use self::claude::{ClaudeLauncher, command_in};
 pub use self::env::{EnvrcStatus, envrc_status, envrc_warning, parse_direnv_status, wrap_command};
 #[cfg(feature = "herdr")]
 pub use self::herdr::HerdrLauncher;

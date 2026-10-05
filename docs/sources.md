@@ -27,6 +27,13 @@ For each source:
 changes without writing. One failing source is reported and the others still run; the exit
 code is 1 when any failed.
 
+`tasq sync --interactive` is the morning briefing in one command: instead of syncing here it
+replaces the process with `claude "/tasq:sync"` in `work.default_project` (through `direnv
+exec` when `launch.env = "direnv"` and the `.envrc` is allowed, exactly like `tasq pick`), with
+`TASQ_NOTEBOOK` and `TASQ_PROFILE` set so the session's `tasq` sees the same notebook. The
+skill then runs `tasq sync --json` itself and reports. It takes no `--source` or ids; the skill
+decides what to run. `--dry-run` prints the command (`--json` for the structured form).
+
 Which sources run: `--source <name>` (repeatable) runs exactly those, whether or not they have
 `auto = true`, and an unknown or disabled name is an error listing the sources that exist.
 Without it, the sources with `auto = false` are skipped, so a source that costs a full LLM

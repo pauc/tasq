@@ -295,9 +295,12 @@ pub enum Command {
         /// Only these sources (`[[source]] name`, repeatable). Without it, every enabled source with `auto = true`.
         #[arg(long, value_name = "NAME")]
         source: Vec<String>,
-        /// Print the changes and write nothing.
+        /// Print the changes and write nothing (with --interactive: print the command and do not run it).
         #[arg(long)]
         dry_run: bool,
+        /// Open a Claude Code briefing session running `/tasq:sync` in work.default_project instead of syncing here.
+        #[arg(long, conflicts_with_all = ["source", "ids"])]
+        interactive: bool,
         /// Re-check only these tasks against their sources instead of a full sweep.
         #[arg(value_name = "ID")]
         ids: Vec<String>,
@@ -428,7 +431,15 @@ becomes a task (with the source's tags and status, and a `## Source` line
 for later matching), a tracked item that is done (merged, closed, approved
 by you, reassigned, gone) logs a note and marks the task done. Tracked
 tasks the sweep no longer lists are re-checked individually. With task ids,
-only those tasks are re-checked. See docs/sources.md.";
+only those tasks are re-checked. See docs/sources.md.
+
+`--interactive` is the morning briefing in one command (the script's
+`tasks update`): it replaces this process with `claude \"/tasq:sync\"` in
+work.default_project, through `direnv exec` when launch.env is `direnv`
+and the directory's .envrc is allowed, with TASQ_NOTEBOOK (and
+TASQ_PROFILE) set so the session's `tasq` sees the same notebook. The
+skill then runs `tasq sync` itself and reports. `--dry-run` prints the
+command instead.";
 
 const SUMMARY_HELP: &str = "\
 Every progress note logged on DAY is collected, one bullet per task

@@ -2017,6 +2017,171 @@ mod sync {
         assert!(out.status.success(), "{}", stderr(&out));
         assert!(stderr(&out).starts_with("tasq: warning: could not look up the title of https://gl.test/g/p/-/merge_requests/11: authentication:"), "{}", stderr(&out));
     }
+    #[test]
+    fn interactive_dry_run_prints_the_command() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .env("TASQ_LAUNCH_ENV", "inherit")
+            .args(["sync", "--interactive", "--dry-run"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stderr(&out), "");
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "Launcher: claude (dry run)\ncd [ROOT]/home\nTASQ_NOTEBOOK=home exec claude \"/tasq:sync\"\n"
+        );
+        // The default strategy with an allowed .envrc wraps in direnv exec;
+        // the profile travels with the notebook.
+        std::fs::write(env.home.join(".envrc"), "").unwrap();
+        env.fake_tool("direnv", "echo 'Found RC allowed true'");
+        env.write_project_config("[profile.work]\n");
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args([
+                "--profile",
+                "work",
+                "sync",
+                "--interactive",
+                "--dry-run",
+                "--json",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let home = env.home.to_str().unwrap();
+        assert_eq!(value["schema"], 1);
+        assert_eq!(value["dry_run"], true);
+        assert_eq!(value["launcher"], "claude");
+        assert_eq!(value["workdir"], home);
+        assert_eq!(
+            value["command"],
+            serde_json::json!(["direnv", "exec", home, "claude", "/tasq:sync"])
+        );
+        assert_eq!(
+            value["env"],
+            serde_json::json!([["TASQ_NOTEBOOK", "home"], ["TASQ_PROFILE", "work"]])
+        );
+        assert_eq!(
+            value["steps"],
+            serde_json::json!([
+                format!("cd {home}"),
+                format!(
+                    "TASQ_NOTEBOOK=home TASQ_PROFILE=work exec direnv exec {home} claude \"/tasq:sync\""
+                ),
+            ])
+        );
+        // A .envrc direnv refuses is a warning step, not a wrapped command.
+        env.fake_tool("direnv", "echo 'Found RC allowed false'");
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["sync", "--interactive", "--dry-run"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "Launcher: claude (dry run)\n\
+             warning: [ROOT]/home/.envrc is not allowed by direnv; run: direnv allow [ROOT]/home\n\
+             cd [ROOT]/home\n\
+             TASQ_NOTEBOOK=home exec claude \"/tasq:sync\"\n"
+        );
+    }
+
+    #[test]
+    fn interactive_runs_claude_in_the_default_project() {
+        let env = TestEnv::fixture();
+        let project = env.home.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let log = env.home.join("claude.log");
+        env.fake_tool(
+            "claude",
+            &format!(
+                "[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\n{{ echo \"cwd=$PWD\"; echo \"nb=$TASQ_NOTEBOOK task=${{TASQ_TASK_ID:-unset}}\"; echo \"argc=$#\"; echo \"$1\"; }} > '{}'",
+                log.display()
+            ),
+        );
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
+            .env("TASQ_LAUNCH_ENV", "inherit")
+            .args(["sync", "--interactive"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stdout(&out), "");
+        assert_eq!(stderr(&out), "");
+        assert_eq!(
+            env.normalize(&std::fs::read_to_string(&log).unwrap()),
+            "cwd=[ROOT]/home/project\nnb=home task=unset\nargc=1\n/tasq:sync\n"
+        );
+        // A .envrc direnv refuses: the warning goes to stderr, claude still runs.
+        std::fs::write(project.join(".envrc"), "").unwrap();
+        env.fake_tool("direnv", "echo 'Found RC allowed false'");
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
+            .args(["sync", "--interactive"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            "tasq: warning: [ROOT]/home/project/.envrc is not allowed by direnv; run: direnv allow [ROOT]/home/project\n"
+        );
+    }
+
+    #[test]
+    fn interactive_needs_a_default_project_and_a_claude() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["sync", "--interactive", "--dry-run"])
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr(
+                "tasq: work.default_project is unset; the briefing session needs a directory to run in\n",
+            );
+        let gone = env.home.join("gone");
+        env.tasq()
+            .env("TASQ_DEFAULT_PROJECT", gone.to_str().unwrap())
+            .args(["sync", "--interactive", "--dry-run"])
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr(format!(
+                "tasq: work.default_project not found: {}\n",
+                gone.display()
+            ));
+        // No claude on PATH: exec fails and reports the program.
+        env.tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .env("TASQ_LAUNCH_ENV", "inherit")
+            .args(["sync", "--interactive"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with("tasq: claude: "));
+        // --interactive is the whole command: no sources, no ids.
+        env.tasq()
+            .args(["sync", "--interactive", "--source", "inbox"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(
+                "'--interactive' cannot be used with '--source <NAME>'",
+            ));
+        env.tasq()
+            .args(["sync", "--interactive", "3"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(
+                "'--interactive' cannot be used with '[ID]...'",
+            ));
+    }
 }
 
 mod summary {
