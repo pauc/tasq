@@ -40,4 +40,5 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0012](0012-detached-sessions-from-the-tui.md) | Opening a work session in a new window from the TUI: `Ctrl+Enter`/`Shift+Enter`, `--detached`, `launch.herdr.placement` | Accepted |
 | [0013](0013-configurable-key-bindings.md) | Configurable TUI key bindings: `[ui.keys]`, action = key or list, parsed by the TUI | Accepted |
 | [0014](0014-sync-sources-on-demand.md) | Choosing which sources a sync runs: `source[].auto`, repeatable `--source`, a source picker in the TUI | Accepted |
-| [0015](0015-edit-form-in-the-tui.md) | Editing a task in a form inside the TUI: `e`, `edit::revise`, title/due/tags rewrites in the store | Accepted |
+| [0015](0015-edit-form-in-the-tui.md) | Editing a task in a form inside the TUI: `e`, `edit::revise`, title/due/tags rewrites in the store | Superseded by ADR-0016 |
+| [0016](0016-full-screen-edit-view.md) | The edit view takes the whole screen and edits the description: `form::Text`, `Ctrl+S`, `set_description` | Accepted |

@@ -235,6 +235,27 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   Follow-up 8be3253: the herdr launcher focuses the workspace right after creating the pane,
   before `agent start` waits for Claude to be ready; the switch felt slow when it came last.
 
+- **Full-screen edit view with the description (follow-up 2026-10-06, ADR 0016, todo 13).**
+  The popup of ADR 0015 is gone: `e` now replaces the list and the detail with one bordered
+  panel, the six single-line rows, a `Description` rule and the description below it; the
+  focused label is cyan bold, the terminal cursor sits in the focused text
+  (`Frame::set_cursor_position`, asserted with `Terminal::get_cursor_position` on the
+  `TestBackend`), a focused choice row shows `‹ value ›`, long single-line values scroll
+  under the cursor (`view::window`), the description wraps by character and scrolls
+  vertically (`view::wrapped`, `view::wrapped_cursor`, `scroll_offset`). `form::Text` is the
+  editor: lines plus a (line, char) cursor with insert, newline, backspace, delete, arrows,
+  Home/End and paste; single-line rows never get a newline. Keys: `Tab`/`Shift+Tab` rows,
+  `Up`/`Down` cursor in the description else rows, `Left`/`Right` cursor or cycle,
+  `Enter` newline in the description else next row, **`Ctrl+S` saves**, `Esc` cancels; the
+  status bar is a key bar (`view::form_hints`, keys bold, labels dim, labels dropped under 68
+  columns). Store: `ops::set_description` (first section rewritten, duplicates removed,
+  missing one inserted after the title) and `clear_description`, 9 fixture pairs, `diff.rs`
+  wiring, `edit::Fields.description`; `tasq apply` can change a description. Mutants: core
+  `ops.rs` + `edit.rs`, store-nb `diff.rs`, tui `form/update/keys/view/msg` 719 tested, 11
+  missed on the first pass (an equivalent guard reshaped, a join case, the `Ctrl+S` guard,
+  scrolling and style assertions, unit tests for the wrapping helpers), 0 missed after
+  (525 on the rerun of the four files). ADR 0015's view section is superseded; its store and
+  core parts stand.
 - **Edit form in the TUI (follow-up 2026-10-05, ADR 0015, todo 13).** `e` opens
   `Mode::Form(Box<Form>)` (`crates/tui/src/form.rs`): six rows, Title, Status, Priority,
   Due, Project, Tags; `Up`/`Down`/`Tab`/`Shift+Tab` move the focus, text rows take typing

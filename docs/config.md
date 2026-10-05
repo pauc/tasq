@@ -293,9 +293,10 @@ A value that is not a colour name or a number from 0 to 255 is ignored. `NO_COLO
 
 `tasq ui` is the grouped list plus the selected task's detail (side by side from 100 columns,
 otherwise one pane with `Tab` switching between them). Its edits are the same operations as
-`tasq set`, `tasq log` and `tasq done`; `e` opens a form for the title, status, priority, due
-date, project and tags (`Up`/`Down` or `Tab` between rows, `Left`/`Right` on the status and
-priority rows, `Enter` saves, `Esc` cancels); `E` opens the task file in `$VISUAL`, else `$EDITOR`,
+`tasq set`, `tasq log` and `tasq done`; `e` opens the edit view for the title, status, priority,
+due date, project, tags and description (`Tab`/`Shift+Tab` and the arrows between rows,
+`Left`/`Right` cycle the status and priority rows, `Enter` is the next row or a newline in the
+description, `Ctrl+S` saves, `Esc` cancels); `E` opens the task file in `$VISUAL`, else `$EDITOR`,
 else `vi`; `Enter`, `s` and `S` run `tasq pick <id>`, `tasq sync` and `tasq sync --source ...`
 (the sources checked in the picker) as child processes with the same `--profile`, `--config`
 and `--set` flags, while the UI has released the terminal. `?` lists every key.
@@ -328,7 +329,7 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `filter` | `/` | list | type a filter |
 | `status`, `priority` | `t` / `p` | list | open the status / priority picker |
 | `log`, `done`, `create` | `l` / `d` / `c` | list | type a note / a final note / a title |
-| `edit` | `e` | list | open the edit form (title, status, priority, due, project, tags) |
+| `edit` | `e` | list | open the edit view (title, status, priority, due, project, tags, description) |
 | `editor` | `E` | list | open the file in the editor |
 | `launch` | `enter` | list | `tasq pick <id>` here |
 | `launch-detached` | `ctrl+enter` | list | `tasq pick <id> --detached` |
@@ -341,7 +342,7 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `confirm` | `enter` | pickers | apply the choice; in the source picker, run the checked sources |
 | `quit` | `q` | list, pickers | leave `tasq ui`; in a picker, close it |
 
-Typing (the filter, a note, a title, the rows of the edit form) is not configurable: characters, `Enter`, `Esc` and
+Typing (the filter, a note, a title, the edit view) is not configurable: characters, `Enter`, `Esc` and
 `Backspace` do what they always do. Neither are the toggles of the source picker: `Space` and
 the row digits. `Ctrl+C` quits in every mode and cannot be rebound. A key
 bound to two actions of the same mode, an unknown action or a key that does not parse stops

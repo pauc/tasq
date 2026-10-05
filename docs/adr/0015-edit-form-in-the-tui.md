@@ -1,6 +1,6 @@
 # ADR-0015: Editing a task in a form inside the TUI (`e`)
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0016 (the view; the store and core decisions stand)
 - **Date:** 2026-10-05
 
 ## Context
