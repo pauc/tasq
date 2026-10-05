@@ -58,6 +58,9 @@ glow_style = "dark"
 
 [ui.colors]                  # status name (or "no-status") = colour, see "Colours"
 
+[ui.keys]                    # action = key or list of keys, [] unbinds; see "Key bindings"
+# launch-detached = "alt+enter"
+
 # [forge.gitlab]            # kind and host inferred from the name when omitted
 # kind = "gitlab"           # gitlab | github; required when the block name is neither
 # host = "gitlab.example.com"
@@ -115,6 +118,7 @@ pre-launch = []
 | `ui.no_osc8` | bool | `false` | Disable OSC 8 hyperlinks in `tasq view`. |
 | `ui.glow_style` | string | `dark` | Style passed to `glow -s`. |
 | `ui.colors.<name>` | string | empty table | Colour per status name, plus `no-status`. See "Colours". |
+| `ui.keys.<action>` | string or array of strings | empty table | Keys of a `tasq ui` action, replacing its defaults; `[]` unbinds it. See "Key bindings". |
 | `forge.<name>.kind` | `gitlab` \| `github` | inferred from `<name>` | API the host speaks. Required when the block is not called `gitlab` or `github`. |
 | `forge.<name>.host` | string | `gitlab.com` / `github.com` by kind | Host without scheme. |
 | `forge.<name>.token_cmd` | string | unset | Command whose stdout is the token. Unset: `GITLAB_TOKEN` / `GITHUB_TOKEN`. |
@@ -231,8 +235,9 @@ passes `-d`. The TUI binds these to `Ctrl+Enter` (new window, switch to it) and 
 (new window, stay), keeping the screen and showing the launcher's result in the status bar;
 plain `Enter` stays "here, with `launch.default`". The two chords need a terminal that speaks
 the kitty keyboard protocol and does not keep the chord for itself; elsewhere they arrive as a
-plain `Enter`. Ghostty binds `Ctrl+Enter` to fullscreen on Linux: `keybind = ctrl+enter=unbind`
-in its config frees it.
+plain `Enter`. Ghostty binds `Ctrl+Enter` to fullscreen on Linux: rebind the action
+(`launch-detached = "alt+enter"` under `[ui.keys]`, see "Key bindings") or free the chord with
+`keybind = ctrl+enter=unbind` in its config.
 
 The session's environment carries `TASQ_TASK_ID`, `TASQ_NOTEBOOK` and, when a profile is
 selected, `TASQ_PROFILE`. `--dry-run` prints the directory, the commands and the prompt
@@ -290,6 +295,51 @@ otherwise one pane with `Tab` switching between them). Its edits are the same op
 else `vi`; `Enter` and `S` run `tasq pick <id>` and `tasq sync` as child processes with the
 same `--profile`, `--config` and `--set` flags, while the UI has released the terminal. `?`
 lists every key.
+
+### Key bindings
+
+Every key of `tasq ui` except `Ctrl+C` is an *action* with default keys. `[ui.keys]` replaces
+the keys of an action: one key, a list of keys, or `[]` to unbind it. Actions that are not
+listed keep their defaults, so the table is normally one or two lines:
+
+```toml
+[ui.keys]
+launch-detached = "alt+enter"              # Ghostty keeps Ctrl+Enter for fullscreen
+launch-detached-stay = ["shift+enter", "alt+shift+enter"]
+sync = []                                  # S does nothing
+```
+
+A key is `[ctrl+][alt+][shift+]<key>`, modifiers in any order and case; `<key>` is one
+character (`j`, `G`, `/`, `?`) or a name: `enter`, `esc`, `tab`, `backspace`, `space`, `up`,
+`down`, `left`, `right`, `home`, `end`, `pgup`, `pgdn`, `del`, `ins`, `f1` to `f12`. `shift`
+goes with a named key only; a shifted character is written as that character (`G`, not
+`shift+g`), because that is what the terminal sends. Modifiers match exactly: `ctrl+enter` is
+not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated list.
+
+| Action | Default | Where | Does |
+|---|---|---|---|
+| `up`, `down` | `k`, `up` / `j`, `down` | list, pickers | move the selection or the cursor |
+| `page-up`, `page-down` | `ctrl+u`, `pgup` / `ctrl+d`, `pgdn` | list | move ten tasks |
+| `top`, `bottom` | `g`, `home` / `G`, `end` | list | first / last task |
+| `filter` | `/` | list | type a filter |
+| `status`, `priority` | `s` / `p` | list | open the status / priority picker |
+| `log`, `done`, `create` | `l` / `d` / `c` | list | type a note / a final note / a title |
+| `edit` | `e` | list | open the file in the editor |
+| `launch` | `enter` | list | `tasq pick <id>` here |
+| `launch-detached` | `ctrl+enter` | list | `tasq pick <id> --detached` |
+| `launch-detached-stay` | `shift+enter` | list | `tasq pick <id> --detached --no-focus` |
+| `sync`, `reload` | `S` / `r` | list | `tasq sync` / reload |
+| `help` | `?` | list | the key overlay (any key closes it) |
+| `toggle-detail` | `tab` | list | one-pane layout: list or detail |
+| `cancel` | `esc` | list, pickers | clear the filter, close the detail or the dialog |
+| `confirm` | `enter` | pickers | apply the choice |
+| `quit` | `q` | list, pickers | leave `tasq ui`; in a picker, close it |
+
+Typing (the filter, a note, a title) is not configurable: characters, `Enter`, `Esc` and
+`Backspace` do what they always do. `Ctrl+C` quits in every mode and cannot be rebound. A key
+bound to two actions of the same mode, an unknown action or a key that does not parse stops
+`tasq ui` at startup with the file and the `ui.keys.<action>` path. The `?` overlay and the
+status-bar hints show the configured keys.
 
 ## Examples
 

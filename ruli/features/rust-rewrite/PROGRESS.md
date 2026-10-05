@@ -62,7 +62,7 @@ migration).
 |------|-------|--------|-------|
 | T-801 | TUI foundation | done | `crates/tui/src/{model,msg,keys,update,view,runtime}.rs`; `tasq ui` in `crates/cli/src/commands/ui.rs`; 18 `TestBackend` snapshots in `crates/tui/tests/render.rs`; gif recorded 2026-10-05 (`docs/demo/demo.tape`) |
 | T-802 | TUI editing actions | done | `s p l d` through `tasq_core::edit`; `c` creates a task (title only, `workflow.default_status`) through `Store::create` and fires `post-create` through `Host::after_create` (ADR 0011); `Ctrl+Enter`/`Shift+Enter` open the session in a new window, focused or not (`tasq pick --detached [--no-focus]`, ADR 0012); `e`/`Enter`/`S` through the `Host` trait, run as `$EDITOR`, `tasq pick`, `tasq sync` child processes with the terminal released; paste collapses to one line; `?` help overlay |
-| T-803 | Theming and config | done | `tasq_core::theme::{Color, Theme}` shared with the CLI; `NO_COLOR`/`--color never` monochrome; two-pane from 100 columns, one pane below; both layouts snapshotted |
+| T-803 | Theming and config | done | `tasq_core::theme::{Color, Theme}` shared with the CLI; `NO_COLOR`/`--color never` monochrome; two-pane from 100 columns, one pane below; both layouts snapshotted; `[ui.keys]` rebinds every key but `Ctrl+C` (ADR 0013) |
 
 ### Phase 7 status
 
@@ -234,6 +234,24 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   `launch/{registry,herdr,tmux}.rs` + `core/launch.rs`: 108 tested, 0 missed. Commit 8abc1ba.
   Follow-up 9c4a489: the herdr launcher focuses the workspace right after creating the pane,
   before `agent start` waits for Claude to be ready; the switch felt slow when it came last.
+
+- **Configurable key bindings (follow-up 2026-10-05, ADR 0013).** `[ui.keys]` maps action
+  names to one key or a list (`[]` unbinds); core stores the strings
+  (`UiConfig.keys: BTreeMap<String, KeySpec>`, `serde(untagged)` string-or-list, a `<name>`
+  wildcard in the `--set` template so `--set ui.keys.quit=q,x` coerces to a list) and
+  `tasq-tui` parses them: `keys::{Action, Key, Chord, KeyMap, KeyError}`. `KeyMap::default()`
+  is the old `match`; `from_config` overlays the table and rejects an unknown action, a bad
+  spec or one chord on two actions of the same mode (`NORMAL`, `PICKER` action sets). The
+  `?` overlay (`view::HELP` is now `(&[Action], &str)` rows rendered by `help_rows`) and the
+  status-bar hints (`hints(&KeyMap, width)`, unbound actions dropped) come from the map.
+  Fixed on purpose: `Ctrl+C` quits everywhere, typing modes, help closes on any key.
+  Deviation: modifiers now match exactly, so `Ctrl+Shift+Enter` is no longer
+  `launch-detached` (was an accident of the match order). `tasq ui` checks the map before the
+  tty check so the error (`<file>: ui.keys.<action>: ...`) is testable without a terminal.
+  Mutants on `tui/{keys,view}.rs`: 181 tested, 8 missed, all pre-existing style/guard
+  mutants in render code not touched here (`bold`, `chip`, `detail_lines`, `status_bar`
+  colour, `render_picker` cursor), invisible to the text snapshots; `keys.rs` and the new
+  `help_rows`/`hints` have 0 missed. Not yet committed.
 
 - **`post-done` from the TUI (follow-up, ADR 0010).** `Host::after_done(&Task)` is called by
   the TUI's `dispatch` after `edit::done` succeeded; the CLI's `CliHost` (now holding `&App`)

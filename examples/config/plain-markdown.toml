@@ -44,6 +44,8 @@ glow_style = "dark"          # `tasq view` renders with glow when it is installe
 
 [ui.colors]                  # optional overrides, status name = colour; see docs/config.md
 
+[ui.keys]                    # optional rebinding, action = key or list ([] unbinds); see docs/config.md
+
 # No [forge.*] and no [[source]]: `tasq sync` has nothing to do and says so.
 
 [report.summary]

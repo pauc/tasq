@@ -35,6 +35,9 @@ glow_style = "dark"
 [ui.colors]
 # ready = "208"
 
+[ui.keys]                    # action = key or list, [] unbinds; see docs/config.md "Key bindings"
+# launch-detached = "alt+enter"   # Ghostty keeps Ctrl+Enter for fullscreen
+
 [forge.gitlab]               # kind "gitlab" inferred from the block name
 host = "gitlab.silverfin.com"
 token_cmd = "glab auth token"
