@@ -39,7 +39,7 @@ gap ADR-0015 closed for the title, due date and tags.
   rows; `Up`/`Down` move the cursor inside the description and otherwise
   move between rows (leaving the description upwards from its first
   line); `Left`/`Right` move the cursor in a text row and cycle a choice
-  row; `Home`/`End`; `Enter` is a newline in the description and the next
+  row; `Home`/`End`, also as `Ctrl+A`/`Ctrl+E`; `Enter` is a newline in the description and the next
   row elsewhere; **`Ctrl+S` saves**, `Esc` cancels, `Ctrl+C` quits. Enter
   had to give up saving once it meant a newline somewhere; one key for
   saving everywhere is clearer than two.

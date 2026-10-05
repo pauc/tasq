@@ -295,8 +295,9 @@ A value that is not a colour name or a number from 0 to 255 is ignored. `NO_COLO
 otherwise one pane with `Tab` switching between them). Its edits are the same operations as
 `tasq set`, `tasq log` and `tasq done`; `e` opens the edit view for the title, status, priority,
 due date, project, tags and description (`Tab`/`Shift+Tab` and the arrows between rows,
-`Left`/`Right` cycle the status and priority rows, `Enter` is the next row or a newline in the
-description, `Ctrl+S` saves, `Esc` cancels); `E` opens the task file in `$VISUAL`, else `$EDITOR`,
+`Left`/`Right` cycle the status and priority rows, `Home`/`End` or `Ctrl+A`/`Ctrl+E` go to the
+ends of the line, `Enter` is the next row or a newline in the description, `Ctrl+S` saves,
+`Esc` cancels); `E` opens the task file in `$VISUAL`, else `$EDITOR`,
 else `vi`; `Enter`, `s` and `S` run `tasq pick <id>`, `tasq sync` and `tasq sync --source ...`
 (the sources checked in the picker) as child processes with the same `--profile`, `--config`
 and `--set` flags, while the UI has released the terminal. `?` lists every key.

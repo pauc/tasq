@@ -625,8 +625,9 @@ pub fn translate(keys: &KeyMap, mode: &Mode, key: &KeyEvent) -> Option<Msg> {
     }
 }
 
-/// The edit view's fixed keys: typing like a prompt plus the cursor keys,
-/// `Tab`/`Shift+Tab` between the rows, `Ctrl+S` to save.
+/// The edit view's fixed keys: typing like a prompt plus the cursor keys
+/// (`Ctrl+A`/`Ctrl+E` are `Home`/`End`, as in readline), `Tab`/`Shift+Tab`
+/// between the rows, `Ctrl+S` to save.
 fn form(code: KeyCode, ctrl: bool) -> Option<Msg> {
     Some(match code {
         KeyCode::Tab => Msg::NextField,
@@ -638,6 +639,8 @@ fn form(code: KeyCode, ctrl: bool) -> Option<Msg> {
         KeyCode::Home => Msg::Home,
         KeyCode::End => Msg::End,
         KeyCode::Delete => Msg::Delete,
+        KeyCode::Char('a') if ctrl => Msg::Home,
+        KeyCode::Char('e') if ctrl => Msg::End,
         KeyCode::Char('s') if ctrl => Msg::Save,
         _ => return text(code, ctrl),
     })
@@ -826,8 +829,12 @@ mod tests {
             (key(KeyCode::Right), Msg::Right),
             (key(KeyCode::Home), Msg::Home),
             (key(KeyCode::End), Msg::End),
+            (ctrl('a'), Msg::Home),
+            (ctrl('e'), Msg::End),
             (key(KeyCode::Delete), Msg::Delete),
             (ctrl('s'), Msg::Save),
+            (ch('a'), Msg::Char('a')),
+            (ch('e'), Msg::Char('e')),
             (key(KeyCode::Enter), Msg::Enter),
             (key(KeyCode::Esc), Msg::Escape),
             (key(KeyCode::Backspace), Msg::Backspace),
