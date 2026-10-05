@@ -1,6 +1,6 @@
 ---
 source: crates/tui/tests/render.rs
-expression: "screen(&mut model, 120, 24)"
+expression: terminal.backend().to_string()
 ---
 " Edit [1]  Fix the flaky build                                                                                          "
 "┌ Title ───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
@@ -10,7 +10,7 @@ expression: "screen(&mut model, 120, 24)"
 "│  in-progress   ready   waiting   blocked   later   none             │ │  A   B   C                                   │"
 "└─────────────────────────────────────────────────────────────────────┘ └──────────────────────────────────────────────┘"
 "┌ Due ─────────┐ ┌ Project ──────────────────────────────────────────────────┐ ┌ Tags ─────────────────────────────────┐"
-"│ 2026-10-10x  │ │ /home/me/code/app                                         │ │ ci                                    │"
+"│ 0x or later  │ │ /home/me/code/app                                         │ │ ci                                    │"
 "└──────────────┘ └───────────────────────────────────────────────────────────┘ └───────────────────────────────────────┘"
 "┌ Description ─────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
 "│ The nightly job fails one time in three. Cache.                                                                      │"
@@ -25,4 +25,4 @@ expression: "screen(&mut model, 120, 24)"
 "│                                                                                                                      │"
 "│                                                                                                                      │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
-"due: invalid date or timestamp "2026-10-10x" (expected YYYY-MM-DD or YYYY-MM-DD HH:MM)                                  "
+"Tab/S-Tab row  ↑↓←→ move  Enter next / newline  C-s save  Esc cancel                                                    "

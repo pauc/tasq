@@ -168,14 +168,16 @@ fn edit_view() {
     update(&mut model, Msg::Edit);
     let mut terminal = render(&mut model, 120, 24);
     assert_snapshot!("edit_view", terminal.backend().to_string());
+    let (x, y) = find(&terminal, "\u{2502} Fix the flaky build", 0);
     assert_eq!(
         terminal.get_cursor_position().unwrap(),
-        (2 + 11 + 19, 1).into(),
-        "the cursor after the title"
+        (x + 2 + 19, y).into(),
+        "the cursor after the title, inside its box"
     );
     update(&mut model, Msg::NextField);
     update(&mut model, Msg::Right);
     assert_snapshot!("edit_view_choice_row", screen(&mut model, 120, 24));
+    assert_snapshot!("edit_view_choice_row_100", screen(&mut model, 100, 20));
     for _ in 0..5 {
         update(&mut model, Msg::NextField);
     }
@@ -185,9 +187,10 @@ fn edit_view() {
     }
     let mut terminal = render(&mut model, 120, 24);
     assert_snapshot!("edit_view_description", terminal.backend().to_string());
+    let (x, y) = find(&terminal, "one time in three. Cache.", 0);
     assert_eq!(
         terminal.get_cursor_position().unwrap(),
-        (2 + 47, 9).into(),
+        (x + 25, y).into(),
         "the cursor in the description"
     );
     update(&mut model, Msg::PrevField);
@@ -196,6 +199,18 @@ fn edit_view() {
     update(&mut model, Msg::Char('x'));
     update(&mut model, Msg::Save);
     assert_snapshot!("edit_view_bad_due", screen(&mut model, 120, 24));
+    // The due box is 12 columns inside; a longer value scrolls under the cursor.
+    for c in " or later".chars() {
+        update(&mut model, Msg::Char(c));
+    }
+    let mut terminal = render(&mut model, 120, 24);
+    assert_snapshot!("edit_view_due_scrolled", terminal.backend().to_string());
+    let (x, y) = find(&terminal, "0x or later", 0);
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (x + 11, y).into(),
+        "the first nine characters scrolled away; the cursor is on the box's last column"
+    );
     // Narrow: the long description line wraps, the cursor follows.
     update(&mut model, Msg::Escape);
     update(&mut model, Msg::Edit);
@@ -234,6 +249,45 @@ fn edit_view() {
 }
 
 #[test]
+fn edit_view_compact() {
+    let mut model = fixture(true).with_today(date("2026-10-05"));
+    update(&mut model, Msg::Edit);
+    update(&mut model, Msg::NextField);
+    let mut terminal = render(&mut model, 60, 16);
+    assert_snapshot!("edit_view_compact_choice", terminal.backend().to_string());
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (0, 0).into(),
+        "no cursor on a choice row"
+    );
+    let buffer = terminal.backend().buffer();
+    let status = &buffer[find(&terminal, "Status", 0)];
+    assert_eq!(status.fg, Color::Cyan);
+    assert!(status.modifier.contains(Modifier::BOLD));
+    let title = &buffer[find(&terminal, "Title", 0)];
+    assert_eq!(title.fg, Color::Reset);
+    assert!(!title.modifier.contains(Modifier::BOLD));
+    let rule = &buffer[find(&terminal, "Description", 0)];
+    assert_eq!(rule.fg, Color::Reset);
+    update(&mut model, Msg::NextField);
+    update(&mut model, Msg::NextField);
+    let mut terminal = render(&mut model, 60, 16);
+    let (x, y) = find(&terminal, "2026-10-10", 0);
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (x + 10, y).into(),
+        "the cursor after the due date, on its row"
+    );
+    for _ in 0..3 {
+        update(&mut model, Msg::NextField);
+    }
+    let terminal = render(&mut model, 60, 16);
+    let rule = &terminal.backend().buffer()[find(&terminal, "Description", 0)];
+    assert_eq!(rule.fg, Color::Cyan);
+    assert!(rule.modifier.contains(Modifier::BOLD));
+}
+
+#[test]
 fn edit_view_styles() {
     let mut model = fixture(true);
     update(&mut model, Msg::Edit);
@@ -249,6 +303,27 @@ fn edit_view_styles() {
     assert_eq!(rule.fg, Color::Reset);
     let (x, y) = find(&terminal, "Tab/S-Tab", 0);
     assert!(buffer[(x, y)].modifier.contains(Modifier::BOLD));
+    // Choice boxes: the chosen option bold, the others dim; reversed too
+    // once the box has the focus.
+    let chosen = &buffer[find(&terminal, "in-progress", 0)];
+    assert!(chosen.modifier.contains(Modifier::BOLD));
+    assert!(!chosen.modifier.contains(Modifier::REVERSED));
+    assert!(!chosen.modifier.contains(Modifier::DIM));
+    let other = &buffer[find(&terminal, "waiting", 0)];
+    assert!(other.modifier.contains(Modifier::DIM));
+    assert!(!other.modifier.contains(Modifier::BOLD));
+    update(&mut model, Msg::NextField);
+    let terminal = render(&mut model, 120, 24);
+    let chosen = &terminal.backend().buffer()[find(&terminal, "in-progress", 0)];
+    assert!(
+        chosen
+            .modifier
+            .contains(Modifier::REVERSED | Modifier::BOLD)
+    );
+    let other = &terminal.backend().buffer()[find(&terminal, "waiting", 0)];
+    assert!(other.modifier.contains(Modifier::DIM));
+    assert!(!other.modifier.contains(Modifier::REVERSED));
+    update(&mut model, Msg::PrevField);
     assert!(
         buffer[(x + 10, y)].modifier.contains(Modifier::DIM),
         "the label after the key"

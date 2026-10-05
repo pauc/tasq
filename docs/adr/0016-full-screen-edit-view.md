@@ -55,6 +55,20 @@ gap ADR-0015 closed for the title, due date and tags.
   `description` and `revise` writes it. `tasq apply` can change a
   description too.
 
+### Addendum (same day): boxed fields on wide terminals
+
+The first cut drew label-and-value rows. Following the patterns of the
+ratatui `user_input` example, `tui-textarea` and the TUI design guides
+(a bordered box per field with the label as its title, the focused box
+with a coloured border and the others dim, every option visible with the
+chosen one marked, a context key bar), terminals of 100 columns and more
+get: a header line (`Edit [id]` and the stored title), the title box,
+status and priority boxes side by side with every choice shown and the
+chosen one bold (reversed when focused), due, project and tags boxes on
+one row, and the description box taking the rest. A box the save refused
+gets a red border. Narrower terminals keep the compact rows, which fit
+where boxes would not.
+
 ## Consequences
 
 ### Positive

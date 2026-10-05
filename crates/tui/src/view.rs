@@ -13,14 +13,14 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::widgets::{Block, Clear, Padding, Paragraph};
 use tasq_core::clock::{format_date, format_timestamp};
-use tasq_core::model::{Priority, Task};
+use tasq_core::model::{Priority, Status, Task};
 use tasq_core::theme::{self, group_label};
 
 use crate::form::{Field, Form, Text};
 use crate::keys::{Action, KeyMap};
-use crate::model::{LayoutKind, Mode, Model, NoteTarget, Row};
+use crate::model::{LayoutKind, Mode, Model, NoteTarget, Row, TWO_PANE_MIN_WIDTH};
 
 /// How many progress notes the detail pane shows (the most recent ones).
 pub const PROGRESS_SHOWN: usize = 8;
@@ -638,11 +638,172 @@ fn render_help(model: &Model, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// The edit view: the whole main area. The single-line rows at the top,
-/// the description below a rule, the focused row's label highlighted,
-/// the terminal cursor in the focused text; a choice row shows its value
-/// between chevrons when focused.
+/// The edit view, the whole main area. Wide terminals get boxed fields:
+/// a header line, the title box, status and priority side by side (every
+/// choice visible, the chosen one marked), due, project and tags on one
+/// row, and the description box taking the rest. Narrow terminals get
+/// the compact rows ([`render_form_compact`]). The focused box has a
+/// coloured border, a box the save refused a red one, and the terminal
+/// cursor sits in the focused text.
 fn render_form(model: &Model, frame: &mut Frame, area: Rect, form: &Form) {
+    if area.width < TWO_PANE_MIN_WIDTH {
+        render_form_compact(model, frame, area, form);
+        return;
+    }
+    let [header, title, choices, details, description] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(3),
+        Constraint::Length(3),
+        Constraint::Min(3),
+    ])
+    .areas(area);
+    frame.render_widget(form_header(model, form), header);
+    let mut cursor = None;
+    text_box(model, frame, title, form, Field::Title, &mut cursor);
+    let [status, priority] =
+        Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .spacing(1)
+            .areas(choices);
+    choice_box(model, frame, status, form, Field::Status);
+    choice_box(model, frame, priority, form, Field::Priority);
+    let [due, project, tags] = Layout::horizontal([
+        Constraint::Length(16),
+        Constraint::Fill(3),
+        Constraint::Fill(2),
+    ])
+    .spacing(1)
+    .areas(details);
+    text_box(model, frame, due, form, Field::Due, &mut cursor);
+    text_box(model, frame, project, form, Field::Project, &mut cursor);
+    text_box(model, frame, tags, form, Field::Tags, &mut cursor);
+    let block = field_block(model, form, Field::Description);
+    let inner = block.inner(description);
+    frame.render_widget(block, description);
+    render_description(frame, inner, form, &mut cursor);
+    if let Some(position) = cursor {
+        frame.set_cursor_position(position);
+    }
+}
+
+/// `Edit [id]` and the task's title as it is on disk, so the user knows
+/// what they are editing while they retype the title.
+fn form_header(model: &Model, form: &Form) -> Line<'static> {
+    let stored = model
+        .tasks
+        .iter()
+        .find(|t| t.id == form.id)
+        .map(|t| t.title.clone())
+        .unwrap_or_default();
+    Line::from(vec![
+        Span::styled(format!(" Edit [{}]", form.id), bold()),
+        Span::styled(format!("  {stored}"), dim()),
+    ])
+}
+
+/// The box around a field: its label as the title, the border coloured
+/// when the field has the focus (red when the last save refused it),
+/// dim otherwise; one column of padding inside.
+fn field_block(model: &Model, form: &Form, field: Field) -> Block<'static> {
+    let focused = field == form.focus;
+    let refused = focused && model.message.as_ref().is_some_and(|m| m.is_error);
+    let border = if refused {
+        colored(model, theme::Color::Red)
+    } else if focused {
+        colored(model, theme::Color::Cyan)
+    } else {
+        dim()
+    };
+    let title = if focused {
+        border.add_modifier(Modifier::BOLD)
+    } else {
+        Style::new()
+    };
+    Block::bordered()
+        .border_style(border)
+        .title(Span::styled(format!(" {} ", field.label()), title))
+        .padding(Padding::horizontal(1))
+}
+
+/// A single-line text field in its box; the text scrolls under the
+/// cursor when it is longer than the box.
+fn text_box(
+    model: &Model,
+    frame: &mut Frame,
+    area: Rect,
+    form: &Form,
+    field: Field,
+    cursor: &mut Option<(u16, u16)>,
+) {
+    let block = field_block(model, form, field);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let Some(text) = form.text(field) else {
+        return;
+    };
+    let width = usize::from(inner.width).max(1);
+    let (_, col) = text.cursor();
+    let start = window(col, width);
+    let shown: String = text.lines()[0].chars().skip(start).take(width).collect();
+    frame.render_widget(Paragraph::new(shown), inner);
+    if field == form.focus {
+        *cursor = Some((inner.x + narrow(col - start), inner.y));
+    }
+}
+
+/// A choice field in its box: every option on one line, the chosen one
+/// marked (reversed when the field has the focus, bold otherwise), the
+/// others dim.
+fn choice_box(model: &Model, frame: &mut Frame, area: Rect, form: &Form, field: Field) {
+    let block = field_block(model, form, field);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let chosen = form.value(field, &model.workflow);
+    let options: Vec<String> = match field {
+        Field::Status => Form::status_choices(&model.workflow)
+            .iter()
+            .map(|s| s.as_ref().map_or("none", Status::as_str).to_owned())
+            .collect(),
+        _ => Model::priority_choices()
+            .iter()
+            .map(|p| p.as_str().to_owned())
+            .collect(),
+    };
+    let focused = field == form.focus;
+    let mut spans = Vec::new();
+    for (i, option) in options.into_iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(" "));
+        }
+        let style = if option != chosen {
+            dim()
+        } else if focused {
+            bold().add_modifier(Modifier::REVERSED)
+        } else {
+            bold()
+        };
+        spans.push(Span::styled(format!(" {option} "), style));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), inner);
+}
+
+/// The description, wrapped to `area` and scrolled to keep the cursor in
+/// view.
+fn render_description(frame: &mut Frame, area: Rect, form: &Form, cursor: &mut Option<(u16, u16)>) {
+    let width = usize::from(area.width).max(1);
+    let lines = wrapped(form.description.lines(), width);
+    let (vrow, vcol) = wrapped_cursor(&form.description, width);
+    let offset = scroll_offset(Some(vrow), usize::from(area.height));
+    let shown: Vec<Line<'_>> = lines.into_iter().skip(offset).map(Line::raw).collect();
+    frame.render_widget(Paragraph::new(shown), area);
+    if form.focus == Field::Description {
+        *cursor = Some((area.x + narrow(vcol), area.y + narrow(vrow - offset)));
+    }
+}
+
+/// The edit view on a narrow terminal: label and value per row, the
+/// description below a rule, no boxes.
+fn render_form_compact(model: &Model, frame: &mut Frame, area: Rect, form: &Form) {
     let block = Block::bordered().title(format!(" Edit [{}] ", form.id));
     let inner = block.inner(area).inner(Margin::new(1, 0));
     frame.render_widget(block, area);
@@ -705,15 +866,7 @@ fn render_form(model: &Model, frame: &mut Frame, area: Rect, form: &Form) {
         ])),
         rule,
     );
-    let width = usize::from(body.width).max(1);
-    let lines = wrapped(form.description.lines(), width);
-    let (vrow, vcol) = wrapped_cursor(&form.description, width);
-    let offset = scroll_offset(Some(vrow), usize::from(body.height));
-    let shown: Vec<Line<'_>> = lines.into_iter().skip(offset).map(Line::raw).collect();
-    frame.render_widget(Paragraph::new(shown), body);
-    if focused {
-        cursor = Some((body.x + narrow(vcol), body.y + narrow(vrow - offset)));
-    }
+    render_description(frame, body, form, &mut cursor);
     if let Some(position) = cursor {
         frame.set_cursor_position(position);
     }

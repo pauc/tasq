@@ -235,6 +235,17 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   Follow-up 8be3253: the herdr launcher focuses the workspace right after creating the pane,
   before `agent start` waits for Claude to be ready; the switch felt slow when it came last.
 
+- **Boxed edit view on wide terminals (follow-up 2026-10-06, ADR 0016 addendum).** After
+  reading the ratatui `user_input` example, `tui-textarea` and the TUI design guides, the
+  wide layout (>= 100 columns, `TWO_PANE_MIN_WIDTH`) became a header line plus a bordered box
+  per field (`field_block`: label as title, cyan border when focused, red when the save
+  refused it, dim otherwise, one column of padding), status and priority side by side with
+  every option visible (`choice_box`: chosen bold, reversed when focused, others dim), due,
+  project and tags on one row, the description box taking the rest; narrow terminals keep the
+  compact rows (`render_form_compact`). `Ctrl+A`/`Ctrl+E` added as Home/End. Mutants on
+  `view.rs`: 199 tested, 9 missed on the first pass (styles and scrolling the text snapshots
+  cannot see: covered with buffer-style assertions, a scrolled due box, a compact-layout test
+  and a 100-column boundary snapshot), 0 missed after one reshaped modifier expression.
 - **Full-screen edit view with the description (follow-up 2026-10-06, ADR 0016, todo 13).**
   The popup of ADR 0015 is gone: `e` now replaces the list and the detail with one bordered
   panel, the six single-line rows, a `Description` rule and the description below it; the
