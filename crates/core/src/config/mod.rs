@@ -427,6 +427,10 @@ impl ForgeKind {
 ///
 /// Which fields apply depends on `kind`; [`Config::load`] checks that the
 /// required ones are present (see [`SourceKind`]).
+// Four independent switches (`enabled`, `auto`, `create_new`,
+// `close_when_done`) that a TOML table spells as booleans; an enum would
+// not read better in the config file.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceConfig {
@@ -452,6 +456,12 @@ pub struct SourceConfig {
     /// Whether `sync` runs this source. Default: `true`.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Whether a bare `tasq sync` (and the TUI's sync-all key) includes
+    /// this source. Default: `true`. With `false` it runs only when named
+    /// with `--source` or picked in the TUI's source picker; `enabled`
+    /// still decides whether it can run at all.
+    #[serde(default = "default_true")]
+    pub auto: bool,
     /// Create tasks for new items. Default: `true`. With `false` the source
     /// only updates tasks that already exist (the plan's `flag_only`).
     #[serde(default = "default_true")]

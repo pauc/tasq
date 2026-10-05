@@ -1277,6 +1277,7 @@ fn sources_need_the_keys_their_kind_requires() {
     let s = &loaded.config.source[0];
     assert_eq!(s.kind, SourceKind::GithubWorkItems);
     assert!(s.enabled, "enabled defaults to true");
+    assert!(s.auto, "auto defaults to true");
     assert_eq!(s.tags, Vec::<String>::new());
     assert_eq!(s.status, None);
     assert_eq!(s.command, None);
@@ -1311,12 +1312,13 @@ fn source_list_is_replaced_not_appended_by_a_later_layer() {
     let sb = Sandbox::new();
     sb.write_global("[[source]]\nname = \"a\"\nkind = \"llm-bridge\"\ncommand = \"a\"\n");
     sb.write_project(
-        "[[source]]\nname = \"b\"\nkind = \"llm-bridge\"\ncommand = \"b\"\nenabled = false\n",
+        "[[source]]\nname = \"b\"\nkind = \"llm-bridge\"\ncommand = \"b\"\nenabled = false\nauto = false\n",
     );
     let loaded = Config::load(&sb.opts()).unwrap();
     assert_eq!(loaded.config.source.len(), 1);
     assert_eq!(loaded.config.source[0].name, "b");
     assert!(!loaded.config.source[0].enabled);
+    assert!(!loaded.config.source[0].auto);
 }
 
 // --- the plan's example ----------------------------------------------------
@@ -1362,7 +1364,7 @@ fn plan_section_4_6_example_loads_as_is() {
         c.source[2].prompt_file,
         Some(sb.home.join(".config/tasq/prompts/inbox.md"))
     );
-    assert!(c.source.iter().all(|s| s.enabled));
+    assert!(c.source.iter().all(|s| s.enabled && s.auto));
     assert_eq!(c.report.summary.summarizer, Summarizer::Llm);
     assert_eq!(c.report.summary.command, "claude -p --model sonnet");
     assert_eq!(c.report.summary.model, None);
