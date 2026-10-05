@@ -80,14 +80,24 @@ pub fn run_command(
     })
 }
 
-/// Drops a surrounding Markdown code fence (` ```json ... ``` `).
+/// The JSON in a model reply: text that already starts with `[` or `{`
+/// as is; otherwise the body of the first Markdown code fence
+/// (` ```json ... ``` `), whatever prose surrounds it. Measured on
+/// `claude -p --output-format json`: told to print only the array, it still
+/// answered `Final list:` and a fence (`docs/sources.md`).
 pub fn strip_fences(text: &str) -> &str {
     let trimmed = text.trim();
-    let Some(rest) = trimmed.strip_prefix("```") else {
+    if trimmed.starts_with(['[', '{']) {
+        return trimmed;
+    }
+    let Some(start) = trimmed.find("```") else {
         return trimmed;
     };
-    let body = rest.split_once('\n').map_or("", |(_, body)| body);
-    body.trim_end().strip_suffix("```").unwrap_or(body).trim()
+    let body = trimmed[start + 3..]
+        .split_once('\n')
+        .map_or("", |(_, body)| body);
+    let body = body.find("```").map_or(body, |end| &body[..end]);
+    body.trim()
 }
 
 /// Items from the command's output: a JSON array of items; or an object
@@ -222,6 +232,27 @@ mod tests {
         assert_eq!(strip_fences("```\n[1]\n```\n"), "[1]");
         assert_eq!(strip_fences("```json\n[1]"), "[1]");
         assert_eq!(strip_fences("```"), "");
+        // Prose before and after the fence, as `claude -p` really answers.
+        assert_eq!(
+            strip_fences("All items stand. Final list:\n\n```json\n[1]\n```\n\nDone."),
+            "[1]"
+        );
+        assert_eq!(strip_fences("Final list:\n```\n[1]"), "[1]");
+        // Only the first fence counts; a later one is not the JSON.
+        assert_eq!(
+            strip_fences("Note:\n```json\n[1]\n```\nAlso:\n```\n[2]\n```"),
+            "[1]"
+        );
+        // Text that is already JSON is never searched for fences.
+        assert_eq!(
+            strip_fences("[{\"title\":\"```sh```\"}]"),
+            "[{\"title\":\"```sh```\"}]"
+        );
+        assert_eq!(
+            strip_fences(" {\"result\": \"```\"} "),
+            "{\"result\": \"```\"}"
+        );
+        assert_eq!(strip_fences("no json here"), "no json here");
     }
 
     #[test]
@@ -239,6 +270,20 @@ mod tests {
         .to_string();
         let items = parse_items(&envelope).unwrap();
         assert_eq!(items[0].tags, vec![Tag::new("slack").unwrap()]);
+        // The shape a real `claude -p --output-format json` run produced on 2026-10-05:
+        // a sentence of prose, then the fenced array, inside the envelope's "result".
+        let chatty = serde_json::json!({
+            "type": "result",
+            "subtype": "success",
+            "is_error": false,
+            "num_turns": 15,
+            "result": "All nine MRs are still open, so both items stand. Final list:\n\n```json\n[\n  {\n    \"external_id\": \"slack:C1/1790950762.711209\",\n    \"url\": \"https://x.slack.com/archives/C1/p1790950762711209\",\n    \"title\": \"Review !1 for A\",\n    \"body\": \"Friday status update.\",\n    \"tags\": [\"slack\"],\n    \"status\": \"ready\",\n    \"priority\": \"A\"\n  }\n]\n```"
+        })
+        .to_string();
+        let items = parse_items(&chatty).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].external_id, "slack:C1/1790950762.711209");
+        assert_eq!(items[0].title, "Review !1 for A");
         assert_eq!(parse_items("[]").unwrap(), Vec::new());
     }
 
