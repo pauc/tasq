@@ -197,17 +197,35 @@ fn update_refuses_changes_it_cannot_express() {
     let mut store = nb.open();
     let before = nb.mtimes();
     let mut task = store.get(&TaskId::from(id::FULL)).unwrap();
-    task.title = "Renamed".into();
-    task.tags.clear();
+    task.description = Some("Rewritten".into());
+    task.progress.clear();
     let err = store.update(&task).unwrap_err();
     let StoreError::Unsupported { operation } = &err else {
         panic!("{err:?}")
     };
     assert!(
-        operation.starts_with("changing title, tags of task 1 "),
+        operation.starts_with("changing description, progress of task 1 "),
         "{operation}"
     );
     assert_eq!(nb.mtimes(), before, "nothing written");
+}
+
+#[test]
+fn update_rewrites_the_form_fields() {
+    let nb = NbEnv::fixture();
+    let mut store = nb.open();
+    let mut task = store.get(&TaskId::from(id::FULL)).unwrap();
+    task.title = "Renamed".into();
+    task.tags.clear();
+    task.due = None;
+    task.project = None;
+    store.update(&task).unwrap();
+    assert_eq!(store.get(&TaskId::from(id::FULL)).unwrap(), task);
+    let text = nb.read(file_name(id::FULL));
+    assert!(text.starts_with("# [ ] Renamed\n"), "{text}");
+    assert!(!text.contains("## Due"), "{text}");
+    assert!(!text.contains("## Project"), "{text}");
+    assert!(text.contains("\n#A #in-progress\n"), "{text}");
 }
 
 #[test]

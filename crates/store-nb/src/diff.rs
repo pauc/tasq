@@ -24,6 +24,9 @@ pub fn apply(
     let project = |doc: &Document| format::project(doc, wanted.id.clone(), workflow);
     let current = project(doc);
 
+    if wanted.title != current.title {
+        ops::set_title(doc, &wanted.title);
+    }
     if wanted.done != current.done {
         if wanted.done {
             ops::set_done(doc, workflow);
@@ -44,10 +47,24 @@ pub fn apply(
             None => ops::strip_status_tag(doc, workflow),
         }
     }
-    if let Some(project_dir) = &wanted.project
-        && wanted.project != current.project
-    {
-        ops::set_project(doc, project_dir);
+    if wanted.due != current.due {
+        match wanted.due {
+            Some(due) => ops::set_due(doc, due),
+            None => {
+                ops::clear_due(doc);
+            }
+        }
+    }
+    if wanted.project != current.project {
+        match &wanted.project {
+            Some(project_dir) => ops::set_project(doc, project_dir),
+            None => {
+                ops::clear_project(doc);
+            }
+        }
+    }
+    if wanted.tags != current.tags {
+        ops::set_tags(doc, &wanted.tags, workflow);
     }
     for link in wanted
         .related
@@ -237,15 +254,6 @@ mod tests {
     #[test]
     fn changes_without_an_operation_are_reported() {
         assert_eq!(
-            apply_to(TEXT, |t| t.title = "Other".into()),
-            Err(vec!["title"])
-        );
-        assert_eq!(
-            apply_to(TEXT, |t| t.tags.clear()),
-            Err(vec!["tags"]),
-            "removing a topic tag"
-        );
-        assert_eq!(
             apply_to(TEXT, |t| t.progress.clear()),
             Err(vec!["progress"])
         );
@@ -254,27 +262,42 @@ mod tests {
             Err(vec!["progress"])
         );
         assert_eq!(
-            apply_to(TEXT, |t| {
-                t.description = Some("d".into());
-                t.due = Some(FixedClock::at("2026-10-04 10:15").today());
-            }),
-            Err(vec!["due", "description"])
-        );
-        assert_eq!(
-            apply_to(TEXT, |t| {
-                t.add_tag(Tag::new("new").unwrap());
-            }),
-            Err(vec!["tags"])
-        );
-        let with_project = "# [ ] T\n\n## Project\n\n/old\n";
-        assert_eq!(
-            apply_to(with_project, |t| t.project = None),
-            Err(vec!["project"])
+            apply_to(TEXT, |t| t.description = Some("d".into())),
+            Err(vec!["description"])
         );
         assert_eq!(
             apply_to(TEXT, |t| t.id = TaskId::from(9)),
             Ok(TEXT.to_owned()),
             "id is not in the file"
+        );
+    }
+
+    #[test]
+    fn the_form_fields_rewrite_their_sections() {
+        let today = FixedClock::at("2026-10-04 10:15").today();
+        let out = apply_to(TEXT, |t| {
+            t.title = "Other".into();
+            t.due = Some(today);
+            t.tags = vec![Tag::new("new").unwrap()];
+        })
+        .unwrap();
+        assert_eq!(
+            out,
+            "# [ ] Other\n\n## Due\n\n2026-10-04\n\n## Tags\n\n#new #B #ready\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+        );
+        assert_eq!(
+            apply_to(TEXT, |t| t.tags.clear()).unwrap(),
+            "# [ ] Title\n\n## Tags\n\n#B #ready\n\n## Progress\n\n- 2026-10-01 09:00: created\n",
+            "removing a topic tag"
+        );
+        let with_both = "# [ ] T\n\n## Project\n\n/old\n\n## Due\n\n2026-01-01\n\n## Tags\n\n#B\n";
+        assert_eq!(
+            apply_to(with_both, |t| {
+                t.project = None;
+                t.due = None;
+            })
+            .unwrap(),
+            "# [ ] T\n\n## Tags\n\n#B\n"
         );
     }
 
