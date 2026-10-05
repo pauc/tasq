@@ -12,7 +12,10 @@
 
 use std::path::Path;
 
-use crate::model::{Link, Priority, ProgressEntry, Session, Status, Workflow, Worktree};
+use chrono::NaiveDate;
+
+use crate::clock::format_date;
+use crate::model::{Link, Priority, ProgressEntry, Session, Status, Tag, Workflow, Worktree};
 
 use super::document::{DONE_PREFIX, Document, OPEN_PREFIX, heading_name};
 use super::entry;
@@ -199,21 +202,8 @@ pub fn append_related(doc: &mut Document, link: &Link) -> bool {
 /// path, or inserts the section after `## Description` when that is the first
 /// section, else right after the title line.
 pub fn set_project(doc: &mut Document, path: &Path) {
-    let hdr = heading(section::PROJECT);
     let path = path.display().to_string();
-    // Every `## Project` heading gets the new body (the awk loop never reset
-    // its match), followed by a blank line when another `## ` heading follows.
-    // Going backwards keeps the earlier indices valid while later sections
-    // change length.
-    let headings = doc.find_all(&hdr);
-    for &h in headings.iter().rev() {
-        doc.set_body(h, ["", path.as_str()]);
-        let next = doc.section_end(h);
-        if next < doc.line_count() {
-            doc.insert(next, "");
-        }
-    }
-    if !headings.is_empty() {
+    if replace_bodies(doc, section::PROJECT, &path) {
         return;
     }
     let first = (0..doc.line_count()).find(|&i| heading_name(doc.line(i)).is_some());
@@ -221,19 +211,164 @@ pub fn set_project(doc: &mut Document, path: &Path) {
     if let Some(first) = first
         && doc.line(first) == heading(section::DESCRIPTION)
     {
-        let second = (first + 1..doc.line_count()).find(|&i| heading_name(doc.line(i)).is_some());
-        insafter = second.unwrap_or(doc.line_count());
+        insafter = doc.section_end(first);
     }
-    // `insafter` counts lines to keep before the new section (awk is 1-based).
+    insert_section(doc, section::PROJECT, &path, insafter);
+}
+
+/// Gives every `## <name>` heading the body `["", value]` (the awk loop of
+/// `set_project` never reset its match), followed by a blank line when
+/// another `## ` heading follows. Going backwards keeps the earlier indices
+/// valid while later sections change length. Returns whether a heading was
+/// found.
+fn replace_bodies(doc: &mut Document, name: &str, value: &str) -> bool {
+    let headings = doc.find_all(&heading(name));
+    for &h in headings.iter().rev() {
+        doc.set_body(h, ["", value]);
+        let next = doc.section_end(h);
+        if next < doc.line_count() {
+            doc.insert(next, "");
+        }
+    }
+    !headings.is_empty()
+}
+
+/// Inserts a new `## <name>` section with the one-line body `value` so that
+/// `insafter` lines stay before it (awk is 1-based): a blank line first when
+/// the line before is not blank, then heading, blank line, value, and a blank
+/// line after when a non-blank line follows.
+fn insert_section(doc: &mut Document, name: &str, value: &str, insafter: usize) {
+    let hdr = heading(name);
     let mut at = insafter;
     if !doc.is_blank(at - 1) {
         doc.insert(at, "");
         at += 1;
     }
-    doc.insert_all(at, [hdr.as_str(), "", path.as_str()]);
+    doc.insert_all(at, [hdr.as_str(), "", value]);
     at += 3;
     if at < doc.line_count() && !doc.is_blank(at) {
         doc.insert(at, "");
+    }
+    doc.terminate();
+}
+
+/// Removes every `## <name>` section, heading and body, so the line before
+/// the heading is followed by what came after the section. When the removed
+/// section was last in the file, the blank lines left at the end go too.
+/// Returns whether the document changed. `tasq` only (the script never
+/// removed a section).
+fn remove_sections(doc: &mut Document, name: &str) -> bool {
+    let headings = doc.find_all(&heading(name));
+    for &h in headings.iter().rev() {
+        let end = doc.section_end(h);
+        for i in (h..end).rev() {
+            doc.remove(i);
+        }
+        // The last section took the blank line before it along; nothing
+        // should end a file with blank lines. The title line is never blank,
+        // so this stops before it.
+        if h == doc.line_count() {
+            while doc.is_blank(doc.line_count() - 1) {
+                let last = doc.line_count() - 1;
+                doc.remove(last);
+            }
+        }
+    }
+    if headings.is_empty() {
+        false
+    } else {
+        doc.terminate();
+        true
+    }
+}
+
+/// `set_title`: rewrites the title line with `title`, keeping the open or
+/// done marker. `tasq` only; `title` must not be empty (callers check).
+pub fn set_title(doc: &mut Document, title: &str) {
+    let prefix = if doc.is_done() {
+        DONE_PREFIX
+    } else {
+        OPEN_PREFIX
+    };
+    let line = format!("{prefix}{title}");
+    doc.replace(0, line);
+}
+
+/// `set_due`: replaces the body of every `## Due` with a blank line and the
+/// ISO date, like [`set_project`]; a missing section is inserted after
+/// `## Project`, else after `## Description`, else right after the title
+/// line (the order `cmd_create` wrote). `tasq` only.
+pub fn set_due(doc: &mut Document, due: NaiveDate) {
+    let value = format_date(due);
+    if replace_bodies(doc, section::DUE, &value) {
+        return;
+    }
+    let insafter = [section::PROJECT, section::DESCRIPTION]
+        .iter()
+        .find_map(|name| doc.find_first(&heading(name)))
+        .map_or(1, |h| doc.section_end(h));
+    insert_section(doc, section::DUE, &value, insafter);
+}
+
+/// `clear_due`: removes every `## Due` section. Returns whether there was
+/// one. `tasq` only.
+pub fn clear_due(doc: &mut Document) -> bool {
+    remove_sections(doc, section::DUE)
+}
+
+/// `clear_project`: removes every `## Project` section. Returns whether
+/// there was one. `tasq` only.
+pub fn clear_project(doc: &mut Document) -> bool {
+    remove_sections(doc, section::PROJECT)
+}
+
+/// `set_tags`: makes `tags` the topic tags, keeping the status and priority
+/// tags where they are. On every `#` line of `## Tags` the topic tags are
+/// removed; the new ones go in front of the first such line (the order
+/// `cmd_create` wrote: topics, priority, status). A line left empty is
+/// dropped. Without a `#` line the tags go on a new line after the heading;
+/// without a `## Tags` section one is appended at the end of the file, as
+/// `cmd_set` did. No tags and no section is a no-op. `tasq` only.
+pub fn set_tags(doc: &mut Document, tags: &[Tag], workflow: &Workflow) {
+    let hdr = heading(section::TAGS);
+    let topics: Vec<String> = tags.iter().map(|t| format!("#{t}")).collect();
+    let Some(h) = doc.find_first(&hdr) else {
+        if !topics.is_empty() {
+            doc.append_block([hdr.as_str(), "", &topics.join(" ")]);
+        }
+        return;
+    };
+    let mut in_tags = false;
+    let targets: Vec<usize> = (0..doc.line_count())
+        .filter(|&i| {
+            let line = doc.line(i);
+            if heading_name(line).is_some() {
+                in_tags = line == hdr;
+                return false;
+            }
+            in_tags && line.contains('#')
+        })
+        .collect();
+    let first = targets.first().copied();
+    for &i in targets.iter().rev() {
+        let mut out: Vec<String> = Vec::new();
+        if first == Some(i) {
+            out.extend(topics.iter().cloned());
+        }
+        out.extend(
+            doc.line(i)
+                .split_whitespace()
+                .filter(|t| !matches!(classify(t, workflow), Some(TagKind::Topic(_))))
+                .map(str::to_owned),
+        );
+        if out.is_empty() {
+            doc.remove(i);
+        } else {
+            doc.replace(i, out.join(" "));
+        }
+    }
+    if first.is_none() && !topics.is_empty() {
+        doc.insert_all(h + 1, ["", topics.join(" ").as_str()]);
     }
     doc.terminate();
 }

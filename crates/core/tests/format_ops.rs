@@ -9,7 +9,7 @@ use std::path::Path;
 
 use tasq_core::clock::FixedClock;
 use tasq_core::format::{self, Document, ops};
-use tasq_core::model::{Link, Priority, ProgressEntry, Session, Status, Workflow, Worktree};
+use tasq_core::model::{Link, Priority, ProgressEntry, Session, Status, Tag, Workflow, Worktree};
 
 type Op = fn(&mut Document, &Workflow) -> Option<bool>;
 
@@ -35,6 +35,15 @@ fn mr(url: &str, title: &str) -> Link {
 }
 
 const MR1: &str = "https://gl.invalid/g/p/-/merge_requests/1";
+
+/// The ISO date every `due_*` scenario writes.
+fn due() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2026, 11, 1).unwrap()
+}
+
+fn xy() -> Vec<Tag> {
+    vec![Tag::new("x").unwrap(), Tag::new("y").unwrap()]
+}
 
 /// Scenario name, operation, and the change flag the operation must return
 /// (`None` for operations without a return value).
@@ -396,6 +405,206 @@ const SCENARIOS: &[(&str, Op, Option<bool>)] = &[
         "done_already_done",
         |d, w| {
             ops::set_done(d, w);
+            None
+        },
+        None,
+    ),
+    (
+        "title_open",
+        |d, _| {
+            ops::set_title(d, "Renamed task");
+            None
+        },
+        None,
+    ),
+    (
+        "title_done",
+        |d, _| {
+            ops::set_title(d, "Shipped it");
+            None
+        },
+        None,
+    ),
+    (
+        "due_replaces",
+        |d, _| {
+            ops::set_due(d, due());
+            None
+        },
+        None,
+    ),
+    (
+        "due_after_project",
+        |d, _| {
+            ops::set_due(d, due());
+            None
+        },
+        None,
+    ),
+    (
+        "due_after_description",
+        |d, _| {
+            ops::set_due(d, due());
+            None
+        },
+        None,
+    ),
+    (
+        "due_after_title",
+        |d, _| {
+            ops::set_due(d, due());
+            None
+        },
+        None,
+    ),
+    (
+        "due_title_only_no_newline",
+        |d, _| {
+            ops::set_due(d, due());
+            None
+        },
+        None,
+    ),
+    (
+        "due_project_last_no_blank",
+        |d, _| {
+            ops::set_due(d, due());
+            None
+        },
+        None,
+    ),
+    (
+        "due_replaces_last_section",
+        |d, _| {
+            ops::set_due(d, due());
+            None
+        },
+        None,
+    ),
+    (
+        "due_replaces_duplicates",
+        |d, _| {
+            ops::set_due(d, due());
+            None
+        },
+        None,
+    ),
+    (
+        "clear_due_middle",
+        |d, _| {
+            let r = ops::clear_due(d);
+            Some(r)
+        },
+        Some(true),
+    ),
+    (
+        "clear_due_last",
+        |d, _| {
+            let r = ops::clear_due(d);
+            Some(r)
+        },
+        Some(true),
+    ),
+    (
+        "clear_due_missing",
+        |d, _| {
+            let r = ops::clear_due(d);
+            Some(r)
+        },
+        Some(false),
+    ),
+    (
+        "clear_due_only_section",
+        |d, _| {
+            let r = ops::clear_due(d);
+            Some(r)
+        },
+        Some(true),
+    ),
+    (
+        "clear_due_no_blank_before",
+        |d, _| {
+            let r = ops::clear_due(d);
+            Some(r)
+        },
+        Some(true),
+    ),
+    (
+        "clear_project_middle",
+        |d, _| {
+            let r = ops::clear_project(d);
+            Some(r)
+        },
+        Some(true),
+    ),
+    (
+        "clear_project_duplicates",
+        |d, _| {
+            let r = ops::clear_project(d);
+            Some(r)
+        },
+        Some(true),
+    ),
+    (
+        "tags_replaces",
+        |d, w| {
+            ops::set_tags(d, &xy(), w);
+            None
+        },
+        None,
+    ),
+    (
+        "tags_clears",
+        |d, w| {
+            ops::set_tags(d, &[], w);
+            None
+        },
+        None,
+    ),
+    (
+        "tags_drops_empty_line",
+        |d, w| {
+            ops::set_tags(d, &[], w);
+            None
+        },
+        None,
+    ),
+    (
+        "tags_no_hash_line",
+        |d, w| {
+            ops::set_tags(d, &xy(), w);
+            None
+        },
+        None,
+    ),
+    (
+        "tags_no_section",
+        |d, w| {
+            ops::set_tags(d, &xy(), w);
+            None
+        },
+        None,
+    ),
+    (
+        "tags_no_section_empty",
+        |d, w| {
+            ops::set_tags(d, &[], w);
+            None
+        },
+        None,
+    ),
+    (
+        "tags_many_lines",
+        |d, w| {
+            ops::set_tags(d, &xy(), w);
+            None
+        },
+        None,
+    ),
+    (
+        "tags_no_trailing_newline",
+        |d, w| {
+            ops::set_tags(d, &xy(), w);
             None
         },
         None,

@@ -232,6 +232,33 @@ Used for Progress, Worktrees and Sessions.
 3. Remove the status tag. If the tags line becomes empty, the line is dropped;
    the `## Tags` heading stays.
 
+### Edits the script never made (`tasq` only)
+
+The TUI's edit form (`e`) and `tasq apply` can change the title, the due
+date, the project and the topic tags of a task. The script had no command for
+any of these, so the rewrite rules are `tasq`'s own; they follow the shape of
+the operations above.
+
+- **Title** (`set_title`): line 1 is rewritten with the new title after the
+  same `# [ ] ` or `# [x] ` marker. Nothing else moves.
+- **Due** (`set_due`): writes the ISO date like `set_project` writes a path:
+  every `## Due` body becomes a blank line and the date, followed by a blank
+  line when another heading follows. A missing section is inserted after
+  `## Project`, else after `## Description`, else right after the title line,
+  with the blank lines `set_project` would put around it.
+- **Clearing due or project** (`clear_due`, `clear_project`): every `## Due`
+  (or `## Project`) section is removed, heading and body up to the next `## `
+  heading, so the line before the heading is followed by what came after the
+  section. When the removed section was the last one, the blank lines left at
+  the end of the file go too. A done or an open task is the same here.
+- **Topic tags** (`set_tags`): on every `#` line of `## Tags` the topic tags
+  are removed and the status and priority tags keep their places; the new
+  topic tags go at the front of the first `#` line, the order create wrote
+  (`#gitlab #A #ready`). A line left empty is dropped, the heading stays.
+  Without a `#` line, a blank line and the tags are inserted after the
+  heading; without a `## Tags` section, one is appended at the end of the
+  file like `set` does. No tags and no section changes nothing.
+
 ### Lossless editing
 
 `tasq` parses a file into a task plus a document that keeps unknown sections,
