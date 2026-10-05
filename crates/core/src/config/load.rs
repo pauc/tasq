@@ -419,6 +419,10 @@ fn template() -> Table {
     config.report.summary.model = Some(String::new());
     config.report.summary.prompt_file = Some(PathBuf::from("~"));
     config.ui.colors.insert("<name>".to_owned(), String::new());
+    config
+        .ui
+        .keys
+        .insert("<name>".to_owned(), super::KeySpec::Many(Vec::new()));
     config.forge.insert(
         "<name>".to_owned(),
         super::ForgeConfig {

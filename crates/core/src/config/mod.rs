@@ -65,6 +65,8 @@
 //!
 //! [ui.colors]
 //!
+//! [ui.keys]
+//!
 //! [forge]
 //!
 //! [report.summary]
@@ -315,6 +317,11 @@ pub struct UiConfig {
     /// Colour overrides, element name to colour spec; the TUI defines the
     /// names. Default: empty.
     pub colors: BTreeMap<String, String>,
+    /// Key binding overrides, action name to key spec(s); the TUI defines
+    /// the action names and the key syntax and parses the strings
+    /// (ADR-0013). An action that is not listed keeps its default keys;
+    /// an empty list unbinds it. Default: empty.
+    pub keys: BTreeMap<String, KeySpec>,
 }
 
 impl Default for UiConfig {
@@ -324,6 +331,29 @@ impl Default for UiConfig {
             no_osc8: false,
             glow_style: "dark".to_owned(),
             colors: BTreeMap::new(),
+            keys: BTreeMap::new(),
+        }
+    }
+}
+
+/// The keys of one `[ui.keys]` action: a single key (`"alt+enter"`) or a
+/// list (`["j", "down"]`, `[]` to unbind). The strings are opaque here;
+/// the TUI parses them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum KeySpec {
+    /// One key.
+    One(String),
+    /// Zero or more keys.
+    Many(Vec<String>),
+}
+
+impl KeySpec {
+    /// The key strings, one or many.
+    pub fn keys(&self) -> &[String] {
+        match self {
+            Self::One(key) => std::slice::from_ref(key),
+            Self::Many(keys) => keys,
         }
     }
 }

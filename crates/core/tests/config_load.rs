@@ -8,8 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use tasq_core::config::{
-    Bookkeeper, Config, ConfigError, EnvStrategy, ForgeKind, LoadOptions, Origin, SourceKind,
-    Summarizer, WorktreeManager, expand_tilde,
+    Bookkeeper, Config, ConfigError, EnvStrategy, ForgeKind, KeySpec, LoadOptions, Origin,
+    SourceKind, Summarizer, WorktreeManager, expand_tilde,
 };
 use tasq_core::model::Status;
 use tempfile::TempDir;
@@ -126,6 +126,7 @@ fn defaults_match_the_script() {
     assert!(!c.ui.no_osc8);
     assert_eq!(c.ui.glow_style, "dark");
     assert!(c.ui.colors.is_empty());
+    assert!(c.ui.keys.is_empty());
     assert!(c.forge.is_empty());
     assert_eq!(c.source.len(), 0);
     assert_eq!(c.report.summary.summarizer, Summarizer::Llm);
@@ -168,6 +169,8 @@ no_osc8 = false
 glow_style = \"dark\"
 
 [ui.colors]
+
+[ui.keys]
 
 [forge]
 
@@ -334,6 +337,40 @@ fn empty_file_is_the_defaults() {
 }
 
 // --- files -----------------------------------------------------------------
+
+#[test]
+fn ui_keys_take_a_string_or_a_list_and_merge_per_action() {
+    let sb = Sandbox::new();
+    sb.write_global("[ui.keys]\nquit = \"x\"\nsync = [\"a\", \"b\"]\nfilter = []\n");
+    let project = sb.write_project("[ui.keys]\nquit = [\"y\"]\n");
+    let mut opts = sb.opts();
+    opts.overrides = vec![(
+        "ui.keys.launch-detached".into(),
+        "alt+enter, ctrl+enter".into(),
+    )];
+    let loaded = Config::load(&opts).unwrap();
+    let keys = &loaded.config.ui.keys;
+    assert_eq!(keys["quit"], KeySpec::Many(vec!["y".to_owned()]));
+    assert_eq!(
+        keys["sync"],
+        KeySpec::Many(vec!["a".to_owned(), "b".to_owned()])
+    );
+    assert_eq!(keys["filter"], KeySpec::Many(Vec::new()));
+    assert_eq!(
+        keys["launch-detached"],
+        KeySpec::Many(vec!["alt+enter".to_owned(), "ctrl+enter".to_owned()])
+    );
+    assert_eq!(keys.len(), 4);
+    assert_eq!(loaded.file_for("ui.keys.quit"), Some(project.as_path()));
+    assert_eq!(KeySpec::One("x".to_owned()).keys(), ["x".to_owned()]);
+    assert_eq!(keys["filter"].keys(), Vec::<String>::new());
+    fs::remove_file(&project).unwrap();
+    assert_eq!(
+        Config::load(&sb.opts()).unwrap().config.ui.keys["quit"],
+        KeySpec::One("x".to_owned()),
+        "a string stays a string when nothing above it is a list"
+    );
+}
 
 #[test]
 fn global_file_alone() {
