@@ -41,6 +41,8 @@ pager = "cat"                                # [ROOT]/home/.config/tasq/config.t
 
 [ui.colors]
 
+[ui.keys]
+
 [forge]
 
 [report.summary]

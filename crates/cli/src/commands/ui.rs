@@ -22,7 +22,7 @@ use std::process::Command;
 
 use tasq_core::model::{Task, TaskId};
 use tasq_core::theme::Theme;
-use tasq_tui::{Host, HostResult, LaunchTarget, Model};
+use tasq_tui::{Host, HostResult, KeyMap, LaunchTarget, Model};
 
 use crate::app::App;
 use crate::cli::GlobalArgs;
@@ -34,11 +34,18 @@ pub fn run(app: &App) -> Result<()> {
     if app.out.json_mode() {
         return Err(CliError::user("tasq ui has no --json output"));
     }
+    let keys = KeyMap::from_config(&app.config().ui.keys).map_err(|e| {
+        match app.loaded.file_for(&e.config_key()) {
+            Some(file) => CliError::user(format!("{}: {e}", file.display())),
+            None => CliError::user(e.to_string()),
+        }
+    })?;
     if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
         return Err(CliError::user("tasq ui needs a terminal"));
     }
     let theme = Theme::from_config(&app.config().ui);
     let model = Model::new(app.workflow(), theme, app.out.color())
+        .with_keys(keys)
         .with_default_status(app.config().workflow.default_status.clone())
         .with_default_project(Some(
             crate::commands::existing_dir(&app.opts.cwd).unwrap_or_else(|| app.opts.cwd.clone()),

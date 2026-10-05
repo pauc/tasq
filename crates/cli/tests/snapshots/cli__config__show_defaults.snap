@@ -35,6 +35,8 @@ pager = "less -RFX"                          # defaults
 
 [ui.colors]
 
+[ui.keys]
+
 [forge]
 
 [report.summary]

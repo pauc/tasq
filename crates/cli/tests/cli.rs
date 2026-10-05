@@ -2287,6 +2287,47 @@ mod ui {
         assert!(out.status.success());
         assert_snapshot!(stdout(&out));
     }
+
+    #[test]
+    fn bad_key_bindings_are_refused_before_the_terminal_check() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .args(["--set", "ui.keys.lunch=enter", "ui"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            stderr(&out),
+            "tasq: ui.keys.lunch: unknown action (see `tasq ui --help`)\n"
+        );
+
+        let file = env.write_global_config("[ui.keys]\nquit = [\"q\", \"meta+q\"]\n");
+        let out = env.tasq().arg("ui").output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            stderr(&out),
+            format!(
+                "tasq: {}: ui.keys.quit: \"meta+q\": unknown modifier `meta` (ctrl, alt, shift)\n",
+                file.display()
+            )
+        );
+
+        env.write_global_config("[ui.keys]\nsync = \"j\"\n");
+        let out = env.tasq().arg("ui").output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            stderr(&out),
+            format!(
+                "tasq: {}: ui.keys.sync: j is already bound to down\n",
+                file.display()
+            )
+        );
+
+        env.write_global_config("[ui.keys]\nlaunch-detached = \"alt+enter\"\n");
+        let out = env.tasq().arg("ui").output().unwrap();
+        assert_eq!(stderr(&out), "tasq: tasq ui needs a terminal\n");
+    }
 }
 
 mod plugins {

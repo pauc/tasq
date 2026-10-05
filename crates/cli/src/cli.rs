@@ -473,7 +473,9 @@ window and switch to it, Shift+Enter open it in a new window and stay
 `tasq set`, `log` and `done`. Group colours follow [ui.colors] (status
 name, or `no-status`); NO_COLOR or --color never gives a monochrome UI.
 Ctrl+Enter and Shift+Enter need a terminal with the kitty keyboard
-protocol; elsewhere they are a plain Enter.";
+protocol; elsewhere they are a plain Enter. Every key but Ctrl+C is an
+action that [ui.keys] can rebind (`launch-detached = \"alt+enter\"`); the
+? overlay shows the configured keys. See docs/config.md, \"Key bindings\".";
 
 const PLUGINS_HELP: &str = "\
 `tasq <name> [args...]` runs the executable tasq-<name> found on PATH when
