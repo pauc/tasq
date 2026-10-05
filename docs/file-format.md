@@ -241,6 +241,14 @@ the operations above.
 
 - **Title** (`set_title`): line 1 is rewritten with the new title after the
   same `# [ ] ` or `# [x] ` marker. Nothing else moves.
+- **Description** (`set_description`, `clear_description`): the first
+  `## Description` body becomes a blank line, the lines of the text and a
+  blank line before the next heading; any further `## Description` section
+  is removed, because reading joins them and only one can round-trip. A
+  missing section is inserted right after the title line, where create put
+  it. The text has no blank lines at either end (reading trims them, so they
+  could not round-trip). An empty description removes the section, like
+  clearing.
 - **Due** (`set_due`): writes the ISO date like `set_project` writes a path:
   every `## Due` body becomes a blank line and the date, followed by a blank
   line when another heading follows. A missing section is inserted after

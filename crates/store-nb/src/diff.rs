@@ -47,6 +47,14 @@ pub fn apply(
             None => ops::strip_status_tag(doc, workflow),
         }
     }
+    if wanted.description != current.description {
+        match wanted.description.as_deref() {
+            Some(text) => ops::set_description(doc, text),
+            None => {
+                ops::clear_description(doc);
+            }
+        }
+    }
     if wanted.due != current.due {
         match wanted.due {
             Some(due) => ops::set_due(doc, due),
@@ -262,8 +270,9 @@ mod tests {
             Err(vec!["progress"])
         );
         assert_eq!(
-            apply_to(TEXT, |t| t.description = Some("d".into())),
-            Err(vec!["description"])
+            apply_to(TEXT, |t| t.description = Some("\nleading blank\n".into())),
+            Err(vec!["description"]),
+            "the projection trims blank lines, so they cannot round-trip"
         );
         assert_eq!(
             apply_to(TEXT, |t| t.id = TaskId::from(9)),
@@ -289,6 +298,21 @@ mod tests {
             apply_to(TEXT, |t| t.tags.clear()).unwrap(),
             "# [ ] Title\n\n## Tags\n\n#B #ready\n\n## Progress\n\n- 2026-10-01 09:00: created\n",
             "removing a topic tag"
+        );
+        let out = apply_to(TEXT, |t| t.description = Some("Why.\n\nHow.".into())).unwrap();
+        assert_eq!(
+            out,
+            "# [ ] Title\n\n## Description\n\nWhy.\n\nHow.\n\n## Tags\n\n#gitlab #B #ready\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+        );
+        let described = "# [ ] T\n\n## Description\n\nOld.\n\n## Tags\n\n#B\n";
+        assert_eq!(
+            apply_to(described, |t| t.description = None).unwrap(),
+            "# [ ] T\n\n## Tags\n\n#B\n"
+        );
+        assert_eq!(
+            apply_to(described, |t| t.description = Some(String::new())),
+            Err(vec!["description"]),
+            "an empty description reads back as none, so it is reported; callers pass None"
         );
         let with_both = "# [ ] T\n\n## Project\n\n/old\n\n## Due\n\n2026-01-01\n\n## Tags\n\n#B\n";
         assert_eq!(

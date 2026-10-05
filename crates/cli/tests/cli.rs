@@ -1254,7 +1254,7 @@ mod apply {
         let env = TestEnv::fixture();
         let json = env.tasq().args(["view", "3", "--json"]).output().unwrap();
         let mut value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-        value["task"]["description"] = "Rewritten".into();
+        value["task"]["progress"] = serde_json::json!([]);
         let before = env.read_task("20260902100000.todo.md");
         env.tasq()
             .arg("apply")
@@ -1262,7 +1262,7 @@ mod apply {
             .assert()
             .code(1)
             .stderr(predicate::str::starts_with(
-                "tasq: unsupported: changing description of task 3",
+                "tasq: unsupported: changing progress of task 3",
             ));
         assert_eq!(env.read_task("20260902100000.todo.md"), before);
         env.tasq()

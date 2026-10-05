@@ -213,7 +213,7 @@ pub fn set_project(doc: &mut Document, path: &Path) {
     {
         insafter = doc.section_end(first);
     }
-    insert_section(doc, section::PROJECT, &path, insafter);
+    insert_section(doc, section::PROJECT, &[&path], insafter);
 }
 
 /// Gives every `## <name>` heading the body `["", value]` (the awk loop of
@@ -233,19 +233,20 @@ fn replace_bodies(doc: &mut Document, name: &str, value: &str) -> bool {
     !headings.is_empty()
 }
 
-/// Inserts a new `## <name>` section with the one-line body `value` so that
+/// Inserts a new `## <name>` section with the body `lines` so that
 /// `insafter` lines stay before it (awk is 1-based): a blank line first when
-/// the line before is not blank, then heading, blank line, value, and a blank
-/// line after when a non-blank line follows.
-fn insert_section(doc: &mut Document, name: &str, value: &str, insafter: usize) {
+/// the line before is not blank, then heading, blank line, the body, and a
+/// blank line after when a non-blank line follows.
+fn insert_section(doc: &mut Document, name: &str, lines: &[&str], insafter: usize) {
     let hdr = heading(name);
     let mut at = insafter;
     if !doc.is_blank(at - 1) {
         doc.insert(at, "");
         at += 1;
     }
-    doc.insert_all(at, [hdr.as_str(), "", value]);
-    at += 3;
+    doc.insert_all(at, [hdr.as_str(), ""]);
+    doc.insert_all(at + 2, lines.iter().copied());
+    at += 2 + lines.len();
     if at < doc.line_count() && !doc.is_blank(at) {
         doc.insert(at, "");
     }
@@ -265,13 +266,9 @@ fn remove_sections(doc: &mut Document, name: &str) -> bool {
             doc.remove(i);
         }
         // The last section took the blank line before it along; nothing
-        // should end a file with blank lines. The title line is never blank,
-        // so this stops before it.
+        // should end a file with blank lines.
         if h == doc.line_count() {
-            while doc.is_blank(doc.line_count() - 1) {
-                let last = doc.line_count() - 1;
-                doc.remove(last);
-            }
+            trim_trailing_blank_lines(doc);
         }
     }
     if headings.is_empty() {
@@ -307,7 +304,52 @@ pub fn set_due(doc: &mut Document, due: NaiveDate) {
         .iter()
         .find_map(|name| doc.find_first(&heading(name)))
         .map_or(1, |h| doc.section_end(h));
-    insert_section(doc, section::DUE, &value, insafter);
+    insert_section(doc, section::DUE, &[&value], insafter);
+}
+
+/// `set_description`: the first `## Description` gets a blank line, the
+/// lines of `text` and a blank line before the next heading; any other
+/// `## Description` section is removed (the projection joins them, so one
+/// is all that can round-trip). Without one, the section is inserted right
+/// after the title line, where `cmd_create` put it. `tasq` only; `text` is
+/// non-empty with no blank lines at either end (callers trim, since the
+/// projection does).
+pub fn set_description(doc: &mut Document, text: &str) {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let hdr = heading(section::DESCRIPTION);
+    let headings = doc.find_all(&hdr);
+    for &h in headings.iter().skip(1).rev() {
+        let end = doc.section_end(h);
+        for i in (h..end).rev() {
+            doc.remove(i);
+        }
+    }
+    match headings.first() {
+        Some(&h) => {
+            doc.set_body(h, [""].into_iter().chain(lines.iter().copied()));
+            // A blank line before the next heading; at the end of the file
+            // the trim takes it back.
+            let next = doc.section_end(h);
+            doc.insert(next, "");
+            trim_trailing_blank_lines(doc);
+        }
+        None => insert_section(doc, section::DESCRIPTION, &lines, 1),
+    }
+}
+
+/// `clear_description`: removes every `## Description` section. Returns
+/// whether there was one. `tasq` only.
+pub fn clear_description(doc: &mut Document) -> bool {
+    remove_sections(doc, section::DESCRIPTION)
+}
+
+/// Drops blank lines at the end of the file (the title line is never
+/// blank, so this stops before it).
+fn trim_trailing_blank_lines(doc: &mut Document) {
+    while doc.is_blank(doc.line_count() - 1) {
+        let last = doc.line_count() - 1;
+        doc.remove(last);
+    }
 }
 
 /// `clear_due`: removes every `## Due` section. Returns whether there was

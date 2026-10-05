@@ -60,10 +60,10 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
 ## `tasq apply`
 
 `tasq apply` reads `{"schema": 1, "task": Task}` from stdin (or a file) and writes the task
-through the store, which applies the differences it can express: title, status, priority,
-due, project, topic tags, done, and appended progress entries, worktrees, sessions, related
-links and merge requests. Anything else (a new description, a dropped progress entry, a
-removed link) is refused with an error naming the fields, and nothing is written. Piping `tasq view --json <id>` straight back into
+through the store, which applies the differences it can express: title, description, status,
+priority, due, project, topic tags, done, and appended progress entries, worktrees, sessions,
+related links and merge requests. Anything else (a dropped progress entry, a removed link) is
+refused with an error naming the fields, and nothing is written. Piping `tasq view --json <id>` straight back into
 `tasq apply` changes nothing.
 
 Validation errors name the field: `apply: missing field \`task\``, `apply: unsupported schema

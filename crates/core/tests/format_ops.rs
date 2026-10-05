@@ -490,6 +490,78 @@ const SCENARIOS: &[(&str, Op, Option<bool>)] = &[
         None,
     ),
     (
+        "description_replaces",
+        |d, _| {
+            ops::set_description(d, "One line now.");
+            None
+        },
+        None,
+    ),
+    (
+        "description_multiline",
+        |d, _| {
+            ops::set_description(d, "First.\n\nThird, after a blank line.");
+            None
+        },
+        None,
+    ),
+    (
+        "description_inserts_after_title",
+        |d, _| {
+            ops::set_description(d, "New text.");
+            None
+        },
+        None,
+    ),
+    (
+        "description_title_only_no_newline",
+        |d, _| {
+            ops::set_description(d, "New text.");
+            None
+        },
+        None,
+    ),
+    (
+        "description_replaces_last_section",
+        |d, _| {
+            ops::set_description(d, "New text.");
+            None
+        },
+        None,
+    ),
+    (
+        "description_replaces_duplicates",
+        |d, _| {
+            ops::set_description(d, "New text.");
+            None
+        },
+        None,
+    ),
+    (
+        "description_no_blank_after",
+        |d, _| {
+            ops::set_description(d, "New text.");
+            None
+        },
+        None,
+    ),
+    (
+        "clear_description_middle",
+        |d, _| {
+            let r = ops::clear_description(d);
+            Some(r)
+        },
+        Some(true),
+    ),
+    (
+        "clear_description_missing",
+        |d, _| {
+            let r = ops::clear_description(d);
+            Some(r)
+        },
+        Some(false),
+    ),
+    (
         "clear_due_middle",
         |d, _| {
             let r = ops::clear_due(d);

@@ -56,11 +56,14 @@ impl Value {
 
 /// The fields the TUI's edit form shows and writes back at once: what
 /// [`Fields::of`] reads off a task and what [`revise`] puts on it. The
-/// description (multi-line, the editor's job) and the lists are not here.
+/// lists (links, worktrees, sessions, progress) are not here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fields {
     /// The title line.
     pub title: String,
+    /// `## Description`, without blank lines at either end (the projection
+    /// trims them); `None` removes the section.
+    pub description: Option<String>,
     /// The workflow status; `None` is an open task without a status tag.
     pub status: Option<Status>,
     /// `A`, `B` or `C`.
@@ -75,13 +78,22 @@ pub struct Fields {
 
 /// The names of the [`Fields`], in form order (what [`Fields::changed`]
 /// reports).
-pub const FIELD_NAMES: [&str; 6] = ["title", "status", "priority", "due", "project", "tags"];
+pub const FIELD_NAMES: [&str; 7] = [
+    "title",
+    "description",
+    "status",
+    "priority",
+    "due",
+    "project",
+    "tags",
+];
 
 impl Fields {
     /// The fields as `task` has them.
     pub fn of(task: &Task) -> Self {
         Self {
             title: task.title.clone(),
+            description: task.description.clone(),
             status: task.status.clone(),
             priority: task.priority,
             due: task.due,
@@ -95,6 +107,7 @@ impl Fields {
     pub fn changed(&self, task: &Task) -> Vec<&'static str> {
         let differs = [
             self.title != task.title,
+            self.description != task.description,
             self.status != task.status,
             self.priority != task.priority,
             self.due != task.due,
@@ -111,6 +124,7 @@ impl Fields {
     /// Puts the fields on `task`.
     pub fn apply(&self, task: &mut Task) {
         task.title.clone_from(&self.title);
+        task.description.clone_from(&self.description);
         match &self.status {
             Some(status) => task.set_status(status.clone()),
             None => task.clear_status(),
@@ -394,11 +408,13 @@ mod tests {
         let mut task = Task::new(TaskId::from(1), "A");
         task.set_status(Status::READY);
         task.add_tag(Tag::new("gitlab").unwrap());
+        task.description = Some("Why.".into());
         let fields = Fields::of(&task);
         assert_eq!(
             fields,
             Fields {
                 title: "A".into(),
+                description: Some("Why.".into()),
                 status: Some(Status::READY),
                 priority: Priority::B,
                 due: None,
@@ -409,6 +425,7 @@ mod tests {
         assert_eq!(fields.changed(&task), Vec::<&str>::new());
         let all = Fields {
             title: "B".into(),
+            description: None,
             status: None,
             priority: Priority::A,
             due: Some(clock().today()),
