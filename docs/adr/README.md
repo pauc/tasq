@@ -39,3 +39,4 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0011](0011-create-from-the-tui.md) | Creating a task from the TUI: title only, through the `Store`, hooks through the `Host` | Accepted |
 | [0012](0012-detached-sessions-from-the-tui.md) | Opening a work session in a new window from the TUI: `Ctrl+Enter`/`Shift+Enter`, `--detached`, `launch.herdr.placement` | Accepted |
 | [0013](0013-configurable-key-bindings.md) | Configurable TUI key bindings: `[ui.keys]`, action = key or list, parsed by the TUI | Accepted |
+| [0014](0014-sync-sources-on-demand.md) | Choosing which sources a sync runs: `source[].auto`, repeatable `--source`, a source picker in the TUI | Accepted |

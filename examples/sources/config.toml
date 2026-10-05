@@ -23,11 +23,13 @@ exclude_labels = ["wontfix"]
 
 # Slack/Gmail through headless Claude Code; copy inbox.md next to this file to prompt_file.
 # Verified 2026-10-05: `claude -p` gets the claude.ai connectors of the interactive session.
-# One run is ~90 s and ~$2 (docs/sources.md, "Headless Claude Code"); run it on purpose with
-# `tasq sync --source inbox`, or set `enabled = false` and flip it when needed.
+# One run is ~90 s and ~$2 (docs/sources.md, "Headless Claude Code"), so `auto = false` keeps
+# it out of a bare `tasq sync`; run it on purpose with `tasq sync --source inbox` or the `S`
+# picker of `tasq ui`.
 [[source]]
 name = "inbox"
 kind = "llm-bridge"
 command = "claude -p --output-format json"
 prompt_file = "~/.config/tasq/prompts/inbox.md"
 tags = ["inbox"]
+auto = false

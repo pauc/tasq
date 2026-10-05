@@ -26,12 +26,16 @@ tasq sync --json
 - `tasq: no [[source]] is configured` means nothing is set up yet. Point the user at
   `docs/config.md` and `examples/sources/config.toml` in the tasq repository, then continue
   with step 2 so the run is still useful.
+- A source with `auto = false` is skipped by a bare `tasq sync`. When `tasq config show --json`
+  lists an enabled source of `kind = "llm-bridge"` with `auto = false`, run it too, as
+  `tasq sync --json --source <name>`: the user asked for a sync, and the bridge is their
+  Slack/Gmail path. Other `auto = false` sources stay skipped unless the user names them.
 
 ## 2. Triage the inbox when no bridge does it
 
 Check `tasq config show --json` for an enabled source of `kind = "llm-bridge"`. When there is
-one, `tasq sync` already covered the inbox; skip this step unless the user asked for a manual
-sweep.
+one, step 1 already covered the inbox (by default or by name); skip this step unless the user
+asked for a manual sweep.
 
 Otherwise, with the connectors available in this session (Slack, Gmail), read the unread
 mentions, direct messages and threads addressed to the user from the last two working days.

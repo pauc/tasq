@@ -2,7 +2,8 @@
 
 A source turns something outside the notebook into tasks: merge requests waiting for your
 review, issues assigned to you, or whatever an LLM finds in your inbox. Sources are declared as
-`[[source]]` blocks (see `docs/config.md`); `tasq sync` runs the enabled ones in order.
+`[[source]]` blocks (see `docs/config.md`); `tasq sync` runs the enabled ones that have
+`auto = true` in order, `tasq sync --source <name>...` exactly the named ones.
 
 ## What a sweep does
 
@@ -23,8 +24,18 @@ For each source:
    says whether each is still open, done (and why) or gone.
 
 `tasq sync <id>...` skips the sweep and only re-checks those tasks. `--dry-run` prints the
-changes without writing. `--source <name>` runs one source. One failing source is reported
-and the others still run; the exit code is 1 when any failed.
+changes without writing. One failing source is reported and the others still run; the exit
+code is 1 when any failed.
+
+Which sources run: `--source <name>` (repeatable) runs exactly those, whether or not they have
+`auto = true`, and an unknown or disabled name is an error listing the sources that exist.
+Without it, the sources with `auto = false` are skipped, so a source that costs a full LLM
+session runs on purpose (`tasq sync --source inbox`, or the `S` picker of `tasq ui`) and never
+by accident; when every enabled source is `auto = false`, a bare `tasq sync` says so and exits
+1. `enabled = false` is stronger: the source cannot run at all, and naming it is an error. In
+`tasq ui`, `s` is the bare `tasq sync` and `S` opens the picker with the `auto` sources
+pre-checked (`Space` toggles, `Enter` runs the checked ones, the choice is kept for the
+session).
 
 ## Forge sources
 
@@ -99,7 +110,7 @@ So the connector question holds: headless `claude -p` triages the inbox like `/u
 did, and the plugin's `/tasq:sync` step 2 (interactive triage) is only the fallback for a
 config without an enabled bridge. Two caveats:
 
-- Every run costs a full Claude session. Run it on purpose, `tasq sync --source inbox`, or set
-  `enabled = false` and flip it when needed, rather than paying it on every `tasq sync`.
+- Every run costs a full Claude session. Give the source `auto = false`: a bare `tasq sync`
+  and the TUI's `s` skip it, `tasq sync --source inbox` and the TUI's `S` picker run it.
 - Gmail was not observed in that run (no item came from mail, and the transcript was not
   inspected), so "Gmail works headless" rests on `claude mcp list`, not on a returned item.

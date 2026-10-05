@@ -188,7 +188,8 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
       tasks `tasks update` created; nothing is written. Then `tasq sync`.
 - [ ] Inbox bridge: copy `examples/sources/inbox.md` to `~/.config/tasq/prompts/` and add
       the `inbox` `[[source]]` from `examples/sources/config.toml`. Each run is one headless
-      Claude session (~90 s, ~$2), so use `tasq sync --source inbox` or `enabled = false`
+      Claude session (~90 s, ~$2), so keep its `auto = false` and run it on purpose with
+      `tasq sync --source inbox` or the `S` picker of `tasq ui`
       ([`docs/sources.md`](sources.md), "Headless Claude Code").
 - [ ] Point herdr and Claude workflows at `tasq next` and `tasq pick <id>`
       (they set `TASQ_TASK_ID` for the session).

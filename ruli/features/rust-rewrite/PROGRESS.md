@@ -235,6 +235,19 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   Follow-up 9c4a489: the herdr launcher focuses the workspace right after creating the pane,
   before `agent start` waits for Claude to be ready; the switch felt slow when it came last.
 
+- **Sync sources on demand (follow-up 2026-10-05, ADR 0014, todo 12).** `source[].auto`
+  (default `true`): a bare `tasq sync` and the TUI's sync-all run the `auto` sources only;
+  `--source NAME` is now repeatable and runs exactly the named enabled sources, `auto` or not;
+  `enabled = false` keeps meaning "cannot run" (naming it is an error). Motivation: the inbox
+  bridge costs a full Claude session (~$2.3) per run. The TUI got a source picker: `S` opens
+  `Mode::Sources` over `Model::sources` (the enabled `[[source]]` blocks, passed by the CLI as
+  `SourceChoice { name, kind, auto }`), the checked set lives in `Model::checked` so it
+  survives closing the picker, `Space` and digits toggle, `Enter` sends `Cmd::Sync(names)`,
+  `Host::sync(&[String])` turns the names into `--source` flags. Three default keys moved:
+  sync-all `S` -> `s`, status `s` -> `t`, editor `e` -> `E` (freeing `e` for the in-TUI edit
+  form, todo 13; `t` and `p` stay as quick pickers). The status-bar hint shows `s/S sync` so
+  the full line still fits 100 columns (99). Commits: 39a3863 (core), be409bc (tui), 283ed83 (cli), docs
+  follow-up.
 - **Configurable key bindings (follow-up 2026-10-05, ADR 0013).** `[ui.keys]` maps action
   names to one key or a list (`[]` unbinds); core stores the strings
   (`UiConfig.keys: BTreeMap<String, KeySpec>`, `serde(untagged)` string-or-list, a `<name>`

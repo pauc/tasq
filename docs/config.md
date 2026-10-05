@@ -77,6 +77,7 @@ glow_style = "dark"
 # tags = ["gitlab", "review-request"]
 # status = "ready"
 # enabled = true
+# auto = true                       # false: a bare `tasq sync` skips it; run it with --source or from the TUI
 # create_new = true                 # false: only update tasks that already exist
 # close_when_done = true            # mark the task done when the item is merged/closed/approved
 # flag = "review-request"           # tag added to matched open tasks that lack it
@@ -130,7 +131,8 @@ pre-launch = []
 | `source[].prompt_file` | path | unset | File fed to the `llm-bridge` command on stdin. `~` expanded. |
 | `source[].tags` | array of strings | `[]` | Tags added to every task the source creates. |
 | `source[].status` | string | `workflow.default_status` | Status of tasks the source creates. |
-| `source[].enabled` | bool | `true` | Whether `tasq sync` runs it. |
+| `source[].enabled` | bool | `true` | Whether the source can run at all. `false`: never, and naming it is an error. |
+| `source[].auto` | bool | `true` | Whether a bare `tasq sync` (and the TUI's `s`) includes it. `false`: it runs only when named with `--source` or checked in the TUI's `S` picker. |
 | `source[].create_new` | bool | `true` | Create tasks for new items. `false`: only update existing tasks. |
 | `source[].close_when_done` | bool | `true` | Log a note and mark the task done when its item is merged, closed, approved or reassigned. |
 | `source[].flag` | string | unset | Tag added to matched open tasks that lack it. |
@@ -291,10 +293,10 @@ A value that is not a colour name or a number from 0 to 255 is ignored. `NO_COLO
 
 `tasq ui` is the grouped list plus the selected task's detail (side by side from 100 columns,
 otherwise one pane with `Tab` switching between them). Its edits are the same operations as
-`tasq set`, `tasq log` and `tasq done`; `e` opens the task file in `$VISUAL`, else `$EDITOR`,
-else `vi`; `Enter` and `S` run `tasq pick <id>` and `tasq sync` as child processes with the
-same `--profile`, `--config` and `--set` flags, while the UI has released the terminal. `?`
-lists every key.
+`tasq set`, `tasq log` and `tasq done`; `E` opens the task file in `$VISUAL`, else `$EDITOR`,
+else `vi`; `Enter`, `s` and `S` run `tasq pick <id>`, `tasq sync` and `tasq sync --source ...`
+(the sources checked in the picker) as child processes with the same `--profile`, `--config`
+and `--set` flags, while the UI has released the terminal. `?` lists every key.
 
 ### Key bindings
 
@@ -306,7 +308,7 @@ listed keep their defaults, so the table is normally one or two lines:
 [ui.keys]
 launch-detached = "alt+enter"              # Ghostty keeps Ctrl+Enter for fullscreen
 launch-detached-stay = ["shift+enter", "alt+shift+enter"]
-sync = []                                  # S does nothing
+sync = []                                  # s does nothing
 ```
 
 A key is `[ctrl+][alt+][shift+]<key>`, modifiers in any order and case; `<key>` is one
@@ -322,21 +324,23 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `page-up`, `page-down` | `ctrl+u`, `pgup` / `ctrl+d`, `pgdn` | list | move ten tasks |
 | `top`, `bottom` | `g`, `home` / `G`, `end` | list | first / last task |
 | `filter` | `/` | list | type a filter |
-| `status`, `priority` | `s` / `p` | list | open the status / priority picker |
+| `status`, `priority` | `t` / `p` | list | open the status / priority picker |
 | `log`, `done`, `create` | `l` / `d` / `c` | list | type a note / a final note / a title |
-| `edit` | `e` | list | open the file in the editor |
+| `edit` | `E` | list | open the file in the editor |
 | `launch` | `enter` | list | `tasq pick <id>` here |
 | `launch-detached` | `ctrl+enter` | list | `tasq pick <id> --detached` |
 | `launch-detached-stay` | `shift+enter` | list | `tasq pick <id> --detached --no-focus` |
-| `sync`, `reload` | `S` / `r` | list | `tasq sync` / reload |
+| `sync`, `sources` | `s` / `S` | list | `tasq sync` (the `auto = true` sources) / the source picker |
+| `reload` | `r` | list | reload |
 | `help` | `?` | list | the key overlay (any key closes it) |
 | `toggle-detail` | `tab` | list | one-pane layout: list or detail |
 | `cancel` | `esc` | list, pickers | clear the filter, close the detail or the dialog |
-| `confirm` | `enter` | pickers | apply the choice |
+| `confirm` | `enter` | pickers | apply the choice; in the source picker, run the checked sources |
 | `quit` | `q` | list, pickers | leave `tasq ui`; in a picker, close it |
 
 Typing (the filter, a note, a title) is not configurable: characters, `Enter`, `Esc` and
-`Backspace` do what they always do. `Ctrl+C` quits in every mode and cannot be rebound. A key
+`Backspace` do what they always do. Neither are the toggles of the source picker: `Space` and
+the row digits. `Ctrl+C` quits in every mode and cannot be rebound. A key
 bound to two actions of the same mode, an unknown action or a key that does not parse stops
 `tasq ui` at startup with the file and the `ui.keys.<action>` path. The `?` overlay and the
 status-bar hints show the configured keys.

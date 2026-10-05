@@ -129,11 +129,11 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    tasq ui
    ```
 
-   `j`/`k` move, `/` filters, `c` creates a task from a title, `s`/`p` set status and
-   priority, `l` logs a note, `d` marks done, `e` opens the file in `$EDITOR`, `Enter` starts
+   `j`/`k` move, `/` filters, `c` creates a task from a title, `t`/`p` set status and
+   priority, `l` logs a note, `d` marks done, `E` opens the file in `$EDITOR`, `Enter` starts
    a session here, `Ctrl+Enter` starts it in a new herdr or tmux window and switches to it,
-   `Shift+Enter` does the same without leaving the list, `S` runs the sources, `?` lists
-   every key. Every key can be rebound under `[ui.keys]` in the config: Ghostty on Linux keeps
+   `Shift+Enter` does the same without leaving the list, `s` runs the sources that run by
+   default, `S` picks which sources to run, `?` lists every key. Every key can be rebound under `[ui.keys]` in the config: Ghostty on Linux keeps
    `Ctrl+Enter` for fullscreen, so `launch-detached = "alt+enter"` moves the action there.
 
 ## Concepts
