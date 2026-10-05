@@ -69,11 +69,37 @@ Only `external_id` and `title` are required. `state` is `open` (default), `done`
 `needs-attention`. `status` must be a workflow status, `priority` `A`/`B`/`C`, `tags` plain
 words without `#`, `due` `YYYY-MM-DD`. Accepted shapes: a bare array; an object with
 `"items": [...]`; or the envelope `claude -p --output-format json` prints, whose `"result"`
-string holds the array (a ```` ```json ```` fence around it is fine). Anything else is an
-error quoting the first 200 characters of the output.
+string holds the array. The array may sit in a ```` ```json ```` fence with prose before and
+after it: the first fenced block is taken (told to print only the array, Claude still answers
+`Final list:` and a fence). Anything else is an error quoting the first 200 characters of the
+output.
 
 Repeated items are dropped: same external id, else same URL, else same title ignoring case and
 whitespace. The bridge cannot look items up again, so it never closes tasks; close them with
 `tasq done` or let another source do it.
 
 Example configuration and prompt: `examples/sources/`.
+
+### Headless Claude Code
+
+The example bridge relies on `claude -p` seeing the Slack and Gmail connectors of the
+interactive session. Checked on 2026-10-05 from a plain shell, with `TASQ_SYNC_KNOWN='[]'` and
+the example prompt on stdin:
+
+| Measured | Value |
+|---|---|
+| Claude Code | 2.1.289; `claude mcp list` reports claude.ai Slack and Gmail `Connected` |
+| Items returned | 3, all Slack, with well-formed `slack:<channel>/<ts>` ids and permalinks |
+| Turns | 15 |
+| API time | 89 s (96 s wall clock) |
+| Cost (`total_cost_usd`, list price) | $2.28 |
+| Output shape | envelope; `"result"` was a sentence of prose followed by a ```` ```json ```` fence |
+
+So the connector question holds: headless `claude -p` triages the inbox like `/update-tasks`
+did, and the plugin's `/tasq:sync` step 2 (interactive triage) is only the fallback for a
+config without an enabled bridge. Two caveats:
+
+- Every run costs a full Claude session. Run it on purpose, `tasq sync --source inbox`, or set
+  `enabled = false` and flip it when needed, rather than paying it on every `tasq sync`.
+- Gmail was not observed in that run (no item came from mail, and the transcript was not
+  inspected), so "Gmail works headless" rests on `claude mcp list`, not on a returned item.

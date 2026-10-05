@@ -458,6 +458,17 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   envelope (with a code fence) and never closes tasks; its `check` reports every origin as open
   so a configured `flag` still applies (that shape also exists because a function whose body is
   `Ok(Vec::new())` cannot be mutation-tested).
+- Headless check of the bridge (2026-10-05, Claude Code 2.1.289, `claude -p --output-format
+  json < examples/sources/inbox.md` from a plain shell): `claude mcp list` shows the claude.ai
+  Slack and Gmail connectors `Connected`, and the run returned 3 real Slack items in 15 turns,
+  89 s API time, $2.28. So `/update-tasks` parity for Slack/Gmail does not need an interactive
+  session; `/tasq:sync` step 2 stays the no-bridge fallback. The example ships, with its cost
+  documented (`docs/sources.md`, "Headless Claude Code"). Gmail items were not observed.
+- The same run broke the parser: despite "Print only a JSON array, no prose", `"result"` was
+  `All nine ... Final list:\n\n```json ...`, and `strip_fences` only dropped a fence at the
+  very start. It now takes the body of the first fenced block wherever it sits and leaves text
+  that already starts with `[`/`{` alone (so JSON containing a fence in a string is safe). The
+  real envelope shape is pinned in `parses_arrays_objects_and_claude_envelopes`. Commit: 050bda2.
 - `tasq mr` / `create --mr`: title from the forge whose `host` matches the URL; a failed lookup
   is a warning and the short reference (`g/p!10`) is used; a gone MR (404) silently falls back.
 
