@@ -3,7 +3,7 @@
 
 use tasq_core::model::{Priority, TaskId};
 
-use crate::form::Form;
+use crate::form::{Field, Form};
 use crate::model::{Message, Mode, Model, NoteTarget, PAGE};
 use crate::msg::{Cmd, LaunchTarget, Msg};
 
@@ -137,7 +137,17 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
                 model.mode = Mode::Sources { cursor: 0 };
             }
         }
-        Msg::Backspace | Msg::Char(_) | Msg::Paste(_) | Msg::Left | Msg::Right => {}
+        Msg::Backspace
+        | Msg::Char(_)
+        | Msg::Paste(_)
+        | Msg::Left
+        | Msg::Right
+        | Msg::Home
+        | Msg::End
+        | Msg::Delete
+        | Msg::NextField
+        | Msg::PrevField
+        | Msg::Save => {}
         Msg::Resize(..) | Msg::Loaded(_) | Msg::Select(_) | Msg::Info(_) | Msg::Failed(_) => {
             unreachable!("handled before the mode dispatch")
         }
@@ -394,9 +404,11 @@ fn create(model: &mut Model, mut input: String, msg: Msg) -> Vec<Cmd> {
     Vec::new()
 }
 
-/// The edit form (`e`): rows are typed or cycled in place; `Enter` saves
-/// through [`Cmd::Revise`] when every row validates, else the focus moves
-/// to the first bad row and the form stays open; `Esc` discards.
+/// The edit view (`e`): rows are typed or cycled in place, `Tab` and the
+/// arrows move between them, `Enter` is a newline in the description and
+/// the next row elsewhere; `Ctrl+S` saves through [`Cmd::Revise`] when
+/// every row validates, else the focus moves to the first bad row and the
+/// view stays; `Esc` discards.
 fn form_mode(model: &mut Model, mut form: Form, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Quit => {
@@ -407,14 +419,26 @@ fn form_mode(model: &mut Model, mut form: Form, msg: Msg) -> Vec<Cmd> {
             model.mode = Mode::Normal;
             return Vec::new();
         }
-        Msg::Up => form.focus_prev(),
-        Msg::Down => form.focus_next(),
-        Msg::Left => form.cycle(-1, &model.workflow),
-        Msg::Right => form.cycle(1, &model.workflow),
-        Msg::Char(c) => form.type_char(c),
-        Msg::Paste(text) => form.paste(&one_line(&text)),
+        Msg::NextField => form.focus_next(),
+        Msg::PrevField => form.focus_prev(),
+        Msg::Up => form.up(),
+        Msg::Down => form.down(),
+        Msg::Left => form.left(&model.workflow),
+        Msg::Right => form.right(&model.workflow),
+        Msg::Home => form.home(),
+        Msg::End => form.end(),
+        Msg::Char(c) => form.insert(c),
+        Msg::Paste(text) => form.paste(&text),
         Msg::Backspace => form.backspace(),
-        Msg::Enter => match form.fields(&model.workflow, model.today) {
+        Msg::Delete => form.delete(),
+        Msg::Enter => {
+            if form.focus == Field::Description {
+                form.newline();
+            } else {
+                form.focus_next();
+            }
+        }
+        Msg::Save => match form.fields(&model.workflow, model.today) {
             Ok(fields) => {
                 model.mode = Mode::Normal;
                 return vec![Cmd::Revise(form.id, Box::new(fields))];
@@ -441,7 +465,7 @@ pub fn one_line(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::form::Field;
+    use crate::form::Text;
     use crate::model::SourceChoice;
     use tasq_core::edit::Fields;
     use tasq_core::model::{Status, Tag, Task, TaskDraft, Workflow};
@@ -994,38 +1018,58 @@ mod tests {
         assert_eq!(update(&mut m, Msg::Edit), Vec::new());
         let form = form_of(&m);
         assert_eq!(form.id, TaskId::from(1));
-        assert_eq!(form.title, "First");
+        assert_eq!(form.title.text(), "First");
         assert_eq!(form.focus, Field::Title);
         assert_eq!(m.message, None);
 
         assert_eq!(feed(&mut m, chars(" bis")), Vec::new());
-        assert_eq!(form_of(&m).title, "First bis");
-        assert_eq!(feed(&mut m, [Msg::Down, Msg::Right]), Vec::new());
+        assert_eq!(form_of(&m).title.text(), "First bis");
+        assert_eq!(feed(&mut m, [Msg::Home, Msg::Delete, Msg::End]), Vec::new());
+        assert_eq!(form_of(&m).title.text(), "irst bis");
+        assert_eq!(
+            feed(&mut m, [Msg::Left, Msg::Char('!'), Msg::Right]),
+            Vec::new()
+        );
+        assert_eq!(form_of(&m).title.text(), "irst bi!s");
+        assert_eq!(feed(&mut m, [Msg::Enter, Msg::Right]), Vec::new());
         let form = form_of(&m);
-        assert_eq!(form.focus, Field::Status);
+        assert_eq!(form.focus, Field::Status, "Enter moves on");
         assert_eq!(form.chosen_status(&m.workflow), Some(Status::READY));
         assert_eq!(feed(&mut m, [Msg::Down, Msg::Left]), Vec::new());
         assert_eq!(form_of(&m).chosen_priority(), Priority::A);
-        assert_eq!(update(&mut m, Msg::Down), Vec::new());
+        assert_eq!(update(&mut m, Msg::NextField), Vec::new());
         assert_eq!(feed(&mut m, chars("tomorrow")), Vec::new());
         assert_eq!(
-            feed(&mut m, [Msg::Down, Msg::Paste("/p\n".into())]),
+            feed(&mut m, [Msg::NextField, Msg::Paste("/p\n".into())]),
             Vec::new()
         );
-        assert_eq!(form_of(&m).project, "/p");
+        assert_eq!(form_of(&m).project.text(), "/p");
         assert_eq!(update(&mut m, Msg::Down), Vec::new());
         assert_eq!(feed(&mut m, chars("a #b")), Vec::new());
         assert_eq!(feed(&mut m, [Msg::Down, Msg::Top]), Vec::new());
-        assert_eq!(form_of(&m).focus, Field::Tags, "the bottom row stays");
+        assert_eq!(form_of(&m).focus, Field::Description);
+        assert_eq!(feed(&mut m, chars("why")), Vec::new());
+        assert_eq!(feed(&mut m, [Msg::Enter, Msg::Enter]), Vec::new());
+        assert_eq!(feed(&mut m, [Msg::Paste("how\n".into())]), Vec::new());
+        assert_eq!(feed(&mut m, [Msg::Down, Msg::NextField]), Vec::new());
+        assert_eq!(
+            form_of(&m).focus,
+            Field::Description,
+            "the bottom row stays"
+        );
+        assert_eq!(form_of(&m).description.lines(), ["why", "", "how", ""]);
+        assert_eq!(feed(&mut m, [Msg::PrevField, Msg::Up]), Vec::new());
+        assert_eq!(form_of(&m).focus, Field::Project);
 
-        let cmds = update(&mut m, Msg::Enter);
+        let cmds = update(&mut m, Msg::Save);
         assert_eq!(m.mode, Mode::Normal);
         assert_eq!(
             cmds,
             vec![Cmd::Revise(
                 TaskId::from(1),
                 Box::new(Fields {
-                    title: "First bis".into(),
+                    title: "irst bi!s".into(),
+                    description: Some("why\n\nhow".into()),
                     status: Some(Status::READY),
                     priority: Priority::A,
                     due: Some(chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap()),
@@ -1045,10 +1089,10 @@ mod tests {
         feed(&mut m, chars("soon"));
         assert_eq!(update(&mut m, Msg::Up), Vec::new());
         assert_eq!(form_of(&m).focus, Field::Priority);
-        assert_eq!(update(&mut m, Msg::Enter), Vec::new());
+        assert_eq!(update(&mut m, Msg::Save), Vec::new());
         let form = form_of(&m);
         assert_eq!(form.focus, Field::Due, "the focus goes to the bad row");
-        assert_eq!(form.due, "soon");
+        assert_eq!(form.due.text(), "soon");
         let message = m.message.clone().expect("an error");
         assert!(message.is_error);
         assert!(message.text.starts_with("due: "), "{}", message.text);
@@ -1061,10 +1105,8 @@ mod tests {
         for _ in 0..5 {
             update(&mut m, Msg::Backspace);
         }
-        assert_eq!(form_of(&m).title, "");
-        assert_eq!(feed(&mut m, [Msg::Left, Msg::Right]), Vec::new());
-        assert_eq!(form_of(&m).title, "", "a text row does not cycle");
-        assert_eq!(update(&mut m, Msg::Enter), Vec::new());
+        assert_eq!(form_of(&m).title.text(), "");
+        assert_eq!(update(&mut m, Msg::Save), Vec::new());
         assert_eq!(
             m.message,
             Some(Message::error("the title must not be empty"))
@@ -1075,14 +1117,30 @@ mod tests {
         assert_eq!(m.message, None);
         assert_eq!(
             m.tasks[0].title, "First",
-            "the form never touches the model's tasks"
+            "the view never touches the model's tasks"
         );
         update(&mut m, Msg::Edit);
         assert_eq!(update(&mut m, Msg::Quit), Vec::new());
         assert!(m.quit);
         let mut m = model();
-        assert_eq!(feed(&mut m, [Msg::Left, Msg::Right]), Vec::new());
+        assert_eq!(
+            feed(
+                &mut m,
+                [
+                    Msg::Left,
+                    Msg::Right,
+                    Msg::Home,
+                    Msg::End,
+                    Msg::Delete,
+                    Msg::NextField,
+                    Msg::PrevField,
+                    Msg::Save
+                ]
+            ),
+            Vec::new()
+        );
         assert_eq!(m.mode, Mode::Normal, "nothing in normal mode");
+        let _ = Text::single;
     }
 
     #[test]

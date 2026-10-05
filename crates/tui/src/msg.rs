@@ -14,10 +14,22 @@ pub enum Msg {
     Up,
     /// Move the selection or the picker cursor down one.
     Down,
-    /// In the form: cycle the focused choice row backwards.
+    /// In the edit view: the cursor back, or the previous choice.
     Left,
-    /// In the form: cycle the focused choice row forwards.
+    /// In the edit view: the cursor forward, or the next choice.
     Right,
+    /// In the edit view: the cursor to the start of the line.
+    Home,
+    /// In the edit view: the cursor to the end of the line.
+    End,
+    /// In the edit view: delete the character under the cursor.
+    Delete,
+    /// In the edit view: `Tab`, the next row.
+    NextField,
+    /// In the edit view: `Shift+Tab`, the previous row.
+    PrevField,
+    /// In the edit view: `Ctrl+S`, validate and write.
+    Save,
     /// Move the selection [`crate::model::PAGE`] rows up.
     PageUp,
     /// Move the selection [`crate::model::PAGE`] rows down.
@@ -48,7 +60,7 @@ pub enum Msg {
     BeginDone,
     /// `c`: start typing the title of a new task.
     BeginCreate,
-    /// `e`: open the edit form on the selected task.
+    /// `e`: open the edit view on the selected task.
     Edit,
     /// `E`: open the task's file in the editor.
     Editor,
@@ -101,7 +113,7 @@ pub enum Cmd {
     /// `tasq create <title>`: [`tasq_core::store::Store::create`] with the
     /// model's draft, then the host's `after_create`.
     Create(Box<TaskDraft>),
-    /// The form's save: [`tasq_core::edit::revise`] with the fields.
+    /// The edit view's save: [`tasq_core::edit::revise`] with the fields.
     Revise(TaskId, Box<Fields>),
     /// Open the task's file in the editor (terminal released meanwhile).
     Editor(TaskId),

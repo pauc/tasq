@@ -10,7 +10,7 @@
 use std::fmt::Write as _;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
@@ -18,7 +18,7 @@ use tasq_core::clock::{format_date, format_timestamp};
 use tasq_core::model::{Priority, Task};
 use tasq_core::theme::{self, group_label};
 
-use crate::form::{Field, Form};
+use crate::form::{Field, Form, Text};
 use crate::keys::{Action, KeyMap};
 use crate::model::{LayoutKind, Mode, Model, NoteTarget, Row};
 
@@ -166,6 +166,11 @@ fn join(parts: impl Iterator<Item = Option<String>>) -> String {
 pub fn view(model: &Model, frame: &mut Frame) {
     let [main, bar] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
+    if let Mode::Form(form) = &model.mode {
+        render_form(model, frame, main, form);
+        frame.render_widget(status_bar(model, bar.width), bar);
+        return;
+    }
     match model.layout() {
         LayoutKind::TwoPane => {
             let [left, right] =
@@ -212,7 +217,7 @@ pub fn view(model: &Model, frame: &mut Frame) {
             &source_entries(model),
             *cursor,
         ),
-        Mode::Form(form) => render_form(model, frame, main, form),
+        Mode::Form(_) => unreachable!("drawn above"),
         Mode::Normal | Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => {}
     }
 }
@@ -532,7 +537,7 @@ pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
             Span::raw(input.as_str()),
             Span::styled("\u{2581}", dim()),
         ]),
-        Mode::Form(_) if model.message.is_none() => Line::styled(FORM_HINTS, dim()),
+        Mode::Form(_) if model.message.is_none() => form_hints(width),
         _ => match &model.message {
             Some(message) if message.is_error => Line::styled(
                 message.text.as_str(),
@@ -545,8 +550,37 @@ pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
     Paragraph::new(line)
 }
 
-/// The status-bar hints while the form is open (its keys are fixed).
-pub const FORM_HINTS: &str = "Up/Down, Tab: next row  Left/Right: change  Enter: save  Esc: cancel";
+/// The status-bar key hints while the edit view is open (its keys are
+/// fixed): each key bold, what it does dim.
+pub const FORM_HINTS: &[(&str, &str)] = &[
+    ("Tab/S-Tab", "row"),
+    ("\u{2191}\u{2193}\u{2190}\u{2192}", "move"),
+    ("Enter", "next / newline"),
+    ("C-s", "save"),
+    ("Esc", "cancel"),
+];
+
+/// [`FORM_HINTS`] as one line: keys and labels when they fit in `width`
+/// columns, the keys alone otherwise.
+pub fn form_hints(width: u16) -> Line<'static> {
+    let full: usize = FORM_HINTS
+        .iter()
+        .map(|(key, what)| key.chars().count() + 1 + what.len())
+        .sum::<usize>()
+        + 2 * (FORM_HINTS.len() - 1);
+    let labelled = usize::from(width) >= full;
+    let mut spans = Vec::new();
+    for (i, (key, what)) in FORM_HINTS.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(*key, bold()));
+        if labelled {
+            spans.push(Span::styled(format!(" {what}"), dim()));
+        }
+    }
+    Line::from(spans)
+}
 
 /// The longest hint line for `keys` that fits in `width` columns.
 pub fn hints(keys: &KeyMap, width: u16) -> String {
@@ -604,54 +638,144 @@ fn render_help(model: &Model, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// The edit form: one row per field, the focused row's label reversed; a
-/// text row shows the cursor after its text, a choice row shows its value
-/// between `<` and `>`.
+/// The edit view: the whole main area. The single-line rows at the top,
+/// the description below a rule, the focused row's label highlighted,
+/// the terminal cursor in the focused text; a choice row shows its value
+/// between chevrons when focused.
 fn render_form(model: &Model, frame: &mut Frame, area: Rect, form: &Form) {
-    let lines: Vec<Line<'_>> = Field::ALL
-        .into_iter()
-        .map(|field| {
-            let label = format!(" {:<9}", field.label());
-            let value = form.value(field, &model.workflow);
+    let block = Block::bordered().title(format!(" Edit [{}] ", form.id));
+    let inner = block.inner(area).inner(Margin::new(1, 0));
+    frame.render_widget(block, area);
+    let [rows_area, _gap, rule, body] = Layout::vertical([
+        Constraint::Length(SINGLE_ROWS.len().try_into().unwrap_or(u16::MAX)),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+    ])
+    .areas(inner);
+
+    let value_width = usize::from(rows_area.width)
+        .saturating_sub(LABEL_WIDTH)
+        .max(1);
+    let mut cursor = None;
+    let rows: Vec<Line<'_>> = SINGLE_ROWS
+        .iter()
+        .enumerate()
+        .map(|(i, &field)| {
             let focused = field == form.focus;
-            let label_style = if focused {
-                Style::new().add_modifier(Modifier::REVERSED)
-            } else {
-                bold()
-            };
-            let mut spans = vec![Span::styled(label, label_style), Span::raw(" ")];
-            match (field.is_text(), focused) {
-                (true, true) => {
-                    spans.push(Span::raw(value));
-                    spans.push(Span::styled("\u{2581}", dim()));
+            let label = Span::styled(
+                format!("{:<LABEL_WIDTH$}", field.label()),
+                label_style(model, focused),
+            );
+            let value = match form.text(field) {
+                Some(text) => {
+                    let (_, col) = text.cursor();
+                    let start = window(col, value_width);
+                    let shown: String = text.lines()[0]
+                        .chars()
+                        .skip(start)
+                        .take(value_width)
+                        .collect();
+                    if focused {
+                        cursor = Some((
+                            rows_area.x + narrow(LABEL_WIDTH + col - start),
+                            rows_area.y + narrow(i),
+                        ));
+                    }
+                    Span::raw(shown)
                 }
-                (false, true) => spans.push(Span::raw(format!("< {value} >"))),
-                (_, false) => spans.push(Span::raw(value)),
-            }
-            Line::from(spans)
+                None if focused => Span::styled(
+                    format!("\u{2039} {} \u{203a}", form.value(field, &model.workflow)),
+                    bold(),
+                ),
+                None => Span::raw(form.value(field, &model.workflow)),
+            };
+            Line::from(vec![label, value])
         })
         .collect();
-    let width = narrow(
-        lines
-            .iter()
-            .map(Line::width)
-            .max()
-            .unwrap_or(0)
-            .max(FORM_MIN_WIDTH)
-            + 3,
+    frame.render_widget(Paragraph::new(rows), rows_area);
+
+    let focused = form.focus == Field::Description;
+    let label = format!("{} ", Field::Description.label());
+    let filler = "\u{2500}".repeat(usize::from(rule.width).saturating_sub(label.len()));
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(label, label_style(model, focused)),
+            Span::styled(filler, dim()),
+        ])),
+        rule,
     );
-    let height = narrow(lines.len() + 2);
-    let popup = centered(area, width, height);
-    frame.render_widget(Clear, popup);
-    let block = Block::bordered().title(format!(" Edit [{}] ", form.id));
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-    frame.render_widget(Paragraph::new(lines), inner);
+    let width = usize::from(body.width).max(1);
+    let lines = wrapped(form.description.lines(), width);
+    let (vrow, vcol) = wrapped_cursor(&form.description, width);
+    let offset = scroll_offset(Some(vrow), usize::from(body.height));
+    let shown: Vec<Line<'_>> = lines.into_iter().skip(offset).map(Line::raw).collect();
+    frame.render_widget(Paragraph::new(shown), body);
+    if focused {
+        cursor = Some((body.x + narrow(vcol), body.y + narrow(vrow - offset)));
+    }
+    if let Some(position) = cursor {
+        frame.set_cursor_position(position);
+    }
 }
 
-/// The form is at least this wide inside its border, so short values
-/// leave room to type (and the title always fits).
-const FORM_MIN_WIDTH: usize = 50;
+/// The rows above the description, top to bottom.
+const SINGLE_ROWS: [Field; 6] = [
+    Field::Title,
+    Field::Status,
+    Field::Priority,
+    Field::Due,
+    Field::Project,
+    Field::Tags,
+];
+
+/// Columns a row label takes, value column included.
+const LABEL_WIDTH: usize = 11;
+
+/// A row label: the focused one stands out, the others are plain.
+fn label_style(model: &Model, focused: bool) -> Style {
+    if focused {
+        colored(model, theme::Color::Cyan).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new()
+    }
+}
+
+/// The first character shown of a single-line value `width` columns wide
+/// so that the cursor at `col` is visible: the text scrolls once the
+/// cursor passes the right edge.
+pub fn window(col: usize, width: usize) -> usize {
+    col.saturating_sub(width.saturating_sub(1))
+}
+
+/// `lines` cut into pieces of at most `width` characters. A line gets one
+/// piece more than it fills completely (so an empty line is one empty
+/// piece and a line of exactly `width` characters leaves an empty piece
+/// after it), which is where the cursor goes at the end of such a line.
+pub fn wrapped(lines: &[String], width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut out = Vec::new();
+    for line in lines {
+        let chars: Vec<char> = line.chars().collect();
+        for piece in 0..=chars.len() / width {
+            let start = piece * width;
+            let end = (start + width).min(chars.len());
+            out.push(chars[start..end].iter().collect());
+        }
+    }
+    out
+}
+
+/// Where the cursor of `text` lands among [`wrapped`] lines of `width`.
+pub fn wrapped_cursor(text: &Text, width: usize) -> (usize, usize) {
+    let width = width.max(1);
+    let (row, col) = text.cursor();
+    let above: usize = text.lines()[..row]
+        .iter()
+        .map(|line| line.chars().count() / width + 1)
+        .sum();
+    (above + col / width, col % width)
+}
 
 fn render_picker(
     model: &Model,
@@ -708,6 +832,67 @@ mod tests {
         assert_eq!(scroll_offset(Some(10), 10), 1);
         assert_eq!(scroll_offset(Some(25), 10), 16);
         assert_eq!(scroll_offset(Some(5), 0), 0);
+    }
+
+    #[test]
+    fn wrapping_and_the_cursor_within_it() {
+        let lines = ["abcdefgh".to_owned(), String::new(), "xy".to_owned()];
+        assert_eq!(wrapped(&lines, 3), ["abc", "def", "gh", "", "xy"]);
+        assert_eq!(
+            wrapped(&["abc".to_owned()], 3),
+            ["abc", ""],
+            "a full line leaves a piece for the cursor after it"
+        );
+        assert_eq!(
+            wrapped(&lines, 0),
+            wrapped(&lines, 1),
+            "width is at least one"
+        );
+        assert_eq!(wrapped(&[], 5), Vec::<String>::new());
+        let mut text = Text::multi("abcdefgh\n\nxy");
+        assert_eq!(wrapped_cursor(&text, 3), (0, 0));
+        text.end();
+        assert_eq!(
+            wrapped_cursor(&text, 3),
+            (2, 2),
+            "col 8 is piece 2, column 2"
+        );
+        text.down();
+        text.down();
+        text.right();
+        assert_eq!(
+            wrapped_cursor(&text, 3),
+            (4, 1),
+            "three pieces, one empty line, then col 1"
+        );
+        text.right();
+        text.right();
+        assert_eq!(wrapped_cursor(&text, 3), (4, 2));
+        assert_eq!(wrapped_cursor(&text, 0), wrapped_cursor(&text, 1));
+        assert_eq!(window(3, 25), 0);
+        assert_eq!(window(24, 25), 0);
+        assert_eq!(window(25, 25), 1);
+        assert_eq!(window(29, 25), 5);
+        assert_eq!(window(7, 0), 7);
+    }
+
+    #[test]
+    fn form_hints_drop_their_labels_when_narrow() {
+        let text = |width| {
+            form_hints(width)
+                .spans
+                .iter()
+                .map(|s| s.content.to_string())
+                .collect::<String>()
+        };
+        let full = "Tab/S-Tab row  \u{2191}\u{2193}\u{2190}\u{2192} move  Enter next / newline  C-s save  Esc cancel";
+        assert_eq!(text(200), full);
+        assert_eq!(full.chars().count(), 68);
+        assert_eq!(text(68), full);
+        assert_eq!(
+            text(67),
+            "Tab/S-Tab  \u{2191}\u{2193}\u{2190}\u{2192}  Enter  C-s  Esc"
+        );
     }
 
     #[test]

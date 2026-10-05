@@ -625,14 +625,20 @@ pub fn translate(keys: &KeyMap, mode: &Mode, key: &KeyEvent) -> Option<Msg> {
     }
 }
 
-/// The form's fixed keys: typing like a prompt, `Up`/`Down`/`Tab`/
-/// `Shift+Tab` between the rows, `Left`/`Right` on a choice row.
+/// The edit view's fixed keys: typing like a prompt plus the cursor keys,
+/// `Tab`/`Shift+Tab` between the rows, `Ctrl+S` to save.
 fn form(code: KeyCode, ctrl: bool) -> Option<Msg> {
     Some(match code {
-        KeyCode::Up | KeyCode::BackTab => Msg::Up,
-        KeyCode::Down | KeyCode::Tab => Msg::Down,
+        KeyCode::Tab => Msg::NextField,
+        KeyCode::BackTab => Msg::PrevField,
+        KeyCode::Up => Msg::Up,
+        KeyCode::Down => Msg::Down,
         KeyCode::Left => Msg::Left,
         KeyCode::Right => Msg::Right,
+        KeyCode::Home => Msg::Home,
+        KeyCode::End => Msg::End,
+        KeyCode::Delete => Msg::Delete,
+        KeyCode::Char('s') if ctrl => Msg::Save,
         _ => return text(code, ctrl),
     })
 }
@@ -813,16 +819,21 @@ mod tests {
         )));
         for (event, expected) in [
             (key(KeyCode::Up), Msg::Up),
-            (key(KeyCode::BackTab), Msg::Up),
+            (key(KeyCode::BackTab), Msg::PrevField),
             (key(KeyCode::Down), Msg::Down),
-            (key(KeyCode::Tab), Msg::Down),
+            (key(KeyCode::Tab), Msg::NextField),
             (key(KeyCode::Left), Msg::Left),
             (key(KeyCode::Right), Msg::Right),
+            (key(KeyCode::Home), Msg::Home),
+            (key(KeyCode::End), Msg::End),
+            (key(KeyCode::Delete), Msg::Delete),
+            (ctrl('s'), Msg::Save),
             (key(KeyCode::Enter), Msg::Enter),
             (key(KeyCode::Esc), Msg::Escape),
             (key(KeyCode::Backspace), Msg::Backspace),
             (ch('x'), Msg::Char('x')),
             (ch('j'), Msg::Char('j')),
+            (ch('s'), Msg::Char('s')),
             (ch(' '), Msg::Char(' ')),
             (ctrl('c'), Msg::Quit),
         ] {

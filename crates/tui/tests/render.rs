@@ -163,21 +163,109 @@ fn overlays() {
 }
 
 #[test]
-fn edit_form() {
+fn edit_view() {
     let mut model = fixture(true).with_today(date("2026-10-05"));
     update(&mut model, Msg::Edit);
-    assert_snapshot!("edit_form", screen(&mut model, 120, 20));
-    update(&mut model, Msg::Down);
+    let mut terminal = render(&mut model, 120, 24);
+    assert_snapshot!("edit_view", terminal.backend().to_string());
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (2 + 11 + 19, 1).into(),
+        "the cursor after the title"
+    );
+    update(&mut model, Msg::NextField);
     update(&mut model, Msg::Right);
-    assert_snapshot!("edit_form_choice_row", screen(&mut model, 120, 20));
-    update(&mut model, Msg::Down);
-    update(&mut model, Msg::Down);
-    for c in "x".chars() {
+    assert_snapshot!("edit_view_choice_row", screen(&mut model, 120, 24));
+    for _ in 0..5 {
+        update(&mut model, Msg::NextField);
+    }
+    update(&mut model, Msg::End);
+    for c in " Cache.".chars() {
         update(&mut model, Msg::Char(c));
     }
-    update(&mut model, Msg::Enter);
-    assert_snapshot!("edit_form_bad_due", screen(&mut model, 120, 20));
-    assert_snapshot!("edit_form_narrow", screen(&mut model, 60, 12));
+    let mut terminal = render(&mut model, 120, 24);
+    assert_snapshot!("edit_view_description", terminal.backend().to_string());
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (2 + 47, 9).into(),
+        "the cursor in the description"
+    );
+    update(&mut model, Msg::PrevField);
+    update(&mut model, Msg::PrevField);
+    update(&mut model, Msg::PrevField);
+    update(&mut model, Msg::Char('x'));
+    update(&mut model, Msg::Save);
+    assert_snapshot!("edit_view_bad_due", screen(&mut model, 120, 24));
+    // Narrow: the long description line wraps, the cursor follows.
+    update(&mut model, Msg::Escape);
+    update(&mut model, Msg::Edit);
+    for _ in 0..6 {
+        update(&mut model, Msg::NextField);
+    }
+    update(&mut model, Msg::End);
+    let mut terminal = render(&mut model, 40, 16);
+    assert_snapshot!("edit_view_narrow", terminal.backend().to_string());
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (2 + 4, 10).into(),
+        "a 40-character line wraps at 36 columns; the cursor is on the second piece"
+    );
+    // The description scrolls to keep the cursor in its five lines.
+    for c in "\n\n\n\nlast".chars() {
+        update(&mut model, Msg::Char(c));
+    }
+    let mut terminal = render(&mut model, 40, 16);
+    assert_snapshot!("edit_view_scrolled", terminal.backend().to_string());
+    assert_eq!(terminal.get_cursor_position().unwrap(), (2 + 4, 13).into());
+    // A long single-line value scrolls under the cursor.
+    for _ in 0..6 {
+        update(&mut model, Msg::PrevField);
+    }
+    for c in " on arm64 too".chars() {
+        update(&mut model, Msg::Char(c));
+    }
+    let mut terminal = render(&mut model, 40, 16);
+    assert_snapshot!("edit_view_long_title", terminal.backend().to_string());
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (2 + 11 + 24, 1).into(),
+        "the cursor stays on the last value column"
+    );
+}
+
+#[test]
+fn edit_view_styles() {
+    let mut model = fixture(true);
+    update(&mut model, Msg::Edit);
+    let terminal = render(&mut model, 120, 24);
+    let buffer = terminal.backend().buffer();
+    let focused = &buffer[find(&terminal, "Title", 0)];
+    assert_eq!(focused.fg, Color::Cyan);
+    assert!(focused.modifier.contains(Modifier::BOLD));
+    let plain = &buffer[find(&terminal, "Status", 0)];
+    assert_eq!(plain.fg, Color::Reset);
+    assert!(!plain.modifier.contains(Modifier::BOLD));
+    let rule = &buffer[find(&terminal, "Description", 0)];
+    assert_eq!(rule.fg, Color::Reset);
+    let (x, y) = find(&terminal, "Tab/S-Tab", 0);
+    assert!(buffer[(x, y)].modifier.contains(Modifier::BOLD));
+    assert!(
+        buffer[(x + 10, y)].modifier.contains(Modifier::DIM),
+        "the label after the key"
+    );
+    for _ in 0..6 {
+        update(&mut model, Msg::NextField);
+    }
+    let terminal = render(&mut model, 120, 24);
+    let rule = &terminal.backend().buffer()[find(&terminal, "Description", 0)];
+    assert_eq!(rule.fg, Color::Cyan);
+    assert!(rule.modifier.contains(Modifier::BOLD));
+    let mut plain = fixture(false);
+    update(&mut plain, Msg::Edit);
+    let terminal = render(&mut plain, 120, 24);
+    let focused = &terminal.backend().buffer()[find(&terminal, "Title", 0)];
+    assert_eq!(focused.fg, Color::Reset, "NO_COLOR keeps the bold only");
+    assert!(focused.modifier.contains(Modifier::BOLD));
 }
 
 #[test]
