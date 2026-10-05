@@ -253,10 +253,8 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   Mutants: core `ops.rs` + `edit.rs` + store-nb `diff.rs` 173 tested, 0 missed; tui
   `form/update/keys/view/model/msg/runtime` 419 tested, 9 missed on the first pass (all in
   the new code: two unreachable fallbacks reshaped, the form key translation tested, the
-  title term of the popup width dropped), 0 missed after. Observed once: the two
-  `plugins::` CLI integration tests failed together under a full `cargo test --workspace`
-  and passed alone and on the next full run; unrelated to this change, not investigated.
-  Commits 10f8212 (core), 81d1e1b (store-nb), 86558e6 (ADR) and the tui/docs commits below.
+  title term of the popup width dropped), 0 missed after. Commits 10f8212 (core),
+  81d1e1b (store-nb), 86558e6 (ADR), af861ea (tui), 48500f2 (docs).
 - **Sync sources on demand (follow-up 2026-10-05, ADR 0014, todo 12).** `source[].auto`
   (default `true`): a bare `tasq sync` and the TUI's sync-all run the `auto` sources only;
   `--source NAME` is now repeatable and runs exactly the named enabled sources, `auto` or not;
@@ -755,6 +753,17 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   allocation bomb aborts and the mutant is *caught*; (2) `subsections` rewritten as bounded
   iteration over heading positions; (3) guard lowered to `MemoryMax=12G`, `MemorySwapMax=0`.
   Verified: the 13 subsections mutants are all caught in 9 s.
+- **Random CLI test failures under the address-space cap (2026-10-06).** Two or three
+  `crates/cli/tests/cli.rs` tests failed per full `cargo test --workspace`, different ones
+  each time, and always passed alone. With `--test-threads=48` ten runs in twelve failed and
+  the panics were `failed to spawn thread` (assert_cmd's stdout/stderr readers) and `failed
+  to allocate an alternative stack: Cannot allocate memory`. Cause: the 4 GiB `ulimit -v` of
+  `scripts/test-runner` is an address-space cap, and glibc's malloc reserves a 64 MiB arena
+  per allocating thread, up to 8 per core (256 on this machine): the test process with one
+  thread per core plus two reader threads per child ran out of address space, not memory.
+  Fix: the runner exports `MALLOC_ARENA_MAX=2`. Twelve stress runs at 48 threads then passed,
+  as did repeated full workspace runs. The ETXTBSY probe loop in `TestEnv::fake_tool` was a
+  guess at the same symptom and stays (it is correct for what it covers).
 
 ## Deviations from the plan
 

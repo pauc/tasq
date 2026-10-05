@@ -7,6 +7,15 @@
 # daemon reacts. With a 4 GiB address-space limit the allocation fails, the
 # test aborts, and the mutant is counted as caught instead of taking the
 # machine down. Override with TASQ_TEST_AS_KB (kilobytes).
+#
+# The cap is on address space, not memory, and glibc's malloc reserves a
+# 64 MiB arena per thread that first allocates (up to 8 per core). A test
+# binary with one thread per core, each spawning child processes with their
+# reader threads, reserves several GiB of arenas and then fails to allocate
+# the next thread stack ("failed to spawn thread", "failed to allocate an
+# alternative stack": Cannot allocate memory). Two arenas are plenty for
+# tests and keep the reservation small; this costs nothing in real memory.
 set -euo pipefail
+export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
 ulimit -v "${TASQ_TEST_AS_KB:-4194304}"
 exec "$@"

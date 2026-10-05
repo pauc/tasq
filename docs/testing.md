@@ -139,6 +139,12 @@ alongside cargo-mutants, exhausted 62 GB of RAM and killed the desktop session. 
 also runs every test binary through `scripts/test-runner`, which caps the process address space
 at 4 GiB (`TASQ_TEST_AS_KB` overrides). A test, or a mutant, that allocates without bound then
 aborts on its own and is counted as a failure, instead of outrunning cargo-mutants' timeout.
+The runner also sets `MALLOC_ARENA_MAX=2`: the cap is on address space, and glibc reserves a
+64 MiB malloc arena per thread that allocates (up to eight per core), so a test binary with one
+thread per core, each spawning a child with two reader threads, reserved several GiB of arenas
+and then failed to create the next thread (`failed to spawn thread`, `failed to allocate an
+alternative stack: Cannot allocate memory`). That was the cause of random failures across the
+CLI integration tests on a 32-core machine, two or three tests per full run.
 Rules of thumb:
 
 - Run cargo through the guard (`scripts/guard cargo ...`) whenever you are not using `just`.
