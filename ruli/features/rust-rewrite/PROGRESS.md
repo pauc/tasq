@@ -34,7 +34,7 @@ now fires `post-done` through a fourth `Host` method (ADR 0010); commit sha belo
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
 | T-901 | Plugin mechanism | done | ADR 0006 Accepted; `crates/cli/src/plugins.rs` (dispatch, discovery, hooks), `commands/plugins.rs`; core `HooksConfig` + `TASQ_SET`; `docs/plugins.md`; `examples/plugins/{tasq-tlogs,hooks/log-event.sh}`; 6 integration + 6 unit tests |
-| T-902 | Documentation and examples | done | README, `CONTRIBUTING.md`, `docs/architecture.md` (crates, modules, dependency and sequence diagrams; added 2026-10-05), `docs/config.md` (every key with default), `docs/json.md`, `docs/testing.md` (wiremock claim removed), `examples/config/{plain-markdown,author}.toml`, `examples/README.md`; gif recorded 2026-10-05 (`docs/demo/`, VHS in docker, commit c294f54) |
+| T-902 | Documentation and examples | done | README, `CONTRIBUTING.md`, `docs/architecture.md` (crates, modules, dependency and sequence diagrams; added 2026-10-05), `docs/config.md` (every key with default), `docs/json.md`, `docs/testing.md` (wiremock claim removed), `examples/config/{plain-markdown,author}.toml`, `examples/README.md`; gif recorded 2026-10-05 (`docs/demo/`, VHS in docker, commit fddd704) |
 | T-903 | Release pipeline | done, unrun | `.github/workflows/release.yml`, `cliff.toml`, `homebrew/tasq.rb.template`, `docs/release.md`; manifests carry `version` on path deps, `homepage`/`keywords`/`categories`; needs a GitHub repo and `CARGO_REGISTRY_TOKEN` to run |
 | T-904 | Migration guide | docs done, acceptance pending | `docs/migration.md` (command and env mapping from `original/tasks`, switch-over checklist, daily verification); the one-week run is manual |
 
@@ -231,8 +231,8 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   and pops it on restore (a static `AtomicBool` guards the pop, so a terminal that never got
   the push is not sent `CSI < u`). Probed from a herdr 0.9.3 pane: `CSI ? u` answers
   `CSI ? 0 u`, so herdr speaks the kitty protocol and the chords arrive as such. Mutants on
-  `launch/{registry,herdr,tmux}.rs` + `core/launch.rs`: 108 tested, 0 missed. Commit 8abc1ba.
-  Follow-up 9c4a489: the herdr launcher focuses the workspace right after creating the pane,
+  `launch/{registry,herdr,tmux}.rs` + `core/launch.rs`: 108 tested, 0 missed. Commit d7b39e3.
+  Follow-up 8be3253: the herdr launcher focuses the workspace right after creating the pane,
   before `agent start` waits for Claude to be ready; the switch felt slow when it came last.
 
 - **Sync sources on demand (follow-up 2026-10-05, ADR 0014, todo 12).** `source[].auto`
@@ -246,7 +246,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   `Host::sync(&[String])` turns the names into `--source` flags. Three default keys moved:
   sync-all `S` -> `s`, status `s` -> `t`, editor `e` -> `E` (freeing `e` for the in-TUI edit
   form, todo 13; `t` and `p` stay as quick pickers). The status-bar hint shows `s/S sync` so
-  the full line still fits 100 columns (99). Commits: 39a3863 (core), be409bc (tui), 283ed83 (cli), docs
+  the full line still fits 100 columns (99). Commits: d2e4f13 (core), 42528dd (tui), 96c14a0 (cli), docs
   follow-up.
 - **Configurable key bindings (follow-up 2026-10-05, ADR 0013).** `[ui.keys]` maps action
   names to one key or a list (`[]` unbinds); core stores the strings
@@ -264,8 +264,8 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   Mutants on `tui/{keys,view}.rs`: 181 tested, 8 missed, all pre-existing style/guard
   mutants in render code not touched here (`bold`, `chip`, `detail_lines`, `status_bar`
   colour, `render_picker` cursor), invisible to the text snapshots; `keys.rs` and the new
-  `help_rows`/`hints` have 0 missed. Commits 69ac1d2 (core), 344b05a (tui), bfcea54 (cli),
-  9abefea (docs).
+  `help_rows`/`hints` have 0 missed. Commits 195b2b4 (core), 3be8a64 (tui), 115fbee (cli),
+  e5ba776 (docs).
 
 - **`post-done` from the TUI (follow-up, ADR 0010).** `Host::after_done(&Task)` is called by
   the TUI's `dispatch` after `edit::done` succeeded; the CLI's `CliHost` (now holding `&App`)
@@ -275,7 +275,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   screen; `run_hooks` is the printing wrapper and CLI behaviour is unchanged. `CliHost`'s
   unit tests build an `App` from a `.tasq.toml` in a temp dir and use `/bin/sh -c` hooks,
   no fake tools needed. Message on a hook failure: `[1] done: A (post-done hook "x" failed:
-  ...)` in the error style; the task is closed either way. Commit: 1f81216.
+  ...)` in the error style; the task is closed either way. Commit: 278e576.
 
 - **Dispatch happens before clap and before the config is loaded.** `tasq_cli::plugins::
   External::parse` scans argv for the first positional, skipping the global flags (the four
@@ -349,7 +349,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   handled like a result (does not clear the message) and ignored when a filter hides the new
   task. `Host::after_create` mirrors `after_done`; `CliHost::hooks(hook, task)` is the shared
   runner. Status-bar `HINTS` lost the word "move" to stay under 100 columns (97) with
-  `c new` added; the `hints()` test now pins both lengths. Commit: 39b81e5.
+  `c new` added; the `hints()` test now pins both lengths. Commit: 2b71369.
 
 ### Plugin decisions (T-701)
 
@@ -481,7 +481,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   `All nine ... Final list:\n\n```json ...`, and `strip_fences` only dropped a fence at the
   very start. It now takes the body of the first fenced block wherever it sits and leaves text
   that already starts with `[`/`{` alone (so JSON containing a fence in a string is safe). The
-  real envelope shape is pinned in `parses_arrays_objects_and_claude_envelopes`. Commit: 050bda2.
+  real envelope shape is pinned in `parses_arrays_objects_and_claude_envelopes`. Commit: 93ceaf5.
 - `tasq mr` / `create --mr`: title from the forge whose `host` matches the URL; a failed lookup
   is a warning and the short reference (`g/p!10`) is used; a gone MR (404) silently falls back.
 
