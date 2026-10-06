@@ -6,7 +6,8 @@
 //! names to key specs (`"ctrl+enter"`, `["j", "down"]`, `[]` to unbind),
 //! which [`Chord::parse`] turns into [`Chord`]s. [`KeyMap::default`] is the
 //! built-in map; [`KeyMap::from_config`] overlays the table on it. Typing
-//! (the filter, a note, a title), the help overlay and `Ctrl+C` are fixed.
+//! (the filter, a note, a title, with readline's cursor keys), the edit
+//! view, the calendar, the help overlay and `Ctrl+C` are fixed.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -632,7 +633,7 @@ pub fn translate(keys: &KeyMap, mode: &Mode, key: &KeyEvent) -> Option<Msg> {
     }
     match mode {
         Mode::Normal => keys.lookup(NORMAL, key).map(Action::msg),
-        Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => text(key.code, ctrl),
+        Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => prompt(key.code, ctrl),
         Mode::Status { .. } | Mode::Priority { .. } | Mode::Sources { .. } => picker(keys, key),
         Mode::Form(_) => form(key.code, ctrl),
         Mode::Calendar { .. } => calendar(key.code, ctrl),
@@ -658,32 +659,34 @@ fn calendar(code: KeyCode, ctrl: bool) -> Option<Msg> {
     })
 }
 
-/// The edit view's fixed keys: typing like a prompt plus the cursor keys
-/// (`Ctrl+A`/`Ctrl+E` are `Home`/`End`, as in readline), `Tab`/`Shift+Tab`
-/// between the rows, `Ctrl+S` to save.
+/// The edit view's fixed keys: a prompt's keys plus `Up`/`Down`,
+/// `Tab`/`Shift+Tab` between the rows, `Ctrl+S` to save.
 fn form(code: KeyCode, ctrl: bool) -> Option<Msg> {
     Some(match code {
         KeyCode::Tab => Msg::NextField,
         KeyCode::BackTab => Msg::PrevField,
         KeyCode::Up => Msg::Up,
         KeyCode::Down => Msg::Down,
-        KeyCode::Left => Msg::Left,
-        KeyCode::Right => Msg::Right,
-        KeyCode::Home => Msg::Home,
-        KeyCode::End => Msg::End,
-        KeyCode::Delete => Msg::Delete,
-        KeyCode::Char('a') if ctrl => Msg::Home,
-        KeyCode::Char('e') if ctrl => Msg::End,
         KeyCode::Char('s') if ctrl => Msg::Save,
-        _ => return text(code, ctrl),
+        _ => return prompt(code, ctrl),
     })
 }
 
-fn text(code: KeyCode, ctrl: bool) -> Option<Msg> {
+/// A one-line prompt's fixed keys (the filter, a note, a title): typing,
+/// `Backspace` and `Delete`, `Left`/`Right`, `Home`/`End` (also
+/// `Ctrl+A`/`Ctrl+E`, as in readline), `Enter` and `Esc`.
+fn prompt(code: KeyCode, ctrl: bool) -> Option<Msg> {
     Some(match code {
         KeyCode::Enter => Msg::Enter,
         KeyCode::Esc => Msg::Escape,
         KeyCode::Backspace => Msg::Backspace,
+        KeyCode::Delete => Msg::Delete,
+        KeyCode::Left => Msg::Left,
+        KeyCode::Right => Msg::Right,
+        KeyCode::Home => Msg::Home,
+        KeyCode::End => Msg::End,
+        KeyCode::Char('a') if ctrl => Msg::Home,
+        KeyCode::Char('e') if ctrl => Msg::End,
         KeyCode::Char(c) if !ctrl => Msg::Char(c),
         _ => return None,
     })
@@ -706,6 +709,7 @@ fn picker(keys: &KeyMap, key: &KeyEvent) -> Option<Msg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::form::Text;
     use crate::model::NoteTarget;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -822,14 +826,14 @@ mod tests {
         let keys = KeyMap::default();
         for mode in [
             Mode::Filter {
-                input: String::new(),
+                input: Text::single(""),
             },
             Mode::Note {
-                input: String::new(),
+                input: Text::single(""),
                 target: NoteTarget::Log,
             },
             Mode::Create {
-                input: String::new(),
+                input: Text::single(""),
             },
         ] {
             let t = |event: &KeyEvent| translate(&keys, &mode, event);
@@ -841,9 +845,46 @@ mod tests {
             assert_eq!(t(&key(KeyCode::Esc)), Some(Msg::Escape));
             assert_eq!(t(&key(KeyCode::Backspace)), Some(Msg::Backspace));
             assert_eq!(t(&ctrl('c')), Some(Msg::Quit));
-            assert_eq!(t(&ctrl('a')), None);
             assert_eq!(t(&key(KeyCode::Up)), None);
             assert_eq!(t(&key(KeyCode::Tab)), None);
+            assert_eq!(t(&ctrl('s')), None, "no save outside the edit view");
+            assert_eq!(t(&ctrl('x')), None);
+        }
+    }
+
+    #[test]
+    fn text_modes_take_readline_cursor_keys() {
+        let keys =
+            KeyMap::from_config(&config(&[("hide-detail", many(&[])), ("top", one("x"))])).unwrap();
+        for mode in [
+            Mode::Filter {
+                input: Text::single("ab"),
+            },
+            Mode::Note {
+                input: Text::single("ab"),
+                target: NoteTarget::Done,
+            },
+            Mode::Create {
+                input: Text::single("ab"),
+            },
+        ] {
+            for (event, expected) in [
+                (key(KeyCode::Left), Msg::Left),
+                (key(KeyCode::Right), Msg::Right),
+                (key(KeyCode::Home), Msg::Home),
+                (key(KeyCode::End), Msg::End),
+                (key(KeyCode::Delete), Msg::Delete),
+                (ctrl('a'), Msg::Home),
+                (ctrl('e'), Msg::End),
+                (ch('a'), Msg::Char('a')),
+                (ch('e'), Msg::Char('e')),
+            ] {
+                assert_eq!(
+                    translate(&keys, &mode, &event),
+                    Some(expected),
+                    "{mode:?} {event:?}"
+                );
+            }
         }
     }
 

@@ -4,7 +4,8 @@
 //!
 //! Pure data, like the rest of the model: [`crate::update()`] drives it
 //! and [`crate::view()`] draws it. [`Text`] is the small editor behind the
-//! text rows and the description: lines, a cursor, and the usual keys.
+//! text rows and the description, and behind the status-bar prompts
+//! (filter, notes, a new title): lines, a cursor, and the usual keys.
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -81,8 +82,9 @@ impl Field {
 }
 
 /// Editable text: lines and a cursor (`row`, `col` in characters). A
-/// single-line row is a `Text` that never gets a newline (the [`Form`]
-/// sees to that); the description takes as many lines as typed.
+/// single-line row or prompt is a `Text` that never gets a newline (the
+/// [`Form`] and [`crate::update()`] see to that); the description takes
+/// as many lines as typed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Text {
     lines: Vec<String>,

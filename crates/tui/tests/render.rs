@@ -519,6 +519,48 @@ fn creating_from_an_empty_list() {
 }
 
 #[test]
+fn long_prompts_scroll_under_the_cursor() {
+    let mut model = fixture(true);
+    update(&mut model, Msg::BeginNote);
+    let note = "the cache key hashes the lockfile but not the toolchain file, so a rustup bump reuses a stale cache";
+    assert!(note.len() > 80);
+    for c in note.chars() {
+        update(&mut model, Msg::Char(c));
+    }
+    let mut terminal = render(&mut model, 80, 10);
+    assert_snapshot!("long_note_scrolled", terminal.backend().to_string());
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (79, 9).into(),
+        "the cursor on the bar's last column"
+    );
+    assert_eq!(find(&terminal, "log: ", 0), (0, 9), "the label stays");
+    let (x, _) = find(&terminal, "reuses a stale cache", 0);
+    assert_eq!(x, 79 - 20, "the tail of the note ends before the cursor");
+    // Home scrolls back to the start; typing there shows where it went.
+    update(&mut model, Msg::Home);
+    update(&mut model, Msg::Char('>'));
+    let mut terminal = render(&mut model, 80, 10);
+    assert_eq!(terminal.get_cursor_position().unwrap(), (6, 9).into());
+    assert_eq!(find(&terminal, "log: >the cache key", 0), (0, 9));
+    // The other prompts put the terminal cursor on their input too.
+    update(&mut model, Msg::Escape);
+    update(&mut model, Msg::BeginFilter);
+    update(&mut model, Msg::Char('r'));
+    update(&mut model, Msg::Char('e'));
+    update(&mut model, Msg::Left);
+    let mut terminal = render(&mut model, 80, 10);
+    assert_eq!(terminal.get_cursor_position().unwrap(), (2, 9).into());
+    update(&mut model, Msg::Escape);
+    update(&mut model, Msg::BeginCreate);
+    let mut terminal = render(&mut model, 80, 10);
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (u16::try_from("new task (ready): ".len()).unwrap(), 9).into()
+    );
+}
+
+#[test]
 fn messages_and_empty_states() {
     let mut model = fixture(true);
     update(&mut model, Msg::Info("[1] -> ready".into()));

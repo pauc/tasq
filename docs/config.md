@@ -392,8 +392,10 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `confirm` | `enter` | pickers | apply the choice; in the source picker, run the checked sources |
 | `quit` | `q` | list, pickers | leave `tasq ui`; in a picker, close it |
 
-Typing (the filter, a note, a title, the edit view) is not configurable: characters, `Enter`, `Esc` and
-`Backspace` do what they always do. Neither are the toggles of the source picker: `Space` and
+Typing (the filter, a note, a title, the edit view) is not configurable: characters, `Enter`,
+`Esc`, `Backspace` and `Delete` do what they always do, `Left`/`Right` move the cursor and
+`Home`/`End` or `Ctrl+A`/`Ctrl+E` go to the ends of the line, as in readline. An input longer
+than the status bar scrolls to keep the cursor in view. Neither are the toggles of the source picker: `Space` and
 the row digits. `Ctrl+C` quits in every mode and cannot be rebound. A key
 bound to two actions of the same mode, an unknown action or a key that does not parse stops
 `tasq ui` at startup with the file and the `ui.keys.<action>` path. The `?` overlay and the

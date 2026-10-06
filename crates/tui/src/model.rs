@@ -11,7 +11,7 @@ use tasq_core::query::{self, Filter, Group};
 use tasq_core::theme::Theme;
 
 use crate::calendar::Calendar;
-use crate::form::Form;
+use crate::form::{Form, Text};
 use crate::keys::KeyMap;
 
 /// Terminal width from which the list and the detail pane sit side by
@@ -28,8 +28,8 @@ pub enum Mode {
     Normal,
     /// Typing a filter (`/`); the list follows every keystroke.
     Filter {
-        /// Text typed so far.
-        input: String,
+        /// Text typed so far, with its cursor.
+        input: Text,
     },
     /// Choosing a status for the selected task (`t`).
     Status {
@@ -49,15 +49,15 @@ pub enum Mode {
     },
     /// Typing a progress note (`l`) or the final note of `done` (`d`).
     Note {
-        /// Text typed so far.
-        input: String,
+        /// Text typed so far, with its cursor.
+        input: Text,
         /// What the note is for.
         target: NoteTarget,
     },
     /// Typing the title of a new task (`c`).
     Create {
-        /// Text typed so far.
-        input: String,
+        /// Text typed so far, with its cursor.
+        input: Text,
     },
     /// Editing the selected task's fields in the form (`e`).
     Form(Box<Form>),
