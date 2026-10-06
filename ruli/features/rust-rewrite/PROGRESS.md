@@ -289,6 +289,24 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   (page-up) is a keymap binding and never reaches prompt or form keys. Mutants on the diff:
   46 tested, 41 caught, 2 timeouts (`-=` to `/=` in the `delete_word` loops, which never
   terminate), 3 unviable, 0 missed. Commit 1d1a874.
+  Step 3 of 3: `Up`/`Down` recall in the prompts, session-only and in memory.
+  `history::History` (entries oldest first, cap 100, the shown index and the saved draft) and
+  `Histories { filters, notes, titles }` on `Model::history`; `log` and `done` share the
+  notes, filters and titles stay apart so a recalled filter never lands in a note. `record`
+  trims and skips empty text and a repeat of the newest entry; it runs on a successful
+  submit only (filter `Enter`, log note, non-empty done note, accepted title), never on
+  `Esc` or a refused empty note or title. Navigation as in a shell: the first `Up` saves the
+  prompt's text as the draft, `Down` past the newest brings it back, `Up` at the oldest and
+  `Down` at the draft do nothing, the cursor goes to the end (`Text::single`). Rule for an
+  edited recalled entry: the edit is dropped when navigating away, only the draft survives.
+  The navigation state lives in the `History` (one prompt is open at a time) and the
+  `begin_*` helpers reset it, so a prompt always opens at its draft (the filter's is the
+  applied filter); `Mode` kept its shape. `update::edit_prompt` routes `Up`/`Down` to the
+  history and the rest to `edit_line`; a recalled filter is applied at once. `keys::prompt`
+  maps `Up`/`Down`; `keys::form` dropped its own two arms (the fall-through gives the same
+  messages, and the arms would have been equivalent mutants), the edit view still moves rows
+  with them. `normal` crossed clippy's 100-line limit, hence `begin_filter`/`begin_create`.
+  Mutants on the diff: 42 tested, 36 caught, 6 unviable, 0 missed. Commit de45e48.
 - **Calendar picker for the Due box (follow-up 2026-10-06, ADR 0017, todo 14).** `Enter` on
   the Due box opens `Mode::Calendar { form, calendar }`: the edit view stays underneath, one
   month is drawn centred over it. `calendar::Calendar` is the day under the cursor plus the
