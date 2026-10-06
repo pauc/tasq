@@ -220,6 +220,20 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ### Plugin and release decisions (T-901 to T-904)
 
+- **Wrapped rows in `tasq list` (follow-up 2026-10-07).** On a terminal, a row longer than
+  the terminal breaks between words and continuation lines start under the title (indent =
+  `  [id] #B `, so a three-digit id moves it). The due date and each chip are unbreakable
+  units; escape codes take no columns and widths come from `unicode-width` (CJK counts two).
+  A single word wider than the remaining space is not split, so the terminal wraps it and
+  the indent is lost there. Piped output is unchanged, one row per line
+  (`Output::is_terminal`, `Look::width: None`). Learning: the first cut wrapped at 80 on a
+  160-column terminal. zsh does not export `$COLUMNS`, and `tput cols` with its stdout
+  captured answers terminfo's 80. `view::stdout_columns` now reads `TIOCGWINSZ` on stdout
+  through `rustix::termios::tcgetwinsize` (no `unsafe`), and `terminal_width(env, columns)`
+  takes it as a parameter: `$COLUMNS`, then the ioctl, then `tput`, then 100. `tasq view`
+  had the same bug and gets the same fix. Mutants on the diff (`--no-config --in-diff`,
+  the CLI crate is excluded by config): 32 tested, 29 caught, 3 missed, all in
+  `stdout_columns` (the ioctl wrapper, "Not unit-tested"). Commit 3ec03f2.
 - **`tasq-tlogs` with parity to `tasks tlogs` (follow-up 2026-10-06, task 8).** The
   reference plugin now does what the script did: `tasq dates --json` for the range, then
   `exec claude "/time-logs <from> <to>"` from `work.default_project` (read from
