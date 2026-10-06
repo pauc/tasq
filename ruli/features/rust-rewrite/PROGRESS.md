@@ -855,6 +855,16 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   Fix: the runner exports `MALLOC_ARENA_MAX=2`. Twelve stress runs at 48 threads then passed,
   as did repeated full workspace runs. The ETXTBSY probe loop in `TestEnv::fake_tool` was a
   guess at the same symptom and stays (it is correct for what it covers).
+- **Every cli test failing with `NotFound` on the fixture notebook after the repo moved
+  (2026-10-06).** `cargo test --workspace` had all 111 `crates/cli/tests/cli.rs` tests and
+  `plan_section_4_6_example_loads_as_is` (core) panic in 0.00 s with `fixture notebook
+  exists: No such file or directory`; `cargo test -p tasq` passed. Cause: the test helpers
+  bake `env!("CARGO_MANIFEST_DIR")` into the binary, the checkout had moved
+  (`~/code/tasks` to `~/code/tasq` to `~/code/tasq_lab/tasq`) and cargo does not refingerprint
+  on a manifest-dir change, so the workspace-feature build kept binaries with the old paths
+  (`strings target/debug/deps/cli-* | grep /home/pau/code` showed three). The `-p` build has
+  a different feature hash and had been rebuilt after the move. Fix: `cargo clean` (6.5 GiB)
+  and a cold build; the full workspace then passed. Do this after any move of the checkout.
 
 ## Deviations from the plan
 
