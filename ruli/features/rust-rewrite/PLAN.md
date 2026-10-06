@@ -770,3 +770,4 @@ Rename is a find-and-replace on crate names before T-903; nothing in the plan de
   0009). `Store::file_of` tells a UI which file a task lives in; colour semantics live in
   `tasq_core::theme`.
 - (2026-10-04, during Phase 3) No gwm adapter in tasq: worktree provisioning is a separate, per-repo concern. `work.worktree_manager` is `git` by default or `command` with a user template; gwm users set `worktree_command = "gwm create {new} {branch} --no-tmux -s"`.
+- (2026-10-06, after Phase 9, from the UX review) Colours are roles, not literals: `tasq_core::theme::Role` names everything the CLI and TUI colour, `ui.theme.preset` picks one of five built-in tables (`dark` is the script), `[ui.theme.colors]` overrides roles and `[ui.colors]` stays on top by status name (ADR 0018). The front ends never name a colour.
