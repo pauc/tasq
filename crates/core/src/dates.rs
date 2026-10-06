@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::clock::{TimeError, format_date, parse_date};
+use crate::config::DueFormat;
 
 /// Parses a single day for a due date: `today`, `tomorrow`, `yesterday`
 /// (any case) or `YYYY-MM-DD`. Surrounding whitespace is ignored.
@@ -84,6 +85,52 @@ pub fn monday_of(day: NaiveDate) -> NaiveDate {
 /// The first day of `day`'s month.
 pub fn first_of_month(day: NaiveDate) -> NaiveDate {
     day.with_day(1).unwrap_or(day)
+}
+
+/// Where a due date stands relative to today.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Due {
+    /// Past, by this many days (at least 1).
+    Overdue(i64),
+    /// Today.
+    Today,
+    /// Tomorrow.
+    Tomorrow,
+    /// Further ahead, by this many days (at least 2).
+    Later(i64),
+}
+
+impl Due {
+    /// Where `due` stands relative to `today`.
+    pub fn of(due: NaiveDate, today: NaiveDate) -> Self {
+        match (due - today).num_days() {
+            days @ ..=-1 => Self::Overdue(-days),
+            0 => Self::Today,
+            1 => Self::Tomorrow,
+            days => Self::Later(days),
+        }
+    }
+
+    /// The relative form: `overdue 3d`, `due today`, `due tomorrow`,
+    /// `due in 4d`.
+    pub fn phrase(self) -> String {
+        match self {
+            Self::Overdue(days) => format!("overdue {days}d"),
+            Self::Today => "due today".to_owned(),
+            Self::Tomorrow => "due tomorrow".to_owned(),
+            Self::Later(days) => format!("due in {days}d"),
+        }
+    }
+}
+
+/// A due date as `format` shows it: `overdue 3d`, `due 2026-10-03` or
+/// `overdue 3d, 2026-10-03`.
+pub fn due_label(due: NaiveDate, today: NaiveDate, format: DueFormat) -> String {
+    match format {
+        DueFormat::Relative => Due::of(due, today).phrase(),
+        DueFormat::Iso => format!("due {}", format_date(due)),
+        DueFormat::Both => format!("{}, {}", Due::of(due, today).phrase(), format_date(due)),
+    }
 }
 
 /// An inclusive range of days.
@@ -246,6 +293,41 @@ mod tests {
     // 2026-10-04 is a Sunday; 2026-10-07 a Wednesday.
     const SUNDAY: &str = "2026-10-04";
     const WEDNESDAY: &str = "2026-10-07";
+
+    #[test]
+    fn due_relative_to_today() {
+        let today = day("2026-10-06");
+        assert_eq!(Due::of(day("2026-09-06"), today), Due::Overdue(30));
+        assert_eq!(Due::of(day("2026-10-05"), today), Due::Overdue(1));
+        assert_eq!(Due::of(today, today), Due::Today);
+        assert_eq!(Due::of(day("2026-10-07"), today), Due::Tomorrow);
+        assert_eq!(Due::of(day("2026-10-08"), today), Due::Later(2));
+        assert_eq!(Due::of(day("2027-01-01"), today), Due::Later(87));
+    }
+
+    #[test]
+    fn due_phrases() {
+        assert_eq!(Due::Overdue(3).phrase(), "overdue 3d");
+        assert_eq!(Due::Today.phrase(), "due today");
+        assert_eq!(Due::Tomorrow.phrase(), "due tomorrow");
+        assert_eq!(Due::Later(4).phrase(), "due in 4d");
+    }
+
+    #[test]
+    fn due_labels_by_format() {
+        let today = day("2026-10-06");
+        let due = day("2026-10-03");
+        assert_eq!(due_label(due, today, DueFormat::Relative), "overdue 3d");
+        assert_eq!(due_label(due, today, DueFormat::Iso), "due 2026-10-03");
+        assert_eq!(
+            due_label(due, today, DueFormat::Both),
+            "overdue 3d, 2026-10-03"
+        );
+        assert_eq!(
+            due_label(day("2026-10-10"), today, DueFormat::Both),
+            "due in 4d, 2026-10-10"
+        );
+    }
 
     #[test]
     fn words_are_relative_to_the_given_day() {

@@ -63,6 +63,7 @@
 //! no_osc8 = false
 //! glow_style = "dark"
 //! week_start = "monday"
+//! due_format = "relative"
 //!
 //! [ui.colors]
 //!
@@ -332,6 +333,9 @@ pub struct UiConfig {
     /// The first column of the TUI's calendar picker (ADR-0017).
     /// Default: `monday`.
     pub week_start: WeekStart,
+    /// How list rows show a due date: `relative` (`overdue 3d`), `iso`
+    /// (`due 2026-10-03`) or `both` (ADR-0019). Default: `relative`.
+    pub due_format: DueFormat,
     /// `[ui.theme]`: the colour theme of both front ends (ADR-0018).
     pub theme: ThemeConfig,
 }
@@ -385,6 +389,19 @@ impl WeekStart {
     }
 }
 
+/// How a list row shows a due date (`ui.due_format`, ADR-0019).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DueFormat {
+    /// Relative to today: `overdue 3d`, `due today`, `due in 4d`.
+    #[default]
+    Relative,
+    /// The date: `due 2026-10-03`.
+    Iso,
+    /// Both: `overdue 3d, 2026-10-03`.
+    Both,
+}
+
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
@@ -394,6 +411,7 @@ impl Default for UiConfig {
             colors: BTreeMap::new(),
             keys: BTreeMap::new(),
             week_start: WeekStart::Monday,
+            due_format: DueFormat::Relative,
             theme: ThemeConfig::default(),
         }
     }

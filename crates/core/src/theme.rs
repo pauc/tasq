@@ -5,7 +5,7 @@
 //! of the three attribute pseudo-colours (`dim`, `reversed`, `none`), as
 //! written in the config. A [`Role`] is one thing the front ends colour:
 //! the status groups, the tag chip, the `#A` marker, the focus border, the
-//! selection, errors, dim text, links and headings. A [`Theme`] maps every
+//! selection, errors, dim text, links, headings and due dates. A [`Theme`] maps every
 //! role to a colour in three layers (ADR 0018): a built-in [`Preset`]
 //! (`ui.theme.preset`), the role table `[ui.theme.colors]`, and the
 //! per-status overrides of `[ui.colors]`. How a colour becomes escape codes
@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::config::UiConfig;
+use crate::dates::Due;
 use crate::model::Status;
 
 /// A colour a role can be rendered in.
@@ -111,11 +112,16 @@ pub enum Role {
     /// Titles and section headings in the detail pane and popups; bold is
     /// added by the front ends.
     Header,
+    /// The due date of an open task that is past; bold is added by the
+    /// front ends.
+    Overdue,
+    /// The due date of an open task due today or tomorrow.
+    DueSoon,
 }
 
 impl Role {
     /// Every role, in `[ui.theme.colors]` documentation order.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 19] = [
         Self::InProgress,
         Self::Ready,
         Self::Waiting,
@@ -133,6 +139,8 @@ impl Role {
         Self::Dim,
         Self::Link,
         Self::Header,
+        Self::Overdue,
+        Self::DueSoon,
     ];
 
     /// The `[ui.theme.colors]` key of the role.
@@ -155,6 +163,8 @@ impl Role {
             Self::Dim => "dim",
             Self::Link => "link",
             Self::Header => "header",
+            Self::Overdue => "overdue",
+            Self::DueSoon => "due-soon",
         }
     }
 
@@ -173,6 +183,17 @@ impl Role {
             Some(s) if *s == Status::BLOCKED => Self::Blocked,
             Some(s) if *s == Status::LATER => Self::Later,
             Some(_) => Self::OtherStatus,
+        }
+    }
+
+    /// The role of an open task's due date: [`Overdue`](Self::Overdue),
+    /// [`DueSoon`](Self::DueSoon) today and tomorrow, [`Dim`](Self::Dim)
+    /// further ahead.
+    pub fn of_due(due: Due) -> Self {
+        match due {
+            Due::Overdue(_) => Self::Overdue,
+            Due::Today | Due::Tomorrow => Self::DueSoon,
+            Due::Later(_) => Self::Dim,
         }
     }
 }
@@ -232,14 +253,15 @@ impl Preset {
             (Self::Dark, Role::NoStatus | Role::Done | Role::Dim) => Dim,
             (Self::Dark, Role::ChipBg) => Fixed(24),
             (Self::Dark, Role::ChipFg) => Fixed(231),
-            (Self::Dark, Role::PrioA | Role::Error) => Red,
+            (Self::Dark, Role::PrioA | Role::Error | Role::Overdue) => Red,
+            (Self::Dark, Role::DueSoon) => Yellow,
             (Self::Dark, Role::Focus) => Cyan,
             (Self::Dark, Role::Link) => Fixed(75),
 
             (Self::Light, Role::InProgress | Role::Focus | Role::Link) => Fixed(25),
             (Self::Light, Role::Ready) => Fixed(28),
-            (Self::Light, Role::Waiting) => Fixed(130),
-            (Self::Light, Role::Blocked | Role::PrioA | Role::Error) => Fixed(124),
+            (Self::Light, Role::Waiting | Role::DueSoon) => Fixed(130),
+            (Self::Light, Role::Blocked | Role::PrioA | Role::Error | Role::Overdue) => Fixed(124),
             (Self::Light, Role::Later) => Fixed(90),
             (Self::Light, Role::OtherStatus) => Fixed(30),
             (Self::Light, Role::NoStatus | Role::Done | Role::Dim) => Fixed(245),
@@ -248,8 +270,10 @@ impl Preset {
 
             (Self::Solarized, Role::InProgress | Role::Link) => Fixed(33),
             (Self::Solarized, Role::Ready) => Fixed(64),
-            (Self::Solarized, Role::Waiting) => Fixed(136),
-            (Self::Solarized, Role::Blocked | Role::PrioA | Role::Error) => Fixed(160),
+            (Self::Solarized, Role::Waiting | Role::DueSoon) => Fixed(136),
+            (Self::Solarized, Role::Blocked | Role::PrioA | Role::Error | Role::Overdue) => {
+                Fixed(160)
+            }
             (Self::Solarized, Role::Later) => Fixed(125),
             (Self::Solarized, Role::OtherStatus | Role::Focus) => Fixed(37),
             (Self::Solarized, Role::NoStatus | Role::Done | Role::Dim) => Fixed(240),
@@ -258,8 +282,10 @@ impl Preset {
 
             (Self::Gruvbox, Role::InProgress | Role::Link) => Fixed(109),
             (Self::Gruvbox, Role::Ready) => Fixed(142),
-            (Self::Gruvbox, Role::Waiting) => Fixed(214),
-            (Self::Gruvbox, Role::Blocked | Role::PrioA | Role::Error) => Fixed(167),
+            (Self::Gruvbox, Role::Waiting | Role::DueSoon) => Fixed(214),
+            (Self::Gruvbox, Role::Blocked | Role::PrioA | Role::Error | Role::Overdue) => {
+                Fixed(167)
+            }
             (Self::Gruvbox, Role::Later) => Fixed(175),
             (Self::Gruvbox, Role::OtherStatus | Role::Focus) => Fixed(108),
             (Self::Gruvbox, Role::NoStatus | Role::Done | Role::Dim) => Fixed(245),
@@ -419,6 +445,8 @@ mod tests {
                 "dim",
                 "link",
                 "header",
+                "overdue",
+                "due-soon",
             ]
         );
         for role in Role::ALL {
@@ -443,6 +471,14 @@ mod tests {
             Role::of_status(Some(&Status::new("review").unwrap())),
             Role::OtherStatus
         );
+    }
+
+    #[test]
+    fn role_of_due() {
+        assert_eq!(Role::of_due(Due::Overdue(1)), Role::Overdue);
+        assert_eq!(Role::of_due(Due::Today), Role::DueSoon);
+        assert_eq!(Role::of_due(Due::Tomorrow), Role::DueSoon);
+        assert_eq!(Role::of_due(Due::Later(2)), Role::Dim);
     }
 
     #[test]
@@ -491,6 +527,8 @@ mod tests {
                 Dim,
                 Fixed(75),
                 Plain,
+                Red,
+                Yellow,
             ]
         );
     }
@@ -518,6 +556,8 @@ mod tests {
                 Fixed(245),
                 Fixed(25),
                 Plain,
+                Fixed(124),
+                Fixed(130),
             ]
         );
         assert!(!table(Preset::Light).contains(&Color::Dim));
@@ -546,6 +586,8 @@ mod tests {
                 Fixed(240),
                 Fixed(33),
                 Plain,
+                Fixed(160),
+                Fixed(136),
             ]
         );
     }
@@ -573,6 +615,8 @@ mod tests {
                 Fixed(245),
                 Fixed(109),
                 Plain,
+                Fixed(167),
+                Fixed(214),
             ]
         );
     }
@@ -584,7 +628,7 @@ mod tests {
             table(Preset::Mono),
             vec![
                 Plain, Plain, Plain, Plain, Plain, Plain, Dim, Dim, Reversed, Plain, Plain, Plain,
-                Reversed, Plain, Dim, Plain, Plain,
+                Reversed, Plain, Dim, Plain, Plain, Plain, Plain,
             ]
         );
     }
