@@ -1,6 +1,6 @@
 //! [`NbCliBookkeeper`]: bookkeeping delegated to the `nb` command line tool
 //! (ADR-0007). The index and git semantics stay nb's: `nb index add`,
-//! `nb git dirty`, `nb git checkpoint`, `nb index verify`, `nb sync`.
+//! `nb git checkpoint`, `nb index verify`, `nb sync`.
 //!
 //! Every `index` subcommand gets the notebook directory as its documented
 //! final `<folder-path>` argument; `git` and `sync` take none, so they run
@@ -13,8 +13,9 @@
 //!   is passed; without it the commit may land after we return.
 //! - `nb git checkpoint` runs `nb sync` afterwards when the user's
 //!   `auto_sync` is on. That is the configured behaviour and is kept.
-//! - `nb git dirty` exits 1 when clean (and when the notebook is not a git
-//!   repository); `nb index verify` exits 1 and prints "Index corrupted" on
+//! - `nb git checkpoint --wait` exits 0 even when nothing was committed or
+//!   the commit failed: nb discards the commit's status. `nb index verify`
+//!   exits 1 and prints "Index corrupted" on
 //!   standard error when the index is inconsistent; `nb sync` exits 1 with
 //!   "No remote configured" when there is no remote.
 //! - Most nb *read* commands (`nb todos`, ...) also commit a dirty notebook
@@ -57,28 +58,6 @@ impl NbCliBookkeeper {
     fn dir_arg(&self) -> String {
         self.dir.display().to_string()
     }
-
-    /// Whether `nb git dirty` reports uncommitted changes. A `.git`-less
-    /// notebook is never dirty (nb cannot commit it) and spawns nothing.
-    fn is_dirty(&self) -> Result<bool, StoreError> {
-        if !self.dir.join(".git").exists() {
-            return Ok(false);
-        }
-        match self
-            .nb
-            .run_in(Some(&self.dir), &["git", "dirty", &self.dir_arg()])
-        {
-            Ok(_) => Ok(true),
-            Err(NbError::Failed {
-                status: Some(1), ..
-            }) => Ok(false),
-            Err(e) => Err(failure(
-                "checking for changes",
-                &e,
-                "commit by hand with 'nb git checkpoint'",
-            )),
-        }
-    }
 }
 
 /// Whether nb's verify output says the index is corrupted; nb prints
@@ -110,11 +89,13 @@ impl Bookkeeper for NbCliBookkeeper {
             .map_err(|e| failure(&format!("registering {name}"), &e, RECONCILE_FIX))
     }
 
-    /// `nb git checkpoint <dir> <message> --wait`, only when `nb git dirty`
-    /// says there is something to commit. With nb's `auto_sync` on, nb also
-    /// pushes.
+    /// `nb git checkpoint <dir> <message> --wait` when the notebook is a
+    /// repository; a `.git`-less notebook spawns nothing. No `nb git dirty`
+    /// first: the store only checkpoints after it changed bytes on disk. nb
+    /// exits 0 whether or not it committed, so `true` means nb ran the
+    /// checkpoint. With nb's `auto_sync` on, nb also pushes.
     fn checkpoint(&self, message: &str) -> Result<bool, StoreError> {
-        if !self.is_dirty()? {
+        if !self.dir.join(".git").exists() {
             return Ok(false);
         }
         self.nb
@@ -207,11 +188,10 @@ mod tests {
     }
 
     #[test]
-    fn no_git_directory_is_never_dirty_without_spawning() {
+    fn no_git_directory_never_checkpoints_nor_spawns() {
         let dir = tempfile::tempdir().unwrap();
         let nb = Nb::at(dir.path().join("missing-nb"), Vec::new());
         let b = NbCliBookkeeper::new(nb, dir.path());
-        assert!(!(b.is_dirty().unwrap()));
         assert!(!(b.checkpoint("[tasq] Update: x").unwrap()));
     }
 }

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use tasq_core::store::StoreError;
 
 use crate::bookkeeper::{Bookkeeper, SyncOutcome, Verification, failure};
-use crate::git::Git;
+use crate::git::{Git, GitError};
 use crate::index::Index;
 use crate::resolve::index_path;
 
@@ -114,26 +114,31 @@ impl Bookkeeper for NativeBookkeeper {
     }
 
     /// `git add -A && git commit -q -m <message>` when the notebook is a
-    /// repository with uncommitted changes.
+    /// repository. No `git status` first: the store only checkpoints after
+    /// it changed bytes on disk. `git commit` exits 1 both when there is
+    /// nothing to commit (the file is ignored) and when a hook rejects the
+    /// commit, so only then does a clean tree mean "nothing committed".
     fn checkpoint(&self, message: &str) -> Result<bool, StoreError> {
         if !self.git.is_repository() {
             return Ok(false);
         }
         let fix = "commit by hand with 'git add -A && git commit'";
-        if !self
-            .git
-            .is_dirty()
-            .map_err(|e| failure("checking for changes", &e, fix))?
-        {
-            return Ok(false);
-        }
         self.git
             .run(&["add", "-A"])
             .map_err(|e| failure("staging", &e, fix))?;
-        self.git
-            .run(&["commit", "-q", "-m", message])
-            .map_err(|e| failure("committing", &e, fix))?;
-        Ok(true)
+        match self.git.run(&["commit", "-q", "-m", message]) {
+            Ok(_) => Ok(true),
+            Err(
+                e @ GitError::Failed {
+                    status: Some(1), ..
+                },
+            ) => match self.git.is_dirty() {
+                Ok(false) => Ok(false),
+                Ok(true) => Err(failure("committing", &e, fix)),
+                Err(e) => Err(failure("checking for changes", &e, fix)),
+            },
+            Err(e) => Err(failure("committing", &e, fix)),
+        }
     }
 
     fn verify(&self) -> Result<Verification, StoreError> {

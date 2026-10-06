@@ -90,8 +90,12 @@ pub trait Bookkeeper {
     /// index. The file must already exist.
     fn register(&self, file: &Path) -> Result<(), StoreError>;
 
-    /// Commits pending changes with `message`. Returns `false`, without
-    /// committing, when nothing changed or the notebook is not a repository.
+    /// Commits pending changes with `message`. The store calls it only after
+    /// a write changed bytes on disk, so implementations commit without
+    /// probing for changes first. Returns `false` when the notebook is not a
+    /// repository or the commit turned out empty (the file is ignored by
+    /// git) and the strategy can tell; the nb strategy cannot, nb exits 0
+    /// either way, so it returns `true` once nb ran.
     fn checkpoint(&self, message: &str) -> Result<bool, StoreError>;
 
     /// Checks that the index matches the files.

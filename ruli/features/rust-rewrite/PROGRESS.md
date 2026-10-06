@@ -691,6 +691,15 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 - Register failure after a written file is an error naming the file (no id exists yet); later
   checkpoint failures are warnings carrying the manual fix (`nb index reconcile`).
 - `Bookkeeper::checkpoint -> bool` (committed or skipped), `verify -> Verification`, plus `sync`.
+- No dirty probe before a checkpoint (2026-10-06, perf): the store only checkpoints after a write
+  changed bytes, so the tree is dirty by construction. nb runs `nb git checkpoint --wait` alone
+  (one bash spawn instead of two); native runs `git add -A` + `git commit` and only on commit
+  exit 1 asks `git status --porcelain` whether the tree is clean (nothing to commit, an ignored
+  file: `Ok(false)`) or not (a rejecting pre-commit hook, which also exits 1: a failure). nb's
+  `true` now means "nb ran the checkpoint", since nb's exit status cannot say more.
+  Release build, 43-file copy of the real notebook, signing off, median of 2x30 `tasq set`:
+  nb 145 -> 84 ms, native 11.3 -> 9.8 ms. Both bookkeepers: 47 mutants, 38 caught, 9 unviable,
+  0 missed.
 
 ### nb facts (probed 2026-10-04 with nb 7.25.4 in an isolated NB_DIR)
 
@@ -702,6 +711,12 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 - `nb index add` appends `basename\n` and skips names already listed; it does not repair a missing
   trailing newline on the previous line.
 - `nb git dirty` exits 1 both when clean and when the notebook is not a git repo; check `.git` first.
+- `nb git checkpoint --wait` exits 0 even when it committed nothing or the commit failed:
+  `_git_checkpoint` ends the commit with `|| return 0` (no auto-sync) or `|| :` (auto-sync).
+  Its exit status says nothing about the commit; no longer probed with `nb git dirty` first.
+- Each nb (or native) commit is GPG-signed when the user's global git config has
+  `commit.gpgsign=true`: ~440 ms per commit on the author's machine, three times every other
+  cost of `tasq set` combined. Benchmarks set `commit.gpgsign false` in the notebook copy.
 - `nb sync` without a remote exits 1 ("No remote configured"); reported as not synced, not an error.
 - A cwd inside a notebook makes nb treat it as the current notebook: that is how `git`/`sync`
   (no folder argument) are targeted; index subcommands take the folder as final argument.
@@ -942,6 +957,10 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 - T-802: `c` (create a task from the TUI) was not in the plan's key list; added as title-only
   with the configured default status, refined afterwards with `s`/`p` (ADR 0011). The
   "`post-create` still has no TUI counterpart" negative of ADR 0010 no longer holds.
+
+- Perf, no dirty pre-check (2026-10-06): the task asked for nb's silent no-op to return
+  `Ok(false)`; nb exits 0 either way, so the nb bookkeeper returns `true` once nb ran instead of
+  comparing HEAD before and after. Nothing in the store reads the `bool`.
 
 ## Open questions raised during implementation
 
