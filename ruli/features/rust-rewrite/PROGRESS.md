@@ -62,7 +62,7 @@ migration).
 |------|-------|--------|-------|
 | T-801 | TUI foundation | done | `crates/tui/src/{model,msg,keys,update,view,runtime}.rs`; `tasq ui` in `crates/cli/src/commands/ui.rs`; 18 `TestBackend` snapshots in `crates/tui/tests/render.rs`; gif recorded 2026-10-05 (`docs/demo/demo.tape`) |
 | T-802 | TUI editing actions | done | `s p l d` through `tasq_core::edit`; `c` creates a task (title only, `workflow.default_status`) through `Store::create` and fires `post-create` through `Host::after_create` (ADR 0011); `Ctrl+Enter`/`Shift+Enter` open the session in a new window, focused or not (`tasq pick --detached [--no-focus]`, ADR 0012); `e`/`Enter`/`S` through the `Host` trait, run as `$EDITOR`, `tasq pick`, `tasq sync` child processes with the terminal released; paste collapses to one line; `?` help overlay |
-| T-803 | Theming and config | done | `tasq_core::theme::{Color, Theme}` shared with the CLI; `NO_COLOR`/`--color never` monochrome; two-pane from 100 columns, one pane below; both layouts snapshotted; `[ui.keys]` rebinds every key but `Ctrl+C` (ADR 0013); follow-up 2026-10-06: named colour themes, `theme::{Role, Preset}`, `ui.theme.preset` (dark/light/solarized/gruvbox/mono) + `[ui.theme.colors]` under `[ui.colors]` (ADR 0018, commit b540e6c) |
+| T-803 | Theming and config | done | `tasq_core::theme::{Color, Theme}` shared with the CLI; `NO_COLOR`/`--color never` monochrome; two-pane from 100 columns, one pane below; both layouts snapshotted; `[ui.keys]` rebinds every key but `Ctrl+C` (ADR 0013); follow-up 2026-10-06: named colour themes, `theme::{Role, Preset}`, `ui.theme.preset` (dark/light/solarized/gruvbox/mono) + `[ui.theme.colors]` under `[ui.colors]` (ADR 0018, commit 51ed314) |
 
 ### Phase 7 status
 
@@ -478,7 +478,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   all 17 values. The CLI link closer undoes exactly what the opener set (`24;39`, `24;22` for
   `dim`, `24;27` for `reversed`) so glow's own styling around a link survives. 144 mutants in
   `theme` + `config`, 0 missed. The `doctor` verdict colours are not roles (a check report,
-  not task styling). Commit: b540e6c.
+  not task styling). Commit: 51ed314.
 
 ### Plugin decisions (T-701)
 
