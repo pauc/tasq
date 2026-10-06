@@ -41,6 +41,10 @@ regex = "1"
 shell-words = "1"
 # `config show` walks the effective config as a TOML table to annotate each key.
 toml = "0.9"
+# The terminal size of stdout (TIOCGWINSZ) without unsafe code.
+rustix = { version = "1", features = ["termios"] }
+# Column widths of titles and chips when `list` wraps rows to the terminal.
+unicode-width = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2"

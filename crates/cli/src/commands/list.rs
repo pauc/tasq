@@ -8,6 +8,9 @@
 //! `due today` / `due tomorrow` (yellow) or `due in 4d` (dim) under the
 //! default `ui.due_format`; topic tags are chips (white on dark blue). When the filter names a single status the
 //! header is the status name itself, uncoloured, as the script printed it.
+//!
+//! On a terminal, a row longer than the terminal wraps with a hanging
+//! indent under the title; piped output keeps one row per line.
 
 use chrono::NaiveDate;
 use tasq_core::clock::format_date;
@@ -18,9 +21,11 @@ use tasq_core::dates::{Due, due_label};
 use tasq_core::model::{Priority, Status, Tag, Task, Workflow};
 use tasq_core::query::{self, Filter, Group};
 use tasq_core::store::Store;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
 use crate::cli::ListArgs;
+use crate::commands::view::{stdout_columns, terminal_width};
 use crate::error::{CliError, Result};
 use crate::json;
 use crate::output::Style;
@@ -57,6 +62,10 @@ pub fn run(app: &App, args: &ListArgs) -> Result<()> {
         style: app.out.style(),
         today: app.clock()?.today(),
         due_format: app.config().ui.due_format,
+        width: app
+            .out
+            .is_terminal()
+            .then(|| terminal_width(&app.env_vec(), stdout_columns())),
     };
     let text = render(&groups, &done, &look, criteria.status.is_some());
     app.out.page(&text)
@@ -221,6 +230,8 @@ pub struct Look<'a> {
     pub today: NaiveDate,
     /// `ui.due_format`.
     pub due_format: DueFormat,
+    /// The terminal width rows wrap at; `None` never wraps.
+    pub width: Option<usize>,
 }
 
 /// Renders the groups, then `done` as a `DONE` group when non-empty.
@@ -264,35 +275,61 @@ pub fn render(
 /// in the theme's `dim`, `#A` in `prio-a`, the chips in `chip-fg` on
 /// `chip-bg`. The due date is shown in `ui.due_format`: bold `overdue`
 /// when past, `due-soon` today and tomorrow, `dim` further ahead; a done
-/// task shows its date, dim.
+/// task shows its date, dim. With a `width`, the row wraps between words
+/// and continuation lines start under the title.
 pub fn row(task: &Task, look: &Look<'_>) -> String {
     let (theme, style) = (look.theme, look.style);
     let dim = theme.color(Role::Dim);
-    let id = style.color(dim, &format!("[{:>2}]", task.id.as_str()));
+    let id_text = format!("[{:>2}]", task.id.as_str());
+    let id = style.color(dim, &id_text);
     let prio = match task.priority {
         Priority::A => style.bold_color(theme.color(Role::PrioA), "#A"),
         Priority::B => style.color(dim, "#B"),
         Priority::C => style.color(dim, "#C"),
     };
-    let due = task.due.map_or_else(String::new, |d| {
-        let due = if task.done {
-            style.color(dim, &format!("(due {})", format_date(d)))
+    let mut words: Vec<(String, usize)> = task
+        .title
+        .split(' ')
+        .map(|w| (w.to_owned(), w.width()))
+        .collect();
+    if let Some(d) = task.due {
+        let text = if task.done {
+            format!("(due {})", format_date(d))
         } else {
-            let text = format!("({})", due_label(d, look.today, look.due_format));
-            match Role::of_due(Due::of(d, look.today)) {
-                Role::Overdue => style.bold_color(theme.color(Role::Overdue), &text),
-                role => style.color(theme.color(role), &text),
-            }
+            format!("({})", due_label(d, look.today, look.due_format))
         };
-        format!(" {due}")
-    });
+        let styled = match (task.done, Role::of_due(Due::of(d, look.today))) {
+            (true, _) => style.color(dim, &text),
+            (false, Role::Overdue) => style.bold_color(theme.color(Role::Overdue), &text),
+            (false, role) => style.color(theme.color(role), &text),
+        };
+        words.push((styled, text.width()));
+    }
     let (bg, fg) = (theme.color(Role::ChipBg), theme.color(Role::ChipFg));
-    let chips = task.tags.iter().fold(String::new(), |mut acc, t| {
-        acc.push(' ');
-        acc.push_str(&style.chip(bg, fg, &t.to_hash()));
-        acc
-    });
-    format!("  {id} {prio} {}{due}{chips}\n", task.title)
+    for tag in &task.tags {
+        let text = tag.to_hash();
+        words.push((style.chip(bg, fg, &text), text.width() + 2));
+    }
+    // `  [id] #B ` is the indent continuation lines line up with.
+    let indent = id_text.width() + 6;
+    let mut out = format!("  {id} {prio} ");
+    let mut column = indent;
+    for (i, (word, width)) in words.iter().enumerate() {
+        if i > 0 {
+            if look.width.is_some_and(|max| column + 1 + width > max) {
+                out.push('\n');
+                out.push_str(&" ".repeat(indent));
+                column = indent;
+            } else {
+                out.push(' ');
+                column += 1;
+            }
+        }
+        out.push_str(word);
+        column += width;
+    }
+    out.push('\n');
+    out
 }
 
 #[cfg(test)]
@@ -308,6 +345,7 @@ mod tests {
             style,
             today: NaiveDate::from_ymd_opt(2026, 10, 6).unwrap(),
             due_format: DueFormat::Iso,
+            width: None,
         }
     }
 
@@ -550,6 +588,54 @@ mod tests {
             row(&closed, &on),
             format!("{id} \x1b[2m(due 2026-10-03)\x1b[0m\n")
         );
+    }
+
+    #[test]
+    fn row_wraps_under_the_title() {
+        let theme = Theme::default();
+        let mut t = Task::new(TaskId::from(3), "one two three four");
+        t.add_tag(Tag::new("ux").unwrap());
+        let at = |width| Look {
+            width: Some(width),
+            ..look(&theme, Style::OFF)
+        };
+        // `four` ends exactly at column 20; the chip does not fit after it.
+        assert_eq!(
+            row(&t, &at(20)),
+            "  [ 3] #B one two\n          three four\n           #ux \n"
+        );
+        assert_eq!(
+            row(&t, &at(26)),
+            "  [ 3] #B one two three\n          four  #ux \n"
+        );
+        // The chip is five columns wide: it fits at 34, not at 33.
+        assert_eq!(
+            row(&t, &at(33)),
+            "  [ 3] #B one two three four\n           #ux \n"
+        );
+        assert_eq!(row(&t, &at(34)), "  [ 3] #B one two three four  #ux \n");
+        assert_eq!(row(&t, &look(&theme, Style::OFF)), row(&t, &at(34)));
+        // A wide id moves the indent; escape codes take no columns.
+        let mut due = Task::new(TaskId::from(123), "a b");
+        due.due = NaiveDate::from_ymd_opt(2026, 10, 6);
+        let on = |width| Look {
+            width: Some(width),
+            due_format: DueFormat::Relative,
+            ..look(&theme, Style::ON)
+        };
+        let head = "  \x1b[2m[123]\x1b[0m \x1b[2m#B\x1b[0m a b";
+        assert_eq!(
+            row(&due, &on(26)),
+            format!("{head} \x1b[33m(due today)\x1b[0m\n")
+        );
+        assert_eq!(
+            row(&due, &on(25)),
+            format!("{head}\n           \x1b[33m(due today)\x1b[0m\n")
+        );
+        // Wide characters count two columns each.
+        let wide = Task::new(TaskId::from(3), "日本 語");
+        assert_eq!(row(&wide, &at(17)), "  [ 3] #B 日本 語\n");
+        assert_eq!(row(&wide, &at(16)), "  [ 3] #B 日本\n          語\n");
     }
 
     #[test]

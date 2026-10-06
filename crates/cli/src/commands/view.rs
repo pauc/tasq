@@ -93,7 +93,7 @@ pub fn show_markdown(app: &App, markdown: &str) -> Result<()> {
     let Some(glow) = glow else {
         return app.out.page(markdown);
     };
-    let width = terminal_width(&env);
+    let width = terminal_width(&env, stdout_columns());
     let ui = &app.config().ui;
     let rendered = if ui.no_osc8 {
         render_with_glow(&glow, &unwrap_urls(markdown, width), &ui.glow_style, width)
@@ -113,13 +113,26 @@ pub fn show_markdown(app: &App, markdown: &str) -> Result<()> {
     }
 }
 
-/// `$COLUMNS`, else `tput cols`, else [`DEFAULT_WIDTH`].
-pub fn terminal_width(env: &[(String, String)]) -> usize {
+/// The width of the terminal stdout is on, when it is one. zsh does not
+/// export `$COLUMNS` and `tput cols` answers 80 when its stdout is a pipe,
+/// so this is the only reliable source.
+///
+/// Not unit-tested: an ioctl on the process's real stdout.
+pub fn stdout_columns() -> Option<usize> {
+    rustix::termios::tcgetwinsize(std::io::stdout())
+        .ok()
+        .map(|size| usize::from(size.ws_col))
+}
+
+/// `$COLUMNS`, else `columns` (from [`stdout_columns`]), else `tput cols`,
+/// else [`DEFAULT_WIDTH`].
+pub fn terminal_width(env: &[(String, String)], columns: Option<usize>) -> usize {
     if let Some(cols) = env
         .iter()
         .find(|(k, _)| k == "COLUMNS")
         .and_then(|(_, v)| v.trim().parse::<usize>().ok())
         .filter(|c| *c > 0)
+        .or(columns.filter(|c| *c > 0))
     {
         return cols;
     }
@@ -520,12 +533,14 @@ mod tests {
     #[test]
     fn terminal_width_reads_columns() {
         let env = vec![("COLUMNS".to_owned(), "132".to_owned())];
-        assert_eq!(terminal_width(&env), 132);
+        assert_eq!(terminal_width(&env, Some(90)), 132);
         let env = vec![
             ("COLUMNS".to_owned(), "0".to_owned()),
             ("PATH".to_owned(), "/nonexistent".to_owned()),
         ];
-        assert_eq!(terminal_width(&env), DEFAULT_WIDTH);
+        assert_eq!(terminal_width(&env, Some(90)), 90);
+        assert_eq!(terminal_width(&env, Some(0)), DEFAULT_WIDTH);
+        assert_eq!(terminal_width(&env, None), DEFAULT_WIDTH);
     }
 
     #[test]

@@ -2037,6 +2037,7 @@ dependencies = [
  "insta",
  "predicates",
  "regex",
+ "rustix",
  "serde",
  "serde_json",
  "shell-words",
@@ -2047,6 +2048,7 @@ dependencies = [
  "tasq-tui",
  "tempfile",
  "toml",
+ "unicode-width",
 ]
 
 [[package]]

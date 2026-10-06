@@ -24,6 +24,7 @@ pub struct Output {
     pager: Option<Vec<String>>,
     json: bool,
     verbose: u8,
+    terminal: bool,
 }
 
 impl Output {
@@ -49,6 +50,7 @@ impl Output {
             pager: pager_command(global.no_pager, stdout_is_tty, &ui.pager),
             json: global.json,
             verbose: global.verbose,
+            terminal: stdout_is_tty,
         }
     }
 
@@ -69,6 +71,11 @@ impl Output {
     /// Whether colour escapes are emitted.
     pub fn color(&self) -> bool {
         self.color
+    }
+
+    /// Whether stdout is a terminal.
+    pub fn is_terminal(&self) -> bool {
+        self.terminal
     }
 
     /// Verbosity level (`-v` count).
@@ -300,11 +307,13 @@ mod tests {
         };
         let out = Output::new(&global, &UiConfig::default(), &BTreeMap::new(), true);
         assert!(!out.color());
+        assert!(out.is_terminal());
         let global = GlobalArgs {
             color: ColorChoice::Always,
             ..GlobalArgs::default()
         };
         let out = Output::new(&global, &UiConfig::default(), &BTreeMap::new(), false);
+        assert!(!out.is_terminal());
         assert!(out.color());
         assert_eq!(out.style(), Style::ON);
     }
