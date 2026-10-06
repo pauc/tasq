@@ -5,6 +5,7 @@ use tasq_core::model::{Priority, TaskId};
 
 use crate::calendar::Calendar;
 use crate::form::{Field, Form, Text};
+use crate::history::History;
 use crate::model::{Message, Mode, Model, NoteTarget, PAGE};
 use crate::msg::{Cmd, LaunchTarget, Msg};
 
@@ -82,11 +83,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::HideDetail => model.show_detail = false,
         Msg::Help => model.mode = Mode::Help,
         Msg::Reload => return vec![Cmd::Load],
-        Msg::BeginFilter => {
-            model.mode = Mode::Filter {
-                input: Text::single(&model.filter),
-            };
-        }
+        Msg::BeginFilter => begin_filter(model),
         Msg::BeginStatus => {
             if let Some(task) = model.selected_task() {
                 let cursor = task
@@ -112,11 +109,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         }
         Msg::BeginNote => begin_note(model, NoteTarget::Log),
         Msg::BeginDone => begin_note(model, NoteTarget::Done),
-        Msg::BeginCreate => {
-            model.mode = Mode::Create {
-                input: Text::single(""),
-            };
-        }
+        Msg::BeginCreate => begin_create(model),
         Msg::Edit => {
             if let Some(task) = model.selected_task() {
                 model.mode = Mode::Form(Box::new(Form::of(task, &model.workflow)));
@@ -167,8 +160,25 @@ const NO_SELECTION: &str = "no task selected";
 const NO_SOURCES: &str = "no [[source]] is configured (see docs/sources.md)";
 const NO_SOURCE_CHECKED: &str = "no source checked (Space toggles, Esc closes)";
 
+/// Opens the filter prompt on the applied filter, which is also the
+/// draft its recall comes back to.
+fn begin_filter(model: &mut Model) {
+    model.history.filters.reset();
+    model.mode = Mode::Filter {
+        input: Text::single(&model.filter),
+    };
+}
+
+fn begin_create(model: &mut Model) {
+    model.history.titles.reset();
+    model.mode = Mode::Create {
+        input: Text::single(""),
+    };
+}
+
 fn begin_note(model: &mut Model, target: NoteTarget) {
     if model.selected_task().is_some() {
+        model.history.notes.reset();
         model.mode = Mode::Note {
             input: Text::single(""),
             target,
@@ -188,23 +198,43 @@ fn with_selection(model: &mut Model, make: impl FnOnce(TaskId) -> Cmd) -> Vec<Cm
     vec![make(id)]
 }
 
-/// The filter (`/`): the list follows every edit, `Enter` keeps the
-/// filter, `Esc` clears it.
+/// The filter (`/`): the list follows every edit and every recalled
+/// entry, `Enter` keeps the filter (and records it), `Esc` clears it.
 fn filter(model: &mut Model, mut input: Text, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Quit => model.quit = true,
-        Msg::Enter => model.mode = Mode::Normal,
+        Msg::Enter => {
+            model.history.filters.record(&input.text());
+            model.mode = Mode::Normal;
+        }
         Msg::Escape => {
             model.set_filter(String::new());
             model.mode = Mode::Normal;
         }
         msg => {
-            edit_line(&mut input, &msg);
+            edit_prompt(&mut input, &mut model.history.filters, &msg);
             model.set_filter(input.text());
             model.mode = Mode::Filter { input };
         }
     }
     Vec::new()
+}
+
+/// Applies a message to a status-bar prompt's `input`: `Up`/`Down`
+/// replace it with an entry of `history` (or the draft), cursor at the
+/// end; anything else goes to [`edit_line`].
+fn edit_prompt(input: &mut Text, history: &mut History, msg: &Msg) {
+    let recalled = match msg {
+        Msg::Up => history.up(&input.text()),
+        Msg::Down => history.down(),
+        msg => {
+            edit_line(input, msg);
+            return;
+        }
+    };
+    if let Some(text) = recalled {
+        *input = Text::single(&text);
+    }
 }
 
 /// Applies a line-editing message to a status-bar prompt's `input`:
@@ -352,6 +382,8 @@ fn toggle_source(model: &mut Model, index: usize) {
     }
 }
 
+/// A progress note (`l`) or the final note of `done` (`d`); a submitted
+/// note is recorded in the notes history both share.
 fn note(model: &mut Model, mut input: Text, target: NoteTarget, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Quit => model.quit = true,
@@ -364,11 +396,13 @@ fn note(model: &mut Model, mut input: Text, target: NoteTarget, msg: Msg) -> Vec
                     model.message = Some(Message::error("the note must not be empty"));
                 }
                 NoteTarget::Log => {
+                    model.history.notes.record(text);
                     let note = text.to_owned();
                     model.mode = Mode::Normal;
                     return with_selection(model, |id| Cmd::Log(id, note));
                 }
                 NoteTarget::Done => {
+                    model.history.notes.record(text);
                     let note = (!text.is_empty()).then(|| text.to_owned());
                     model.mode = Mode::Normal;
                     return with_selection(model, |id| Cmd::Done(id, note));
@@ -376,7 +410,7 @@ fn note(model: &mut Model, mut input: Text, target: NoteTarget, msg: Msg) -> Vec
             }
         }
         msg => {
-            edit_line(&mut input, &msg);
+            edit_prompt(&mut input, &mut model.history.notes, &msg);
             model.mode = Mode::Note { input, target };
         }
     }
@@ -384,8 +418,8 @@ fn note(model: &mut Model, mut input: Text, target: NoteTarget, msg: Msg) -> Vec
 }
 
 /// The title of a new task (`c`): typed like a note, written with the
-/// model's draft on Enter. An empty title is refused and the input stays
-/// open, as `tasq create` refuses it.
+/// model's draft (and recorded) on Enter. An empty title is refused and
+/// the input stays open, as `tasq create` refuses it.
 fn create(model: &mut Model, mut input: Text, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Quit => model.quit = true,
@@ -396,13 +430,14 @@ fn create(model: &mut Model, mut input: Text, msg: Msg) -> Vec<Cmd> {
             if title.is_empty() {
                 model.message = Some(Message::error("the title must not be empty"));
             } else {
+                model.history.titles.record(title);
                 let draft = model.draft(title);
                 model.mode = Mode::Normal;
                 return vec![Cmd::Create(Box::new(draft))];
             }
         }
         msg => {
-            edit_line(&mut input, &msg);
+            edit_prompt(&mut input, &mut model.history.titles, &msg);
             model.mode = Mode::Create { input };
         }
     }
@@ -1141,7 +1176,7 @@ mod tests {
                 input: Text::single("  Call the bank")
             }
         );
-        assert_eq!(update(&mut m, Msg::Down), Vec::new(), "ignored key");
+        assert_eq!(update(&mut m, Msg::Down), Vec::new(), "nothing to recall");
         assert_eq!(
             update(&mut m, Msg::Enter),
             vec![Cmd::Create(Box::new(
@@ -1600,6 +1635,119 @@ mod tests {
         m.selected = Some(TaskId::from(42));
         assert_eq!(update(&mut m, Msg::Launch), Vec::new());
         assert_eq!(m.message, Some(Message::error("no task selected")));
+    }
+
+    fn entries(history: &History) -> Vec<&str> {
+        history.entries().iter().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn filters_are_recorded_on_enter_and_recalled_onto_the_list() {
+        let mut m = model();
+        feed(&mut m, [Msg::BeginFilter, Msg::Char('s'), Msg::Char('e')]);
+        update(&mut m, Msg::Enter);
+        // Reopening holds the applied filter; it is the draft.
+        feed(&mut m, [Msg::BeginFilter, Msg::KillToStart]);
+        feed(&mut m, chars(" thi "));
+        update(&mut m, Msg::Enter);
+        // Escape clears the filter and records nothing.
+        feed(&mut m, [Msg::BeginFilter, Msg::Char('x'), Msg::Escape]);
+        assert_eq!(entries(&m.history.filters), ["se", "thi"]);
+        assert_eq!(m.filter, "");
+
+        feed(&mut m, [Msg::BeginFilter, Msg::Char('f'), Msg::Left]);
+        assert_eq!(update(&mut m, Msg::Up), Vec::new());
+        assert_eq!(prompt(&m), ("thi".into(), 3), "cursor at the end");
+        assert_eq!(m.filter, "thi");
+        assert_eq!(m.selected, Some(TaskId::from(3)));
+        update(&mut m, Msg::Up);
+        assert_eq!(prompt(&m), ("se".into(), 2));
+        assert_eq!(m.filter, "se");
+        assert_eq!(m.selected, Some(TaskId::from(2)));
+        update(&mut m, Msg::Up);
+        assert_eq!(prompt(&m), ("se".into(), 2), "at the oldest");
+        update(&mut m, Msg::Down);
+        assert_eq!(prompt(&m), ("thi".into(), 3));
+        update(&mut m, Msg::Down);
+        assert_eq!(prompt(&m), ("f".into(), 1), "the draft, cursor at the end");
+        assert_eq!(m.filter, "f");
+        assert_eq!(m.selected, Some(TaskId::from(1)));
+        update(&mut m, Msg::Down);
+        assert_eq!(prompt(&m), ("f".into(), 1), "at the draft");
+        update(&mut m, Msg::Enter);
+        assert_eq!(entries(&m.history.filters), ["se", "thi", "f"]);
+        assert_eq!(entries(&m.history.notes), Vec::<&str>::new());
+        assert_eq!(entries(&m.history.titles), Vec::<&str>::new());
+
+        // A prompt opens at its draft, wherever the last one stopped.
+        feed(&mut m, [Msg::BeginFilter, Msg::Up, Msg::Up, Msg::Escape]);
+        feed(&mut m, [Msg::BeginFilter, Msg::Up]);
+        assert_eq!(prompt(&m), ("f".into(), 1));
+    }
+
+    #[test]
+    fn notes_are_recorded_by_log_and_done_and_recalled_by_both() {
+        let mut m = model();
+        // A refused empty note, an empty done note and Escape record nothing.
+        feed(&mut m, [Msg::BeginNote, Msg::Enter, Msg::Escape]);
+        feed(&mut m, [Msg::BeginDone, Msg::Enter]);
+        feed(&mut m, [Msg::BeginNote, Msg::Char('x'), Msg::Escape]);
+        assert_eq!(entries(&m.history.notes), Vec::<&str>::new());
+
+        update(&mut m, Msg::BeginNote);
+        feed(&mut m, chars(" found it "));
+        update(&mut m, Msg::Enter);
+        update(&mut m, Msg::BeginDone);
+        feed(&mut m, chars("merged"));
+        update(&mut m, Msg::Enter);
+        assert_eq!(entries(&m.history.notes), ["found it", "merged"]);
+
+        feed(&mut m, [Msg::BeginDone, Msg::Up, Msg::Up]);
+        assert_eq!(prompt(&m), ("found it".into(), 8));
+        update(&mut m, Msg::Escape);
+        feed(&mut m, [Msg::BeginNote, Msg::Char('d')]);
+        update(&mut m, Msg::Up);
+        assert_eq!(prompt(&m), ("merged".into(), 6), "opened at the draft");
+        update(&mut m, Msg::Down);
+        assert_eq!(
+            m.mode,
+            Mode::Note {
+                input: Text::single("d"),
+                target: NoteTarget::Log
+            }
+        );
+        assert_eq!(entries(&m.history.filters), Vec::<&str>::new());
+        assert_eq!(entries(&m.history.titles), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn titles_are_recorded_when_accepted_and_kept_apart_from_filters() {
+        let mut m = model();
+        feed(&mut m, [Msg::BeginFilter, Msg::Char('s'), Msg::Enter]);
+        // A refused empty title and Escape record nothing.
+        feed(&mut m, [Msg::BeginCreate, Msg::Enter, Msg::Escape]);
+        assert_eq!(entries(&m.history.titles), Vec::<&str>::new());
+        update(&mut m, Msg::BeginCreate);
+        feed(&mut m, chars(" Call the bank "));
+        update(&mut m, Msg::Enter);
+        feed(&mut m, [Msg::BeginCreate, Msg::Char('W'), Msg::Enter]);
+        assert_eq!(entries(&m.history.titles), ["Call the bank", "W"]);
+        assert_eq!(entries(&m.history.filters), ["s"]);
+
+        feed(&mut m, [Msg::BeginCreate, Msg::Up, Msg::Up, Msg::Escape]);
+        feed(&mut m, [Msg::BeginCreate, Msg::Char('x'), Msg::Up]);
+        assert_eq!(prompt(&m), ("W".into(), 1), "opened at the draft");
+        update(&mut m, Msg::Up);
+        assert_eq!(
+            m.mode,
+            Mode::Create {
+                input: Text::single("Call the bank")
+            }
+        );
+        update(&mut m, Msg::Up);
+        assert_eq!(prompt(&m), ("Call the bank".into(), 13), "no filters");
+        feed(&mut m, [Msg::Down, Msg::Down]);
+        assert_eq!(prompt(&m), ("x".into(), 1));
     }
 
     #[test]

@@ -12,6 +12,7 @@ use tasq_core::theme::Theme;
 
 use crate::calendar::Calendar;
 use crate::form::{Form, Text};
+use crate::history::Histories;
 use crate::keys::KeyMap;
 
 /// Terminal width from which the list and the detail pane sit side by
@@ -176,6 +177,8 @@ pub struct Model {
     pub selected: Option<TaskId>,
     /// What the keys do.
     pub mode: Mode,
+    /// What the prompts submitted this session, for `Up`/`Down`.
+    pub history: Histories,
     /// Result of the last action.
     pub message: Option<Message>,
     /// Terminal width.
@@ -211,6 +214,7 @@ impl Model {
             filter: String::new(),
             selected: None,
             mode: Mode::Normal,
+            history: Histories::default(),
             message: None,
             width: 0,
             height: 0,

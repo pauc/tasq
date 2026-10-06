@@ -345,6 +345,11 @@ ends of the line, `Ctrl+W`/`Ctrl+U`/`Ctrl+K` delete as in readline, `Enter` is t
 day and a week, `PageUp`/`PageDown` by a month, `t` jumps to today, `Enter` puts the day in the
 box as ISO, `Esc` closes it; typing a date or `today`/`tomorrow` into the box works as before.
 `ui.week_start` sets the grid's first column (`monday` by default).
+In the one-line prompts (the `/` filter, the `l` and `d` notes, the `c` title), `Up`/`Down` go
+through what was submitted earlier in the session, like a shell's history: filters, notes and
+titles each have their own (`l` and `d` share the notes), going down past the newest brings back
+what was being typed, and a recalled filter applies to the list at once. Only submitted, non-empty
+entries count (not one closed with `Esc`); the history lives in memory and ends with `tasq ui`.
 `E` opens the task file in `$VISUAL`, else `$EDITOR`,
 else `vi`; `Enter`, `s` and `S` run `tasq pick <id>`, `tasq sync` and `tasq sync --source ...`
 (the sources checked in the picker) as child processes with the same `--profile`, `--config`
@@ -396,8 +401,9 @@ Typing (the filter, a note, a title, the edit view) is not configurable: charact
 `Esc`, `Backspace` and `Delete` do what they always do, `Left`/`Right` move the cursor and
 `Home`/`End` or `Ctrl+A`/`Ctrl+E` go to the ends of the line, and `Ctrl+W`, `Ctrl+U` and
 `Ctrl+K` delete the word before the cursor, back to the start of the line and on to its end,
-as in readline (on the current line only: they never join lines). An input longer
-than the status bar scrolls to keep the cursor in view. Neither are the toggles of the source picker: `Space` and
+as in readline (on the current line only: they never join lines). In the one-line prompts
+`Up`/`Down` recall earlier entries of the session; in the edit view they move between rows.
+An input longer than the status bar scrolls to keep the cursor in view. Neither are the toggles of the source picker: `Space` and
 the row digits. `Ctrl+C` quits in every mode and cannot be rebound. A key
 bound to two actions of the same mode, an unknown action or a key that does not parse stops
 `tasq ui` at startup with the file and the `ui.keys.<action>` path. The `?` overlay and the

@@ -659,14 +659,13 @@ fn calendar(code: KeyCode, ctrl: bool) -> Option<Msg> {
     })
 }
 
-/// The edit view's fixed keys: a prompt's keys plus `Up`/`Down`,
-/// `Tab`/`Shift+Tab` between the rows, `Ctrl+S` to save.
+/// The edit view's fixed keys: a prompt's keys (where `Up`/`Down` move
+/// between the rows instead of recalling), `Tab`/`Shift+Tab` between the
+/// rows, `Ctrl+S` to save.
 fn form(code: KeyCode, ctrl: bool) -> Option<Msg> {
     Some(match code {
         KeyCode::Tab => Msg::NextField,
         KeyCode::BackTab => Msg::PrevField,
-        KeyCode::Up => Msg::Up,
-        KeyCode::Down => Msg::Down,
         KeyCode::Char('s') if ctrl => Msg::Save,
         _ => return prompt(code, ctrl),
     })
@@ -675,11 +674,14 @@ fn form(code: KeyCode, ctrl: bool) -> Option<Msg> {
 /// A one-line prompt's fixed keys (the filter, a note, a title): typing,
 /// `Backspace` and `Delete`, `Left`/`Right`, `Home`/`End` (also
 /// `Ctrl+A`/`Ctrl+E`, as in readline), readline's kills (`Ctrl+W` the word
-/// before the cursor, `Ctrl+U` to the start, `Ctrl+K` to the end), `Enter`
-/// and `Esc`.
+/// before the cursor, `Ctrl+U` to the start, `Ctrl+K` to the end),
+/// `Up`/`Down` through the prompt's earlier entries (see
+/// [`crate::history`]), `Enter` and `Esc`.
 fn prompt(code: KeyCode, ctrl: bool) -> Option<Msg> {
     Some(match code {
         KeyCode::Enter => Msg::Enter,
+        KeyCode::Up => Msg::Up,
+        KeyCode::Down => Msg::Down,
         KeyCode::Esc => Msg::Escape,
         KeyCode::Backspace => Msg::Backspace,
         KeyCode::Delete => Msg::Delete,
@@ -850,7 +852,8 @@ mod tests {
             assert_eq!(t(&key(KeyCode::Esc)), Some(Msg::Escape));
             assert_eq!(t(&key(KeyCode::Backspace)), Some(Msg::Backspace));
             assert_eq!(t(&ctrl('c')), Some(Msg::Quit));
-            assert_eq!(t(&key(KeyCode::Up)), None);
+            assert_eq!(t(&key(KeyCode::Up)), Some(Msg::Up), "recalls");
+            assert_eq!(t(&key(KeyCode::Down)), Some(Msg::Down), "recalls");
             assert_eq!(t(&key(KeyCode::Tab)), None);
             assert_eq!(t(&ctrl('s')), None, "no save outside the edit view");
             assert_eq!(t(&ctrl('x')), None);

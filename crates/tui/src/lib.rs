@@ -17,6 +17,7 @@
 
 pub mod calendar;
 pub mod form;
+pub mod history;
 pub mod keys;
 pub mod model;
 pub mod msg;
@@ -26,6 +27,7 @@ pub mod view;
 
 pub use calendar::Calendar;
 pub use form::{Field, Form, FormError};
+pub use history::{Histories, History};
 pub use keys::{Action, Chord, Key, KeyError, KeyMap};
 pub use model::{Mode, Model, NoteTarget, SourceChoice};
 pub use msg::{Cmd, Host, HostResult, LaunchTarget, Msg, NoHost, RecordingHost};
