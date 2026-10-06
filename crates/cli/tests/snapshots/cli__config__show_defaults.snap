@@ -38,6 +38,11 @@ week_start = "monday"                        # defaults
 
 [ui.keys]
 
+[ui.theme]
+preset = "dark"                              # defaults
+
+[ui.theme.colors]
+
 [forge]
 
 [report.summary]

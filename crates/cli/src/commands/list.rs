@@ -19,8 +19,8 @@ use crate::app::App;
 use crate::cli::ListArgs;
 use crate::error::{CliError, Result};
 use crate::json;
-use crate::output::{Color, Style};
-pub use tasq_core::theme::{DONE_LABEL, Theme, group_label};
+use crate::output::Style;
+pub use tasq_core::theme::{DONE_LABEL, Role, Theme, group_label};
 
 /// Runs `list`.
 pub fn run(app: &App, args: &ListArgs) -> Result<()> {
@@ -227,7 +227,7 @@ pub fn render(
         out.push_str(&header);
         out.push('\n');
         for task in &group.tasks {
-            out.push_str(&row(task, style));
+            out.push_str(&row(task, theme, style));
         }
         out.push('\n');
     }
@@ -235,27 +235,34 @@ pub fn render(
         out.push_str(&style.bold_color(theme.done_color(), DONE_LABEL));
         out.push('\n');
         for task in done {
-            out.push_str(&row(task, style));
+            out.push_str(&row(task, theme, style));
         }
         out.push('\n');
     }
     out
 }
 
-/// One task line: `  [id] #prio Title (due date) chips`.
-pub fn row(task: &Task, style: Style) -> String {
-    let id = style.dim(&format!("[{:>2}]", task.id.as_str()));
+/// One task line: `  [id] #prio Title (due date) chips`, the id, `#B`,
+/// `#C` and the due date in the theme's `dim`, `#A` in `prio-a`, the
+/// chips in `chip-fg` on `chip-bg`.
+pub fn row(task: &Task, theme: &Theme, style: Style) -> String {
+    let dim = theme.color(Role::Dim);
+    let id = style.color(dim, &format!("[{:>2}]", task.id.as_str()));
     let prio = match task.priority {
-        Priority::A => style.bold_color(Color::Red, "#A"),
-        Priority::B => style.dim("#B"),
-        Priority::C => style.dim("#C"),
+        Priority::A => style.bold_color(theme.color(Role::PrioA), "#A"),
+        Priority::B => style.color(dim, "#B"),
+        Priority::C => style.color(dim, "#C"),
     };
     let due = task.due.map_or_else(String::new, |d| {
-        format!(" {}", style.dim(&format!("(due {})", format_date(d))))
+        format!(
+            " {}",
+            style.color(dim, &format!("(due {})", format_date(d)))
+        )
     });
+    let (bg, fg) = (theme.color(Role::ChipBg), theme.color(Role::ChipFg));
     let chips = task.tags.iter().fold(String::new(), |mut acc, t| {
         acc.push(' ');
-        acc.push_str(&style.chip(&t.to_hash()));
+        acc.push_str(&style.chip(bg, fg, &t.to_hash()));
         acc
     });
     format!("  {id} {prio} {}{due}{chips}\n", task.title)
@@ -425,16 +432,35 @@ mod tests {
         t.due = NaiveDate::from_ymd_opt(2026, 10, 10);
         t.add_tag(Tag::new("gitlab").unwrap());
         t.add_tag(Tag::new("review-request").unwrap());
+        let theme = Theme::default();
         assert_eq!(
-            row(&t, Style::OFF),
+            row(&t, &theme, Style::OFF),
             "  [ 3] #A Fix it (due 2026-10-10)  #gitlab   #review-request \n"
         );
         assert_eq!(
-            row(&t, Style::ON),
+            row(&t, &theme, Style::ON),
             "  \x1b[2m[ 3]\x1b[0m \x1b[1;31m#A\x1b[0m Fix it \x1b[2m(due 2026-10-10)\x1b[0m \x1b[48;5;24m\x1b[38;5;231m #gitlab \x1b[0m \x1b[48;5;24m\x1b[38;5;231m #review-request \x1b[0m\n"
         );
         let plain = Task::new(TaskId::from(12), "Plain");
-        assert_eq!(row(&plain, Style::OFF), "  [12] #B Plain\n");
+        assert_eq!(row(&plain, &theme, Style::OFF), "  [12] #B Plain\n");
+        // A preset restyles the id, the marker, the date and the chips.
+        let mut ui = UiConfig::default();
+        ui.theme.preset = tasq_core::theme::Preset::Light;
+        let light = Theme::from_config(&ui);
+        assert_eq!(
+            row(&t, &light, Style::ON),
+            "  \x1b[38;5;245m[ 3]\x1b[0m \x1b[1;38;5;124m#A\x1b[0m Fix it \x1b[38;5;245m(due 2026-10-10)\x1b[0m \x1b[48;5;153m\x1b[38;5;17m #gitlab \x1b[0m \x1b[48;5;153m\x1b[38;5;17m #review-request \x1b[0m\n"
+        );
+        ui.theme.preset = tasq_core::theme::Preset::Mono;
+        let mono = Theme::from_config(&ui);
+        assert_eq!(
+            row(&plain, &mono, Style::ON),
+            "  \x1b[2m[12]\x1b[0m \x1b[2m#B\x1b[0m Plain\n"
+        );
+        assert_eq!(
+            row(&t, &mono, Style::ON),
+            "  \x1b[2m[ 3]\x1b[0m \x1b[1m#A\x1b[0m Fix it \x1b[2m(due 2026-10-10)\x1b[0m \x1b[7m #gitlab \x1b[0m \x1b[7m #review-request \x1b[0m\n"
+        );
     }
 
     #[test]

@@ -39,6 +39,7 @@ pub const ENV_SET: &str = "TASQ_SET";
 /// | `TASQ_NO_OSC8` | `ui.no_osc8` |
 /// | `TASQ_GLOW_STYLE` | `ui.glow_style` |
 /// | `TASQ_WEEK_START` | `ui.week_start` |
+/// | `TASQ_THEME` | `ui.theme.preset` |
 /// | `TASQ_SUMMARIZER` | `report.summary.summarizer` |
 /// | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
 /// | `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
@@ -63,6 +64,7 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_NO_OSC8", "ui.no_osc8"),
     ("TASQ_GLOW_STYLE", "ui.glow_style"),
     ("TASQ_WEEK_START", "ui.week_start"),
+    ("TASQ_THEME", "ui.theme.preset"),
     ("TASQ_SUMMARIZER", "report.summary.summarizer"),
     ("TASQ_SUMMARY_MODEL", "report.summary.model"),
     ("TASQ_SUMMARY_COMMAND", "report.summary.command"),
@@ -421,6 +423,11 @@ fn template() -> Table {
     config.report.summary.model = Some(String::new());
     config.report.summary.prompt_file = Some(PathBuf::from("~"));
     config.ui.colors.insert("<name>".to_owned(), String::new());
+    config
+        .ui
+        .theme
+        .colors
+        .insert("<name>".to_owned(), String::new());
     config
         .ui
         .keys

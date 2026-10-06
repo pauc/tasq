@@ -10,7 +10,7 @@ use ratatui::style::{Color, Modifier};
 use tasq_core::clock::FixedClock;
 use tasq_core::config::UiConfig;
 use tasq_core::model::{Link, Priority, Session, Status, Tag, Task, TaskId, Workflow, Worktree};
-use tasq_core::theme::Theme;
+use tasq_core::theme::{Preset, Theme};
 use tasq_tui::{Model, Msg, SourceChoice, update, view};
 
 fn date(text: &str) -> NaiveDate {
@@ -673,5 +673,70 @@ fn colours_follow_the_theme_and_no_color() {
         screen(&mut plain, 120, 28),
         screen(&mut model, 120, 28),
         "colour must not change the layout"
+    );
+}
+
+#[test]
+fn presets_restyle_every_role() {
+    // Light: real colours where dark used attributes, so nothing is faint.
+    let mut ui = UiConfig::default();
+    ui.theme.preset = Preset::Light;
+    let mut light = Model::new(Workflow::default(), Theme::from_config(&ui), true);
+    update(&mut light, Msg::Loaded(tasks()));
+    update(&mut light, Msg::ShowDetail);
+    let terminal = render(&mut light, 120, 28);
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(1, 1)].fg, Color::Indexed(25), "IN PROGRESS header");
+    let row = &buffer[(3, 2)];
+    assert_eq!(row.symbol(), "[");
+    assert!(row.modifier.contains(Modifier::REVERSED));
+    assert_eq!(row.fg, Color::Indexed(245), "the id in the light grey");
+    let (x, y) = find(&terminal, "#ci", 60);
+    assert_eq!(buffer[(x, y)].bg, Color::Indexed(153));
+    assert_eq!(buffer[(x, y)].fg, Color::Indexed(17));
+    for cell in buffer.content() {
+        assert!(!cell.modifier.contains(Modifier::DIM), "{cell:?}");
+    }
+    update(&mut light, Msg::Failed("boom".into()));
+    let terminal = render(&mut light, 120, 28);
+    assert_eq!(terminal.backend().buffer()[(0, 27)].fg, Color::Indexed(124));
+    update(&mut light, Msg::Edit);
+    let terminal = render(&mut light, 120, 24);
+    let focused = &terminal.backend().buffer()[find(&terminal, "Title", 0)];
+    assert_eq!(focused.fg, Color::Indexed(25), "the focus role");
+    assert!(focused.modifier.contains(Modifier::BOLD));
+
+    // Mono: attributes only, the chip reversed; [ui.theme.colors] on top
+    // turns the selection into a background colour.
+    ui.theme.preset = Preset::Mono;
+    ui.theme.colors.insert("selection".into(), "236".into());
+    let mut mono = Model::new(Workflow::default(), Theme::from_config(&ui), true);
+    update(&mut mono, Msg::Loaded(tasks()));
+    update(&mut mono, Msg::ShowDetail);
+    let terminal = render(&mut mono, 120, 28);
+    let buffer = terminal.backend().buffer();
+    let header = &buffer[(1, 1)];
+    assert_eq!(header.fg, Color::Reset);
+    assert!(header.modifier.contains(Modifier::BOLD));
+    let row = &buffer[(3, 2)];
+    assert_eq!(row.bg, Color::Indexed(236), "selection as a background");
+    assert!(!row.modifier.contains(Modifier::REVERSED));
+    assert!(row.modifier.contains(Modifier::DIM), "the id stays dim");
+    let (x, y) = find(&terminal, "#ci", 60);
+    assert!(buffer[(x, y)].modifier.contains(Modifier::REVERSED));
+    for cell in buffer.content() {
+        assert_eq!(cell.fg, Color::Reset, "{cell:?}");
+        assert!(
+            cell.bg == Color::Reset || cell.bg == Color::Indexed(236),
+            "{cell:?}"
+        );
+    }
+    // The same text in every theme.
+    let mut dark = fixture(true);
+    update(&mut dark, Msg::ShowDetail);
+    assert_eq!(
+        screen(&mut mono, 120, 28),
+        screen(&mut dark, 120, 28),
+        "a theme must not change the layout"
     );
 }

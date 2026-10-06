@@ -62,7 +62,7 @@ migration).
 |------|-------|--------|-------|
 | T-801 | TUI foundation | done | `crates/tui/src/{model,msg,keys,update,view,runtime}.rs`; `tasq ui` in `crates/cli/src/commands/ui.rs`; 18 `TestBackend` snapshots in `crates/tui/tests/render.rs`; gif recorded 2026-10-05 (`docs/demo/demo.tape`) |
 | T-802 | TUI editing actions | done | `s p l d` through `tasq_core::edit`; `c` creates a task (title only, `workflow.default_status`) through `Store::create` and fires `post-create` through `Host::after_create` (ADR 0011); `Ctrl+Enter`/`Shift+Enter` open the session in a new window, focused or not (`tasq pick --detached [--no-focus]`, ADR 0012); `e`/`Enter`/`S` through the `Host` trait, run as `$EDITOR`, `tasq pick`, `tasq sync` child processes with the terminal released; paste collapses to one line; `?` help overlay |
-| T-803 | Theming and config | done | `tasq_core::theme::{Color, Theme}` shared with the CLI; `NO_COLOR`/`--color never` monochrome; two-pane from 100 columns, one pane below; both layouts snapshotted; `[ui.keys]` rebinds every key but `Ctrl+C` (ADR 0013) |
+| T-803 | Theming and config | done | `tasq_core::theme::{Color, Theme}` shared with the CLI; `NO_COLOR`/`--color never` monochrome; two-pane from 100 columns, one pane below; both layouts snapshotted; `[ui.keys]` rebinds every key but `Ctrl+C` (ADR 0013); follow-up 2026-10-06: named colour themes, `theme::{Role, Preset}`, `ui.theme.preset` (dark/light/solarized/gruvbox/mono) + `[ui.theme.colors]` under `[ui.colors]` (ADR 0018, commit 51ed314) |
 
 ### Phase 7 status
 
@@ -461,6 +461,24 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   task. `Host::after_create` mirrors `after_done`; `CliHost::hooks(hook, task)` is the shared
   runner. Status-bar `HINTS` lost the word "move" to stay under 100 columns (97) with
   `c new` added; the `hints()` test now pins both lengths. Commit: 2b71369.
+
+- **Named colour themes (ADR 0018, 2026-10-06, from the UX review).** Every coloured
+  thing is a `tasq_core::theme::Role` (17: the eight groups, `chip-bg`, `chip-fg`, `prio-a`,
+  `focus`, `selection`, `error`, `dim`, `link`, `header`) and `Theme::color(role)` layers a
+  built-in `Preset` under `[ui.theme.colors]` under the old `[ui.colors]` by status name.
+  `Color` gained `black` and three attribute pseudo-colours (`dim`, `reversed`, `none`), so
+  "the selection is reversed" and "mono has no chip background" are table rows, not special
+  cases; the TUI applies `selection` as a background when it is a colour and `chip-bg` as a
+  background under `chip-fg`, and keeps the faint attribute for `dim` when colours are off so
+  the light theme's grey 245 does not come out plain. `ui.theme` is a table (`preset` plus
+  `colors`), not the string the task first asked for: `[ui.theme.colors]` has to live under
+  it and a layer merge cannot combine a string with a table; `TASQ_THEME=light` is the short
+  form. Clippy's `match_same_arms` fights a data table laid out by preset, so `Preset::color`
+  carries one `#[allow]` with the reason; each of the five tables is pinned by a test listing
+  all 17 values. The CLI link closer undoes exactly what the opener set (`24;39`, `24;22` for
+  `dim`, `24;27` for `reversed`) so glow's own styling around a link survives. 144 mutants in
+  `theme` + `config`, 0 missed. The `doctor` verdict colours are not roles (a check report,
+  not task styling). Commit: 51ed314.
 
 ### Plugin decisions (T-701)
 

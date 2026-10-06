@@ -62,6 +62,11 @@ week_start = "monday"        # first column of the calendar picker: monday .. su
 [ui.keys]                    # action = key or list of keys, [] unbinds; see "Key bindings"
 # launch-detached = "alt+enter"
 
+[ui.theme]
+preset = "dark"              # dark, light, solarized, gruvbox or mono; see "Colours"
+
+[ui.theme.colors]            # role = colour (chip-bg, focus, link, ...); see "Colours"
+
 # [forge.gitlab]            # kind and host inferred from the name when omitted
 # kind = "gitlab"           # gitlab | github; required when the block name is neither
 # host = "gitlab.example.com"
@@ -120,7 +125,9 @@ pre-launch = []
 | `ui.no_osc8` | bool | `false` | Disable OSC 8 hyperlinks in `tasq view`. |
 | `ui.glow_style` | string | `dark` | Style passed to `glow -s`. |
 | `ui.week_start` | weekday name | `monday` | First column of the calendar picker in `tasq ui` (`monday`, `tuesday`, ... `sunday`). |
-| `ui.colors.<name>` | string | empty table | Colour per status name, plus `no-status`. See "Colours". |
+| `ui.colors.<name>` | string | empty table | Colour per status name, plus `no-status` and `done`, on top of the theme. See "Colours". |
+| `ui.theme.preset` | `dark` \| `light` \| `solarized` \| `gruvbox` \| `mono` | `dark` | The built-in colour theme of `tasq list`, `tasq view` and `tasq ui`. See "Colours". |
+| `ui.theme.colors.<role>` | string | empty table | Colour per role (`in-progress`, `ready`, `waiting`, `blocked`, `later`, `other-status`, `no-status`, `done`, `chip-bg`, `chip-fg`, `prio-a`, `focus`, `selection`, `error`, `dim`, `link`, `header`), over the preset. See "Colours". |
 | `ui.keys.<action>` | string or array of strings | empty table | Keys of a `tasq ui` action, replacing its defaults; `[]` unbinds it. See "Key bindings". |
 | `forge.<name>.kind` | `gitlab` \| `github` | inferred from `<name>` | API the host speaks. Required when the block is not called `gitlab` or `github`. |
 | `forge.<name>.host` | string | `gitlab.com` / `github.com` by kind | Host without scheme. |
@@ -173,6 +180,7 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_NO_OSC8` | `ui.no_osc8` (`1/true/yes/on`, `0/false/no/off`) |
 | `TASQ_GLOW_STYLE` | `ui.glow_style` |
 | `TASQ_WEEK_START` | `ui.week_start` |
+| `TASQ_THEME` | `ui.theme.preset` |
 | `TASQ_SUMMARIZER` | `report.summary.summarizer` |
 | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
 | `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
@@ -276,21 +284,48 @@ pre-launch = ["~/bin/check-vpn --quiet"]
 
 ## Colours
 
-Status groups are coloured the same way in `tasq list` headers and in the terminal UI
-(`tasq ui`): `in-progress` blue, `ready` green, `waiting` yellow, `blocked` red, `later`
-magenta, any other configured status cyan, and the no-status group dim. `[ui.colors]` overrides
-them per status name, with `no-status` for the last group:
+`tasq list`, `tasq view` and the terminal UI (`tasq ui`) take their colours from one theme
+(ADR 0018), built in three layers:
+
+1. **`ui.theme.preset`**, a built-in table. `dark` (the default) is the original script:
+   `in-progress` blue, `ready` green, `waiting` yellow, `blocked` red, `later` magenta, any
+   other configured status cyan, the no-status and done groups dim, tag chips white on dark
+   blue, `#A` red, the focus border cyan, the selection reversed, errors red, links light
+   blue. `light` uses darker shades and a real grey instead of faint text, which many
+   light-background terminals cannot show. `solarized` and `gruvbox` are 256-colour
+   approximations of the dark variants. `mono` has no colours: bold, dim and reversed only.
+2. **`[ui.theme.colors]`**, one colour per role, over the preset.
+3. **`[ui.colors]`**, one colour per status name, over both; `no-status` and `done` name the
+   two groups that are not a status. This is where a status the roles do not know gets its
+   colour (`review = "red"`).
 
 ```toml
+[ui.theme]
+preset = "light"
+
+[ui.theme.colors]
+focus = "208"            # a 256-colour palette index
+selection = "236"        # a colour here is a background; "reversed" swaps the colours
+chip-bg = "none"         # no colour: the chip becomes plain text in chip-fg
+link = "blue"            # black red green yellow blue magenta cyan white
+
 [ui.colors]
-ready = "208"            # a 256-colour palette index
-review = "cyan"          # red green yellow blue magenta cyan white dim (grey/gray)
-no-status = "white"
+review = "cyan"          # a status the roles do not name
+no-status = "dim"        # dim (grey/gray), reversed (reverse), none (plain/default)
 done = "green"           # the DONE group of `tasq list --all` / `--done`
 ```
 
-A value that is not a colour name or a number from 0 to 255 is ignored. `NO_COLOR` or
-`--color never` turns every colour off in both front ends; bold, dim and reversed stay.
+The roles: the eight groups `in-progress`, `ready`, `waiting`, `blocked`, `later`,
+`other-status`, `no-status`, `done`; `chip-bg` and `chip-fg` for tag chips; `prio-a` for the
+`#A` marker; `focus` for the focused field of the edit view and the calendar border;
+`selection` for the selected row and the chosen option; `error` for error messages and a
+refused field; `dim` for ids, dates, hints and calendar weekends; `link` for the hyperlinks of
+`tasq view`; `header` for titles and section headings (bold is always added).
+
+A colour is a name, `dim`, `reversed`, `none` or a number from 0 to 255; anything else is
+ignored, as is a role name that does not exist. An unknown preset is a config error.
+`TASQ_THEME=light` sets the preset from the environment. `NO_COLOR` or `--color never` turns
+every colour off in both front ends; bold, dim and reversed stay.
 
 ## Terminal UI
 

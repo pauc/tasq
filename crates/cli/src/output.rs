@@ -6,6 +6,7 @@
 //! commands with potentially long output; `--no-pager` disables it.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::io::{self, IsTerminal, Write};
 use std::process::{Command, Stdio};
 
@@ -210,31 +211,42 @@ impl Style {
 
     /// Bold in `color`.
     pub fn bold_color(self, color: Color, text: &str) -> String {
-        match color {
-            Color::Dim => self.wrap("1;2", text),
-            other => self.wrap(&format!("1;{}", sgr(other)), text),
+        match sgr(color) {
+            Some(code) => self.wrap(&format!("1;{code}"), text),
+            None => self.wrap("1", text),
         }
     }
 
-    /// Text in `color`.
+    /// Text in `color` (`none` leaves it as it is).
     pub fn color(self, color: Color, text: &str) -> String {
-        self.wrap(&sgr(color), text)
+        match sgr(color) {
+            Some(code) => self.wrap(&code, text),
+            None => text.to_owned(),
+        }
     }
 
-    /// The tag chip of the original script: white on a dark blue background,
-    /// with a space of padding on each side.
-    pub fn chip(self, text: &str) -> String {
+    /// A tag chip: `text` in `fg` on `bg` (the original script's white on
+    /// dark blue), with a space of padding on each side.
+    pub fn chip(self, bg: Color, fg: Color, text: &str) -> String {
+        let mut codes = String::new();
         if self.enabled {
-            format!("\x1b[48;5;24m\x1b[38;5;231m {text} \x1b[0m")
-        } else {
+            for code in [sgr_bg(bg), sgr(fg)].into_iter().flatten() {
+                let _ = write!(codes, "\x1b[{code}m");
+            }
+        }
+        if codes.is_empty() {
             format!(" {text} ")
+        } else {
+            format!("{codes} {text} \x1b[0m")
         }
     }
 }
 
-/// The SGR parameter(s) selecting `color` as the foreground.
-pub fn sgr(color: Color) -> String {
-    match color {
+/// The SGR parameter(s) selecting `color` as the foreground; `none` has
+/// none.
+pub fn sgr(color: Color) -> Option<String> {
+    Some(match color {
+        Color::Black => "30".to_owned(),
         Color::Red => "31".to_owned(),
         Color::Green => "32".to_owned(),
         Color::Yellow => "33".to_owned(),
@@ -243,8 +255,27 @@ pub fn sgr(color: Color) -> String {
         Color::Cyan => "36".to_owned(),
         Color::White => "37".to_owned(),
         Color::Dim => "2".to_owned(),
+        Color::Reversed => "7".to_owned(),
+        Color::Plain => return None,
         Color::Fixed(n) => format!("38;5;{n}"),
-    }
+    })
+}
+
+/// The SGR parameter(s) selecting `color` as the background; the
+/// attributes (`dim`, `reversed`) apply as they are.
+pub fn sgr_bg(color: Color) -> Option<String> {
+    Some(match color {
+        Color::Black => "40".to_owned(),
+        Color::Red => "41".to_owned(),
+        Color::Green => "42".to_owned(),
+        Color::Yellow => "43".to_owned(),
+        Color::Blue => "44".to_owned(),
+        Color::Magenta => "45".to_owned(),
+        Color::Cyan => "46".to_owned(),
+        Color::White => "47".to_owned(),
+        Color::Fixed(n) => format!("48;5;{n}"),
+        Color::Dim | Color::Reversed | Color::Plain => return sgr(color),
+    })
 }
 
 #[cfg(test)]
@@ -306,16 +337,52 @@ mod tests {
         assert_eq!(Style::ON.color(Color::Blue, "x"), "\x1b[34mx\x1b[0m");
         assert_eq!(Style::ON.bold_color(Color::Red, "x"), "\x1b[1;31mx\x1b[0m");
         assert_eq!(Style::ON.bold_color(Color::Dim, "x"), "\x1b[1;2mx\x1b[0m");
+        assert_eq!(Style::ON.bold_color(Color::Plain, "x"), "\x1b[1mx\x1b[0m");
+        assert_eq!(Style::ON.color(Color::Black, "x"), "\x1b[30mx\x1b[0m");
+        assert_eq!(Style::ON.color(Color::Reversed, "x"), "\x1b[7mx\x1b[0m");
+        assert_eq!(Style::ON.color(Color::Plain, "x"), "x");
         assert_eq!(
             Style::ON.color(Color::Fixed(208), "x"),
             "\x1b[38;5;208mx\x1b[0m"
         );
         assert_eq!(
-            Style::ON.chip("#gitlab"),
+            Style::ON.chip(Color::Fixed(24), Color::Fixed(231), "#gitlab"),
             "\x1b[48;5;24m\x1b[38;5;231m #gitlab \x1b[0m"
         );
+        assert_eq!(
+            Style::ON.chip(Color::Blue, Color::Plain, "#gitlab"),
+            "\x1b[44m #gitlab \x1b[0m"
+        );
+        assert_eq!(
+            Style::ON.chip(Color::Reversed, Color::Plain, "#gitlab"),
+            "\x1b[7m #gitlab \x1b[0m"
+        );
+        assert_eq!(
+            Style::ON.chip(Color::Plain, Color::Plain, "#gitlab"),
+            " #gitlab "
+        );
         assert_eq!(Style::OFF.bold("x"), "x");
-        assert_eq!(Style::OFF.chip("#gitlab"), " #gitlab ");
+        assert_eq!(
+            Style::OFF.chip(Color::Fixed(24), Color::Fixed(231), "#gitlab"),
+            " #gitlab "
+        );
         assert_eq!(Style::OFF.bold_color(Color::Red, "x"), "x");
+        for color in [
+            Color::Black,
+            Color::Red,
+            Color::Green,
+            Color::Yellow,
+            Color::Blue,
+            Color::Magenta,
+            Color::Cyan,
+            Color::White,
+        ] {
+            let fg: u8 = sgr(color).unwrap().parse().unwrap();
+            let bg: u8 = sgr_bg(color).unwrap().parse().unwrap();
+            assert_eq!(bg, fg + 10, "{color:?}");
+        }
+        assert_eq!(sgr_bg(Color::Dim).as_deref(), Some("2"));
+        assert_eq!(sgr_bg(Color::Reversed).as_deref(), Some("7"));
+        assert_eq!(sgr_bg(Color::Plain), None);
     }
 }
