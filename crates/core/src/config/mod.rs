@@ -68,6 +68,11 @@
 //!
 //! [ui.keys]
 //!
+//! [ui.theme]
+//! preset = "dark"
+//!
+//! [ui.theme.colors]
+//!
 //! [forge]
 //!
 //! [report.summary]
@@ -90,6 +95,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{Status, Workflow};
+use crate::theme::Preset;
 
 pub use self::error::ConfigError;
 pub use self::load::{
@@ -326,6 +332,21 @@ pub struct UiConfig {
     /// The first column of the TUI's calendar picker (ADR-0017).
     /// Default: `monday`.
     pub week_start: WeekStart,
+    /// `[ui.theme]`: the colour theme of both front ends (ADR-0018).
+    pub theme: ThemeConfig,
+}
+
+/// `[ui.theme]`: a built-in preset and per-role overrides, under which
+/// `[ui.colors]` still overrides by status name (ADR-0018).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ThemeConfig {
+    /// The built-in theme: `dark`, `light`, `solarized`, `gruvbox` or
+    /// `mono`. Default: `dark`.
+    pub preset: Preset,
+    /// Colour per role (`chip-bg`, `focus`, `link`, ...; the role names are
+    /// `tasq_core::theme::Role::key`). Default: empty.
+    pub colors: BTreeMap<String, String>,
 }
 
 /// The day a week starts on, for the calendar picker's grid.
@@ -373,6 +394,7 @@ impl Default for UiConfig {
             colors: BTreeMap::new(),
             keys: BTreeMap::new(),
             week_start: WeekStart::Monday,
+            theme: ThemeConfig::default(),
         }
     }
 }

@@ -20,7 +20,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Padding, Paragraph};
 use tasq_core::clock::{format_date, format_timestamp};
 use tasq_core::model::{Priority, Status, Task};
-use tasq_core::theme::{self, group_label};
+use tasq_core::theme::{self, Role, group_label};
 
 use crate::calendar::{self, Calendar, DAYS_PER_WEEK};
 use crate::form::{Field, Form, Text};
@@ -267,49 +267,86 @@ pub fn source_entries(model: &Model) -> Vec<String> {
         .collect()
 }
 
-/// The style for a theme colour: plain when colours are off (only `Dim`
-/// keeps its modifier).
+/// The ratatui colour of a theme colour that is a real colour; the three
+/// attributes (`dim`, `reversed`, `none`) have none.
+fn palette(color: theme::Color) -> Option<Color> {
+    Some(match color {
+        theme::Color::Black => Color::Black,
+        theme::Color::Red => Color::Red,
+        theme::Color::Green => Color::Green,
+        theme::Color::Yellow => Color::Yellow,
+        theme::Color::Blue => Color::Blue,
+        theme::Color::Magenta => Color::Magenta,
+        theme::Color::Cyan => Color::Cyan,
+        theme::Color::White => Color::White,
+        theme::Color::Fixed(n) => Color::Indexed(n),
+        theme::Color::Dim | theme::Color::Reversed | theme::Color::Plain => return None,
+    })
+}
+
+/// The style for a theme colour as a foreground: plain when colours are
+/// off (`dim` and `reversed` are attributes, not colours, and stay).
 pub fn colored(model: &Model, color: theme::Color) -> Style {
     let style = Style::new();
     match color {
         theme::Color::Dim => style.add_modifier(Modifier::DIM),
+        theme::Color::Reversed => style.add_modifier(Modifier::REVERSED),
         _ if !model.color => style,
-        theme::Color::Red => style.fg(Color::Red),
-        theme::Color::Green => style.fg(Color::Green),
-        theme::Color::Yellow => style.fg(Color::Yellow),
-        theme::Color::Blue => style.fg(Color::Blue),
-        theme::Color::Magenta => style.fg(Color::Magenta),
-        theme::Color::Cyan => style.fg(Color::Cyan),
-        theme::Color::White => style.fg(Color::White),
-        theme::Color::Fixed(n) => style.fg(Color::Indexed(n)),
+        color => palette(color).map_or(style, |c| style.fg(c)),
     }
 }
 
-fn dim() -> Style {
-    Style::new().add_modifier(Modifier::DIM)
+/// The style of a theme role.
+fn role(model: &Model, role: Role) -> Style {
+    colored(model, model.theme.color(role))
+}
+
+/// Secondary text: the theme's `dim` role, or faint when colours are off
+/// (a light theme's grey would otherwise come out plain).
+fn dim(model: &Model) -> Style {
+    if model.color {
+        role(model, Role::Dim)
+    } else {
+        Style::new().add_modifier(Modifier::DIM)
+    }
 }
 
 fn bold() -> Style {
     Style::new().add_modifier(Modifier::BOLD)
 }
 
-/// The tag chip: white on dark blue like the CLI, or plain text.
-fn chip(model: &Model) -> Style {
-    if model.color {
-        Style::new().bg(Color::Indexed(24)).fg(Color::Indexed(231))
-    } else {
-        Style::new()
+/// A title or section heading: bold in the theme's `header` colour.
+fn header(model: &Model) -> Style {
+    role(model, Role::Header).add_modifier(Modifier::BOLD)
+}
+
+/// The selected row or the chosen option: the theme's `selection` as a
+/// background, reversed when it says so or when colours are off.
+fn selection(model: &Model) -> Style {
+    let color = model.theme.color(Role::Selection);
+    match palette(color) {
+        Some(bg) if model.color => Style::new().bg(bg),
+        Some(_) => Style::new().add_modifier(Modifier::REVERSED),
+        None => colored(model, color),
     }
+}
+
+/// The tag chip: the theme's `chip-fg` on `chip-bg`, or plain text when
+/// colours are off.
+fn chip(model: &Model) -> Style {
+    if !model.color {
+        return Style::new();
+    }
+    let bg = model.theme.color(Role::ChipBg);
+    let background = palette(bg).map_or_else(|| colored(model, bg), |c| Style::new().bg(c));
+    background.patch(role(model, Role::ChipFg))
 }
 
 fn priority_span(model: &Model, priority: Priority) -> Span<'static> {
     match priority {
-        Priority::A => Span::styled(
-            "#A",
-            colored(model, theme::Color::Red).add_modifier(Modifier::BOLD),
-        ),
-        Priority::B => Span::styled("#B", dim()),
-        Priority::C => Span::styled("#C", dim()),
+        Priority::A => Span::styled("#A", role(model, Role::PrioA).add_modifier(Modifier::BOLD)),
+        Priority::B => Span::styled("#B", dim(model)),
+        Priority::C => Span::styled("#C", dim(model)),
     }
 }
 
@@ -320,13 +357,16 @@ fn priority_span(model: &Model, priority: Priority) -> Span<'static> {
 /// than the pane gets a line of its own (and is cut by the terminal).
 pub fn task_lines<'a>(model: &Model, task: &'a Task, width: u16) -> Vec<Line<'a>> {
     let prefix = vec![
-        Span::styled(format!("  [{:>2}] ", task.id.as_str()), dim()),
+        Span::styled(format!("  [{:>2}] ", task.id.as_str()), dim(model)),
         priority_span(model, task.priority),
     ];
     let indent: usize = prefix.iter().map(Span::width).sum::<usize>() + 1;
     let mut atoms: Vec<Span<'a>> = task.title.split_whitespace().map(Span::raw).collect();
     if let Some(due) = task.due {
-        atoms.push(Span::styled(format!("(due {})", format_date(due)), dim()));
+        atoms.push(Span::styled(
+            format!("(due {})", format_date(due)),
+            dim(model),
+        ));
     }
     for tag in &task.tags {
         atoms.push(Span::styled(format!(" {} ", tag.to_hash()), chip(model)));
@@ -373,10 +413,7 @@ pub fn list_lines(model: &Model, width: u16) -> (Vec<Line<'_>>, Option<Range<usi
                 let rows = task_lines(model, task, width);
                 if selected == Some(&task.id) {
                     selected_lines = Some(lines.len()..lines.len() + rows.len());
-                    lines.extend(
-                        rows.into_iter()
-                            .map(|line| line.style(Style::new().add_modifier(Modifier::REVERSED))),
-                    );
+                    lines.extend(rows.into_iter().map(|line| line.style(selection(model))));
                 } else {
                     lines.extend(rows);
                 }
@@ -423,9 +460,9 @@ fn render_list(model: &Model, frame: &mut Frame, area: Rect) {
 
 /// The detail pane lines for `task`.
 pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
-    let mut lines = vec![Line::styled(task.title.as_str(), bold())];
+    let mut lines = vec![Line::styled(task.title.as_str(), header(model))];
     let mut head = vec![
-        Span::styled(format!("[{}]", task.id.as_str()), dim()),
+        Span::styled(format!("[{}]", task.id.as_str()), dim(model)),
         Span::raw("  "),
         priority_span(model, task.priority),
     ];
@@ -439,13 +476,16 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
         }
         None if task.done => {
             head.push(Span::raw("  "));
-            head.push(Span::styled("done", dim()));
+            head.push(Span::styled("done", dim(model)));
         }
         None => {}
     }
     if let Some(due) = task.due {
         head.push(Span::raw("  "));
-        head.push(Span::styled(format!("due {}", format_date(due)), dim()));
+        head.push(Span::styled(
+            format!("due {}", format_date(due)),
+            dim(model),
+        ));
     }
     lines.push(Line::from(head));
     if !task.tags.is_empty() {
@@ -459,19 +499,19 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
     if let Some(project) = &task.project {
         lines.push(Line::default());
         lines.push(Line::from(vec![
-            Span::styled("Project: ", bold()),
+            Span::styled("Project: ", header(model)),
             Span::raw(project.display().to_string()),
         ]));
     }
     if let Some(description) = &task.description {
         lines.push(Line::default());
-        lines.push(Line::styled("Description", bold()));
+        lines.push(Line::styled("Description", header(model)));
         lines.extend(description.lines().map(Line::raw));
     }
     for (heading, items) in link_sections(task) {
         if !items.is_empty() {
             lines.push(Line::default());
-            lines.push(Line::styled(heading, bold()));
+            lines.push(Line::styled(heading, header(model)));
             lines.extend(items.into_iter().map(|item| Line::raw(format!("- {item}"))));
         }
     }
@@ -486,10 +526,10 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
         } else {
             "Progress".to_owned()
         };
-        lines.push(Line::styled(heading, bold()));
+        lines.push(Line::styled(heading, header(model)));
         for entry in task.progress.iter().skip(skipped) {
             lines.push(Line::from(vec![
-                Span::styled(format!("- {}: ", entry.at), dim()),
+                Span::styled(format!("- {}: ", entry.at), dim(model)),
                 Span::raw(entry.note.as_str()),
             ]));
         }
@@ -545,7 +585,7 @@ fn render_detail(model: &Model, frame: &mut Frame, area: Rect) {
         ),
         None => (
             " Task ".to_owned(),
-            vec![Line::styled("No task selected.", dim())],
+            vec![Line::styled("No task selected.", dim(model))],
         ),
     };
     let mut block = Block::bordered().title(title);
@@ -569,7 +609,7 @@ pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
         Mode::Filter { input } => Line::from(vec![
             Span::styled("/", bold()),
             Span::raw(input.as_str()),
-            Span::styled("\u{2581}", dim()),
+            Span::styled("\u{2581}", dim(model)),
         ]),
         Mode::Note { input, target } => {
             let prompt = match target {
@@ -579,7 +619,7 @@ pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
             Line::from(vec![
                 Span::styled(prompt, bold()),
                 Span::raw(input.as_str()),
-                Span::styled("\u{2581}", dim()),
+                Span::styled("\u{2581}", dim(model)),
             ])
         }
         Mode::Create { input } => Line::from(vec![
@@ -588,17 +628,19 @@ pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
                 bold(),
             ),
             Span::raw(input.as_str()),
-            Span::styled("\u{2581}", dim()),
+            Span::styled("\u{2581}", dim(model)),
         ]),
-        Mode::Form(_) if model.message.is_none() => key_bar(FORM_HINTS, width),
-        Mode::Calendar { .. } if model.message.is_none() => key_bar(CALENDAR_HINTS, width),
+        Mode::Form(_) if model.message.is_none() => key_bar(FORM_HINTS, width, dim(model)),
+        Mode::Calendar { .. } if model.message.is_none() => {
+            key_bar(CALENDAR_HINTS, width, dim(model))
+        }
         _ => match &model.message {
             Some(message) if message.is_error => Line::styled(
                 message.text.as_str(),
-                colored(model, theme::Color::Red).add_modifier(Modifier::BOLD),
+                role(model, Role::Error).add_modifier(Modifier::BOLD),
             ),
             Some(message) => Line::raw(message.text.as_str()),
-            None => Line::styled(hints(&model.keys, width), dim()),
+            None => Line::styled(hints(&model.keys, width), dim(model)),
         },
     };
     Paragraph::new(line)
@@ -624,8 +666,8 @@ pub const CALENDAR_HINTS: &[(&str, &str)] = &[
 ];
 
 /// `hints` as one line: keys and labels when they fit in `width`
-/// columns, the keys alone otherwise.
-pub fn key_bar(hints: &[(&str, &str)], width: u16) -> Line<'static> {
+/// columns, the keys alone otherwise; the labels in `dim`.
+pub fn key_bar(hints: &[(&str, &str)], width: u16, dim: Style) -> Line<'static> {
     let full: usize = hints
         .iter()
         .map(|(key, what)| key.chars().count() + 1 + what.len())
@@ -639,7 +681,7 @@ pub fn key_bar(hints: &[(&str, &str)], width: u16) -> Line<'static> {
         }
         spans.push(Span::styled((*key).to_owned(), bold()));
         if labelled {
-            spans.push(Span::styled(format!(" {what}"), dim()));
+            spans.push(Span::styled(format!(" {what}"), dim));
         }
     }
     Line::from(spans)
@@ -694,8 +736,7 @@ fn render_help(model: &Model, frame: &mut Frame, area: Rect) {
     frame.render_widget(Clear, popup);
     let block = Block::bordered()
         .title(" Keys ")
-        .title_bottom(Line::from(" any key closes ").right_aligned())
-        .style(colored(model, theme::Color::Dim).remove_modifier(Modifier::DIM));
+        .title_bottom(Line::from(" any key closes ").right_aligned());
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
     frame.render_widget(Paragraph::new(lines), inner);
@@ -758,8 +799,8 @@ fn form_header(model: &Model, form: &Form) -> Line<'static> {
         .map(|t| t.title.clone())
         .unwrap_or_default();
     Line::from(vec![
-        Span::styled(format!(" Edit [{}]", form.id), bold()),
-        Span::styled(format!("  {stored}"), dim()),
+        Span::styled(format!(" Edit [{}]", form.id), header(model)),
+        Span::styled(format!("  {stored}"), dim(model)),
     ])
 }
 
@@ -770,11 +811,11 @@ fn field_block(model: &Model, form: &Form, field: Field) -> Block<'static> {
     let focused = field == form.focus;
     let refused = focused && model.message.as_ref().is_some_and(|m| m.is_error);
     let border = if refused {
-        colored(model, theme::Color::Red)
+        role(model, Role::Error)
     } else if focused {
-        colored(model, theme::Color::Cyan)
+        role(model, Role::Focus)
     } else {
-        dim()
+        dim(model)
     };
     let title = if focused {
         border.add_modifier(Modifier::BOLD)
@@ -838,9 +879,9 @@ fn choice_box(model: &Model, frame: &mut Frame, area: Rect, form: &Form, field: 
             spans.push(Span::raw(" "));
         }
         let style = if option != chosen {
-            dim()
+            dim(model)
         } else if focused {
-            bold().add_modifier(Modifier::REVERSED)
+            bold().patch(selection(model))
         } else {
             bold()
         };
@@ -929,7 +970,7 @@ fn render_form_compact(
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(label, label_style(model, focused)),
-            Span::styled(filler, dim()),
+            Span::styled(filler, dim(model)),
         ])),
         rule,
     );
@@ -944,8 +985,8 @@ fn render_form_compact(
 fn render_calendar(model: &Model, frame: &mut Frame, area: Rect, calendar: Calendar) {
     let grid = calendar::month_grid(calendar.day, model.week_start);
     let mut lines = vec![
-        Line::styled(grid.title, bold()).centered(),
-        Line::styled(grid.header, dim()),
+        Line::styled(grid.title, header(model)).centered(),
+        Line::styled(grid.header, dim(model)),
     ];
     for week in &grid.weeks {
         let mut spans = Vec::with_capacity(2 * DAYS_PER_WEEK);
@@ -954,7 +995,7 @@ fn render_calendar(model: &Model, frame: &mut Frame, area: Rect, calendar: Calen
             spans.push(match cell {
                 Some(date) => Span::styled(
                     format!("{:2}", date.day()),
-                    day_style(*date, calendar.day, model.today),
+                    day_style(model, *date, calendar.day, model.today),
                 ),
                 None => Span::raw("  "),
             });
@@ -962,10 +1003,10 @@ fn render_calendar(model: &Model, frame: &mut Frame, area: Rect, calendar: Calen
         lines.push(Line::from(spans));
     }
     let block = Block::bordered()
-        .border_style(colored(model, theme::Color::Cyan))
+        .border_style(role(model, Role::Focus))
         .title(Span::styled(
             format!(" {} ", Field::Due.label()),
-            colored(model, theme::Color::Cyan).add_modifier(Modifier::BOLD),
+            role(model, Role::Focus).add_modifier(Modifier::BOLD),
         ))
         .padding(Padding::horizontal(1));
     let width = narrow(3 * DAYS_PER_WEEK + 4);
@@ -977,18 +1018,18 @@ fn render_calendar(model: &Model, frame: &mut Frame, area: Rect, calendar: Calen
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// How the picker draws a day: the cursor reversed and bold, today bold,
+/// How the picker draws a day: the cursor selected and bold, today bold,
 /// Saturdays and Sundays dim.
-fn day_style(date: NaiveDate, cursor: NaiveDate, today: NaiveDate) -> Style {
+fn day_style(model: &Model, date: NaiveDate, cursor: NaiveDate, today: NaiveDate) -> Style {
     let mut style = Style::new();
     if calendar::is_weekend(date) {
-        style = style.add_modifier(Modifier::DIM);
+        style = style.patch(dim(model));
     }
     if date == today {
         style = style.add_modifier(Modifier::BOLD);
     }
     if date == cursor {
-        style = style.add_modifier(Modifier::REVERSED);
+        style = style.patch(selection(model));
         style = style.add_modifier(Modifier::BOLD);
     }
     style
@@ -1010,7 +1051,7 @@ const LABEL_WIDTH: usize = 11;
 /// A row label: the focused one stands out, the others are plain.
 fn label_style(model: &Model, focused: bool) -> Style {
     if focused {
-        colored(model, theme::Color::Cyan).add_modifier(Modifier::BOLD)
+        role(model, Role::Focus).add_modifier(Modifier::BOLD)
     } else {
         Style::new()
     }
@@ -1066,7 +1107,7 @@ fn render_picker(
         .map(|(i, entry)| {
             let text = format!(" {entry} ");
             if i == cursor {
-                Line::styled(text, Style::new().add_modifier(Modifier::REVERSED))
+                Line::styled(text, selection(model))
             } else {
                 Line::raw(text)
             }
@@ -1185,7 +1226,7 @@ mod tests {
     #[test]
     fn key_bars_drop_their_labels_when_narrow() {
         let text = |hints, width| {
-            key_bar(hints, width)
+            key_bar(hints, width, Style::new())
                 .spans
                 .iter()
                 .map(|s| s.content.to_string())

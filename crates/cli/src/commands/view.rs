@@ -21,11 +21,13 @@ use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
 use tasq_core::store::{Store, StoreError};
+use tasq_core::theme::{Color, Role, Theme};
 use tasq_store_nb::nb::find_in_path;
 
 use crate::app::App;
 use crate::error::Result;
 use crate::json;
+use crate::output::sgr;
 
 /// Opens a link marker: `M0 <n> M1 <label> M2`.
 pub const M0: char = '\u{E000}';
@@ -97,7 +99,9 @@ pub fn show_markdown(app: &App, markdown: &str) -> Result<()> {
         render_with_glow(&glow, &unwrap_urls(markdown, width), &ui.glow_style, width)
     } else {
         let (marked, urls) = linkify_pre(markdown);
-        render_with_glow(&glow, &marked, &ui.glow_style, width).map(|r| linkify_post(&r, &urls))
+        let link = Theme::from_config(ui).color(Role::Link);
+        render_with_glow(&glow, &marked, &ui.glow_style, width)
+            .map(|r| linkify_post(&r, &urls, link))
     };
     match rendered {
         Ok(rendered) => app.out.page(&rendered),
@@ -258,8 +262,11 @@ fn marker(urls: &mut Vec<String>, url: &str, label: &str) -> String {
     format!("{M0}{}{M1}{label}{M2}", urls.len())
 }
 
-/// Turns the markers in glow's output into OSC 8 hyperlinks.
-pub fn linkify_post(rendered: &str, urls: &[String]) -> String {
+/// Turns the markers in glow's output into OSC 8 hyperlinks, underlined
+/// in the theme's `link` colour. The closing code undoes exactly what the
+/// opening one set, so glow's own styling around the link survives.
+pub fn linkify_post(rendered: &str, urls: &[String], link: Color) -> String {
+    let (open, close) = link_codes(link);
     let opened = REOPEN.replace_all(rendered, |c: &Captures<'_>| {
         let url = c[1]
             .parse::<usize>()
@@ -267,9 +274,22 @@ pub fn linkify_post(rendered: &str, urls: &[String]) -> String {
             .and_then(|n| n.checked_sub(1))
             .and_then(|i| urls.get(i))
             .map_or("", String::as_str);
-        format!("\x1b]8;;{url}\x07\x1b[38;5;75;4m")
+        format!("\x1b]8;;{url}\x07\x1b[{open}m")
     });
-    opened.replace(M2, "\x1b[24;39m\x1b]8;;\x07")
+    opened.replace(M2, &format!("\x1b[{close}m\x1b]8;;\x07"))
+}
+
+/// The SGR parameters that open and close a link in `color`: underline
+/// plus the colour, and the resets of exactly those.
+fn link_codes(color: Color) -> (String, String) {
+    let reset = match color {
+        Color::Dim => "22",
+        Color::Reversed => "27",
+        Color::Plain => return ("4".to_owned(), "24".to_owned()),
+        _ => "39",
+    };
+    let open = sgr(color).map_or_else(|| "4".to_owned(), |code| format!("{code};4"));
+    (open, format!("24;{reset}"))
 }
 
 /// The no-OSC-8 fallback: on lines longer than `width - 6` (outside fenced
@@ -411,13 +431,30 @@ mod tests {
         let rendered = format!("  • {M0}1{M1}Add parser{M2} done\n");
         let urls = vec![GL.to_owned()];
         assert_eq!(
-            linkify_post(&rendered, &urls),
+            linkify_post(&rendered, &urls, Color::Fixed(75)),
             format!("  • \x1b]8;;{GL}\x07\x1b[38;5;75;4mAdd parser\x1b[24;39m\x1b]8;;\x07 done\n")
         );
         // Unknown numbers degrade to an empty target rather than panicking.
         assert_eq!(
-            linkify_post(&format!("{M0}9{M1}x{M2}"), &urls),
+            linkify_post(&format!("{M0}9{M1}x{M2}"), &urls, Color::Fixed(75)),
             "\x1b]8;;\x07\x1b[38;5;75;4mx\x1b[24;39m\x1b]8;;\x07"
+        );
+        // The theme's link colour, and the closing code that undoes it.
+        assert_eq!(
+            linkify_post(&format!("{M0}1{M1}x{M2}"), &urls, Color::Blue),
+            format!("\x1b]8;;{GL}\x07\x1b[34;4mx\x1b[24;39m\x1b]8;;\x07")
+        );
+        assert_eq!(
+            linkify_post(&format!("{M0}1{M1}x{M2}"), &urls, Color::Dim),
+            format!("\x1b]8;;{GL}\x07\x1b[2;4mx\x1b[24;22m\x1b]8;;\x07")
+        );
+        assert_eq!(
+            linkify_post(&format!("{M0}1{M1}x{M2}"), &urls, Color::Reversed),
+            format!("\x1b]8;;{GL}\x07\x1b[7;4mx\x1b[24;27m\x1b]8;;\x07")
+        );
+        assert_eq!(
+            linkify_post(&format!("{M0}1{M1}x{M2}"), &urls, Color::Plain),
+            format!("\x1b]8;;{GL}\x07\x1b[4mx\x1b[24m\x1b]8;;\x07")
         );
     }
 

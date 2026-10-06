@@ -12,6 +12,7 @@ use tasq_core::config::{
     SourceKind, Summarizer, WeekStart, WorktreeManager, expand_tilde,
 };
 use tasq_core::model::Status;
+use tasq_core::theme::Preset;
 use tempfile::TempDir;
 
 /// A throwaway `$HOME` with a `project/sub` tree inside it.
@@ -128,6 +129,8 @@ fn defaults_match_the_script() {
     assert_eq!(c.ui.week_start, WeekStart::Monday);
     assert_eq!(c.ui.week_start.weekday(), chrono::Weekday::Mon);
     assert!(c.ui.colors.is_empty());
+    assert_eq!(c.ui.theme.preset, Preset::Dark);
+    assert!(c.ui.theme.colors.is_empty());
     assert!(c.ui.keys.is_empty());
     assert!(c.forge.is_empty());
     assert_eq!(c.source.len(), 0);
@@ -175,6 +178,11 @@ week_start = \"monday\"
 
 [ui.keys]
 
+[ui.theme]
+preset = \"dark\"
+
+[ui.theme.colors]
+
 [forge]
 
 [report.summary]
@@ -211,6 +219,98 @@ fn herdr_placement_values_and_errors() {
         ),
         "{err}"
     );
+}
+
+#[test]
+fn theme_preset_and_role_colors_from_every_layer() {
+    // File: the preset and a role table under it.
+    let sb = Sandbox::new();
+    let global = sb.write_global(
+        "[ui.theme]
+preset = \"light\"
+
+[ui.theme.colors]
+focus = \"208\"
+",
+    );
+    let project = sb.write_project(
+        "[ui.theme.colors]
+link = \"blue\"
+
+[ui.colors]
+ready = \"green\"
+",
+    );
+    let mut opts = sb.opts();
+    let loaded = Config::load(&opts).unwrap();
+    let c = &loaded.config;
+    assert_eq!(c.ui.theme.preset, Preset::Light);
+    assert_eq!(
+        c.ui.theme.colors,
+        BTreeMap::from([
+            ("focus".to_owned(), "208".to_owned()),
+            ("link".to_owned(), "blue".to_owned()),
+        ])
+    );
+    assert_eq!(c.ui.colors["ready"], "green");
+    assert_eq!(loaded.file_for("ui.theme.preset"), Some(global.as_path()));
+    assert_eq!(
+        loaded.file_for("ui.theme.colors.focus"),
+        Some(global.as_path())
+    );
+    assert_eq!(
+        loaded.file_for("ui.theme.colors.link"),
+        Some(project.as_path())
+    );
+    // Env and --set win, --set over env; the role table takes any name.
+    opts.env = env(&[("TASQ_THEME", "solarized")]);
+    opts.overrides = vec![
+        ("ui.theme.preset".to_owned(), "mono".to_owned()),
+        ("ui.theme.colors.chip-bg".to_owned(), "none".to_owned()),
+    ];
+    let loaded = Config::load(&opts).unwrap();
+    let c = &loaded.config;
+    assert_eq!(c.ui.theme.preset, Preset::Mono);
+    assert_eq!(c.ui.theme.colors["chip-bg"], "none");
+    assert_eq!(c.ui.theme.colors["focus"], "208");
+    assert_eq!(loaded.explain("ui.theme.preset"), Some(&Origin::Overrides));
+    assert_eq!(
+        loaded.explain("ui.theme.colors.chip-bg"),
+        Some(&Origin::Overrides)
+    );
+    // Every preset name parses; anything else is an error with a position.
+    for preset in Preset::ALL {
+        let sb = Sandbox::new();
+        sb.write_project(&format!(
+            "[ui.theme]
+preset = \"{}\"
+",
+            preset.name()
+        ));
+        let c = Config::load(&sb.opts()).unwrap().config;
+        assert_eq!(c.ui.theme.preset, preset);
+    }
+    let sb = Sandbox::new();
+    sb.write_project(
+        "[ui.theme]
+preset = \"nord\"
+",
+    );
+    let err = Config::load(&sb.opts()).unwrap_err().to_string();
+    assert!(
+        err.ends_with(
+            ".tasq.toml:2:10: unknown variant `nord`, expected one of `dark`, `light`, `solarized`, `gruvbox`, `mono`"
+        ),
+        "{err}"
+    );
+    let sb = Sandbox::new();
+    sb.write_project(
+        "[ui.theme]
+colours = {}
+",
+    );
+    let err = Config::load(&sb.opts()).unwrap_err().to_string();
+    assert!(err.contains("unknown field `colours`"), "{err}");
 }
 
 #[test]
@@ -822,6 +922,7 @@ fn env_overrides_files() {
         ("TASQ_NO_OSC8", "1"),
         ("TASQ_GLOW_STYLE", "light"),
         ("TASQ_WEEK_START", "saturday"),
+        ("TASQ_THEME", "gruvbox"),
         ("TASQ_SUMMARIZER", "raw"),
         ("TASQ_SUMMARY_MODEL", "opus"),
         ("TASQ_SUMMARY_COMMAND", "llm -m gpt"),
@@ -847,6 +948,7 @@ fn env_overrides_files() {
     assert_eq!(c.ui.glow_style, "light");
     assert_eq!(c.ui.week_start, WeekStart::Saturday);
     assert_eq!(c.ui.week_start.weekday(), chrono::Weekday::Sat);
+    assert_eq!(c.ui.theme.preset, Preset::Gruvbox);
     assert_eq!(c.report.summary.summarizer, Summarizer::Raw);
     assert_eq!(c.report.summary.model, Some("opus".to_owned()));
     assert_eq!(c.report.summary.command, "llm -m gpt");
@@ -858,7 +960,7 @@ fn env_overrides_files() {
     assert_eq!(loaded.explain("ui.pager"), Some(&Origin::Env));
     let env_layer = loaded.layers.last().unwrap();
     assert_eq!(env_layer.origin, Origin::Env);
-    assert_eq!(env_layer.keys.len(), 17);
+    assert_eq!(env_layer.keys.len(), 18);
     assert_eq!(Origin::Env.to_string(), "env");
 }
 
@@ -876,6 +978,7 @@ fn every_documented_env_key_is_a_real_key() {
             "ui.no_osc8" => "true",
             "report.summary.summarizer" => "raw",
             "ui.week_start" => "sunday",
+            "ui.theme.preset" => "mono",
             _ => "value",
         };
         opts.env = env(&[(var, value)]);

@@ -32,8 +32,14 @@ pager = "less -RFX"
 no_osc8 = false
 glow_style = "dark"
 
+[ui.theme]
+# preset = "light"           # dark (default), light, solarized, gruvbox, mono; see docs/config.md "Colours"
+
+[ui.theme.colors]
+# focus = "208"              # role = colour, over the preset
+
 [ui.colors]
-# ready = "208"
+# ready = "208"              # status name = colour, over the theme
 
 [ui.keys]                    # action = key or list, [] unbinds; see docs/config.md "Key bindings"
 # launch-detached = "alt+enter"   # Ghostty keeps Ctrl+Enter for fullscreen
