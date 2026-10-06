@@ -278,7 +278,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   unbound in prompts (history comes later). Mutants on the diff (`--no-config --in-diff`):
   54 tested, 1 missed on the first pass (`- -> +` in the cursor column, hidden by a
   `min(width - 1)` clamp that was always active when scrolled), 0 after capping the label
-  instead (56 tested, 48 caught, 8 unviable). Commit f983b82.
+  instead (56 tested, 48 caught, 8 unviable). Commit af3987e.
   Step 2 of 3: readline's kills, as `Text` methods so the prompts and the edit view's text
   rows both get them (`Form` forwards to the focused row, choice rows ignore them):
   `Ctrl+W` `delete_word` (unix-word-rubout: whitespace before the cursor, then back to the
@@ -288,7 +288,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   end of a line do nothing (no join, unlike `Backspace`/`Delete`). The list's `Ctrl+U`
   (page-up) is a keymap binding and never reaches prompt or form keys. Mutants on the diff:
   46 tested, 41 caught, 2 timeouts (`-=` to `/=` in the `delete_word` loops, which never
-  terminate), 3 unviable, 0 missed. Commit 1d1a874.
+  terminate), 3 unviable, 0 missed. Commit a0c851f.
   Step 3 of 3: `Up`/`Down` recall in the prompts, session-only and in memory.
   `history::History` (entries oldest first, cap 100, the shown index and the saved draft) and
   `Histories { filters, notes, titles }` on `Model::history`; `log` and `done` share the
@@ -306,7 +306,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   maps `Up`/`Down`; `keys::form` dropped its own two arms (the fall-through gives the same
   messages, and the arms would have been equivalent mutants), the edit view still moves rows
   with them. `normal` crossed clippy's 100-line limit, hence `begin_filter`/`begin_create`.
-  Mutants on the diff: 42 tested, 36 caught, 6 unviable, 0 missed. Commit de45e48.
+  Mutants on the diff: 42 tested, 36 caught, 6 unviable, 0 missed. Commit 00a030b.
 - **Calendar picker for the Due box (follow-up 2026-10-06, ADR 0017, todo 14).** `Enter` on
   the Due box opens `Mode::Calendar { form, calendar }`: the edit view stays underneath, one
   month is drawn centred over it. `calendar::Calendar` is the day under the cursor plus the
