@@ -265,6 +265,20 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   dropped from scope (the saved row already shows overdue). Mutants: `dates.rs` +
   `theme.rs` 118 tested, 0 missed. Known limit: a long-running `tasq ui` keeps the `today`
   it started with. Commits baf8006, e5e47bf, b460d55, 36bb278.
+- **Readline keys and scrolling in the status-bar prompts (follow-up 2026-10-06, step 1 of
+  3).** The filter, log, done and create prompts hold a single-line `form::Text` (the edit
+  view's editor) instead of a `String`. `keys::prompt` (was `text`) adds `Left`/`Right`,
+  `Home`/`End`, `Delete` and `Ctrl+A`/`Ctrl+E`; the edit view's `form` falls through to it.
+  `update::edit_line(&mut Text, &Msg)` is the one editing helper for the three handlers
+  (paste still through `one_line`); the filter is re-applied after every message.
+  `view::prompt(model, width) -> Option<Prompt { label, shown, cursor }>` windows the input
+  after the label (the label capped at `width - 1`, so the cursor never leaves the bar) and
+  `render_status_bar` puts the real terminal cursor there; the fake `▁` is gone, so five
+  prompt snapshots lost it and `long_note_scrolled` (80 columns) was added. `Up`/`Down` stay
+  unbound in prompts (history comes later). Mutants on the diff (`--no-config --in-diff`):
+  54 tested, 1 missed on the first pass (`- -> +` in the cursor column, hidden by a
+  `min(width - 1)` clamp that was always active when scrolled), 0 after capping the label
+  instead (56 tested, 48 caught, 8 unviable). Commit f983b82.
 - **Calendar picker for the Due box (follow-up 2026-10-06, ADR 0017, todo 14).** `Enter` on
   the Due box opens `Mode::Calendar { form, calendar }`: the edit view stays underneath, one
   month is drawn centred over it. `calendar::Calendar` is the day under the cursor plus the
