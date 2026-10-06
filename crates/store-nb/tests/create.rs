@@ -334,10 +334,17 @@ fn create_in_a_git_notebook_commits_as_nb_would() {
 fn checkpoint_failure_after_create_is_a_warning() {
     let nb = NbEnv::fixture();
     nb.git_init();
-    // Break committing: a HOME without an identity.
+    // Break committing: a HOME without an identity. `useConfigOnly` stops
+    // git from guessing one from the user and hostname, which succeeds on
+    // macOS runners.
     let mut options = nb.options().with_bookkeeper(Choice::Native);
     let bare_home = nb.root.path().join("bare-home");
     std::fs::create_dir_all(&bare_home).unwrap();
+    std::fs::write(
+        bare_home.join(".gitconfig"),
+        "[user]\n\tuseConfigOnly = true\n",
+    )
+    .unwrap();
     for (k, v) in &mut options.env {
         if k == "HOME" {
             *v = bare_home.display().to_string();
