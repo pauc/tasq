@@ -32,6 +32,7 @@ placement = "auto"                           # defaults
 glow_style = "dark"                          # defaults
 no_osc8 = false                              # defaults
 pager = "less -RFX"                          # defaults
+week_start = "monday"                        # defaults
 
 [ui.colors]
 

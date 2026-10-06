@@ -62,6 +62,7 @@
 //! pager = "less -RFX"
 //! no_osc8 = false
 //! glow_style = "dark"
+//! week_start = "monday"
 //!
 //! [ui.colors]
 //!
@@ -322,6 +323,45 @@ pub struct UiConfig {
     /// (ADR-0013). An action that is not listed keeps its default keys;
     /// an empty list unbinds it. Default: empty.
     pub keys: BTreeMap<String, KeySpec>,
+    /// The first column of the TUI's calendar picker (ADR-0017).
+    /// Default: `monday`.
+    pub week_start: WeekStart,
+}
+
+/// The day a week starts on, for the calendar picker's grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WeekStart {
+    /// ISO weeks, as in Europe.
+    #[default]
+    Monday,
+    /// `tuesday`.
+    Tuesday,
+    /// `wednesday`.
+    Wednesday,
+    /// `thursday`.
+    Thursday,
+    /// `friday`.
+    Friday,
+    /// `saturday`, as in parts of the Middle East.
+    Saturday,
+    /// `sunday`, as in the US.
+    Sunday,
+}
+
+impl WeekStart {
+    /// The chrono weekday.
+    pub fn weekday(self) -> chrono::Weekday {
+        match self {
+            Self::Monday => chrono::Weekday::Mon,
+            Self::Tuesday => chrono::Weekday::Tue,
+            Self::Wednesday => chrono::Weekday::Wed,
+            Self::Thursday => chrono::Weekday::Thu,
+            Self::Friday => chrono::Weekday::Fri,
+            Self::Saturday => chrono::Weekday::Sat,
+            Self::Sunday => chrono::Weekday::Sun,
+        }
+    }
 }
 
 impl Default for UiConfig {
@@ -332,6 +372,7 @@ impl Default for UiConfig {
             glow_style: "dark".to_owned(),
             colors: BTreeMap::new(),
             keys: BTreeMap::new(),
+            week_start: WeekStart::Monday,
         }
     }
 }

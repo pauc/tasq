@@ -38,6 +38,7 @@ placement = "auto"                           # defaults
 glow_style = "light"                         # env
 no_osc8 = true                               # --set
 pager = "cat"                                # [ROOT]/home/.config/tasq/config.toml
+week_start = "monday"                        # defaults
 
 [ui.colors]
 

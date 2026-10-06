@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use tasq_core::config::{
     Bookkeeper, Config, ConfigError, EnvStrategy, ForgeKind, KeySpec, LoadOptions, Origin,
-    SourceKind, Summarizer, WorktreeManager, expand_tilde,
+    SourceKind, Summarizer, WeekStart, WorktreeManager, expand_tilde,
 };
 use tasq_core::model::Status;
 use tempfile::TempDir;
@@ -125,6 +125,8 @@ fn defaults_match_the_script() {
     assert_eq!(c.ui.pager, "less -RFX");
     assert!(!c.ui.no_osc8);
     assert_eq!(c.ui.glow_style, "dark");
+    assert_eq!(c.ui.week_start, WeekStart::Monday);
+    assert_eq!(c.ui.week_start.weekday(), chrono::Weekday::Mon);
     assert!(c.ui.colors.is_empty());
     assert!(c.ui.keys.is_empty());
     assert!(c.forge.is_empty());
@@ -167,6 +169,7 @@ placement = \"auto\"
 pager = \"less -RFX\"
 no_osc8 = false
 glow_style = \"dark\"
+week_start = \"monday\"
 
 [ui.colors]
 
@@ -439,7 +442,7 @@ fn without_home_there_is_no_global_file_but_xdg_still_works() {
 fn project_file_overrides_global_field_wise() {
     let sb = Sandbox::new();
     let global = sb.write_global(
-        "[store]\nnotebook = \"global\"\nbookkeeper = \"nb\"\n[ui]\nglow_style = \"light\"\n",
+        "[store]\nnotebook = \"global\"\nbookkeeper = \"nb\"\n[ui]\nglow_style = \"light\"\nweek_start = \"sunday\"\n",
     );
     let project = sb.write_project("[store]\nnotebook = \"project\"\n");
     let loaded = Config::load(&sb.opts()).unwrap();
@@ -450,6 +453,8 @@ fn project_file_overrides_global_field_wise() {
         "sibling key survives"
     );
     assert_eq!(loaded.config.ui.glow_style, "light");
+    assert_eq!(loaded.config.ui.week_start, WeekStart::Sunday);
+    assert_eq!(loaded.config.ui.week_start.weekday(), chrono::Weekday::Sun);
     assert_eq!(
         loaded.explain("store.notebook"),
         Some(&Origin::File(project.clone()))
@@ -816,6 +821,7 @@ fn env_overrides_files() {
         ("TASQ_PAGER", "bat -p"),
         ("TASQ_NO_OSC8", "1"),
         ("TASQ_GLOW_STYLE", "light"),
+        ("TASQ_WEEK_START", "saturday"),
         ("TASQ_SUMMARIZER", "raw"),
         ("TASQ_SUMMARY_MODEL", "opus"),
         ("TASQ_SUMMARY_COMMAND", "llm -m gpt"),
@@ -839,6 +845,8 @@ fn env_overrides_files() {
     assert_eq!(c.ui.pager, "bat -p");
     assert!(c.ui.no_osc8);
     assert_eq!(c.ui.glow_style, "light");
+    assert_eq!(c.ui.week_start, WeekStart::Saturday);
+    assert_eq!(c.ui.week_start.weekday(), chrono::Weekday::Sat);
     assert_eq!(c.report.summary.summarizer, Summarizer::Raw);
     assert_eq!(c.report.summary.model, Some("opus".to_owned()));
     assert_eq!(c.report.summary.command, "llm -m gpt");
@@ -850,7 +858,7 @@ fn env_overrides_files() {
     assert_eq!(loaded.explain("ui.pager"), Some(&Origin::Env));
     let env_layer = loaded.layers.last().unwrap();
     assert_eq!(env_layer.origin, Origin::Env);
-    assert_eq!(env_layer.keys.len(), 16);
+    assert_eq!(env_layer.keys.len(), 17);
     assert_eq!(Origin::Env.to_string(), "env");
 }
 
@@ -867,6 +875,7 @@ fn every_documented_env_key_is_a_real_key() {
             "launch.env" => "direnv",
             "ui.no_osc8" => "true",
             "report.summary.summarizer" => "raw",
+            "ui.week_start" => "sunday",
             _ => "value",
         };
         opts.env = env(&[(var, value)]);

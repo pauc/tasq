@@ -38,6 +38,7 @@ pub const ENV_SET: &str = "TASQ_SET";
 /// | `TASQ_PAGER` | `ui.pager` |
 /// | `TASQ_NO_OSC8` | `ui.no_osc8` |
 /// | `TASQ_GLOW_STYLE` | `ui.glow_style` |
+/// | `TASQ_WEEK_START` | `ui.week_start` |
 /// | `TASQ_SUMMARIZER` | `report.summary.summarizer` |
 /// | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
 /// | `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
@@ -61,6 +62,7 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_PAGER", "ui.pager"),
     ("TASQ_NO_OSC8", "ui.no_osc8"),
     ("TASQ_GLOW_STYLE", "ui.glow_style"),
+    ("TASQ_WEEK_START", "ui.week_start"),
     ("TASQ_SUMMARIZER", "report.summary.summarizer"),
     ("TASQ_SUMMARY_MODEL", "report.summary.model"),
     ("TASQ_SUMMARY_COMMAND", "report.summary.command"),
