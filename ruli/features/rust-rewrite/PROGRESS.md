@@ -276,7 +276,8 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   model.rs`, core `config/{mod,load}.rs`): first pass with the widget 80 tested, 2 missed
   (the calendar's status-bar message guard, untested; `REVERSED | BOLD` equivalent under
   `^`), 0 after a `Msg::Failed`-while-open assertion and two `add_modifier` calls; with the
-  owned grid and the config key 103 tested, 0 missed (10 unviable). Docs: `docs/config.md` (key, env, defaults, TUI
+  owned grid and the config key 103 tested, 0 missed (10 unviable). Commits c90ffcd (core),
+  8054d8a (tui, docs). Docs: `docs/config.md` (key, env, defaults, TUI
   section), README. Pre-existing and unrelated: `cargo doc` warns about a redundant link
   target in `view.rs:5`; `render_with_glow_runs_the_program_and_reports_failures` (cli)
   failed once in a full workspace run and passed alone.
