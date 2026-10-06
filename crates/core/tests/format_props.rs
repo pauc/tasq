@@ -154,20 +154,26 @@ proptest! {
         let text = format!("# [ ] T{body}");
         let mut doc = Document::parse(&text).unwrap();
         let entry = ProgressEntry::new(NaiveDate::from_ymd_opt(2026, 10, 4).unwrap().and_time(NaiveTime::MIN), "n");
-        match n {
-            0 => ops::set_status(&mut doc, &Status::READY, &wf),
-            1 => ops::set_priority(&mut doc, Priority::A, &wf),
-            2 => ops::append_progress(&mut doc, &entry),
-            3 => { ops::append_worktree(&mut doc, &Worktree::new("/w")); }
-            4 => { ops::append_session(&mut doc, &Session { at: entry.at.date_time(), id: "s".into(), launcher: None, description: None }); }
-            5 => { ops::append_merge_request(&mut doc, &Link::labelled("u", "t")); }
-            6 => ops::set_project(&mut doc, Path::new("/p")),
-            _ => ops::set_done(&mut doc, &wf),
-        }
+        // The append ops report `false` when the entry is already tracked
+        // and leave the file untouched, missing final newline included.
+        let changed = match n {
+            0 => { ops::set_status(&mut doc, &Status::READY, &wf); true }
+            1 => { ops::set_priority(&mut doc, Priority::A, &wf); true }
+            2 => { ops::append_progress(&mut doc, &entry); true }
+            3 => ops::append_worktree(&mut doc, &Worktree::new("/w")),
+            4 => ops::append_session(&mut doc, &Session { at: entry.at.date_time(), id: "s".into(), launcher: None, description: None }),
+            5 => ops::append_merge_request(&mut doc, &Link::labelled("u", "t")),
+            6 => { ops::set_project(&mut doc, Path::new("/p")); true }
+            _ => { ops::set_done(&mut doc, &wf); true }
+        };
         let rendered = format::render(&doc);
         let again = Document::parse(&rendered).unwrap();
-        prop_assert_eq!(again.render(), rendered);
-        prop_assert!(doc.ends_with_newline());
+        prop_assert_eq!(again.render(), rendered.clone());
+        if changed {
+            prop_assert!(doc.ends_with_newline());
+        } else {
+            prop_assert_eq!(rendered, text.clone());
+        }
         let task = format::project(&doc, TaskId::from(1), &wf);
         match n {
             0 => prop_assert_eq!(task.status, Some(Status::READY)),
@@ -329,4 +335,24 @@ proptest! {
         prop_assert_eq!(&err, &format::FormatError::NotATask { first_line: first.clone() });
         prop_assert_eq!(Document::parse(&text), Err(err));
     }
+}
+
+/// Found by `operations_never_panic_and_stay_parseable` in CI: a session
+/// that is already tracked in a file without a final newline is a no-op,
+/// and the file keeps its bytes.
+#[test]
+fn duplicate_session_without_final_newline_is_untouched() {
+    let text = "# [ ] T\n- `s`";
+    let mut doc = Document::parse(text).unwrap();
+    let at = NaiveDate::from_ymd_opt(2026, 10, 4)
+        .unwrap()
+        .and_time(NaiveTime::MIN);
+    let session = Session {
+        at,
+        id: "s".into(),
+        launcher: None,
+        description: None,
+    };
+    assert!(!ops::append_session(&mut doc, &session));
+    assert_eq!(format::render(&doc), text);
 }
