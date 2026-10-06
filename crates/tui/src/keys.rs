@@ -674,7 +674,9 @@ fn form(code: KeyCode, ctrl: bool) -> Option<Msg> {
 
 /// A one-line prompt's fixed keys (the filter, a note, a title): typing,
 /// `Backspace` and `Delete`, `Left`/`Right`, `Home`/`End` (also
-/// `Ctrl+A`/`Ctrl+E`, as in readline), `Enter` and `Esc`.
+/// `Ctrl+A`/`Ctrl+E`, as in readline), readline's kills (`Ctrl+W` the word
+/// before the cursor, `Ctrl+U` to the start, `Ctrl+K` to the end), `Enter`
+/// and `Esc`.
 fn prompt(code: KeyCode, ctrl: bool) -> Option<Msg> {
     Some(match code {
         KeyCode::Enter => Msg::Enter,
@@ -687,6 +689,9 @@ fn prompt(code: KeyCode, ctrl: bool) -> Option<Msg> {
         KeyCode::End => Msg::End,
         KeyCode::Char('a') if ctrl => Msg::Home,
         KeyCode::Char('e') if ctrl => Msg::End,
+        KeyCode::Char('w') if ctrl => Msg::DeleteWord,
+        KeyCode::Char('u') if ctrl => Msg::KillToStart,
+        KeyCode::Char('k') if ctrl => Msg::KillToEnd,
         KeyCode::Char(c) if !ctrl => Msg::Char(c),
         _ => return None,
     })
@@ -876,8 +881,14 @@ mod tests {
                 (key(KeyCode::Delete), Msg::Delete),
                 (ctrl('a'), Msg::Home),
                 (ctrl('e'), Msg::End),
+                (ctrl('w'), Msg::DeleteWord),
+                (ctrl('u'), Msg::KillToStart),
+                (ctrl('k'), Msg::KillToEnd),
                 (ch('a'), Msg::Char('a')),
                 (ch('e'), Msg::Char('e')),
+                (ch('w'), Msg::Char('w')),
+                (ch('u'), Msg::Char('u')),
+                (ch('k'), Msg::Char('k')),
             ] {
                 assert_eq!(
                     translate(&keys, &mode, &event),
@@ -907,6 +918,9 @@ mod tests {
             (key(KeyCode::End), Msg::End),
             (ctrl('a'), Msg::Home),
             (ctrl('e'), Msg::End),
+            (ctrl('w'), Msg::DeleteWord),
+            (ctrl('u'), Msg::KillToStart),
+            (ctrl('k'), Msg::KillToEnd),
             (key(KeyCode::Delete), Msg::Delete),
             (ctrl('s'), Msg::Save),
             (ch('a'), Msg::Char('a')),
@@ -922,7 +936,11 @@ mod tests {
         ] {
             assert_eq!(translate(&keys, &mode, &event), Some(expected), "{event:?}");
         }
-        assert_eq!(translate(&keys, &mode, &ctrl('u')), None);
+        assert_eq!(
+            translate(&keys, &mode, &ctrl('d')),
+            None,
+            "the list's page-down does not reach the edit view"
+        );
         assert_eq!(translate(&keys, &mode, &key(KeyCode::F(1))), None);
     }
 

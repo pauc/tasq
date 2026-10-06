@@ -149,6 +149,9 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         | Msg::Home
         | Msg::End
         | Msg::Delete
+        | Msg::DeleteWord
+        | Msg::KillToStart
+        | Msg::KillToEnd
         | Msg::NextField
         | Msg::PrevField
         | Msg::Save
@@ -206,13 +209,17 @@ fn filter(model: &mut Model, mut input: Text, msg: Msg) -> Vec<Cmd> {
 
 /// Applies a line-editing message to a status-bar prompt's `input`:
 /// typing, a paste (on one line, see [`one_line`]), `Backspace`,
-/// `Delete` and the cursor keys. Any other message leaves it as it is.
+/// `Delete`, the cursor keys and the kills (`Ctrl+W`, `Ctrl+U`, `Ctrl+K`).
+/// Any other message leaves it as it is.
 fn edit_line(input: &mut Text, msg: &Msg) {
     match msg {
         Msg::Char(c) => input.insert(*c),
         Msg::Paste(text) => input.paste(&one_line(text)),
         Msg::Backspace => input.backspace(),
         Msg::Delete => input.delete(),
+        Msg::DeleteWord => input.delete_word(),
+        Msg::KillToStart => input.kill_to_start(),
+        Msg::KillToEnd => input.kill_to_end(),
         Msg::Left => {
             input.left();
         }
@@ -430,6 +437,9 @@ fn form_mode(model: &mut Model, mut form: Form, msg: Msg) -> Vec<Cmd> {
         Msg::Paste(text) => form.paste(&text),
         Msg::Backspace => form.backspace(),
         Msg::Delete => form.delete(),
+        Msg::DeleteWord => form.delete_word(),
+        Msg::KillToStart => form.kill_to_start(),
+        Msg::KillToEnd => form.kill_to_end(),
         Msg::Enter => match form.focus {
             Field::Description => form.newline(),
             Field::Due => {
@@ -743,6 +753,65 @@ mod tests {
             };
             assert_eq!(cmds, expected, "{begin:?}");
         }
+    }
+
+    #[test]
+    fn every_prompt_takes_the_readline_kills() {
+        for begin in [
+            Msg::BeginFilter,
+            Msg::BeginNote,
+            Msg::BeginDone,
+            Msg::BeginCreate,
+        ] {
+            let mut m = model();
+            update(&mut m, begin.clone());
+            feed(&mut m, chars("one two  three"));
+            assert_eq!(update(&mut m, Msg::DeleteWord), Vec::new());
+            assert_eq!(prompt(&m), ("one two  ".into(), 9), "{begin:?}: Ctrl+W");
+            update(&mut m, Msg::DeleteWord);
+            assert_eq!(prompt(&m), ("one ".into(), 4), "{begin:?}: Ctrl+W again");
+            feed(&mut m, chars("two"));
+            feed(&mut m, [Msg::Left, Msg::Left]);
+            assert_eq!(update(&mut m, Msg::KillToEnd), Vec::new());
+            assert_eq!(prompt(&m), ("one t".into(), 5), "{begin:?}: Ctrl+K");
+            update(&mut m, Msg::Left);
+            assert_eq!(update(&mut m, Msg::KillToStart), Vec::new());
+            assert_eq!(prompt(&m), ("t".into(), 0), "{begin:?}: Ctrl+U");
+            update(&mut m, Msg::DeleteWord);
+            assert_eq!(
+                prompt(&m),
+                ("t".into(), 0),
+                "{begin:?}: Ctrl+W at the start"
+            );
+            let cmds = update(&mut m, Msg::Enter);
+            let expected = match begin {
+                Msg::BeginFilter => Vec::new(),
+                Msg::BeginNote => vec![Cmd::Log(TaskId::from(1), "t".into())],
+                Msg::BeginDone => vec![Cmd::Done(TaskId::from(1), Some("t".into()))],
+                _ => vec![Cmd::Create(Box::new(
+                    TaskDraft::new("t").with_status(Some(Status::READY)),
+                ))],
+            };
+            assert_eq!(cmds, expected, "{begin:?}");
+        }
+    }
+
+    #[test]
+    fn the_filter_follows_the_kills() {
+        let mut m = model();
+        update(&mut m, Msg::BeginFilter);
+        feed(&mut m, chars("second x"));
+        assert_eq!(m.visible().len(), 0);
+        update(&mut m, Msg::DeleteWord);
+        assert_eq!(m.filter, "second ");
+        assert_eq!(m.visible().len(), 1);
+        assert_eq!(m.selected, Some(TaskId::from(2)));
+        feed(&mut m, [Msg::Home, Msg::Right, Msg::Right, Msg::Right]);
+        update(&mut m, Msg::KillToEnd);
+        assert_eq!(m.filter, "sec");
+        update(&mut m, Msg::KillToStart);
+        assert_eq!(m.filter, "");
+        assert_eq!(m.visible().len(), 3);
     }
 
     #[test]
@@ -1174,6 +1243,26 @@ mod tests {
             Vec::new()
         );
         assert_eq!(form_of(&m).title.text(), "irst bi!s");
+        let mut killed = m.clone();
+        assert_eq!(update(&mut killed, Msg::DeleteWord), Vec::new());
+        assert_eq!(form_of(&killed).title.text(), "irst ", "Ctrl+W");
+        feed(&mut killed, [Msg::Left, Msg::Left]);
+        assert_eq!(update(&mut killed, Msg::KillToEnd), Vec::new());
+        assert_eq!(form_of(&killed).title.text(), "irs", "Ctrl+K");
+        update(&mut killed, Msg::Left);
+        assert_eq!(update(&mut killed, Msg::KillToStart), Vec::new());
+        assert_eq!(form_of(&killed).title.text(), "s", "Ctrl+U");
+        update(&mut killed, Msg::NextField);
+        let before = form_of(&killed);
+        assert_eq!(before.focus, Field::Status);
+        assert_eq!(
+            feed(
+                &mut killed,
+                [Msg::DeleteWord, Msg::KillToStart, Msg::KillToEnd]
+            ),
+            Vec::new()
+        );
+        assert_eq!(form_of(&killed), before, "a choice row ignores the kills");
         assert_eq!(feed(&mut m, [Msg::Enter, Msg::Right]), Vec::new());
         let form = form_of(&m);
         assert_eq!(form.focus, Field::Status, "Enter moves on");
@@ -1275,6 +1364,9 @@ mod tests {
                     Msg::Home,
                     Msg::End,
                     Msg::Delete,
+                    Msg::DeleteWord,
+                    Msg::KillToStart,
+                    Msg::KillToEnd,
                     Msg::NextField,
                     Msg::PrevField,
                     Msg::Save

@@ -24,6 +24,14 @@ pub enum Msg {
     End,
     /// In the edit view: delete the character under the cursor.
     Delete,
+    /// In a text input: `Ctrl+W`, delete the word before the cursor.
+    DeleteWord,
+    /// In a text input: `Ctrl+U`, delete from the start of the line to the
+    /// cursor.
+    KillToStart,
+    /// In a text input: `Ctrl+K`, delete from the cursor to the end of the
+    /// line.
+    KillToEnd,
     /// In the edit view: `Tab`, the next row.
     NextField,
     /// In the edit view: `Shift+Tab`, the previous row.

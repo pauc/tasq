@@ -340,7 +340,7 @@ wrap at the pane width. Its edits are the same operations as
 `tasq set`, `tasq log` and `tasq done`; `e` opens the edit view for the title, status, priority,
 due date, project, tags and description (`Tab`/`Shift+Tab` and the arrows between rows,
 `Left`/`Right` cycle the status and priority rows, `Home`/`End` or `Ctrl+A`/`Ctrl+E` go to the
-ends of the line, `Enter` is the next row or a newline in the description, `Ctrl+S` saves,
+ends of the line, `Ctrl+W`/`Ctrl+U`/`Ctrl+K` delete as in readline, `Enter` is the next row or a newline in the description, `Ctrl+S` saves,
 `Esc` cancels). `Enter` on the Due box opens a calendar over the view: the arrows move by a
 day and a week, `PageUp`/`PageDown` by a month, `t` jumps to today, `Enter` puts the day in the
 box as ISO, `Esc` closes it; typing a date or `today`/`tomorrow` into the box works as before.
@@ -394,7 +394,9 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 
 Typing (the filter, a note, a title, the edit view) is not configurable: characters, `Enter`,
 `Esc`, `Backspace` and `Delete` do what they always do, `Left`/`Right` move the cursor and
-`Home`/`End` or `Ctrl+A`/`Ctrl+E` go to the ends of the line, as in readline. An input longer
+`Home`/`End` or `Ctrl+A`/`Ctrl+E` go to the ends of the line, and `Ctrl+W`, `Ctrl+U` and
+`Ctrl+K` delete the word before the cursor, back to the start of the line and on to its end,
+as in readline (on the current line only: they never join lines). An input longer
 than the status bar scrolls to keep the cursor in view. Neither are the toggles of the source picker: `Space` and
 the row digits. `Ctrl+C` quits in every mode and cannot be rebound. A key
 bound to two actions of the same mode, an unknown action or a key that does not parse stops
