@@ -340,11 +340,16 @@ wrap at the pane width. Its edits are the same operations as
 `tasq set`, `tasq log` and `tasq done`; `e` opens the edit view for the title, status, priority,
 due date, project, tags and description (`Tab`/`Shift+Tab` and the arrows between rows,
 `Left`/`Right` cycle the status and priority rows, `Home`/`End` or `Ctrl+A`/`Ctrl+E` go to the
-ends of the line, `Enter` is the next row or a newline in the description, `Ctrl+S` saves,
+ends of the line, `Ctrl+W`/`Ctrl+U`/`Ctrl+K` delete as in readline, `Enter` is the next row or a newline in the description, `Ctrl+S` saves,
 `Esc` cancels). `Enter` on the Due box opens a calendar over the view: the arrows move by a
 day and a week, `PageUp`/`PageDown` by a month, `t` jumps to today, `Enter` puts the day in the
 box as ISO, `Esc` closes it; typing a date or `today`/`tomorrow` into the box works as before.
 `ui.week_start` sets the grid's first column (`monday` by default).
+In the one-line prompts (the `/` filter, the `l` and `d` notes, the `c` title), `Up`/`Down` go
+through what was submitted earlier in the session, like a shell's history: filters, notes and
+titles each have their own (`l` and `d` share the notes), going down past the newest brings back
+what was being typed, and a recalled filter applies to the list at once. Only submitted, non-empty
+entries count (not one closed with `Esc`); the history lives in memory and ends with `tasq ui`.
 `E` opens the task file in `$VISUAL`, else `$EDITOR`,
 else `vi`; `Enter`, `s` and `S` run `tasq pick <id>`, `tasq sync` and `tasq sync --source ...`
 (the sources checked in the picker) as child processes with the same `--profile`, `--config`
@@ -392,8 +397,13 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `confirm` | `enter` | pickers | apply the choice; in the source picker, run the checked sources |
 | `quit` | `q` | list, pickers | leave `tasq ui`; in a picker, close it |
 
-Typing (the filter, a note, a title, the edit view) is not configurable: characters, `Enter`, `Esc` and
-`Backspace` do what they always do. Neither are the toggles of the source picker: `Space` and
+Typing (the filter, a note, a title, the edit view) is not configurable: characters, `Enter`,
+`Esc`, `Backspace` and `Delete` do what they always do, `Left`/`Right` move the cursor and
+`Home`/`End` or `Ctrl+A`/`Ctrl+E` go to the ends of the line, and `Ctrl+W`, `Ctrl+U` and
+`Ctrl+K` delete the word before the cursor, back to the start of the line and on to its end,
+as in readline (on the current line only: they never join lines). In the one-line prompts
+`Up`/`Down` recall earlier entries of the session; in the edit view they move between rows.
+An input longer than the status bar scrolls to keep the cursor in view. Neither are the toggles of the source picker: `Space` and
 the row digits. `Ctrl+C` quits in every mode and cannot be rebound. A key
 bound to two actions of the same mode, an unknown action or a key that does not parse stops
 `tasq ui` at startup with the file and the `ui.keys.<action>` path. The `?` overlay and the

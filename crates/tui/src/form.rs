@@ -4,7 +4,8 @@
 //!
 //! Pure data, like the rest of the model: [`crate::update()`] drives it
 //! and [`crate::view()`] draws it. [`Text`] is the small editor behind the
-//! text rows and the description: lines, a cursor, and the usual keys.
+//! text rows and the description, and behind the status-bar prompts
+//! (filter, notes, a new title): lines, a cursor, and the usual keys.
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -81,8 +82,9 @@ impl Field {
 }
 
 /// Editable text: lines and a cursor (`row`, `col` in characters). A
-/// single-line row is a `Text` that never gets a newline (the [`Form`]
-/// sees to that); the description takes as many lines as typed.
+/// single-line row or prompt is a `Text` that never gets a newline (the
+/// [`Form`] and [`crate::update()`] see to that); the description takes
+/// as many lines as typed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Text {
     lines: Vec<String>,
@@ -129,12 +131,18 @@ impl Text {
         self.lines[row].chars().count()
     }
 
+    /// Byte offset of the cursor in the current line (its length at the
+    /// end).
+    fn byte(&self) -> usize {
+        self.byte_at(self.col)
+    }
+
     /// Byte offset of character `col` in the current line (its length at
     /// the end).
-    fn byte(&self) -> usize {
+    fn byte_at(&self, col: usize) -> usize {
         self.lines[self.row]
             .char_indices()
-            .nth(self.col)
+            .nth(col)
             .map_or(self.lines[self.row].len(), |(i, _)| i)
     }
 
@@ -250,6 +258,38 @@ impl Text {
     /// To the end of the line.
     pub fn end(&mut self) {
         self.col = self.line_len(self.row);
+    }
+
+    /// Deletes the word before the cursor, as readline's `Ctrl+W`
+    /// (unix-word-rubout): the whitespace right before the cursor, then
+    /// back to the previous whitespace. Only on the current line: at its
+    /// start nothing happens (no join, unlike [`Text::backspace`]).
+    pub fn delete_word(&mut self) {
+        let before: Vec<char> = self.lines[self.row].chars().take(self.col).collect();
+        let mut start = before.len();
+        while start > 0 && before[start - 1].is_whitespace() {
+            start -= 1;
+        }
+        while start > 0 && !before[start - 1].is_whitespace() {
+            start -= 1;
+        }
+        let range = self.byte_at(start)..self.byte();
+        self.lines[self.row].replace_range(range, "");
+        self.col = start;
+    }
+
+    /// Deletes from the start of the line to the cursor (`Ctrl+U`).
+    pub fn kill_to_start(&mut self) {
+        let at = self.byte();
+        self.lines[self.row].replace_range(..at, "");
+        self.col = 0;
+    }
+
+    /// Deletes from the cursor to the end of the line (`Ctrl+K`); at the
+    /// end of a line nothing happens (no join).
+    pub fn kill_to_end(&mut self) {
+        let at = self.byte();
+        self.lines[self.row].truncate(at);
     }
 }
 
@@ -441,6 +481,27 @@ impl Form {
     pub fn end(&mut self) {
         if let Some(text) = self.focused_text() {
             text.end();
+        }
+    }
+
+    /// `Ctrl+W` in the focused text row: see [`Text::delete_word`].
+    pub fn delete_word(&mut self) {
+        if let Some(text) = self.focused_text() {
+            text.delete_word();
+        }
+    }
+
+    /// `Ctrl+U` in the focused text row: see [`Text::kill_to_start`].
+    pub fn kill_to_start(&mut self) {
+        if let Some(text) = self.focused_text() {
+            text.kill_to_start();
+        }
+    }
+
+    /// `Ctrl+K` in the focused text row: see [`Text::kill_to_end`].
+    pub fn kill_to_end(&mut self) {
+        if let Some(text) = self.focused_text() {
+            text.kill_to_end();
         }
     }
 
@@ -701,6 +762,115 @@ mod tests {
         assert_eq!(cursor_in_middle.lines(), ["ab", "cd"]);
     }
 
+    /// `text` with the cursor at character `col` of its only line.
+    fn at(text: &str, col: usize) -> Text {
+        let mut t = Text::single(text);
+        t.home();
+        for _ in 0..col {
+            assert!(t.right());
+        }
+        t
+    }
+
+    #[test]
+    fn delete_word_rubs_out_the_word_before_the_cursor() {
+        for (text, col, expected, cursor, why) in [
+            (
+                "foo bar baz",
+                7,
+                "foo  baz",
+                4,
+                "the word ending at the cursor",
+            ),
+            (
+                "foo bar baz",
+                6,
+                "foo r baz",
+                4,
+                "the part of the word before the cursor",
+            ),
+            ("foo bar baz", 11, "foo bar ", 8, "at the end"),
+            (
+                "foo bar   baz",
+                10,
+                "foo baz",
+                4,
+                "the spaces, then the word",
+            ),
+            ("foo\tbar", 7, "foo\t", 4, "a tab is whitespace"),
+            ("  foo", 5, "  ", 2, "stops at the leading spaces"),
+            ("   ", 3, "", 0, "only spaces: all of them"),
+            ("foo", 3, "", 0, "one word"),
+            ("foo bar", 0, "foo bar", 0, "at the start nothing happens"),
+            ("héé wörld", 9, "héé ", 4, "multibyte chars"),
+            (
+                "héé wörld",
+                3,
+                " wörld",
+                0,
+                "multibyte chars before the cursor",
+            ),
+            ("a—b c", 3, " c", 0, "punctuation is part of the word"),
+        ] {
+            let mut t = at(text, col);
+            t.delete_word();
+            assert_eq!(t.text(), expected, "{why}");
+            assert_eq!(t.cursor(), (0, cursor), "{why}");
+        }
+    }
+
+    #[test]
+    fn kills_to_the_start_and_the_end_of_the_line() {
+        for (text, col, start, end) in [
+            ("héllo wörld", 7, "örld", "héllo w"),
+            ("abc", 0, "abc", ""),
+            ("abc", 3, "", "abc"),
+            ("", 0, "", ""),
+        ] {
+            let mut t = at(text, col);
+            t.kill_to_start();
+            assert_eq!(t.text(), start, "{text:?} at {col}: Ctrl+U");
+            assert_eq!(t.cursor(), (0, 0), "{text:?} at {col}: Ctrl+U");
+            let mut t = at(text, col);
+            t.kill_to_end();
+            assert_eq!(t.text(), end, "{text:?} at {col}: Ctrl+K");
+            assert_eq!(t.cursor(), (0, col), "{text:?} at {col}: Ctrl+K");
+        }
+    }
+
+    #[test]
+    fn kills_stay_on_the_current_line() {
+        let mut t = Text::multi("one two\nthree four\nfive");
+        assert!(t.down());
+        assert!(t.right());
+        assert!(t.right());
+        t.kill_to_start();
+        assert_eq!(t.lines(), ["one two", "ree four", "five"]);
+        assert_eq!(t.cursor(), (1, 0));
+        t.delete_word();
+        assert_eq!(
+            t.lines(),
+            ["one two", "ree four", "five"],
+            "Ctrl+W at the start of a line does not join it"
+        );
+        assert_eq!(t.cursor(), (1, 0));
+        t.end();
+        t.kill_to_end();
+        assert_eq!(
+            t.lines(),
+            ["one two", "ree four", "five"],
+            "Ctrl+K at the end of a line does not join the next"
+        );
+        t.delete_word();
+        assert_eq!(t.lines(), ["one two", "ree ", "five"]);
+        assert_eq!(t.cursor(), (1, 4));
+        t.home();
+        assert!(t.right());
+        t.kill_to_end();
+        assert_eq!(t.lines(), ["one two", "r", "five"]);
+        assert_eq!(t.cursor(), (1, 1));
+    }
+
     #[test]
     fn a_form_shows_the_task_and_round_trips_it() {
         let wf = Workflow::default();
@@ -792,6 +962,16 @@ mod tests {
         form.right(&wf);
         form.insert('_');
         assert_eq!(form.title.text(), "even more line_s_");
+        let mut killed = form.clone();
+        killed.delete_word();
+        assert_eq!(killed.title.text(), "even more ", "Ctrl+W");
+        killed.left(&wf);
+        killed.kill_to_start();
+        assert_eq!(killed.title.text(), " ", "Ctrl+U");
+        killed.insert('a');
+        killed.kill_to_end();
+        assert_eq!(killed.title.text(), "a", "Ctrl+K");
+        assert_eq!(killed.title.cursor(), (0, 1));
         form.focus_next();
         assert_eq!(form.focus, Field::Status);
         let before = form.clone();
@@ -801,6 +981,9 @@ mod tests {
         form.home();
         form.end();
         form.paste("y");
+        form.delete_word();
+        form.kill_to_start();
+        form.kill_to_end();
         assert_eq!(form, before, "a choice row ignores typing");
         form.focus_next();
         form.focus_next();

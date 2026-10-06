@@ -5,6 +5,7 @@ use tasq_core::model::{Priority, TaskId};
 
 use crate::calendar::Calendar;
 use crate::form::{Field, Form, Text};
+use crate::history::History;
 use crate::model::{Message, Mode, Model, NoteTarget, PAGE};
 use crate::msg::{Cmd, LaunchTarget, Msg};
 
@@ -82,11 +83,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::HideDetail => model.show_detail = false,
         Msg::Help => model.mode = Mode::Help,
         Msg::Reload => return vec![Cmd::Load],
-        Msg::BeginFilter => {
-            model.mode = Mode::Filter {
-                input: model.filter.clone(),
-            };
-        }
+        Msg::BeginFilter => begin_filter(model),
         Msg::BeginStatus => {
             if let Some(task) = model.selected_task() {
                 let cursor = task
@@ -112,11 +109,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         }
         Msg::BeginNote => begin_note(model, NoteTarget::Log),
         Msg::BeginDone => begin_note(model, NoteTarget::Done),
-        Msg::BeginCreate => {
-            model.mode = Mode::Create {
-                input: String::new(),
-            };
-        }
+        Msg::BeginCreate => begin_create(model),
         Msg::Edit => {
             if let Some(task) = model.selected_task() {
                 model.mode = Mode::Form(Box::new(Form::of(task, &model.workflow)));
@@ -149,6 +142,9 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         | Msg::Home
         | Msg::End
         | Msg::Delete
+        | Msg::DeleteWord
+        | Msg::KillToStart
+        | Msg::KillToEnd
         | Msg::NextField
         | Msg::PrevField
         | Msg::Save
@@ -164,10 +160,27 @@ const NO_SELECTION: &str = "no task selected";
 const NO_SOURCES: &str = "no [[source]] is configured (see docs/sources.md)";
 const NO_SOURCE_CHECKED: &str = "no source checked (Space toggles, Esc closes)";
 
+/// Opens the filter prompt on the applied filter, which is also the
+/// draft its recall comes back to.
+fn begin_filter(model: &mut Model) {
+    model.history.filters.reset();
+    model.mode = Mode::Filter {
+        input: Text::single(&model.filter),
+    };
+}
+
+fn begin_create(model: &mut Model) {
+    model.history.titles.reset();
+    model.mode = Mode::Create {
+        input: Text::single(""),
+    };
+}
+
 fn begin_note(model: &mut Model, target: NoteTarget) {
     if model.selected_task().is_some() {
+        model.history.notes.reset();
         model.mode = Mode::Note {
-            input: String::new(),
+            input: Text::single(""),
             target,
         };
     } else {
@@ -185,35 +198,68 @@ fn with_selection(model: &mut Model, make: impl FnOnce(TaskId) -> Cmd) -> Vec<Cm
     vec![make(id)]
 }
 
-fn filter(model: &mut Model, mut input: String, msg: Msg) -> Vec<Cmd> {
+/// The filter (`/`): the list follows every edit and every recalled
+/// entry, `Enter` keeps the filter (and records it), `Esc` clears it.
+fn filter(model: &mut Model, mut input: Text, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Quit => model.quit = true,
-        Msg::Enter => model.mode = Mode::Normal,
+        Msg::Enter => {
+            model.history.filters.record(&input.text());
+            model.mode = Mode::Normal;
+        }
         Msg::Escape => {
             model.set_filter(String::new());
             model.mode = Mode::Normal;
         }
-        Msg::Char(c) => retype(model, input, Some(c)),
-        Msg::Paste(text) => {
-            input.push_str(&one_line(&text));
-            retype(model, input, None);
+        msg => {
+            edit_prompt(&mut input, &mut model.history.filters, &msg);
+            model.set_filter(input.text());
+            model.mode = Mode::Filter { input };
         }
-        Msg::Backspace => {
-            input.pop();
-            retype(model, input, None);
-        }
-        _ => {}
     }
     Vec::new()
 }
 
-/// Applies the filter text as typed so the list follows every keystroke.
-fn retype(model: &mut Model, mut input: String, c: Option<char>) {
-    if let Some(c) = c {
-        input.push(c);
+/// Applies a message to a status-bar prompt's `input`: `Up`/`Down`
+/// replace it with an entry of `history` (or the draft), cursor at the
+/// end; anything else goes to [`edit_line`].
+fn edit_prompt(input: &mut Text, history: &mut History, msg: &Msg) {
+    let recalled = match msg {
+        Msg::Up => history.up(&input.text()),
+        Msg::Down => history.down(),
+        msg => {
+            edit_line(input, msg);
+            return;
+        }
+    };
+    if let Some(text) = recalled {
+        *input = Text::single(&text);
     }
-    model.set_filter(input.clone());
-    model.mode = Mode::Filter { input };
+}
+
+/// Applies a line-editing message to a status-bar prompt's `input`:
+/// typing, a paste (on one line, see [`one_line`]), `Backspace`,
+/// `Delete`, the cursor keys and the kills (`Ctrl+W`, `Ctrl+U`, `Ctrl+K`).
+/// Any other message leaves it as it is.
+fn edit_line(input: &mut Text, msg: &Msg) {
+    match msg {
+        Msg::Char(c) => input.insert(*c),
+        Msg::Paste(text) => input.paste(&one_line(text)),
+        Msg::Backspace => input.backspace(),
+        Msg::Delete => input.delete(),
+        Msg::DeleteWord => input.delete_word(),
+        Msg::KillToStart => input.kill_to_start(),
+        Msg::KillToEnd => input.kill_to_end(),
+        Msg::Left => {
+            input.left();
+        }
+        Msg::Right => {
+            input.right();
+        }
+        Msg::Home => input.home(),
+        Msg::End => input.end(),
+        _ => {}
+    }
 }
 
 fn status_picker(model: &mut Model, cursor: usize, msg: &Msg) -> Vec<Cmd> {
@@ -336,75 +382,64 @@ fn toggle_source(model: &mut Model, index: usize) {
     }
 }
 
-fn note(model: &mut Model, mut input: String, target: NoteTarget, msg: Msg) -> Vec<Cmd> {
+/// A progress note (`l`) or the final note of `done` (`d`); a submitted
+/// note is recorded in the notes history both share.
+fn note(model: &mut Model, mut input: Text, target: NoteTarget, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Quit => model.quit = true,
         Msg::Escape => model.mode = Mode::Normal,
-        Msg::Char(c) => {
-            input.push(c);
-            model.mode = Mode::Note { input, target };
-        }
-        Msg::Paste(text) => {
-            input.push_str(&one_line(&text));
-            model.mode = Mode::Note { input, target };
-        }
-        Msg::Backspace => {
-            input.pop();
-            model.mode = Mode::Note { input, target };
-        }
         Msg::Enter => {
-            let text = input.trim();
+            let text = input.text();
+            let text = text.trim();
             match target {
                 NoteTarget::Log if text.is_empty() => {
                     model.message = Some(Message::error("the note must not be empty"));
                 }
                 NoteTarget::Log => {
+                    model.history.notes.record(text);
                     let note = text.to_owned();
                     model.mode = Mode::Normal;
                     return with_selection(model, |id| Cmd::Log(id, note));
                 }
                 NoteTarget::Done => {
+                    model.history.notes.record(text);
                     let note = (!text.is_empty()).then(|| text.to_owned());
                     model.mode = Mode::Normal;
                     return with_selection(model, |id| Cmd::Done(id, note));
                 }
             }
         }
-        _ => {}
+        msg => {
+            edit_prompt(&mut input, &mut model.history.notes, &msg);
+            model.mode = Mode::Note { input, target };
+        }
     }
     Vec::new()
 }
 
 /// The title of a new task (`c`): typed like a note, written with the
-/// model's draft on Enter. An empty title is refused and the input stays
-/// open, as `tasq create` refuses it.
-fn create(model: &mut Model, mut input: String, msg: Msg) -> Vec<Cmd> {
+/// model's draft (and recorded) on Enter. An empty title is refused and
+/// the input stays open, as `tasq create` refuses it.
+fn create(model: &mut Model, mut input: Text, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Quit => model.quit = true,
         Msg::Escape => model.mode = Mode::Normal,
-        Msg::Char(c) => {
-            input.push(c);
-            model.mode = Mode::Create { input };
-        }
-        Msg::Paste(text) => {
-            input.push_str(&one_line(&text));
-            model.mode = Mode::Create { input };
-        }
-        Msg::Backspace => {
-            input.pop();
-            model.mode = Mode::Create { input };
-        }
         Msg::Enter => {
-            let title = input.trim();
+            let title = input.text();
+            let title = title.trim();
             if title.is_empty() {
                 model.message = Some(Message::error("the title must not be empty"));
             } else {
+                model.history.titles.record(title);
                 let draft = model.draft(title);
                 model.mode = Mode::Normal;
                 return vec![Cmd::Create(Box::new(draft))];
             }
         }
-        _ => {}
+        msg => {
+            edit_prompt(&mut input, &mut model.history.titles, &msg);
+            model.mode = Mode::Create { input };
+        }
     }
     Vec::new()
 }
@@ -437,6 +472,9 @@ fn form_mode(model: &mut Model, mut form: Form, msg: Msg) -> Vec<Cmd> {
         Msg::Paste(text) => form.paste(&text),
         Msg::Backspace => form.backspace(),
         Msg::Delete => form.delete(),
+        Msg::DeleteWord => form.delete_word(),
+        Msg::KillToStart => form.kill_to_start(),
+        Msg::KillToEnd => form.kill_to_end(),
         Msg::Enter => match form.focus {
             Field::Description => form.newline(),
             Field::Due => {
@@ -646,7 +684,7 @@ mod tests {
         assert_eq!(
             m.mode,
             Mode::Filter {
-                input: String::new()
+                input: Text::single("")
             }
         );
         feed(&mut m, chars("sec"));
@@ -660,7 +698,7 @@ mod tests {
         assert_eq!(
             m.mode,
             Mode::Filter {
-                input: "second".into()
+                input: Text::single("second")
             }
         );
         update(&mut m, Msg::Enter);
@@ -671,7 +709,7 @@ mod tests {
         assert_eq!(
             m.mode,
             Mode::Filter {
-                input: "second".into()
+                input: Text::single("second")
             }
         );
         update(&mut m, Msg::Escape);
@@ -687,6 +725,161 @@ mod tests {
         assert!(matches!(m.mode, Mode::Filter { .. }));
         update(&mut m, Msg::Quit);
         assert!(m.quit);
+    }
+
+    /// The prompt's text and cursor column, in any of the prompt modes.
+    fn prompt(m: &Model) -> (String, usize) {
+        let input = match &m.mode {
+            Mode::Filter { input } | Mode::Note { input, .. } | Mode::Create { input } => input,
+            other => panic!("not a prompt: {other:?}"),
+        };
+        assert_eq!(input.lines().len(), 1, "a prompt is one line");
+        (input.text(), input.cursor().1)
+    }
+
+    #[test]
+    fn every_prompt_edits_in_the_middle() {
+        for begin in [
+            Msg::BeginFilter,
+            Msg::BeginNote,
+            Msg::BeginDone,
+            Msg::BeginCreate,
+        ] {
+            let mut m = model();
+            update(&mut m, begin.clone());
+            feed(&mut m, chars("acd"));
+            feed(&mut m, [Msg::Left, Msg::Left, Msg::Char('b')]);
+            assert_eq!(prompt(&m), ("abcd".into(), 2), "{begin:?}: typed mid-line");
+            feed(&mut m, [Msg::Home, Msg::Char('>')]);
+            assert_eq!(prompt(&m), (">abcd".into(), 1), "{begin:?}: Home");
+            update(&mut m, Msg::Delete);
+            assert_eq!(prompt(&m), (">bcd".into(), 1), "{begin:?}: Delete");
+            feed(&mut m, [Msg::End, Msg::Left, Msg::Backspace]);
+            assert_eq!(
+                prompt(&m),
+                (">bd".into(), 2),
+                "{begin:?}: Backspace mid-line"
+            );
+            update(&mut m, Msg::Right);
+            assert_eq!(prompt(&m), (">bd".into(), 3), "{begin:?}: Right");
+            update(&mut m, Msg::Right);
+            assert_eq!(prompt(&m), (">bd".into(), 3), "{begin:?}: Right at the end");
+            feed(&mut m, [Msg::Home, Msg::Right]);
+            update(&mut m, Msg::Paste("x\r\ny\n".into()));
+            assert_eq!(
+                prompt(&m),
+                (">x ybd".into(), 4),
+                "{begin:?}: a paste in the middle, on one line"
+            );
+            assert_eq!(
+                feed(&mut m, [Msg::Up, Msg::Down, Msg::NextField]),
+                Vec::new()
+            );
+            assert_eq!(prompt(&m), (">x ybd".into(), 4), "{begin:?}: ignored keys");
+            let cmds = update(&mut m, Msg::Enter);
+            assert_eq!(m.mode, Mode::Normal, "{begin:?}");
+            let expected = match begin {
+                Msg::BeginFilter => Vec::new(),
+                Msg::BeginNote => vec![Cmd::Log(TaskId::from(1), ">x ybd".into())],
+                Msg::BeginDone => vec![Cmd::Done(TaskId::from(1), Some(">x ybd".into()))],
+                _ => vec![Cmd::Create(Box::new(
+                    TaskDraft::new(">x ybd").with_status(Some(Status::READY)),
+                ))],
+            };
+            assert_eq!(cmds, expected, "{begin:?}");
+        }
+    }
+
+    #[test]
+    fn every_prompt_takes_the_readline_kills() {
+        for begin in [
+            Msg::BeginFilter,
+            Msg::BeginNote,
+            Msg::BeginDone,
+            Msg::BeginCreate,
+        ] {
+            let mut m = model();
+            update(&mut m, begin.clone());
+            feed(&mut m, chars("one two  three"));
+            assert_eq!(update(&mut m, Msg::DeleteWord), Vec::new());
+            assert_eq!(prompt(&m), ("one two  ".into(), 9), "{begin:?}: Ctrl+W");
+            update(&mut m, Msg::DeleteWord);
+            assert_eq!(prompt(&m), ("one ".into(), 4), "{begin:?}: Ctrl+W again");
+            feed(&mut m, chars("two"));
+            feed(&mut m, [Msg::Left, Msg::Left]);
+            assert_eq!(update(&mut m, Msg::KillToEnd), Vec::new());
+            assert_eq!(prompt(&m), ("one t".into(), 5), "{begin:?}: Ctrl+K");
+            update(&mut m, Msg::Left);
+            assert_eq!(update(&mut m, Msg::KillToStart), Vec::new());
+            assert_eq!(prompt(&m), ("t".into(), 0), "{begin:?}: Ctrl+U");
+            update(&mut m, Msg::DeleteWord);
+            assert_eq!(
+                prompt(&m),
+                ("t".into(), 0),
+                "{begin:?}: Ctrl+W at the start"
+            );
+            let cmds = update(&mut m, Msg::Enter);
+            let expected = match begin {
+                Msg::BeginFilter => Vec::new(),
+                Msg::BeginNote => vec![Cmd::Log(TaskId::from(1), "t".into())],
+                Msg::BeginDone => vec![Cmd::Done(TaskId::from(1), Some("t".into()))],
+                _ => vec![Cmd::Create(Box::new(
+                    TaskDraft::new("t").with_status(Some(Status::READY)),
+                ))],
+            };
+            assert_eq!(cmds, expected, "{begin:?}");
+        }
+    }
+
+    #[test]
+    fn the_filter_follows_the_kills() {
+        let mut m = model();
+        update(&mut m, Msg::BeginFilter);
+        feed(&mut m, chars("second x"));
+        assert_eq!(m.visible().len(), 0);
+        update(&mut m, Msg::DeleteWord);
+        assert_eq!(m.filter, "second ");
+        assert_eq!(m.visible().len(), 1);
+        assert_eq!(m.selected, Some(TaskId::from(2)));
+        feed(&mut m, [Msg::Home, Msg::Right, Msg::Right, Msg::Right]);
+        update(&mut m, Msg::KillToEnd);
+        assert_eq!(m.filter, "sec");
+        update(&mut m, Msg::KillToStart);
+        assert_eq!(m.filter, "");
+        assert_eq!(m.visible().len(), 3);
+    }
+
+    #[test]
+    fn the_filter_follows_edits_in_the_middle() {
+        let mut m = model();
+        update(&mut m, Msg::BeginFilter);
+        feed(&mut m, chars("scond"));
+        assert_eq!(m.filter, "scond");
+        assert_eq!(m.visible().len(), 0);
+        feed(&mut m, [Msg::Home, Msg::Right]);
+        assert_eq!(m.filter, "scond", "moving the cursor keeps the filter");
+        update(&mut m, Msg::Char('e'));
+        assert_eq!(m.filter, "second");
+        assert_eq!(m.visible().len(), 1);
+        assert_eq!(m.selected, Some(TaskId::from(2)));
+        feed(&mut m, [Msg::End, Msg::Left, Msg::Left, Msg::Delete]);
+        assert_eq!(m.filter, "secod");
+        assert_eq!(m.visible().len(), 0);
+        update(&mut m, Msg::Backspace);
+        assert_eq!(m.filter, "secd");
+        update(&mut m, Msg::Paste("on".into()));
+        assert_eq!(m.filter, "second");
+        assert_eq!(m.visible().len(), 1);
+        feed(&mut m, [Msg::Home, Msg::Delete, Msg::Delete, Msg::Delete]);
+        assert_eq!(m.filter, "ond");
+        update(&mut m, Msg::Enter);
+        assert_eq!(m.filter, "ond");
+        update(&mut m, Msg::BeginFilter);
+        assert_eq!(
+            prompt(&m),
+            ("ond".into(), 3),
+            "reopened with the cursor at the end"
+        );
     }
 
     #[test]
@@ -903,7 +1096,7 @@ mod tests {
         assert_eq!(
             m.mode,
             Mode::Note {
-                input: String::new(),
+                input: Text::single(""),
                 target: NoteTarget::Log
             }
         );
@@ -921,7 +1114,7 @@ mod tests {
         assert_eq!(
             m.mode,
             Mode::Note {
-                input: "found the cause".into(),
+                input: Text::single("found the cause"),
                 target: NoteTarget::Log
             }
         );
@@ -963,7 +1156,7 @@ mod tests {
         assert_eq!(
             m.mode,
             Mode::Create {
-                input: String::new()
+                input: Text::single("")
             }
         );
         // An empty title is refused and the input stays open.
@@ -980,10 +1173,10 @@ mod tests {
         assert_eq!(
             m.mode,
             Mode::Create {
-                input: "  Call the bank".into()
+                input: Text::single("  Call the bank")
             }
         );
-        assert_eq!(update(&mut m, Msg::Down), Vec::new(), "ignored key");
+        assert_eq!(update(&mut m, Msg::Down), Vec::new(), "nothing to recall");
         assert_eq!(
             update(&mut m, Msg::Enter),
             vec![Cmd::Create(Box::new(
@@ -1085,6 +1278,26 @@ mod tests {
             Vec::new()
         );
         assert_eq!(form_of(&m).title.text(), "irst bi!s");
+        let mut killed = m.clone();
+        assert_eq!(update(&mut killed, Msg::DeleteWord), Vec::new());
+        assert_eq!(form_of(&killed).title.text(), "irst ", "Ctrl+W");
+        feed(&mut killed, [Msg::Left, Msg::Left]);
+        assert_eq!(update(&mut killed, Msg::KillToEnd), Vec::new());
+        assert_eq!(form_of(&killed).title.text(), "irs", "Ctrl+K");
+        update(&mut killed, Msg::Left);
+        assert_eq!(update(&mut killed, Msg::KillToStart), Vec::new());
+        assert_eq!(form_of(&killed).title.text(), "s", "Ctrl+U");
+        update(&mut killed, Msg::NextField);
+        let before = form_of(&killed);
+        assert_eq!(before.focus, Field::Status);
+        assert_eq!(
+            feed(
+                &mut killed,
+                [Msg::DeleteWord, Msg::KillToStart, Msg::KillToEnd]
+            ),
+            Vec::new()
+        );
+        assert_eq!(form_of(&killed), before, "a choice row ignores the kills");
         assert_eq!(feed(&mut m, [Msg::Enter, Msg::Right]), Vec::new());
         let form = form_of(&m);
         assert_eq!(form.focus, Field::Status, "Enter moves on");
@@ -1186,6 +1399,9 @@ mod tests {
                     Msg::Home,
                     Msg::End,
                     Msg::Delete,
+                    Msg::DeleteWord,
+                    Msg::KillToStart,
+                    Msg::KillToEnd,
                     Msg::NextField,
                     Msg::PrevField,
                     Msg::Save
@@ -1419,6 +1635,119 @@ mod tests {
         m.selected = Some(TaskId::from(42));
         assert_eq!(update(&mut m, Msg::Launch), Vec::new());
         assert_eq!(m.message, Some(Message::error("no task selected")));
+    }
+
+    fn entries(history: &History) -> Vec<&str> {
+        history.entries().iter().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn filters_are_recorded_on_enter_and_recalled_onto_the_list() {
+        let mut m = model();
+        feed(&mut m, [Msg::BeginFilter, Msg::Char('s'), Msg::Char('e')]);
+        update(&mut m, Msg::Enter);
+        // Reopening holds the applied filter; it is the draft.
+        feed(&mut m, [Msg::BeginFilter, Msg::KillToStart]);
+        feed(&mut m, chars(" thi "));
+        update(&mut m, Msg::Enter);
+        // Escape clears the filter and records nothing.
+        feed(&mut m, [Msg::BeginFilter, Msg::Char('x'), Msg::Escape]);
+        assert_eq!(entries(&m.history.filters), ["se", "thi"]);
+        assert_eq!(m.filter, "");
+
+        feed(&mut m, [Msg::BeginFilter, Msg::Char('f'), Msg::Left]);
+        assert_eq!(update(&mut m, Msg::Up), Vec::new());
+        assert_eq!(prompt(&m), ("thi".into(), 3), "cursor at the end");
+        assert_eq!(m.filter, "thi");
+        assert_eq!(m.selected, Some(TaskId::from(3)));
+        update(&mut m, Msg::Up);
+        assert_eq!(prompt(&m), ("se".into(), 2));
+        assert_eq!(m.filter, "se");
+        assert_eq!(m.selected, Some(TaskId::from(2)));
+        update(&mut m, Msg::Up);
+        assert_eq!(prompt(&m), ("se".into(), 2), "at the oldest");
+        update(&mut m, Msg::Down);
+        assert_eq!(prompt(&m), ("thi".into(), 3));
+        update(&mut m, Msg::Down);
+        assert_eq!(prompt(&m), ("f".into(), 1), "the draft, cursor at the end");
+        assert_eq!(m.filter, "f");
+        assert_eq!(m.selected, Some(TaskId::from(1)));
+        update(&mut m, Msg::Down);
+        assert_eq!(prompt(&m), ("f".into(), 1), "at the draft");
+        update(&mut m, Msg::Enter);
+        assert_eq!(entries(&m.history.filters), ["se", "thi", "f"]);
+        assert_eq!(entries(&m.history.notes), Vec::<&str>::new());
+        assert_eq!(entries(&m.history.titles), Vec::<&str>::new());
+
+        // A prompt opens at its draft, wherever the last one stopped.
+        feed(&mut m, [Msg::BeginFilter, Msg::Up, Msg::Up, Msg::Escape]);
+        feed(&mut m, [Msg::BeginFilter, Msg::Up]);
+        assert_eq!(prompt(&m), ("f".into(), 1));
+    }
+
+    #[test]
+    fn notes_are_recorded_by_log_and_done_and_recalled_by_both() {
+        let mut m = model();
+        // A refused empty note, an empty done note and Escape record nothing.
+        feed(&mut m, [Msg::BeginNote, Msg::Enter, Msg::Escape]);
+        feed(&mut m, [Msg::BeginDone, Msg::Enter]);
+        feed(&mut m, [Msg::BeginNote, Msg::Char('x'), Msg::Escape]);
+        assert_eq!(entries(&m.history.notes), Vec::<&str>::new());
+
+        update(&mut m, Msg::BeginNote);
+        feed(&mut m, chars(" found it "));
+        update(&mut m, Msg::Enter);
+        update(&mut m, Msg::BeginDone);
+        feed(&mut m, chars("merged"));
+        update(&mut m, Msg::Enter);
+        assert_eq!(entries(&m.history.notes), ["found it", "merged"]);
+
+        feed(&mut m, [Msg::BeginDone, Msg::Up, Msg::Up]);
+        assert_eq!(prompt(&m), ("found it".into(), 8));
+        update(&mut m, Msg::Escape);
+        feed(&mut m, [Msg::BeginNote, Msg::Char('d')]);
+        update(&mut m, Msg::Up);
+        assert_eq!(prompt(&m), ("merged".into(), 6), "opened at the draft");
+        update(&mut m, Msg::Down);
+        assert_eq!(
+            m.mode,
+            Mode::Note {
+                input: Text::single("d"),
+                target: NoteTarget::Log
+            }
+        );
+        assert_eq!(entries(&m.history.filters), Vec::<&str>::new());
+        assert_eq!(entries(&m.history.titles), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn titles_are_recorded_when_accepted_and_kept_apart_from_filters() {
+        let mut m = model();
+        feed(&mut m, [Msg::BeginFilter, Msg::Char('s'), Msg::Enter]);
+        // A refused empty title and Escape record nothing.
+        feed(&mut m, [Msg::BeginCreate, Msg::Enter, Msg::Escape]);
+        assert_eq!(entries(&m.history.titles), Vec::<&str>::new());
+        update(&mut m, Msg::BeginCreate);
+        feed(&mut m, chars(" Call the bank "));
+        update(&mut m, Msg::Enter);
+        feed(&mut m, [Msg::BeginCreate, Msg::Char('W'), Msg::Enter]);
+        assert_eq!(entries(&m.history.titles), ["Call the bank", "W"]);
+        assert_eq!(entries(&m.history.filters), ["s"]);
+
+        feed(&mut m, [Msg::BeginCreate, Msg::Up, Msg::Up, Msg::Escape]);
+        feed(&mut m, [Msg::BeginCreate, Msg::Char('x'), Msg::Up]);
+        assert_eq!(prompt(&m), ("W".into(), 1), "opened at the draft");
+        update(&mut m, Msg::Up);
+        assert_eq!(
+            m.mode,
+            Mode::Create {
+                input: Text::single("Call the bank")
+            }
+        );
+        update(&mut m, Msg::Up);
+        assert_eq!(prompt(&m), ("Call the bank".into(), 13), "no filters");
+        feed(&mut m, [Msg::Down, Msg::Down]);
+        assert_eq!(prompt(&m), ("x".into(), 1));
     }
 
     #[test]

@@ -6,7 +6,8 @@
 //! columns or more the detail then sits right of the list; below that it
 //! replaces the list. List rows wrap at the pane width, continuation
 //! lines indented under the title. The last line is the status bar: the
-//! input being typed, the last message, or the key hints.
+//! input being typed (scrolled under the terminal cursor), the last
+//! message, or the key hints.
 
 use std::fmt::Write as _;
 use std::ops::Range;
@@ -179,7 +180,7 @@ pub fn view(model: &Model, frame: &mut Frame) {
             if let Some(position) = render_form(model, frame, main, form) {
                 frame.set_cursor_position(position);
             }
-            frame.render_widget(status_bar(model, bar.width), bar);
+            render_status_bar(model, frame, bar);
             return;
         }
         Mode::Calendar { form, calendar } => {
@@ -187,7 +188,7 @@ pub fn view(model: &Model, frame: &mut Frame) {
             // stays hidden while the picker has the keys.
             render_form(model, frame, main, form);
             render_calendar(model, frame, main, *calendar);
-            frame.render_widget(status_bar(model, bar.width), bar);
+            render_status_bar(model, frame, bar);
             return;
         }
         _ => {}
@@ -203,7 +204,7 @@ pub fn view(model: &Model, frame: &mut Frame) {
         LayoutKind::OnePane if model.show_detail => render_detail(model, frame, main),
         LayoutKind::TwoPane | LayoutKind::OnePane => render_list(model, frame, main),
     }
-    frame.render_widget(status_bar(model, bar.width), bar);
+    render_status_bar(model, frame, bar);
     match &model.mode {
         Mode::Help => render_help(model, frame, main),
         Mode::Status { cursor } => render_picker(
@@ -614,31 +615,13 @@ fn render_detail(model: &Model, frame: &mut Frame, area: Rect) {
 /// The bottom line: the input being typed, else the last message, else
 /// the key hints.
 pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
+    if let Some(prompt) = prompt(model, width) {
+        return Paragraph::new(Line::from(vec![
+            Span::styled(prompt.label, bold()),
+            Span::raw(prompt.shown),
+        ]));
+    }
     let line = match &model.mode {
-        Mode::Filter { input } => Line::from(vec![
-            Span::styled("/", bold()),
-            Span::raw(input.as_str()),
-            Span::styled("\u{2581}", dim(model)),
-        ]),
-        Mode::Note { input, target } => {
-            let prompt = match target {
-                NoteTarget::Log => "log: ",
-                NoteTarget::Done => "done, final note (Enter alone just closes): ",
-            };
-            Line::from(vec![
-                Span::styled(prompt, bold()),
-                Span::raw(input.as_str()),
-                Span::styled("\u{2581}", dim(model)),
-            ])
-        }
-        Mode::Create { input } => Line::from(vec![
-            Span::styled(
-                format!("new task ({}): ", model.default_status.as_str()),
-                bold(),
-            ),
-            Span::raw(input.as_str()),
-            Span::styled("\u{2581}", dim(model)),
-        ]),
         Mode::Form(_) if model.message.is_none() => key_bar(FORM_HINTS, width, dim(model)),
         Mode::Calendar { .. } if model.message.is_none() => {
             key_bar(CALENDAR_HINTS, width, dim(model))
@@ -653,6 +636,63 @@ pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
         },
     };
     Paragraph::new(line)
+}
+
+/// Draws the status bar in `area`; while a prompt is open, the terminal
+/// cursor goes on its input.
+fn render_status_bar(model: &Model, frame: &mut Frame, area: Rect) {
+    frame.render_widget(status_bar(model, area.width), area);
+    if let Some(prompt) = prompt(model, area.width) {
+        frame.set_cursor_position((area.x + prompt.cursor, area.y));
+    }
+}
+
+/// A status-bar prompt laid out on one line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prompt {
+    /// What is being typed (`/`, `log: `, ...), drawn bold.
+    pub label: String,
+    /// The part of the input that fits after the label, scrolled so the
+    /// cursor stays in view.
+    pub shown: String,
+    /// The cursor's column in the bar (the last column when the label
+    /// alone fills it).
+    pub cursor: u16,
+}
+
+/// The prompt being typed (the filter, a note, a new title) laid out in
+/// `width` columns, or `None` in the other modes. The input scrolls like
+/// a single-line box of the edit view (see [`window`]).
+pub fn prompt(model: &Model, width: u16) -> Option<Prompt> {
+    let (label, input) = match &model.mode {
+        Mode::Filter { input } => ("/".to_owned(), input),
+        Mode::Note { input, target } => {
+            let label = match target {
+                NoteTarget::Log => "log: ",
+                NoteTarget::Done => "done, final note (Enter alone just closes): ",
+            };
+            (label.to_owned(), input)
+        }
+        Mode::Create { input } => (
+            format!("new task ({}): ", model.default_status.as_str()),
+            input,
+        ),
+        _ => return None,
+    };
+    // The label takes at most all but the last column, which is where
+    // the cursor stays when the label alone fills the bar.
+    let width = usize::from(width);
+    let used = label.chars().count().min(width.saturating_sub(1));
+    let room = (width - used).max(1);
+    let (_, col) = input.cursor();
+    let start = window(col, room);
+    let shown = input.lines()[0].chars().skip(start).take(room).collect();
+    let cursor = narrow(used + col - start);
+    Some(Prompt {
+        label,
+        shown,
+        cursor,
+    })
 }
 
 /// The status-bar key hints while the edit view is open (its keys are
@@ -1188,6 +1228,80 @@ mod tests {
             text(task_lines(&model, &task, 0)),
             ["  [ 7] #B one", "          two", "          three"]
         );
+    }
+
+    #[test]
+    fn prompts_scroll_under_the_cursor() {
+        use tasq_core::model::Workflow;
+        let mut model = Model::new(Workflow::default(), theme::Theme::default(), false);
+        assert_eq!(prompt(&model, 80), None, "no prompt in normal mode");
+        let note: String = ('a'..='z').cycle().take(100).collect();
+        let mut input = Text::single(&note);
+        model.mode = Mode::Note {
+            input: input.clone(),
+            target: NoteTarget::Log,
+        };
+        // 80 columns, 5 for `log: `: 75 for the text, the cursor after
+        // the 100th character on the last column.
+        assert_eq!(
+            prompt(&model, 80),
+            Some(Prompt {
+                label: "log: ".into(),
+                shown: note[26..].into(),
+                cursor: 79,
+            })
+        );
+        input.home();
+        model.mode = Mode::Note {
+            input: input.clone(),
+            target: NoteTarget::Log,
+        };
+        assert_eq!(
+            prompt(&model, 80),
+            Some(Prompt {
+                label: "log: ".into(),
+                shown: note[..75].into(),
+                cursor: 5,
+            })
+        );
+        model.mode = Mode::Filter {
+            input: Text::single("ab"),
+        };
+        assert_eq!(
+            prompt(&model, 10),
+            Some(Prompt {
+                label: "/".into(),
+                shown: "ab".into(),
+                cursor: 3,
+            })
+        );
+        let mut input = Text::single("héllo wörld");
+        input.left();
+        input.left();
+        model.mode = Mode::Create { input };
+        assert_eq!(
+            prompt(&model, 24),
+            Some(Prompt {
+                label: "new task (ready): ".into(),
+                shown: "o wörl".into(),
+                cursor: 23,
+            }),
+            "six columns left; the cursor on the second `l`, in the last one"
+        );
+        // A label wider than the bar: the cursor stays on its last column.
+        model.mode = Mode::Note {
+            input: Text::single("x"),
+            target: NoteTarget::Done,
+        };
+        assert_eq!(
+            prompt(&model, 40),
+            Some(Prompt {
+                label: "done, final note (Enter alone just closes): ".into(),
+                shown: String::new(),
+                cursor: 39,
+            })
+        );
+        assert_eq!(prompt(&model, 0).map(|p| p.cursor), Some(0));
     }
 
     #[test]
