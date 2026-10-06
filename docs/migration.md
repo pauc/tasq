@@ -62,7 +62,7 @@ of the file) and its `tasq` counterpart.
 | `tasks update <id> [<id>...]` | `tasq sync <ID>...` | Re-checks only those tasks. |
 | `tasks update-support [args]` (Freshdesk) | none | Freshdesk is a plan Non-Goal for v1. Keep using the script and its `/update-support-tasks` skill; the `support`-tagged tasks it creates list fine with `tasq support`. |
 | `tasks summary [date] [--raw]` | `tasq summary [DAY] [--raw]` | Also weekday names and `last <weekday>`; summarizer from `[report.summary]`. |
-| `tasks tlogs [when]` | `tasq tlogs [when]`, dispatched to the external `tasq-tlogs` plugin | Time logs are a plan Non-Goal for the main repo. `tasq <name>` runs an executable `tasq-<name>` found on `PATH`; the reference plugin is `examples/plugins/tasq-tlogs`, built on `tasq dates --json` and `tasq summary`. Until it is on your `PATH`, keep `tasks tlogs`. |
+| `tasks tlogs [when]` | `tasq tlogs [when]`, dispatched to the external `tasq-tlogs` plugin | Time logs are a plan Non-Goal for the main repo. `tasq <name>` runs an executable `tasq-<name>` found on `PATH`; `examples/plugins/tasq-tlogs` does what the script did: `tasq dates --json` for the range, then `claude "/time-logs <from> <to>"` from `work.default_project` under `direnv exec`. Put it on `PATH` and set `work.default_project` (the script's `TASKS_DEFAULT_WORKTREE`). `--dry-run` prints the command, `--propose` prints an even split per day without launching anything. |
 | `/wrapup` (the skill the script's session prompt ends with) | `/tasq:wrapup [task-id]` | Claude Code plugin in `plugins/claude`; defaults to `$TASQ_TASK_ID`, set by `tasq next`/`pick`. |
 | `tasks help` | `tasq --help`, `tasq <cmd> --help` | |
 
@@ -202,9 +202,10 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
       [`plugins/claude/README.md`](../plugins/claude/README.md).
 - [ ] Shell completions: `tasq completions zsh > ~/.zfunc/_tasq` (bash and
       fish in `tasq completions --help`).
-- [ ] Keep `tasks update-support` on the script (no Freshdesk in v1). Keep
-      `tasks tlogs` until `examples/plugins/tasq-tlogs` is on your `PATH`;
-      `tasq tlogs` then dispatches to it.
+- [ ] Keep `tasks update-support` on the script (no Freshdesk in v1).
+- [ ] Put `examples/plugins/tasq-tlogs` on your `PATH` and set
+      `work.default_project` to the old `TASKS_DEFAULT_WORKTREE`; check with
+      `tasq tlogs --dry-run`, then `tasq tlogs` replaces `tasks tlogs`.
 - [ ] Last: retire the old `/wrapup` and `/update-tasks` skills once every
       session is started by `tasq`. Do not delete `original/tasks`; it is the
       reference the tests are built against.

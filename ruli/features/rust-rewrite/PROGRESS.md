@@ -220,6 +220,20 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ### Plugin and release decisions (T-901 to T-904)
 
+- **`tasq-tlogs` with parity to `tasks tlogs` (follow-up 2026-10-06, task 8).** The
+  reference plugin now does what the script did: `tasq dates --json` for the range, then
+  `exec claude "/time-logs <from> <to>"` from `work.default_project` (read from
+  `tasq config show --json`, `~` expanded), wrapped in `direnv exec <dir>` when `launch.env`
+  is `direnv`, direnv is on `PATH` and `direnv status` says `Found RC allowed true|0`
+  (a refused `.envrc` is a stderr warning and a bare `claude`, as in the script). It exports
+  `TASKS_NB_NOTEBOOK=<store.notebook>` unless already set, because the personal
+  `/time-logs` skill still reads the notebook through that variable. The even split from
+  progress notes moved behind `--propose` (`--json` as before); `--dry-run` prints
+  `cd <dir> && TASKS_NB_NOTEBOOK=... <cmd>` with `printf %q`, which is what the CLI test
+  asserts (no direnv on the test `PATH`, `--set work.default_project=<home>`), plus exit 1
+  with "work.default_project is not set" when there is no directory. The skill itself stays
+  private (`~/code/SF/.claude/skills/time-logs`); `docs/plugins.md` says so and
+  `docs/migration.md` maps `TASKS_DEFAULT_WORKTREE` to `work.default_project` for it.
 - **Sessions in a new window from the TUI (follow-up 2026-10-05, ADR 0012).** `Enter` stays
   "here"; `Ctrl+Enter` / `Shift+Enter` are `Cmd::Launch(id, LaunchTarget::Detached { focus })`
   and `Host::launch(id, target)`; the CLI host runs `tasq pick <id> --detached [--no-focus]`

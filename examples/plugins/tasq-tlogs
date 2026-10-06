@@ -1,65 +1,134 @@
 #!/usr/bin/env bash
-# tasq-tlogs: propose time-log entries from the progress notes of a day or a range.
+# tasq-tlogs: post the time logs of a day or a range from a Claude session.
 #
-# The reference external plugin of docs/plugins.md. Put it on PATH and run it as
-# `tasq tlogs [SPEC...]`: `tasq tlogs`, `tasq tlogs yesterday`, `tasq tlogs last week`
+# The reference external plugin of docs/plugins.md, and the replacement for
+# `tasks tlogs`. Put it on PATH and run it as `tasq tlogs [SPEC...]`: `tasq tlogs`,
+# `tasq tlogs yesterday`, `tasq tlogs last week`, `tasq tlogs 2026-09-01 2026-09-05`
 # (SPEC is whatever `tasq dates` accepts). It talks to tasq only through
 # `$TASQ_BIN ... --json`, so it sees the same notebook, profile and --set overrides
 # as the `tasq` that ran it.
 #
-# For every working day of the range it lists the tasks that received a progress
-# note that day and splits TLOGS_HOURS (default 8) evenly between them, rounded to
-# the quarter hour: a starting point for whatever posts the time logs (GitLab
-# `/spend`, a timesheet). With --json the same data is printed as
-# {"schema": 1, "from", "to", "days": [{day, weekday, tasks: [{id, title, notes, hours}]}]}.
+# Default: resolve the range, cd to `work.default_project` and replace itself with
+# `claude "/time-logs <from> <to>"`, through `direnv exec` when `launch.env` is
+# `direnv` and the directory's .envrc is allowed. The /time-logs skill (personal,
+# not shipped here) reads HiBob, GitLab, Calendar and Slack and posts /spend.
+# The session gets TASKS_NB_NOTEBOOK=<store.notebook> so a skill written for the
+# old script reads the same notebook.
 #
-# Needs bash and jq.
+#   --propose    Do not launch anything: for every working day, list the tasks
+#                that received a progress note and split TLOGS_HOURS (default 8)
+#                evenly between them, rounded to the quarter hour. With --json:
+#                {"schema": 1, "from", "to", "days": [{day, weekday, tasks:
+#                [{id, title, notes, hours}]}]}.
+#   --dry-run    Print the directory and the command instead of running it.
+#
+# Needs bash and jq; the default mode also needs claude (and direnv, optionally).
 set -euo pipefail
 
 tasq=${TASQ_BIN:-tasq}
 hours=${TLOGS_HOURS:-8}
-json=0
+json=0 propose=0 dry_run=0
 spec=()
 for arg in "$@"; do
   case $arg in
     --json) json=1 ;;
+    --propose) propose=1 ;;
+    -n | --dry-run) dry_run=1 ;;
     -h | --help)
-      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
+      ;;
+    -*)
+      echo "tasq-tlogs: unknown option '$arg' (see --help)" >&2
+      exit 2
       ;;
     *) spec+=("$arg") ;;
   esac
 done
 
 range=$("$tasq" dates --json ${spec[@]+"${spec[@]}"})
-days=$(jq -c '[.from, .to, .working_days]' <<<"$range")
+[ "$(jq -r '.schema' <<<"$range")" = 1 ] || {
+  echo "tasq-tlogs: unsupported tasq dates document" >&2
+  exit 1
+}
+from=$(jq -r '.from' <<<"$range")
+to=$(jq -r '.to' <<<"$range")
 
-report='[]'
-for day in $(jq -r '.[2][]' <<<"$days"); do
-  summary=$("$tasq" summary --json --raw "$day")
-  entry=$(jq -c --arg day "$day" --argjson hours "$hours" '
-    (.tasks | length) as $n
-    | {
-        day: $day,
-        weekday: ($day | strptime("%Y-%m-%d") | strftime("%A")),
-        tasks: [
-          .tasks[]
-          | {id, title, notes: (.notes | length),
-             hours: (if $n == 0 then 0 else (($hours / $n) * 4 | round) / 4 end)}
-        ]
-      }' <<<"$summary")
-  report=$(jq -c --argjson e "$entry" '. + [$e]' <<<"$report")
-done
+# --propose: the even split, from the progress notes of each working day.
+if [ "$propose" = 1 ]; then
+  report='[]'
+  for day in $(jq -r '.working_days[]' <<<"$range"); do
+    summary=$("$tasq" summary --json --raw "$day")
+    entry=$(jq -c --arg day "$day" --argjson hours "$hours" '
+      (.tasks | length) as $n
+      | {
+          day: $day,
+          weekday: ($day | strptime("%Y-%m-%d") | strftime("%A")),
+          tasks: [
+            .tasks[]
+            | {id, title, notes: (.notes | length),
+               hours: (if $n == 0 then 0 else (($hours / $n) * 4 | round) / 4 end)}
+          ]
+        }' <<<"$summary")
+    report=$(jq -c --argjson e "$entry" '. + [$e]' <<<"$report")
+  done
 
-if [ "$json" = 1 ]; then
-  jq --argjson days "$days" --argjson report "$report" -n \
-    '{schema: 1, from: $days[0], to: $days[1], days: $report}'
-else
-  jq -r '
-    .[]
-    | "\(.day) (\(.weekday))",
-      (if (.tasks | length) == 0 then "  nothing logged"
-       else .tasks[]
-         | "  [\(.id)] \(.title)  \(.hours)h  (\(.notes) note\(if .notes == 1 then "" else "s" end))"
-       end)' <<<"$report"
+  if [ "$json" = 1 ]; then
+    jq --arg from "$from" --arg to "$to" --argjson report "$report" -n \
+      '{schema: 1, from: $from, to: $to, days: $report}'
+  else
+    jq -r '
+      .[]
+      | "\(.day) (\(.weekday))",
+        (if (.tasks | length) == 0 then "  nothing logged"
+         else .tasks[]
+           | "  [\(.id)] \(.title)  \(.hours)h  (\(.notes) note\(if .notes == 1 then "" else "s" end))"
+         end)' <<<"$report"
+  fi
+  exit 0
 fi
+
+# Default: the Claude session, from the default project directory.
+config=$("$tasq" config show --json)
+[ "$(jq -r '.schema' <<<"$config")" = 1 ] || {
+  echo "tasq-tlogs: unsupported tasq config document" >&2
+  exit 1
+}
+dir=$(jq -r '.config.work.default_project // empty' <<<"$config")
+if [ -z "$dir" ]; then
+  echo "tasq-tlogs: work.default_project is not set; the session needs a directory" >&2
+  echo "  (set it in the tasq config, TASQ_DEFAULT_PROJECT, or --set work.default_project=DIR)" >&2
+  exit 1
+fi
+dir=${dir/#\~/$HOME}
+if [ ! -d "$dir" ]; then
+  echo "tasq-tlogs: work.default_project not found: $dir" >&2
+  exit 1
+fi
+notebook=$(jq -r '.config.store.notebook // empty' <<<"$config")
+env_strategy=$(jq -r '.config.launch.env // "direnv"' <<<"$config")
+
+cmd=(claude "/time-logs $from $to")
+if [ "$env_strategy" = direnv ] && command -v direnv >/dev/null 2>&1 && [ -f "$dir/.envrc" ]; then
+  # `direnv status` reports `Found RC allowed true` (older versions: `0`) when
+  # the .envrc may load; otherwise the session would run without the project
+  # environment, which is not obvious from inside it.
+  allowed=$( (cd "$dir" && direnv status 2>/dev/null | awk '/^Found RC allowed/ { print $NF; exit }') || true)
+  if [ "$allowed" = true ] || [ "$allowed" = 0 ]; then
+    cmd=(direnv exec "$dir" "${cmd[@]}")
+  else
+    echo "tasq-tlogs: $dir/.envrc is not allowed by direnv; run: direnv allow $dir" >&2
+  fi
+fi
+
+if [ "$dry_run" = 1 ]; then
+  printf 'cd %q && ' "$dir"
+  [ -z "$notebook" ] || printf 'TASKS_NB_NOTEBOOK=%q ' "$notebook"
+  printf '%q ' "${cmd[@]}"
+  echo
+  exit 0
+fi
+
+cd "$dir"
+[ -z "$notebook" ] || export TASKS_NB_NOTEBOOK="${TASKS_NB_NOTEBOOK:-$notebook}"
+exec "${cmd[@]}"

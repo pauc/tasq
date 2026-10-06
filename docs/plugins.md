@@ -63,13 +63,31 @@ Every document carries `"schema": 1`; check it and refuse anything else. Exit co
 
 ### The reference plugin: `tasq-tlogs`
 
-`examples/plugins/tasq-tlogs` (bash and jq) is the shape of the author's time-log tool with
-the personal parts removed. `tasq tlogs [SPEC...]` resolves the range with `tasq dates --json`,
-collects `tasq summary --json --raw <day>` for every working day, and prints a proposal that
-splits `TLOGS_HOURS` (default 8) evenly across the tasks that received a note that day:
+`examples/plugins/tasq-tlogs` (bash and jq) is the author's time-log tool, the replacement for
+`tasks tlogs`. `tasq tlogs [SPEC...]` resolves the range with `tasq dates --json`, reads
+`work.default_project`, `store.notebook` and `launch.env` from `tasq config show --json`, and
+replaces itself with a Claude session in that directory:
 
 ```
-$ tasq tlogs last week
+$ tasq tlogs last week --dry-run
+cd /home/me/code/app && TASKS_NB_NOTEBOOK=home direnv exec /home/me/code/app claude /time-logs\ 2026-09-28\ 2026-10-02
+```
+
+The session runs `/time-logs <from> <to>`, a personal skill that is not shipped here (it reads
+HiBob, GitLab activity, Google Calendar and Slack, proposes a breakdown per day and posts it
+with `/spend`). Write your own under that name, or edit the prompt in the script. The command
+is wrapped in `direnv exec` when `launch.env` is `direnv`, `direnv` is on `PATH` and the
+directory's `.envrc` is allowed (a `.envrc` that direnv refuses is a warning on stderr and
+a bare `claude`). `TASKS_NB_NOTEBOOK` is set to the configured notebook so a skill written
+for the old script reads the same tasks. `work.default_project` unset or missing is exit 1
+with the key to set.
+
+`--propose` launches nothing: for every working day of the range it lists the tasks that
+received a progress note (`tasq summary --json --raw <day>`) and splits `TLOGS_HOURS` (default
+8) evenly across them, a starting point for whatever posts the entries:
+
+```
+$ tasq tlogs --propose last week
 2026-09-28 (Monday)
   [12] Rewrite the tasks script in Rust  6h  (3 notes)
   [15] Review MR !77: Faster index         2h  (1 note)
@@ -77,12 +95,13 @@ $ tasq tlogs last week
   nothing logged
 ```
 
-With `--json` the same data is `{"schema": 1, "from", "to", "days": [{day, weekday, tasks:
-[{id, title, notes, hours}]}]}`, ready for whatever posts the entries (GitLab `/spend`, a
-timesheet). To install it: copy or symlink the file somewhere on `PATH`.
+With `--propose --json` the same data is `{"schema": 1, "from", "to", "days": [{day,
+weekday, tasks: [{id, title, notes, hours}]}]}`. To install the plugin: copy or symlink the
+file somewhere on `PATH`.
 
 The CLI integration test `plugins::example_tlogs_plugin_runs_through_dispatch` runs this
-script through the dispatcher against the fixture notebook.
+script through the dispatcher against the fixture notebook: `--propose` in both formats,
+`--dry-run` with `--set work.default_project=...`, and the error without a directory.
 
 ## Hooks
 

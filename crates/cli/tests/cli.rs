@@ -2855,7 +2855,7 @@ mod plugins {
         let out = env
             .tasq()
             .env("PATH", &path)
-            .args(["tlogs", "2026-10-02", "2026-10-04"])
+            .args(["tlogs", "--propose", "2026-10-02", "2026-10-04"])
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
@@ -2871,6 +2871,7 @@ mod plugins {
                 "--set",
                 "store.notebook=home",
                 "tlogs",
+                "--propose",
                 "--json",
                 "2026-10-02",
             ])
@@ -2880,6 +2881,43 @@ mod plugins {
         let doc: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
         assert_eq!(doc["schema"], 1);
         assert_eq!(doc["days"][0]["tasks"][0]["hours"], 6);
+        // The default mode launches `claude "/time-logs FROM TO"` from
+        // `work.default_project`; --dry-run prints that instead. No direnv on
+        // this PATH, so the command is bare.
+        let project = env.home.to_str().unwrap();
+        let out = env
+            .tasq()
+            .env("PATH", &path)
+            .args([
+                "--set",
+                &format!("work.default_project={project}"),
+                "tlogs",
+                "--dry-run",
+                "2026-10-02",
+                "2026-10-03",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            format!(
+                "cd {project} && TASKS_NB_NOTEBOOK=home claude /time-logs\\ 2026-10-02\\ 2026-10-03 \n"
+            )
+        );
+        // Without a directory it refuses, naming the key to set.
+        let out = env
+            .tasq()
+            .env("PATH", &path)
+            .args(["tlogs", "--dry-run", "2026-10-02"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert!(
+            stderr(&out).contains("work.default_project is not set"),
+            "{}",
+            stderr(&out)
+        );
         let out = env
             .tasq()
             .env("PATH", &path)
