@@ -49,39 +49,22 @@ fn nb_cli_register_passes_the_basename_and_the_folder() {
 }
 
 #[test]
-fn nb_cli_checkpoint_asks_dirty_first_and_waits() {
+fn nb_cli_checkpoint_commits_without_asking_dirty_and_waits() {
     let nb = NbEnv::fixture();
     nb.git_init();
     let folder = nb.notebook().display().to_string();
-    // dirty -> 0 (dirty), checkpoint -> 0
+    // One spawn: no `nb git dirty` before the checkpoint.
     let (dir, fake_nb) = fake("exit 0");
     let b = NbCliBookkeeper::new(fake_nb, nb.notebook());
     assert!(b.checkpoint("[tasq] Update: a.todo.md").unwrap());
     assert_eq!(
         fake_nb_calls(&dir),
-        vec![
-            format!("git dirty {folder}"),
-            format!("git checkpoint {folder} [tasq] Update: a.todo.md --wait"),
-        ]
-    );
-    // dirty -> 1 (clean): no checkpoint call.
-    let (dir, clean) = fake("case \"$2\" in dirty) exit 1;; esac; exit 0");
-    let b = NbCliBookkeeper::new(clean, nb.notebook());
-    assert!(!(b.checkpoint("[tasq] Update: a.todo.md").unwrap()));
-    assert_eq!(fake_nb_calls(&dir), vec![format!("git dirty {folder}")]);
-    // dirty fails some other way: an error with the fix.
-    let (_dir, broken) = fake("echo 'nb broke' >&2; exit 3");
-    let b = NbCliBookkeeper::new(broken, nb.notebook());
-    let err = b.checkpoint("[tasq] Update: a.todo.md").unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        format!(
-            "bookkeeping failed after the write: checking for changes: nb git dirty {folder} failed with status 3: nb broke; commit by hand with 'nb git checkpoint'"
-        )
+        vec![format!(
+            "git checkpoint {folder} [tasq] Update: a.todo.md --wait"
+        )]
     );
     // checkpoint itself fails.
-    let (_dir, no_commit) =
-        fake("case \"$2\" in checkpoint) echo 'denied' >&2; exit 1;; esac; exit 0");
+    let (_dir, no_commit) = fake("echo 'denied' >&2; exit 1");
     let b = NbCliBookkeeper::new(no_commit, nb.notebook());
     let err = b.checkpoint("[tasq] Update: a.todo.md").unwrap_err();
     assert!(
@@ -94,6 +77,32 @@ fn nb_cli_checkpoint_asks_dirty_first_and_waits() {
             .ends_with("denied; commit by hand with 'nb git checkpoint'"),
         "{err}"
     );
+}
+
+#[test]
+fn nb_store_write_runs_only_the_checkpoint() {
+    let nb = NbEnv::fixture();
+    nb.git_init();
+    let folder = nb.notebook().display().to_string();
+    let fake = fake_nb("exit 0");
+    let options = NbStoreOptions::new(Workflow::default())
+        .with_env(vec![("PATH".to_owned(), fake.path().display().to_string())])
+        .with_bookkeeper(Choice::Nb);
+    let mut store = NbStore::open_dir(nb.notebook(), &options).unwrap();
+    let mut task = store.get(&TaskId::from(id::SUPPORT)).unwrap();
+    // Unchanged: nothing written, nb never runs.
+    store.update(&task).unwrap();
+    assert_eq!(fake_nb_calls(&fake), Vec::<String>::new());
+    task.set_priority(Priority::A);
+    store.update(&task).unwrap();
+    assert_eq!(
+        fake_nb_calls(&fake),
+        vec![format!(
+            "git checkpoint {folder} [tasq] Update: {} --wait",
+            file_name(id::SUPPORT)
+        )]
+    );
+    assert_eq!(store.warnings(), []);
 }
 
 #[test]
@@ -196,6 +205,7 @@ fn native_checkpoint_commits_only_dirty_repositories() {
     );
     nb.git_init();
     assert!(!(b.checkpoint("[tasq] Update: x").unwrap()), "clean");
+    assert_eq!(nb.git_subjects(), vec!["[nb] Initialize".to_owned()]);
     nb.write("notes.md", "# Notes\n\nchanged\n");
     assert!(b.checkpoint("[tasq] Update: notes.md").unwrap());
     assert_eq!(
@@ -211,6 +221,33 @@ fn native_checkpoint_commits_only_dirty_repositories() {
     assert!(b.checkpoint("[tasq] Add: fresh.todo.md").unwrap());
     assert_eq!(nb.git_status(), "");
     assert_eq!(nb.git_subjects().len(), 3);
+    // A change git ignores commits nothing and is not a failure.
+    nb.write(".gitignore", "ignored.md\n");
+    assert!(b.checkpoint("[tasq] Update: .gitignore").unwrap());
+    nb.write("ignored.md", "# Ignored\n");
+    assert!(!(b.checkpoint("[tasq] Update: ignored.md").unwrap()));
+    assert_eq!(nb.git_subjects().len(), 4);
+}
+
+#[test]
+fn native_checkpoint_rejected_by_a_hook_is_a_failure() {
+    let nb = NbEnv::fixture();
+    nb.git_init();
+    let hooks = nb.notebook().join(".git/hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("pre-commit");
+    std::fs::write(&hook, "#!/bin/sh\necho 'hook says no' >&2\nexit 1\n").unwrap();
+    let mut perms = std::fs::metadata(&hook).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&hook, perms).unwrap();
+    let b = NativeBookkeeper::new(nb.notebook(), nb.env.clone());
+    nb.write("notes.md", "# Notes\n\nchanged\n");
+    let err = b.checkpoint("[tasq] Update: notes.md").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "bookkeeping failed after the write: committing: git commit -q -m [tasq] Update: notes.md failed with status 1: hook says no; commit by hand with 'git add -A && git commit'"
+    );
+    assert_eq!(nb.git_subjects(), vec!["[nb] Initialize".to_owned()]);
 }
 
 #[test]
