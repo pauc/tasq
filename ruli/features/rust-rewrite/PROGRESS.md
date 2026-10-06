@@ -632,6 +632,14 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ### Launcher decisions (T-401 to T-405)
 
+- **A failed `exec` gets a test binary of its own (2026-10-06, PR #3 CI).** `Command::exec`
+  with a custom env swaps the process-wide `environ` for a temporary array and frees it when
+  exec fails, under the env *read* lock only, so a concurrent `spawn` on another test thread
+  can read freed memory: insta's `cargo metadata` failed with `Bad address (os error 14)`,
+  fell back to the manifest dir and reported `claude_prompt_snapshot` as a new snapshot
+  (`crates/launch/crates/launch/tests/snapshots/*.snap.new`). The Claude and shell
+  failed-exec checks now live in one test in `crates/launch/tests/exec_failure.rs`; never
+  exec from a test that shares its process with other tests.
 - `tasq_core::launch`: `LaunchContext { task, file, markdown, workdir, in_worktree, env, statuses }`,
   `resolve_workdir(task, default_project, is_dir)` (first existing worktree → project if it exists,
   else a warning and the default → `NoWorkdir`/`WorkdirMissing` errors), the `Launcher` trait
