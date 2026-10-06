@@ -1,0 +1,18 @@
+---
+source: crates/tui/tests/render.rs
+expression: "screen(&mut model, 60, 14)"
+---
+"┌ Tasks (6/6) ─────────────────────────────────────────────┐"
+"│READY                                                     │"
+"│  [42] #B Investigate why the nightly export job times out│"
+"│          on the biggest tenants (due 2026-10-20)         │"
+"│           #gitlab   #support                             │"
+"│  [12] #B Review MR !88: paginate the export  #gitlab     │"
+"│           #review-request                                │"
+"│  [ 3] #C Write the release notes                         │"
+"│LATER                                                     │"
+"│  [ 4] #B Try the new profiler                            │"
+"│NO STATUS                                                 │"
+"│  [ 5] #B Call the bank                                   │"
+"└──────────────────────────────────────────────────────────┘"
+"j/k  /  c t p l d e  Enter open  s/S sync  ? help  q quit   "

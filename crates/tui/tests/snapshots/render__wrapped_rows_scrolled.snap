@@ -1,0 +1,13 @@
+---
+source: crates/tui/tests/render.rs
+expression: "screen(&mut model, 60, 9)"
+---
+"┌ Tasks (6/6) ─────────────────────────────────────────────┐"
+"│           #review-request                                │"
+"│  [ 3] #C Write the release notes                         │"
+"│LATER                                                     │"
+"│  [ 4] #B Try the new profiler                            │"
+"│NO STATUS                                                 │"
+"│  [ 5] #B Call the bank                                   │"
+"└──────────────────────────────────────────────────────────┘"
+"j/k  /  c t p l d e  Enter open  s/S sync  ? help  q quit   "

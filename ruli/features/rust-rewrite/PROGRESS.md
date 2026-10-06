@@ -246,6 +246,19 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   `view.rs`: 199 tested, 9 missed on the first pass (styles and scrolling the text snapshots
   cannot see: covered with buffer-style assertions, a scrolled due box, a compact-layout test
   and a 100-column boundary snapshot), 0 missed after one reshaped modifier expression.
+- **Detail on demand and wrapped list rows (follow-up 2026-10-06).** The detail pane is no
+  longer always there: `show_detail` now applies to both layouts and starts off, so `tasq ui`
+  opens on the list alone; `Right` (`show-detail`) shows the selected task's detail beside the
+  list from 100 columns or in its place below that, `Left` (`hide-detail`) hides it, `Tab`
+  still toggles and `Esc` still closes. The one-pane detail's bottom hint is rendered from the
+  `hide-detail` binding. List rows wrap at the pane width (`view::task_lines`): the title's
+  words, the due date and each chip are placed in turn, continuation lines indented to where
+  the title starts; `list_lines` returns the lines plus the selected task's line range and
+  `scroll_offset` takes that range (its last line scrolls into view, the first when the row is
+  taller than the pane). Snapshots: `two_pane_list`/`two_pane_detail`, `wrapped_rows`,
+  `wrapped_rows_scrolled`. Mutants on `task_lines`/`list_lines`/`scroll_offset`: 2 missed on
+  the first pass (two `>` boundaries), 0 after an exact-width wrap test and reshaping
+  `scroll_offset` with `saturating_sub`.
 - **Full-screen edit view with the description (follow-up 2026-10-06, ADR 0016, todo 13).**
   The popup of ADR 0015 is gone: `e` now replaces the list and the detail with one bordered
   panel, the six single-line rows, a `Description` rule and the description below it; the

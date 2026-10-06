@@ -476,8 +476,9 @@ A range never extends past today. Output is `FROM TO` (YYYY-MM-DD); with
 --json: {spec, from, to, days: [...], working_days: [...]}.";
 
 const UI_HELP: &str = "\
-The list is the grouped view of `tasq`, with the selected task's detail
-beside it (or, below 100 columns, behind Tab). Keys: j/k move, g/G first
+The list is the grouped view of `tasq`; Right shows the selected task's
+detail beside it (or, below 100 columns, in its place) and Left hides it
+again. Keys: j/k move, g/G first
 and last, / filter (text matches titles; #word is a status, tag or
 priority as for `tasq <word>`), t status, p priority, l log a note, d mark
 done (with an optional final note), E open the file in $VISUAL or $EDITOR,

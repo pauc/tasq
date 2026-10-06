@@ -82,7 +82,31 @@ fn screen(model: &mut Model, width: u16, height: u16) -> String {
 #[test]
 fn two_pane_layout() {
     let mut model = fixture(true);
-    assert_snapshot!(screen(&mut model, 120, 28));
+    assert_snapshot!("two_pane_list", screen(&mut model, 120, 28));
+    update(&mut model, Msg::ShowDetail);
+    assert_snapshot!("two_pane_detail", screen(&mut model, 120, 28));
+    update(&mut model, Msg::HideDetail);
+    assert_snapshot!("two_pane_list", screen(&mut model, 120, 28));
+}
+
+#[test]
+fn long_rows_wrap_under_the_title() {
+    let mut model = fixture(true);
+    let mut long = Task::new(
+        TaskId::from(42),
+        "Investigate why the nightly export job times out on the biggest tenants",
+    );
+    long.set_status(Status::READY);
+    long.due = Some(date("2026-10-20"));
+    long.add_tag(Tag::new("gitlab").unwrap());
+    long.add_tag(Tag::new("support").unwrap());
+    let mut tasks = tasks();
+    tasks.push(long);
+    update(&mut model, Msg::Loaded(tasks));
+    update(&mut model, Msg::Bottom);
+    assert_snapshot!("wrapped_rows", screen(&mut model, 60, 14));
+    // A wrapped selected row at the bottom scrolls fully into view.
+    assert_snapshot!("wrapped_rows_scrolled", screen(&mut model, 60, 9));
 }
 
 #[test]
@@ -450,6 +474,7 @@ fn detail_head_and_progress_heading() {
 fn styles_the_character_snapshots_cannot_see() {
     // Detail headings are bold; the tag chip has the CLI's colours.
     let mut model = fixture(true);
+    update(&mut model, Msg::ShowDetail);
     let terminal = render(&mut model, 120, 28);
     let (x, y) = find(&terminal, "Merge requests", 60);
     assert!(
@@ -462,6 +487,7 @@ fn styles_the_character_snapshots_cannot_see() {
     assert_eq!(chip.bg, Color::Indexed(24));
     assert_eq!(chip.fg, Color::Indexed(231));
     let mut plain = fixture(false);
+    update(&mut plain, Msg::ShowDetail);
     let terminal = render(&mut plain, 120, 28);
     let (x, y) = find(&terminal, "#ci", 60);
     assert_eq!(terminal.backend().buffer()[(x, y)].bg, Color::Reset);

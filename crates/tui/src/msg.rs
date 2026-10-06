@@ -80,8 +80,12 @@ pub enum Msg {
     Reload,
     /// `?`: toggle the help overlay.
     Help,
-    /// `Tab`: in the one-pane layout, switch between list and detail.
+    /// `Tab`: switch between list and detail.
     ToggleDetail,
+    /// `Right`: show the selected task's detail.
+    ShowDetail,
+    /// `Left`: hide the detail.
+    HideDetail,
     /// `q`: leave.
     Quit,
     /// The terminal is now this size.

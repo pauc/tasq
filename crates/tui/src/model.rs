@@ -115,9 +115,9 @@ impl Message {
 /// How the screen is split.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutKind {
-    /// List on the left, detail on the right.
+    /// Wide enough for the detail beside the list.
     TwoPane,
-    /// One pane: the list, or the detail of the selected task (`Tab`).
+    /// One pane: the list, or the detail of the selected task.
     OnePane,
 }
 
@@ -169,7 +169,9 @@ pub struct Model {
     pub width: u16,
     /// Terminal height.
     pub height: u16,
-    /// In the one-pane layout: show the detail instead of the list.
+    /// Show the selected task's detail: beside the list in the two-pane
+    /// layout, instead of it in the one-pane layout. Off until `Right`
+    /// (or `Tab`); `Left` and `Esc` turn it off again.
     pub show_detail: bool,
     /// Set by `q`; the runtime stops.
     pub quit: bool,

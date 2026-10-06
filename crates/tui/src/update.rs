@@ -76,6 +76,8 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
             }
         }
         Msg::ToggleDetail => model.show_detail = !model.show_detail,
+        Msg::ShowDetail => model.show_detail = true,
+        Msg::HideDetail => model.show_detail = false,
         Msg::Help => model.mode = Mode::Help,
         Msg::Reload => return vec![Cmd::Load],
         Msg::BeginFilter => {
@@ -548,6 +550,14 @@ mod tests {
         assert!(!m.show_detail);
         update(&mut m, Msg::ToggleDetail);
         update(&mut m, Msg::ToggleDetail);
+        assert!(!m.show_detail);
+        update(&mut m, Msg::ShowDetail);
+        assert!(m.show_detail);
+        update(&mut m, Msg::ShowDetail);
+        assert!(m.show_detail);
+        update(&mut m, Msg::HideDetail);
+        assert!(!m.show_detail);
+        update(&mut m, Msg::HideDetail);
         assert!(!m.show_detail);
         feed(&mut m, [Msg::BeginFilter, Msg::Char('T'), Msg::Enter]);
         assert_eq!(m.filter, "T");

@@ -62,8 +62,12 @@ pub enum Action {
     Reload,
     /// Show the help overlay.
     Help,
-    /// One-pane layout: switch between list and detail.
+    /// Switch between list and detail.
     ToggleDetail,
+    /// Show the selected task's detail.
+    ShowDetail,
+    /// Hide the detail.
+    HideDetail,
     /// Clear the filter, close the detail or a dialog.
     Cancel,
     /// Apply the choice in a picker.
@@ -96,6 +100,8 @@ pub const NORMAL: &[Action] = &[
     Action::Reload,
     Action::Help,
     Action::ToggleDetail,
+    Action::ShowDetail,
+    Action::HideDetail,
     Action::Cancel,
     Action::Quit,
 ];
@@ -134,6 +140,8 @@ impl Action {
         Action::Reload,
         Action::Help,
         Action::ToggleDetail,
+        Action::ShowDetail,
+        Action::HideDetail,
         Action::Cancel,
         Action::Confirm,
         Action::Quit,
@@ -164,6 +172,8 @@ impl Action {
             Self::Reload => "reload",
             Self::Help => "help",
             Self::ToggleDetail => "toggle-detail",
+            Self::ShowDetail => "show-detail",
+            Self::HideDetail => "hide-detail",
             Self::Cancel => "cancel",
             Self::Confirm => "confirm",
             Self::Quit => "quit",
@@ -200,6 +210,8 @@ impl Action {
             Self::Reload => &["r"],
             Self::Help => &["?"],
             Self::ToggleDetail => &["tab"],
+            Self::ShowDetail => &["right"],
+            Self::HideDetail => &["left"],
             Self::Cancel => &["esc"],
             Self::Quit => &["q"],
         }
@@ -230,6 +242,8 @@ impl Action {
             Self::Reload => Msg::Reload,
             Self::Help => Msg::Help,
             Self::ToggleDetail => Msg::ToggleDetail,
+            Self::ShowDetail => Msg::ShowDetail,
+            Self::HideDetail => Msg::HideDetail,
             Self::Cancel => Msg::Escape,
             Self::Confirm => Msg::Enter,
             Self::Quit => Msg::Quit,
@@ -749,6 +763,8 @@ mod tests {
             (ch('r'), Msg::Reload),
             (ch('?'), Msg::Help),
             (key(KeyCode::Tab), Msg::ToggleDetail),
+            (key(KeyCode::Right), Msg::ShowDetail),
+            (key(KeyCode::Left), Msg::HideDetail),
             (ch('q'), Msg::Quit),
             (ctrl('c'), Msg::Quit),
             (key(KeyCode::Esc), Msg::Escape),
@@ -898,8 +914,8 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), Action::ALL.len(), "names are unique");
-        assert_eq!(Action::ALL.len(), 25);
-        assert_eq!(NORMAL.len(), 24);
+        assert_eq!(Action::ALL.len(), 27);
+        assert_eq!(NORMAL.len(), 26);
         assert!(!NORMAL.contains(&Action::Confirm));
         assert_eq!(
             PICKER,

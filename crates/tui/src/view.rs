@@ -1,13 +1,15 @@
 //! Rendering: the model onto a ratatui [`Frame`]. No state of its own;
 //! the snapshot tests under `tests/` draw models onto a `TestBackend`.
 //!
-//! Layout (T-803): at [`TWO_PANE_MIN_WIDTH`](crate::model::TWO_PANE_MIN_WIDTH)
-//! columns or more the list sits left and the selected task's detail right;
-//! below that one pane shows the list, or the detail after `Tab`. The last
-//! line is the status bar: the input being typed, the last message, or
-//! the key hints.
+//! Layout (T-803): the list alone until the detail is shown (`Right`,
+//! `Tab`). At [`TWO_PANE_MIN_WIDTH`](crate::model::TWO_PANE_MIN_WIDTH)
+//! columns or more the detail then sits right of the list; below that it
+//! replaces the list. List rows wrap at the pane width, continuation
+//! lines indented under the title. The last line is the status bar: the
+//! input being typed, the last message, or the key hints.
 
 use std::fmt::Write as _;
+use std::ops::Range;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
@@ -74,9 +76,10 @@ pub const HELP: &[(&[Action], &str)] = &[
     ),
     (&[Action::Reload], "reload"),
     (
-        &[Action::ToggleDetail],
-        "narrow terminals: switch between list and detail",
+        &[Action::ShowDetail, Action::HideDetail],
+        "show / hide the selected task's detail",
     ),
+    (&[Action::ToggleDetail], "switch between list and detail"),
     (&[Action::Confirm], "in a picker: apply the choice"),
     (&[Action::Help], "this help"),
     (&[Action::Quit], "quit"),
@@ -172,7 +175,7 @@ pub fn view(model: &Model, frame: &mut Frame) {
         return;
     }
     match model.layout() {
-        LayoutKind::TwoPane => {
+        LayoutKind::TwoPane if model.show_detail => {
             let [left, right] =
                 Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
                     .areas(main);
@@ -180,7 +183,7 @@ pub fn view(model: &Model, frame: &mut Frame) {
             render_detail(model, frame, right);
         }
         LayoutKind::OnePane if model.show_detail => render_detail(model, frame, main),
-        LayoutKind::OnePane => render_list(model, frame, main),
+        LayoutKind::TwoPane | LayoutKind::OnePane => render_list(model, frame, main),
     }
     frame.render_widget(status_bar(model, bar.width), bar);
     match &model.mode {
@@ -294,52 +297,84 @@ fn priority_span(model: &Model, priority: Priority) -> Span<'static> {
     }
 }
 
-/// One list row, in the CLI's shape: `  [id] #prio Title (due date) chips`.
-pub fn task_line<'a>(model: &Model, task: &'a Task) -> Line<'a> {
-    let mut spans = vec![
+/// One list row, in the CLI's shape (`  [id] #prio Title (due date)
+/// chips`), wrapped to `width` columns: the title's words, the due date
+/// and each chip are placed in turn, and a line that is full continues
+/// on the next one, indented to where the title starts. A word wider
+/// than the pane gets a line of its own (and is cut by the terminal).
+pub fn task_lines<'a>(model: &Model, task: &'a Task, width: u16) -> Vec<Line<'a>> {
+    let prefix = vec![
         Span::styled(format!("  [{:>2}] ", task.id.as_str()), dim()),
         priority_span(model, task.priority),
-        Span::raw(" "),
-        Span::raw(task.title.as_str()),
     ];
+    let indent: usize = prefix.iter().map(Span::width).sum::<usize>() + 1;
+    let mut atoms: Vec<Span<'a>> = task.title.split_whitespace().map(Span::raw).collect();
     if let Some(due) = task.due {
-        spans.push(Span::styled(format!(" (due {})", format_date(due)), dim()));
+        atoms.push(Span::styled(format!("(due {})", format_date(due)), dim()));
     }
     for tag in &task.tags {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(format!(" {} ", tag.to_hash()), chip(model)));
+        atoms.push(Span::styled(format!(" {} ", tag.to_hash()), chip(model)));
     }
-    Line::from(spans)
+    let width = usize::from(width);
+    let mut lines = Vec::new();
+    let mut spans = prefix;
+    let mut used = indent - 1;
+    let mut atoms_on_line = 0;
+    for atom in atoms {
+        let atom_width = atom.width();
+        if atoms_on_line > 0 && used + 1 + atom_width > width {
+            lines.push(Line::from(std::mem::take(&mut spans)));
+            spans.push(Span::raw(" ".repeat(indent)));
+            used = indent;
+            atoms_on_line = 0;
+        }
+        if atoms_on_line > 0 || lines.is_empty() {
+            spans.push(Span::raw(" "));
+            used += 1;
+        }
+        spans.push(atom);
+        used += atom_width;
+        atoms_on_line += 1;
+    }
+    lines.push(Line::from(spans));
+    lines
 }
 
-/// The list, headers included, as styled lines.
-pub fn list_lines(model: &Model) -> Vec<Line<'_>> {
+/// The list, headers included, as styled lines wrapped to `width`
+/// columns, plus the range of lines the selected task takes.
+pub fn list_lines(model: &Model, width: u16) -> (Vec<Line<'_>>, Option<Range<usize>>) {
     let selected = model.selected.as_ref();
-    model
-        .rows()
-        .into_iter()
-        .map(|row| match row {
-            Row::Header(status) => Line::styled(
+    let mut lines = Vec::new();
+    let mut selected_lines = None;
+    for row in model.rows() {
+        match row {
+            Row::Header(status) => lines.push(Line::styled(
                 group_label(status.as_ref()),
                 colored(model, model.theme.status_color(status.as_ref()))
                     .add_modifier(Modifier::BOLD),
-            ),
+            )),
             Row::Task(task) => {
-                let line = task_line(model, task);
+                let rows = task_lines(model, task, width);
                 if selected == Some(&task.id) {
-                    line.style(Style::new().add_modifier(Modifier::REVERSED))
+                    selected_lines = Some(lines.len()..lines.len() + rows.len());
+                    lines.extend(
+                        rows.into_iter()
+                            .map(|line| line.style(Style::new().add_modifier(Modifier::REVERSED))),
+                    );
                 } else {
-                    line
+                    lines.extend(rows);
                 }
             }
-        })
-        .collect()
+        }
+    }
+    (lines, selected_lines)
 }
 
-/// The first row to show so that the selected row fits in `height` rows.
-pub fn scroll_offset(selected_row: Option<usize>, height: usize) -> usize {
-    match selected_row {
-        Some(row) if height > 0 && row >= height => row + 1 - height,
+/// The first line to show so that the `selected` lines fit in `height`
+/// lines; when they do not fit, their first line is shown.
+pub fn scroll_offset(selected: Option<Range<usize>>, height: usize) -> usize {
+    match selected {
+        Some(range) if height > 0 => range.end.saturating_sub(height).min(range.start),
         _ => 0,
     }
 }
@@ -364,8 +399,8 @@ fn render_list(model: &Model, frame: &mut Frame, area: Rect) {
         );
         return;
     }
-    let lines = list_lines(model);
-    let offset = scroll_offset(model.selected_row(), inner.height as usize);
+    let (lines, selected) = list_lines(model, inner.width);
+    let offset = scroll_offset(selected, inner.height as usize);
     let visible: Vec<Line<'_>> = lines.into_iter().skip(offset).collect();
     frame.render_widget(Paragraph::new(visible), inner);
 }
@@ -498,8 +533,10 @@ fn render_detail(model: &Model, frame: &mut Frame, area: Rect) {
         ),
     };
     let mut block = Block::bordered().title(title);
-    if model.layout() == LayoutKind::OnePane {
-        block = block.title_bottom(Line::from(" Tab: list ").right_aligned());
+    if model.layout() == LayoutKind::OnePane
+        && let Some(key) = model.keys.hint(Action::HideDetail)
+    {
+        block = block.title_bottom(Line::from(format!(" {key}: list ")).right_aligned());
     }
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -793,7 +830,7 @@ fn render_description(frame: &mut Frame, area: Rect, form: &Form, cursor: &mut O
     let width = usize::from(area.width).max(1);
     let lines = wrapped(form.description.lines(), width);
     let (vrow, vcol) = wrapped_cursor(&form.description, width);
-    let offset = scroll_offset(Some(vrow), usize::from(area.height));
+    let offset = scroll_offset(Some(vrow..vrow + 1), usize::from(area.height));
     let shown: Vec<Line<'_>> = lines.into_iter().skip(offset).map(Line::raw).collect();
     frame.render_widget(Paragraph::new(shown), area);
     if form.focus == Field::Description {
@@ -980,11 +1017,42 @@ mod tests {
     #[test]
     fn scroll_keeps_the_selection_in_view() {
         assert_eq!(scroll_offset(None, 10), 0);
-        assert_eq!(scroll_offset(Some(3), 10), 0);
-        assert_eq!(scroll_offset(Some(9), 10), 0);
-        assert_eq!(scroll_offset(Some(10), 10), 1);
-        assert_eq!(scroll_offset(Some(25), 10), 16);
-        assert_eq!(scroll_offset(Some(5), 0), 0);
+        assert_eq!(scroll_offset(Some(3..4), 10), 0);
+        assert_eq!(scroll_offset(Some(9..10), 10), 0);
+        assert_eq!(scroll_offset(Some(10..11), 10), 1);
+        assert_eq!(scroll_offset(Some(25..26), 10), 16);
+        assert_eq!(scroll_offset(Some(5..6), 0), 0);
+        // A wrapped row scrolls until its last line is in view...
+        assert_eq!(scroll_offset(Some(8..12), 10), 2);
+        // ...unless it is taller than the pane: then its first line is.
+        assert_eq!(scroll_offset(Some(8..30), 10), 8);
+    }
+
+    #[test]
+    fn rows_wrap_at_the_pane_width() {
+        use tasq_core::model::{TaskId, Workflow};
+        let model = Model::new(Workflow::default(), theme::Theme::default(), false);
+        let task = Task::new(TaskId::from(7), "one two three");
+        let text = |lines: Vec<Line<'_>>| -> Vec<String> {
+            lines
+                .iter()
+                .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+                .collect()
+        };
+        // 23 columns: the row fits exactly; one less wraps the last word.
+        assert_eq!(
+            text(task_lines(&model, &task, 23)),
+            ["  [ 7] #B one two three"]
+        );
+        assert_eq!(
+            text(task_lines(&model, &task, 22)),
+            ["  [ 7] #B one two", "          three"]
+        );
+        // A word wider than the pane keeps a line of its own; width 0 never loops.
+        assert_eq!(
+            text(task_lines(&model, &task, 0)),
+            ["  [ 7] #B one", "          two", "          three"]
+        );
     }
 
     #[test]
@@ -1158,15 +1226,22 @@ mod tests {
             )
         );
         assert_eq!(
-            rows[19],
+            rows[18],
+            (
+                "Right, Left".to_owned(),
+                "show / hide the selected task's detail"
+            )
+        );
+        assert_eq!(
+            rows[20],
             ("Enter".to_owned(), "in a picker: apply the choice")
         );
-        assert_eq!(rows[21], ("q, C-c".to_owned(), "quit"));
+        assert_eq!(rows[22], ("q, C-c".to_owned(), "quit"));
         let mut table = BTreeMap::new();
         table.insert("quit".to_owned(), KeySpec::Many(Vec::new()));
         table.insert("sync".to_owned(), KeySpec::One("f5".to_owned()));
         let rows = help_rows(&KeyMap::from_config(&table).unwrap());
-        assert_eq!(rows[21], ("none, C-c".to_owned(), "quit"));
+        assert_eq!(rows[22], ("none, C-c".to_owned(), "quit"));
         assert_eq!(rows[15].0, "F5");
     }
 

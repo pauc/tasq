@@ -291,8 +291,9 @@ A value that is not a colour name or a number from 0 to 255 is ignored. `NO_COLO
 
 ## Terminal UI
 
-`tasq ui` is the grouped list plus the selected task's detail (side by side from 100 columns,
-otherwise one pane with `Tab` switching between them). Its edits are the same operations as
+`tasq ui` is the grouped list, with the selected task's detail shown on `Right` and hidden on
+`Left` (beside the list from 100 columns, in its place below that; `Tab` switches). Long rows
+wrap at the pane width. Its edits are the same operations as
 `tasq set`, `tasq log` and `tasq done`; `e` opens the edit view for the title, status, priority,
 due date, project, tags and description (`Tab`/`Shift+Tab` and the arrows between rows,
 `Left`/`Right` cycle the status and priority rows, `Home`/`End` or `Ctrl+A`/`Ctrl+E` go to the
@@ -338,7 +339,8 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `sync`, `sources` | `s` / `S` | list | `tasq sync` (the `auto = true` sources) / the source picker |
 | `reload` | `r` | list | reload |
 | `help` | `?` | list | the key overlay (any key closes it) |
-| `toggle-detail` | `tab` | list | one-pane layout: list or detail |
+| `toggle-detail` | `tab` | list | switch between list and detail |
+| `show-detail`, `hide-detail` | `right` / `left` | list | show / hide the selected task's detail |
 | `cancel` | `esc` | list, pickers | clear the filter, close the detail or the dialog |
 | `confirm` | `enter` | pickers | apply the choice; in the source picker, run the checked sources |
 | `quit` | `q` | list, pickers | leave `tasq ui`; in a picker, close it |
