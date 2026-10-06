@@ -297,11 +297,15 @@ fn claude_launch_reports_a_missing_executable() {
     let launcher = claude(&sb, EnvStrategy::Inherit);
     // No `claude` on the fake PATH: exec fails and returns, so the error
     // is observable (a real launch never returns here).
+    let before = std::env::current_dir().unwrap();
     let err = launcher.launch(&sb.ctx()).unwrap_err();
     assert!(
         matches!(err, LaunchError::Tool { ref tool, .. } if tool == "claude"),
         "{err}"
     );
+    // The failed exec must not leave this process in the workdir, which
+    // is deleted with the sandbox under every later child process.
+    assert_eq!(std::env::current_dir().unwrap(), before);
 }
 
 // ---------------------------------------------------------------------------

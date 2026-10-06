@@ -136,7 +136,8 @@ pub fn run_with_input(argv: &[String], input: &str, env: &[(String, String)]) ->
 }
 
 /// Replaces the current process with `argv[0] argv[1..]` in `cwd`, with
-/// `env` plus `extra` as the environment. Returns only when the exec fails.
+/// `env` plus `extra` as the environment. Returns only when the exec fails,
+/// back in the caller's working directory.
 /// On non-Unix hosts the program is run as a child and waited for.
 ///
 /// Reason: wraps `exec`; a test cannot observe a replaced process.
@@ -161,7 +162,14 @@ pub fn exec(
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        command.exec()
+        // `exec` changes into `cwd` in this process before `execvp` and does
+        // not change back when it fails, so restore the caller's directory.
+        let previous = std::env::current_dir();
+        let err = command.exec();
+        if let Ok(dir) = previous {
+            let _ = std::env::set_current_dir(dir);
+        }
+        err
     }
     #[cfg(not(unix))]
     {
