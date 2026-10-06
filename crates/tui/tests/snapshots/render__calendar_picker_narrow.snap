@@ -1,0 +1,20 @@
+---
+source: crates/tui/tests/render.rs
+expression: "screen(&mut model, 60, 16)"
+---
+"┌ Edit [1] ────────────────────────────────────────────────┐"
+"│ Title      Fix the flaky build                           │"
+"│ Status     in-p┌ Due ──────────────────┐                 │"
+"│ Priority   A   │     November 2026     │                 │"
+"│ Due        2026│  Mo Tu We Th Fr Sa Su │                 │"
+"│ Project    /hom│                     1 │                 │"
+"│ Tags       ci  │   2  3  4  5  6  7  8 │                 │"
+"│                │   9 10 11 12 13 14 15 │                 │"
+"│ Description ───│  16 17 18 19 20 21 22 │──────────────── │"
+"│ The nightly job│  23 24 25 26 27 28 29 │                 │"
+"│ Suspect the cac│  30                   │                 │"
+"│                └───────────────────────┘                 │"
+"│                                                          │"
+"│                                                          │"
+"└──────────────────────────────────────────────────────────┘"
+"↑↓←→  PgUp/PgDn  t  Enter  Esc                              "

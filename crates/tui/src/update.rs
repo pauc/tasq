@@ -3,7 +3,8 @@
 
 use tasq_core::model::{Priority, TaskId};
 
-use crate::form::{Field, Form};
+use crate::calendar::Calendar;
+use crate::form::{Field, Form, Text};
 use crate::model::{Message, Mode, Model, NoteTarget, PAGE};
 use crate::msg::{Cmd, LaunchTarget, Msg};
 
@@ -46,6 +47,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 Mode::Note { input, target } => note(model, input, target, key),
                 Mode::Create { input } => create(model, input, key),
                 Mode::Form(form) => form_mode(model, *form, key),
+                Mode::Calendar { form, calendar } => calendar_mode(model, *form, calendar, &key),
                 Mode::Help => {
                     if key == Msg::Quit {
                         model.quit = true;
@@ -149,7 +151,8 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         | Msg::Delete
         | Msg::NextField
         | Msg::PrevField
-        | Msg::Save => {}
+        | Msg::Save
+        | Msg::Today => {}
         Msg::Resize(..) | Msg::Loaded(_) | Msg::Select(_) | Msg::Info(_) | Msg::Failed(_) => {
             unreachable!("handled before the mode dispatch")
         }
@@ -407,10 +410,11 @@ fn create(model: &mut Model, mut input: String, msg: Msg) -> Vec<Cmd> {
 }
 
 /// The edit view (`e`): rows are typed or cycled in place, `Tab` and the
-/// arrows move between them, `Enter` is a newline in the description and
-/// the next row elsewhere; `Ctrl+S` saves through [`Cmd::Revise`] when
-/// every row validates, else the focus moves to the first bad row and the
-/// view stays; `Esc` discards.
+/// arrows move between them, `Enter` is a newline in the description,
+/// the calendar picker on the Due box and the next row elsewhere;
+/// `Ctrl+S` saves through [`Cmd::Revise`] when every row validates, else
+/// the focus moves to the first bad row and the view stays; `Esc`
+/// discards.
 fn form_mode(model: &mut Model, mut form: Form, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Quit => {
@@ -433,13 +437,18 @@ fn form_mode(model: &mut Model, mut form: Form, msg: Msg) -> Vec<Cmd> {
         Msg::Paste(text) => form.paste(&text),
         Msg::Backspace => form.backspace(),
         Msg::Delete => form.delete(),
-        Msg::Enter => {
-            if form.focus == Field::Description {
-                form.newline();
-            } else {
-                form.focus_next();
+        Msg::Enter => match form.focus {
+            Field::Description => form.newline(),
+            Field::Due => {
+                let calendar = Calendar::open(&form.due.text(), model.today);
+                model.mode = Mode::Calendar {
+                    form: Box::new(form),
+                    calendar,
+                };
+                return Vec::new();
             }
-        }
+            _ => form.focus_next(),
+        },
         Msg::Save => match form.fields(&model.workflow, model.today) {
             Ok(fields) => {
                 model.mode = Mode::Normal;
@@ -453,6 +462,41 @@ fn form_mode(model: &mut Model, mut form: Form, msg: Msg) -> Vec<Cmd> {
         _ => {}
     }
     model.mode = Mode::Form(Box::new(form));
+    Vec::new()
+}
+
+/// The calendar picker over the edit view: the arrows move the cursor by
+/// a day or a week, `PageUp`/`PageDown` by a month, `t` to today;
+/// `Enter` puts the day in the Due box as ISO and returns to the view,
+/// `Esc` returns to it unchanged.
+fn calendar_mode(model: &mut Model, mut form: Form, mut calendar: Calendar, msg: &Msg) -> Vec<Cmd> {
+    match msg {
+        Msg::Quit => {
+            model.quit = true;
+            return Vec::new();
+        }
+        Msg::Escape => {
+            model.mode = Mode::Form(Box::new(form));
+            return Vec::new();
+        }
+        Msg::Enter => {
+            form.due = Text::single(&calendar.picked());
+            model.mode = Mode::Form(Box::new(form));
+            return Vec::new();
+        }
+        Msg::Up => calendar.shift_days(-7),
+        Msg::Down => calendar.shift_days(7),
+        Msg::Left => calendar.shift_days(-1),
+        Msg::Right => calendar.shift_days(1),
+        Msg::PageUp => calendar.shift_months(-1),
+        Msg::PageDown => calendar.shift_months(1),
+        Msg::Today => calendar.today(model.today),
+        _ => {}
+    }
+    model.mode = Mode::Calendar {
+        form: Box::new(form),
+        calendar,
+    };
     Vec::new()
 }
 
@@ -1151,6 +1195,156 @@ mod tests {
         );
         assert_eq!(m.mode, Mode::Normal, "nothing in normal mode");
         let _ = Text::single;
+    }
+
+    fn form_of_calendar(m: &Model) -> Form {
+        calendar_of(m).0
+    }
+
+    fn calendar_of(m: &Model) -> (Form, Calendar) {
+        match &m.mode {
+            Mode::Calendar { form, calendar } => ((**form).clone(), *calendar),
+            other => panic!("not in the calendar: {other:?}"),
+        }
+    }
+
+    fn day(text: &str) -> chrono::NaiveDate {
+        chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn calendar_flow() {
+        let mut m = model().with_today(today());
+        update(&mut m, Msg::Edit);
+        feed(&mut m, [Msg::NextField, Msg::NextField, Msg::NextField]);
+        assert_eq!(form_of(&m).focus, Field::Due);
+        // An empty Due box opens on today.
+        assert_eq!(update(&mut m, Msg::Enter), Vec::new());
+        let (form, calendar) = calendar_of(&m);
+        assert_eq!(form.focus, Field::Due);
+        assert_eq!(form.due.text(), "");
+        assert_eq!(calendar.day, today());
+        assert_eq!(m.message, None);
+        // The keys move the cursor; the view underneath is untouched.
+        assert_eq!(feed(&mut m, [Msg::Down, Msg::Right]), Vec::new());
+        assert_eq!(calendar_of(&m).1.day, day("2026-10-13"));
+        assert_eq!(feed(&mut m, [Msg::Up, Msg::Left]), Vec::new());
+        assert_eq!(calendar_of(&m).1.day, today());
+        assert_eq!(feed(&mut m, [Msg::PageDown, Msg::PageDown]), Vec::new());
+        assert_eq!(calendar_of(&m).1.day, day("2026-12-05"));
+        assert_eq!(update(&mut m, Msg::PageUp), Vec::new());
+        assert_eq!(calendar_of(&m).1.day, day("2026-11-05"));
+        assert_eq!(update(&mut m, Msg::Today), Vec::new());
+        assert_eq!(calendar_of(&m).1.day, today());
+        assert_eq!(update(&mut m, Msg::Right), Vec::new());
+        assert_eq!(
+            feed(
+                &mut m,
+                [
+                    Msg::Char('x'),
+                    Msg::Paste("y".into()),
+                    Msg::Backspace,
+                    Msg::Delete,
+                    Msg::Home,
+                    Msg::End,
+                    Msg::NextField,
+                    Msg::PrevField,
+                    Msg::Save,
+                    Msg::Top,
+                    Msg::Bottom,
+                    Msg::Help,
+                ]
+            ),
+            Vec::new()
+        );
+        let (form, calendar) = calendar_of(&m);
+        assert_eq!(calendar.day, day("2026-10-06"), "the other keys do nothing");
+        assert_eq!(form.due.text(), "", "typing never reaches the view");
+        assert_eq!(form.focus, Field::Due);
+        // Enter puts the day in the Due box as ISO and returns to the view.
+        assert_eq!(update(&mut m, Msg::Enter), Vec::new());
+        let form = form_of(&m);
+        assert_eq!(form.due.text(), "2026-10-06");
+        assert_eq!(form.due.cursor(), (0, 10));
+        assert_eq!(form.focus, Field::Due);
+        // Reopening starts on the typed day; Esc keeps the box as it was.
+        feed(
+            &mut m,
+            [
+                Msg::Backspace,
+                Msg::Backspace,
+                Msg::Char('3'),
+                Msg::Char('1'),
+            ],
+        );
+        assert_eq!(form_of(&m).due.text(), "2026-10-31");
+        assert_eq!(update(&mut m, Msg::Enter), Vec::new());
+        assert_eq!(calendar_of(&m).1.day, day("2026-10-31"));
+        assert_eq!(update(&mut m, Msg::Down), Vec::new());
+        assert_eq!(calendar_of(&m).1.day, day("2026-11-07"));
+        assert_eq!(update(&mut m, Msg::Escape), Vec::new());
+        let form = form_of(&m);
+        assert_eq!(form.due.text(), "2026-10-31");
+        assert_eq!(form.focus, Field::Due);
+        // A word the box takes opens on its day; one it refuses, on today.
+        for text in ["tomorrow", "nonsense"] {
+            for _ in 0..10 {
+                update(&mut m, Msg::Backspace);
+            }
+            feed(&mut m, chars(text));
+            update(&mut m, Msg::Enter);
+            let expected = if text == "tomorrow" {
+                day("2026-10-06")
+            } else {
+                today()
+            };
+            assert_eq!(calendar_of(&m).1.day, expected, "{text}");
+            update(&mut m, Msg::Escape);
+        }
+    }
+
+    #[test]
+    fn calendar_after_a_refusal_and_the_keys_elsewhere() {
+        let mut m = model().with_today(today());
+        update(&mut m, Msg::Edit);
+        feed(&mut m, [Msg::NextField, Msg::NextField, Msg::NextField]);
+        feed(&mut m, chars("nonsense"));
+        // A message is cleared by any key, as everywhere; a picked day
+        // that replaces a refused one saves.
+        update(&mut m, Msg::Save);
+        assert!(m.message.as_ref().is_some_and(|msg| msg.is_error));
+        assert_eq!(form_of(&m).focus, Field::Due);
+        update(&mut m, Msg::Enter);
+        assert_eq!(m.message, None);
+        assert_eq!(calendar_of(&m).1.day, today());
+        assert_eq!(
+            form_of_calendar(&m).due.text(),
+            "nonsense",
+            "the box keeps the typed word until a day is picked"
+        );
+        feed(&mut m, [Msg::Enter, Msg::Save]);
+        assert_eq!(m.mode, Mode::Normal);
+        // Ctrl+C quits from the picker too.
+        let mut m = model().with_today(today());
+        update(&mut m, Msg::Edit);
+        feed(
+            &mut m,
+            [Msg::NextField, Msg::NextField, Msg::NextField, Msg::Enter],
+        );
+        assert!(matches!(m.mode, Mode::Calendar { .. }));
+        assert_eq!(update(&mut m, Msg::Quit), Vec::new());
+        assert!(m.quit);
+        // Enter on the other rows still moves on (the description: a newline).
+        let mut m = model();
+        update(&mut m, Msg::Edit);
+        update(&mut m, Msg::Enter);
+        assert_eq!(form_of(&m).focus, Field::Status);
+        assert_eq!(update(&mut m, Msg::Today), Vec::new());
+        assert_eq!(
+            form_of(&m).focus,
+            Field::Status,
+            "Today means nothing in the view"
+        );
     }
 
     #[test]

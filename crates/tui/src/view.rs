@@ -11,6 +11,8 @@
 use std::fmt::Write as _;
 use std::ops::Range;
 
+use chrono::{Datelike, NaiveDate};
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -20,6 +22,7 @@ use tasq_core::clock::{format_date, format_timestamp};
 use tasq_core::model::{Priority, Status, Task};
 use tasq_core::theme::{self, group_label};
 
+use crate::calendar::{self, Calendar, DAYS_PER_WEEK};
 use crate::form::{Field, Form, Text};
 use crate::keys::{Action, KeyMap};
 use crate::model::{LayoutKind, Mode, Model, NoteTarget, Row, TWO_PANE_MIN_WIDTH};
@@ -169,10 +172,23 @@ fn join(parts: impl Iterator<Item = Option<String>>) -> String {
 pub fn view(model: &Model, frame: &mut Frame) {
     let [main, bar] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
-    if let Mode::Form(form) = &model.mode {
-        render_form(model, frame, main, form);
-        frame.render_widget(status_bar(model, bar.width), bar);
-        return;
+    match &model.mode {
+        Mode::Form(form) => {
+            if let Some(position) = render_form(model, frame, main, form) {
+                frame.set_cursor_position(position);
+            }
+            frame.render_widget(status_bar(model, bar.width), bar);
+            return;
+        }
+        Mode::Calendar { form, calendar } => {
+            // The view underneath keeps its look; the terminal cursor
+            // stays hidden while the picker has the keys.
+            render_form(model, frame, main, form);
+            render_calendar(model, frame, main, *calendar);
+            frame.render_widget(status_bar(model, bar.width), bar);
+            return;
+        }
+        _ => {}
     }
     match model.layout() {
         LayoutKind::TwoPane if model.show_detail => {
@@ -220,7 +236,7 @@ pub fn view(model: &Model, frame: &mut Frame) {
             &source_entries(model),
             *cursor,
         ),
-        Mode::Form(_) => unreachable!("drawn above"),
+        Mode::Form(_) | Mode::Calendar { .. } => unreachable!("drawn above"),
         Mode::Normal | Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => {}
     }
 }
@@ -574,7 +590,8 @@ pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
             Span::raw(input.as_str()),
             Span::styled("\u{2581}", dim()),
         ]),
-        Mode::Form(_) if model.message.is_none() => form_hints(width),
+        Mode::Form(_) if model.message.is_none() => key_bar(FORM_HINTS, width),
+        Mode::Calendar { .. } if model.message.is_none() => key_bar(CALENDAR_HINTS, width),
         _ => match &model.message {
             Some(message) if message.is_error => Line::styled(
                 message.text.as_str(),
@@ -597,21 +614,30 @@ pub const FORM_HINTS: &[(&str, &str)] = &[
     ("Esc", "cancel"),
 ];
 
-/// [`FORM_HINTS`] as one line: keys and labels when they fit in `width`
+/// The status-bar key hints while the calendar picker is open.
+pub const CALENDAR_HINTS: &[(&str, &str)] = &[
+    ("\u{2191}\u{2193}\u{2190}\u{2192}", "day / week"),
+    ("PgUp/PgDn", "month"),
+    ("t", "today"),
+    ("Enter", "pick"),
+    ("Esc", "close"),
+];
+
+/// `hints` as one line: keys and labels when they fit in `width`
 /// columns, the keys alone otherwise.
-pub fn form_hints(width: u16) -> Line<'static> {
-    let full: usize = FORM_HINTS
+pub fn key_bar(hints: &[(&str, &str)], width: u16) -> Line<'static> {
+    let full: usize = hints
         .iter()
         .map(|(key, what)| key.chars().count() + 1 + what.len())
         .sum::<usize>()
-        + 2 * (FORM_HINTS.len() - 1);
+        + 2 * hints.len().saturating_sub(1);
     let labelled = usize::from(width) >= full;
     let mut spans = Vec::new();
-    for (i, (key, what)) in FORM_HINTS.iter().enumerate() {
+    for (i, (key, what)) in hints.iter().enumerate() {
         if i > 0 {
             spans.push(Span::raw("  "));
         }
-        spans.push(Span::styled(*key, bold()));
+        spans.push(Span::styled((*key).to_owned(), bold()));
         if labelled {
             spans.push(Span::styled(format!(" {what}"), dim()));
         }
@@ -682,10 +708,11 @@ fn render_help(model: &Model, frame: &mut Frame, area: Rect) {
 /// the compact rows ([`render_form_compact`]). The focused box has a
 /// coloured border, a box the save refused a red one, and the terminal
 /// cursor sits in the focused text.
-fn render_form(model: &Model, frame: &mut Frame, area: Rect, form: &Form) {
+/// Draws the edit view and returns where the terminal cursor belongs
+/// (none on a choice row).
+fn render_form(model: &Model, frame: &mut Frame, area: Rect, form: &Form) -> Option<(u16, u16)> {
     if area.width < TWO_PANE_MIN_WIDTH {
-        render_form_compact(model, frame, area, form);
-        return;
+        return render_form_compact(model, frame, area, form);
     }
     let [header, title, choices, details, description] = Layout::vertical([
         Constraint::Length(1),
@@ -718,9 +745,7 @@ fn render_form(model: &Model, frame: &mut Frame, area: Rect, form: &Form) {
     let inner = block.inner(description);
     frame.render_widget(block, description);
     render_description(frame, inner, form, &mut cursor);
-    if let Some(position) = cursor {
-        frame.set_cursor_position(position);
-    }
+    cursor
 }
 
 /// `Edit [id]` and the task's title as it is on disk, so the user knows
@@ -840,7 +865,12 @@ fn render_description(frame: &mut Frame, area: Rect, form: &Form, cursor: &mut O
 
 /// The edit view on a narrow terminal: label and value per row, the
 /// description below a rule, no boxes.
-fn render_form_compact(model: &Model, frame: &mut Frame, area: Rect, form: &Form) {
+fn render_form_compact(
+    model: &Model,
+    frame: &mut Frame,
+    area: Rect,
+    form: &Form,
+) -> Option<(u16, u16)> {
     let block = Block::bordered().title(format!(" Edit [{}] ", form.id));
     let inner = block.inner(area).inner(Margin::new(1, 0));
     frame.render_widget(block, area);
@@ -904,9 +934,64 @@ fn render_form_compact(model: &Model, frame: &mut Frame, area: Rect, form: &Form
         rule,
     );
     render_description(frame, body, form, &mut cursor);
-    if let Some(position) = cursor {
-        frame.set_cursor_position(position);
+    cursor
+}
+
+/// The month of the calendar's day, centred over `area`: the month and
+/// year above the weekday header (starting on the model's `week_start`),
+/// the day under the cursor reversed, today bold, weekends dim, a cyan
+/// border like the focused box.
+fn render_calendar(model: &Model, frame: &mut Frame, area: Rect, calendar: Calendar) {
+    let grid = calendar::month_grid(calendar.day, model.week_start);
+    let mut lines = vec![
+        Line::styled(grid.title, bold()).centered(),
+        Line::styled(grid.header, dim()),
+    ];
+    for week in &grid.weeks {
+        let mut spans = Vec::with_capacity(2 * DAYS_PER_WEEK);
+        for cell in week {
+            spans.push(Span::raw(" "));
+            spans.push(match cell {
+                Some(date) => Span::styled(
+                    format!("{:2}", date.day()),
+                    day_style(*date, calendar.day, model.today),
+                ),
+                None => Span::raw("  "),
+            });
+        }
+        lines.push(Line::from(spans));
     }
+    let block = Block::bordered()
+        .border_style(colored(model, theme::Color::Cyan))
+        .title(Span::styled(
+            format!(" {} ", Field::Due.label()),
+            colored(model, theme::Color::Cyan).add_modifier(Modifier::BOLD),
+        ))
+        .padding(Padding::horizontal(1));
+    let width = narrow(3 * DAYS_PER_WEEK + 4);
+    let height = narrow(lines.len() + 2);
+    let popup = centered(area, width, height);
+    frame.render_widget(Clear, popup);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// How the picker draws a day: the cursor reversed and bold, today bold,
+/// Saturdays and Sundays dim.
+fn day_style(date: NaiveDate, cursor: NaiveDate, today: NaiveDate) -> Style {
+    let mut style = Style::new();
+    if calendar::is_weekend(date) {
+        style = style.add_modifier(Modifier::DIM);
+    }
+    if date == today {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    if date == cursor {
+        style = style.add_modifier(Modifier::REVERSED);
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    style
 }
 
 /// The rows above the description, top to bottom.
@@ -1098,22 +1183,33 @@ mod tests {
     }
 
     #[test]
-    fn form_hints_drop_their_labels_when_narrow() {
-        let text = |width| {
-            form_hints(width)
+    fn key_bars_drop_their_labels_when_narrow() {
+        let text = |hints, width| {
+            key_bar(hints, width)
                 .spans
                 .iter()
                 .map(|s| s.content.to_string())
                 .collect::<String>()
         };
         let full = "Tab/S-Tab row  \u{2191}\u{2193}\u{2190}\u{2192} move  Enter next / newline  C-s save  Esc cancel";
-        assert_eq!(text(200), full);
+        assert_eq!(text(FORM_HINTS, 200), full);
         assert_eq!(full.chars().count(), 68);
-        assert_eq!(text(68), full);
+        assert_eq!(text(FORM_HINTS, 68), full);
         assert_eq!(
-            text(67),
+            text(FORM_HINTS, 67),
             "Tab/S-Tab  \u{2191}\u{2193}\u{2190}\u{2192}  Enter  C-s  Esc"
         );
+        let full = "\u{2191}\u{2193}\u{2190}\u{2192} day / week  PgUp/PgDn month  t today  Enter pick  Esc close";
+        assert_eq!(text(CALENDAR_HINTS, 200), full);
+        assert_eq!(full.chars().count(), 64);
+        assert_eq!(text(CALENDAR_HINTS, 64), full);
+        assert_eq!(
+            text(CALENDAR_HINTS, 63),
+            "\u{2191}\u{2193}\u{2190}\u{2192}  PgUp/PgDn  t  Enter  Esc"
+        );
+        assert_eq!(text(&[], 10), "");
+        assert_eq!(text(&[("x", "y")], 3), "x y");
+        assert_eq!(text(&[("x", "y")], 2), "x");
     }
 
     #[test]

@@ -15,6 +15,7 @@
 
 #![warn(missing_docs)]
 
+pub mod calendar;
 pub mod form;
 pub mod keys;
 pub mod model;
@@ -23,6 +24,7 @@ pub mod runtime;
 pub mod update;
 pub mod view;
 
+pub use calendar::Calendar;
 pub use form::{Field, Form, FormError};
 pub use keys::{Action, Chord, Key, KeyError, KeyMap};
 pub use model::{Mode, Model, NoteTarget, SourceChoice};

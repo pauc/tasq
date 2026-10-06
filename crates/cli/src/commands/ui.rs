@@ -49,6 +49,7 @@ pub fn run(app: &App) -> Result<()> {
     let model = Model::new(app.workflow(), theme, app.out.color())
         .with_keys(keys)
         .with_today(clock.today())
+        .with_week_start(app.config().ui.week_start.weekday())
         .with_default_status(app.config().workflow.default_status.clone())
         .with_default_project(Some(
             crate::commands::existing_dir(&app.opts.cwd).unwrap_or_else(|| app.opts.cwd.clone()),

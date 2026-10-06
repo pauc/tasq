@@ -42,3 +42,4 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0014](0014-sync-sources-on-demand.md) | Choosing which sources a sync runs: `source[].auto`, repeatable `--source`, a source picker in the TUI | Accepted |
 | [0015](0015-edit-form-in-the-tui.md) | Editing a task in a form inside the TUI: `e`, `edit::revise`, title/due/tags rewrites in the store | Superseded by ADR-0016 |
 | [0016](0016-full-screen-edit-view.md) | The edit view takes the whole screen and edits the description: `form::Text`, `Ctrl+S`, `set_description` | Accepted |
+| [0017](0017-calendar-picker-for-the-due-date.md) | A calendar picker for the Due box of the edit view: `Enter` opens a month grid over the view (`ui.week_start`), arrows/PgUp/PgDn/`t`, `Enter` picks as ISO | Accepted |

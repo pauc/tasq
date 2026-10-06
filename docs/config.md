@@ -55,6 +55,7 @@ placement = "auto"           # auto | workspace | tab
 pager = "less -RFX"
 no_osc8 = false
 glow_style = "dark"
+week_start = "monday"        # first column of the calendar picker: monday .. sunday
 
 [ui.colors]                  # status name (or "no-status") = colour, see "Colours"
 
@@ -118,6 +119,7 @@ pre-launch = []
 | `ui.pager` | string | `less -RFX` | Pager for long output on a terminal, split without a shell. `cat` or empty disables it. |
 | `ui.no_osc8` | bool | `false` | Disable OSC 8 hyperlinks in `tasq view`. |
 | `ui.glow_style` | string | `dark` | Style passed to `glow -s`. |
+| `ui.week_start` | weekday name | `monday` | First column of the calendar picker in `tasq ui` (`monday`, `tuesday`, ... `sunday`). |
 | `ui.colors.<name>` | string | empty table | Colour per status name, plus `no-status`. See "Colours". |
 | `ui.keys.<action>` | string or array of strings | empty table | Keys of a `tasq ui` action, replacing its defaults; `[]` unbinds it. See "Key bindings". |
 | `forge.<name>.kind` | `gitlab` \| `github` | inferred from `<name>` | API the host speaks. Required when the block is not called `gitlab` or `github`. |
@@ -170,6 +172,7 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_PAGER` | `ui.pager` |
 | `TASQ_NO_OSC8` | `ui.no_osc8` (`1/true/yes/on`, `0/false/no/off`) |
 | `TASQ_GLOW_STYLE` | `ui.glow_style` |
+| `TASQ_WEEK_START` | `ui.week_start` |
 | `TASQ_SUMMARIZER` | `report.summary.summarizer` |
 | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
 | `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
@@ -298,7 +301,11 @@ wrap at the pane width. Its edits are the same operations as
 due date, project, tags and description (`Tab`/`Shift+Tab` and the arrows between rows,
 `Left`/`Right` cycle the status and priority rows, `Home`/`End` or `Ctrl+A`/`Ctrl+E` go to the
 ends of the line, `Enter` is the next row or a newline in the description, `Ctrl+S` saves,
-`Esc` cancels); `E` opens the task file in `$VISUAL`, else `$EDITOR`,
+`Esc` cancels). `Enter` on the Due box opens a calendar over the view: the arrows move by a
+day and a week, `PageUp`/`PageDown` by a month, `t` jumps to today, `Enter` puts the day in the
+box as ISO, `Esc` closes it; typing a date or `today`/`tomorrow` into the box works as before.
+`ui.week_start` sets the grid's first column (`monday` by default).
+`E` opens the task file in `$VISUAL`, else `$EDITOR`,
 else `vi`; `Enter`, `s` and `S` run `tasq pick <id>`, `tasq sync` and `tasq sync --source ...`
 (the sources checked in the picker) as child processes with the same `--profile`, `--config`
 and `--set` flags, while the UI has released the terminal. `?` lists every key.

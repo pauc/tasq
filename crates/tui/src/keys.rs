@@ -635,8 +635,27 @@ pub fn translate(keys: &KeyMap, mode: &Mode, key: &KeyEvent) -> Option<Msg> {
         Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => text(key.code, ctrl),
         Mode::Status { .. } | Mode::Priority { .. } | Mode::Sources { .. } => picker(keys, key),
         Mode::Form(_) => form(key.code, ctrl),
+        Mode::Calendar { .. } => calendar(key.code, ctrl),
         Mode::Help => Some(Msg::Escape),
     }
+}
+
+/// The calendar picker's fixed keys: the arrows move by day and week,
+/// `PageUp`/`PageDown` by month, `t` to today, `Enter` picks, `Esc`
+/// closes; nothing else does anything.
+fn calendar(code: KeyCode, ctrl: bool) -> Option<Msg> {
+    Some(match code {
+        KeyCode::Up => Msg::Up,
+        KeyCode::Down => Msg::Down,
+        KeyCode::Left => Msg::Left,
+        KeyCode::Right => Msg::Right,
+        KeyCode::PageUp => Msg::PageUp,
+        KeyCode::PageDown => Msg::PageDown,
+        KeyCode::Char('t') if !ctrl => Msg::Today,
+        KeyCode::Enter => Msg::Enter,
+        KeyCode::Esc => Msg::Escape,
+        _ => return None,
+    })
 }
 
 /// The edit view's fixed keys: typing like a prompt plus the cursor keys
@@ -864,6 +883,52 @@ mod tests {
         }
         assert_eq!(translate(&keys, &mode, &ctrl('u')), None);
         assert_eq!(translate(&keys, &mode, &key(KeyCode::F(1))), None);
+    }
+
+    #[test]
+    fn calendar_mode_keys_are_fixed() {
+        let keys = KeyMap::from_config(&config(&[("up", one("x")), ("down", many(&[]))])).unwrap();
+        let task = tasq_core::model::Task::new(tasq_core::model::TaskId::from(1), "T");
+        let mode = Mode::Calendar {
+            form: Box::new(crate::form::Form::of(
+                &task,
+                &tasq_core::model::Workflow::default(),
+            )),
+            calendar: crate::calendar::Calendar {
+                day: chrono::NaiveDate::default(),
+            },
+        };
+        for (event, expected) in [
+            (key(KeyCode::Up), Msg::Up),
+            (key(KeyCode::Down), Msg::Down),
+            (key(KeyCode::Left), Msg::Left),
+            (key(KeyCode::Right), Msg::Right),
+            (key(KeyCode::PageUp), Msg::PageUp),
+            (key(KeyCode::PageDown), Msg::PageDown),
+            (ch('t'), Msg::Today),
+            (key(KeyCode::Enter), Msg::Enter),
+            (key(KeyCode::Esc), Msg::Escape),
+            (ctrl('c'), Msg::Quit),
+        ] {
+            assert_eq!(translate(&keys, &mode, &event), Some(expected), "{event:?}");
+        }
+        for event in [
+            ch('x'),
+            ch('T'),
+            ch(' '),
+            ch('j'),
+            ctrl('t'),
+            ctrl('s'),
+            key(KeyCode::Tab),
+            key(KeyCode::BackTab),
+            key(KeyCode::Home),
+            key(KeyCode::End),
+            key(KeyCode::Backspace),
+            key(KeyCode::Delete),
+            key(KeyCode::F(1)),
+        ] {
+            assert_eq!(translate(&keys, &mode, &event), None, "{event:?}");
+        }
     }
 
     #[test]

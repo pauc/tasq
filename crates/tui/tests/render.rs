@@ -2,7 +2,7 @@
 //! `TestBackend` at the two layouts, with every overlay and mode. Accept
 //! changes with `INSTA_UPDATE=always cargo test -p tasq-tui`.
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Weekday};
 use insta::assert_snapshot;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -269,6 +269,118 @@ fn edit_view() {
         terminal.get_cursor_position().unwrap(),
         (2 + 11 + 24, 1).into(),
         "the cursor stays on the last value column"
+    );
+}
+
+#[test]
+fn calendar_picker() {
+    let mut model = fixture(true).with_today(date("2026-10-05"));
+    update(&mut model, Msg::Edit);
+    for _ in 0..3 {
+        update(&mut model, Msg::NextField);
+    }
+    update(&mut model, Msg::Enter);
+    let mut terminal = render(&mut model, 120, 24);
+    assert_snapshot!("calendar_picker", terminal.backend().to_string());
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (0, 0).into(),
+        "no terminal cursor while the picker is open"
+    );
+    let buffer = terminal.backend().buffer();
+    let (x, y) = find(&terminal, "October 2026", 0);
+    assert!(buffer[(x, y)].modifier.contains(Modifier::BOLD));
+    let (x, y) = find(&terminal, "Mo Tu We Th Fr Sa Su", 0);
+    assert!(
+        buffer[(x, y)].modifier.contains(Modifier::DIM),
+        "the weekday header"
+    );
+    assert_eq!(buffer[(x - 3, y)].fg, Color::Cyan, "the border");
+    // The popup's title, right of the Due box's own.
+    let (x, y) = find(&terminal, "\u{250c} Due \u{2500}", 20);
+    assert_eq!(buffer[(x + 2, y)].fg, Color::Cyan, "the title");
+    assert!(buffer[(x + 2, y)].modifier.contains(Modifier::BOLD));
+    // The week of the 5th: Mo 5 .. Su 11. The cursor is on the 10th (the
+    // due date), reversed; today (the 5th) is bold; the 10th and 11th dim.
+    let (x, y) = find(&terminal, " 5  6  7  8  9 10 11", 0);
+    let cell = |dx: u16| buffer[(x + dx, y)].modifier;
+    assert!(cell(1).contains(Modifier::BOLD), "today");
+    assert!(!cell(1).intersects(Modifier::DIM | Modifier::REVERSED));
+    assert!(
+        !cell(7).intersects(Modifier::DIM | Modifier::BOLD | Modifier::REVERSED),
+        "a weekday"
+    );
+    assert!(
+        cell(16).contains(Modifier::REVERSED | Modifier::BOLD | Modifier::DIM),
+        "the cursor on a Saturday"
+    );
+    assert!(!cell(13).contains(Modifier::REVERSED), "Friday");
+    assert!(cell(19).contains(Modifier::DIM), "Sunday");
+    assert!(!cell(19).intersects(Modifier::BOLD | Modifier::REVERSED));
+    assert!(!cell(0).contains(Modifier::REVERSED), "the gutter");
+    assert!(
+        !cell(14).contains(Modifier::REVERSED),
+        "the gutter before the cursor"
+    );
+    assert!(cell(15).contains(Modifier::REVERSED), "both digits");
+    // Moving keeps the view underneath; a month jump redraws the grid.
+    update(&mut model, Msg::PageDown);
+    update(&mut model, Msg::Up);
+    assert_snapshot!("calendar_picker_next_month", screen(&mut model, 120, 24));
+    // Narrow: the popup sits over the compact view.
+    assert_snapshot!("calendar_picker_narrow", screen(&mut model, 60, 16));
+    // A command's result arriving meanwhile replaces the key bar, as in
+    // the view; the next key clears it.
+    update(&mut model, Msg::Failed("sync: boom".into()));
+    let terminal = render(&mut model, 120, 24);
+    let (x, y) = find(&terminal, "sync: boom", 0);
+    assert_eq!((x, y), (0, 23));
+    assert_eq!(terminal.backend().buffer()[(x, y)].fg, Color::Red);
+    update(&mut model, Msg::Enter);
+    let mut terminal = render(&mut model, 120, 24);
+    let (x, y) = find(&terminal, "2026-11-03", 0);
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (x + 10, y).into(),
+        "back in the Due box, the cursor after the picked day"
+    );
+    // The border loses its colour with --color never; the modifiers stay.
+    let mut plain = fixture(false).with_today(date("2026-10-05"));
+    update(&mut plain, Msg::Edit);
+    for _ in 0..3 {
+        update(&mut plain, Msg::NextField);
+    }
+    update(&mut plain, Msg::Enter);
+    let terminal = render(&mut plain, 120, 24);
+    let buffer = terminal.backend().buffer();
+    let (x, y) = find(&terminal, "Mo Tu", 0);
+    assert_eq!(buffer[(x - 3, y)].fg, Color::Reset);
+    let (x, y) = find(&terminal, " 5  6  7  8  9 10 11", 0);
+    assert!(buffer[(x + 16, y)].modifier.contains(Modifier::REVERSED));
+    // `ui.week_start = "sunday"`: the same month, the columns rotated.
+    let mut sunday = fixture(true)
+        .with_today(date("2026-10-05"))
+        .with_week_start(Weekday::Sun);
+    update(&mut sunday, Msg::Edit);
+    for _ in 0..3 {
+        update(&mut sunday, Msg::NextField);
+    }
+    update(&mut sunday, Msg::Enter);
+    let terminal = render(&mut sunday, 120, 24);
+    assert_snapshot!("calendar_picker_sunday", terminal.backend().to_string());
+    let buffer = terminal.backend().buffer();
+    let (x, y) = find(&terminal, " 4  5  6  7  8  9 10", 0);
+    assert!(
+        buffer[(x + 1, y)].modifier.contains(Modifier::DIM),
+        "Sunday first"
+    );
+    assert!(
+        buffer[(x + 4, y)].modifier.contains(Modifier::BOLD),
+        "today"
+    );
+    assert!(
+        buffer[(x + 19, y)].modifier.contains(Modifier::REVERSED),
+        "the cursor"
     );
 }
 

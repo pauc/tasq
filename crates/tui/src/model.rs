@@ -4,11 +4,12 @@
 
 use std::path::PathBuf;
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Weekday};
 use tasq_core::model::{Priority, Status, Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::{self, Filter, Group};
 use tasq_core::theme::Theme;
 
+use crate::calendar::Calendar;
 use crate::form::Form;
 use crate::keys::KeyMap;
 
@@ -59,6 +60,13 @@ pub enum Mode {
     },
     /// Editing the selected task's fields in the form (`e`).
     Form(Box<Form>),
+    /// The calendar picker over the edit view (`Enter` on the Due box).
+    Calendar {
+        /// The edit view underneath, as it was when the picker opened.
+        form: Box<Form>,
+        /// The picker: the day under the cursor.
+        calendar: Calendar,
+    },
     /// The key help overlay (`?`).
     Help,
 }
@@ -157,6 +165,8 @@ pub struct Model {
     /// The day a due date typed as `today` in the form resolves to; the
     /// front end sets it from its clock.
     pub today: NaiveDate,
+    /// The first column of the calendar picker (`ui.week_start`).
+    pub week_start: Weekday,
     /// The applied filter text (see [`Model::filter`]).
     pub filter: String,
     /// The selected task, when any is visible.
@@ -193,6 +203,7 @@ impl Model {
             sources: Vec::new(),
             checked: Vec::new(),
             today: NaiveDate::default(),
+            week_start: Weekday::Mon,
             filter: String::new(),
             selected: None,
             mode: Mode::Normal,
@@ -223,6 +234,13 @@ impl Model {
     #[must_use]
     pub fn with_today(mut self, today: NaiveDate) -> Self {
         self.today = today;
+        self
+    }
+
+    /// The first column of the calendar picker (`ui.week_start`).
+    #[must_use]
+    pub fn with_week_start(mut self, week_start: Weekday) -> Self {
+        self.week_start = week_start;
         self
     }
 
@@ -539,6 +557,9 @@ mod tests {
         assert_eq!(m.today, NaiveDate::default());
         let day = NaiveDate::from_ymd_opt(2026, 10, 5).unwrap();
         assert_eq!(m.with_today(day).today, day);
+        let m = Model::new(Workflow::default(), Theme::default(), true);
+        assert_eq!(m.week_start, Weekday::Mon);
+        assert_eq!(m.with_week_start(Weekday::Sun).week_start, Weekday::Sun);
     }
 
     #[test]

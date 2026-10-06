@@ -249,6 +249,37 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   Follow-up 8be3253: the herdr launcher focuses the workspace right after creating the pane,
   before `agent start` waits for Claude to be ready; the switch felt slow when it came last.
 
+- **Calendar picker for the Due box (follow-up 2026-10-06, ADR 0017, todo 14).** `Enter` on
+  the Due box opens `Mode::Calendar { form, calendar }`: the edit view stays underneath, one
+  month is drawn centred over it. `calendar::Calendar` is the day under the cursor plus the
+  arithmetic: `Up`/`Down` a week, `Left`/`Right` a day, `PageUp`/`PageDown` a month
+  (`checked_add_months` clamps 31 January to 28 February), `t` today, `Enter` writes ISO into
+  the box (`Text::single`, cursor at the end) and returns to the view, `Esc` returns
+  unchanged; every other key is `None` in `keys::calendar`, `Ctrl+C` quits. Opens on the
+  box's day when `parse_day` takes it, else on today. The grid is the crate's own
+  (`calendar::month_grid`: title, ` Mo Tu ...` header, weeks of `Option<NaiveDate>`), after
+  ratatui's `Monthly` widget, which the first cut used and the author rejected the same day:
+  its weeks are Sunday-based with no Monday option, and it works on `time::Date`, so chrono
+  crossed a crate boundary at every call. Owning the layout dropped the `widget-calendar`
+  feature and the `time` dependency and added `ui.week_start` (`WeekStart`, a weekday name,
+  `monday` by default, `TASQ_WEEK_START`; `Model::with_week_start` from the CLI). Styles in
+  `view::day_style`: cursor reversed bold, today bold, weekends dim; cyan border and ` Due `
+  title like the focused box; the terminal cursor is hidden while the picker is open
+  (`render_form` now returns the cursor position and `view` sets it). `form_hints` became
+  `key_bar(hints, width)` with `CALENDAR_HINTS` (64 columns with labels). chrono fact:
+  `NaiveDate::iter_days` never yields `NaiveDate::MAX` (it stops where `succ_opt` fails), so
+  the grid walks with `succ_opt` itself. Snapshots `calendar_picker` (Monday),
+  `calendar_picker_sunday`, `calendar_picker_next_month`, `calendar_picker_narrow` plus
+  buffer-style assertions (border, title, header, the three day styles, the gutters,
+  `--color never`); grid unit tests for four-, five- and six-row months, three week starts
+  and both ends of chrono's range. Mutants on the diff (tui `calendar/update/keys/view/msg/
+  model.rs`, core `config/{mod,load}.rs`): first pass with the widget 80 tested, 2 missed
+  (the calendar's status-bar message guard, untested; `REVERSED | BOLD` equivalent under
+  `^`), 0 after a `Msg::Failed`-while-open assertion and two `add_modifier` calls; with the
+  owned grid and the config key 103 tested, 0 missed (10 unviable). Docs: `docs/config.md` (key, env, defaults, TUI
+  section), README. Pre-existing and unrelated: `cargo doc` warns about a redundant link
+  target in `view.rs:5`; `render_with_glow_runs_the_program_and_reports_failures` (cli)
+  failed once in a full workspace run and passed alone.
 - **Boxed edit view on wide terminals (follow-up 2026-10-06, ADR 0016 addendum).** After
   reading the ratatui `user_input` example, `tui-textarea` and the TUI design guides, the
   wide layout (>= 100 columns, `TWO_PANE_MIN_WIDTH`) became a header line plus a bordered box

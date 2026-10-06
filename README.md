@@ -131,7 +131,8 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    ```
 
    `j`/`k` move, `/` filters, `c` creates a task from a title, `t`/`p` set status and
-   priority, `e` opens the edit view (every field and the description, `Ctrl+S` saves), `l`
+   priority, `e` opens the edit view (every field and the description, `Enter` on the due
+   date opens a calendar, `Ctrl+S` saves), `l`
    logs a note, `d` marks done, `E` opens the file in `$EDITOR`, `Enter` starts
    a session here, `Ctrl+Enter` starts it in a new herdr or tmux window and switches to it,
    `Shift+Enter` does the same without leaving the list, `s` runs the sources that run by

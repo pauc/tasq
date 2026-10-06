@@ -30,6 +30,8 @@ pub enum Msg {
     PrevField,
     /// In the edit view: `Ctrl+S`, validate and write.
     Save,
+    /// In the calendar picker: `t`, the cursor to today.
+    Today,
     /// Move the selection [`crate::model::PAGE`] rows up.
     PageUp,
     /// Move the selection [`crate::model::PAGE`] rows down.
