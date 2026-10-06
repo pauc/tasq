@@ -18,7 +18,9 @@ use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Padding, Paragraph};
-use tasq_core::clock::{format_date, format_timestamp};
+use tasq_core::clock::format_timestamp;
+use tasq_core::config::DueFormat;
+use tasq_core::dates::{Due, due_label};
 use tasq_core::model::{Priority, Status, Task};
 use tasq_core::theme::{self, Role, group_label};
 
@@ -342,6 +344,19 @@ fn chip(model: &Model) -> Style {
     background.patch(role(model, Role::ChipFg))
 }
 
+/// A due date in `format` (`overdue 3d`): bold `overdue` when past,
+/// `due-soon` today and tomorrow, `dim` further ahead. The TUI lists open
+/// tasks only, so there is no done case. `wrap` adds parentheses.
+fn due_span(model: &Model, due: NaiveDate, format: DueFormat, wrap: bool) -> Span<'static> {
+    let style = match Role::of_due(Due::of(due, model.today)) {
+        Role::Overdue => role(model, Role::Overdue).add_modifier(Modifier::BOLD),
+        Role::Dim => dim(model),
+        other => role(model, other),
+    };
+    let text = due_label(due, model.today, format);
+    Span::styled(if wrap { format!("({text})") } else { text }, style)
+}
+
 fn priority_span(model: &Model, priority: Priority) -> Span<'static> {
     match priority {
         Priority::A => Span::styled("#A", role(model, Role::PrioA).add_modifier(Modifier::BOLD)),
@@ -363,10 +378,7 @@ pub fn task_lines<'a>(model: &Model, task: &'a Task, width: u16) -> Vec<Line<'a>
     let indent: usize = prefix.iter().map(Span::width).sum::<usize>() + 1;
     let mut atoms: Vec<Span<'a>> = task.title.split_whitespace().map(Span::raw).collect();
     if let Some(due) = task.due {
-        atoms.push(Span::styled(
-            format!("(due {})", format_date(due)),
-            dim(model),
-        ));
+        atoms.push(due_span(model, due, model.due_format, true));
     }
     for tag in &task.tags {
         atoms.push(Span::styled(format!(" {} ", tag.to_hash()), chip(model)));
@@ -482,10 +494,7 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
     }
     if let Some(due) = task.due {
         head.push(Span::raw("  "));
-        head.push(Span::styled(
-            format!("due {}", format_date(due)),
-            dim(model),
-        ));
+        head.push(due_span(model, due, DueFormat::Both, false));
     }
     lines.push(Line::from(head));
     if !task.tags.is_empty() {

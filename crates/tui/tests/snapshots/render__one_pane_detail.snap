@@ -1,10 +1,11 @@
 ---
 source: crates/tui/tests/render.rs
+assertion_line: 144
 expression: "screen(&mut model, 80, 24)"
 ---
 "┌ [1] ─────────────────────────────────────────────────────────────────────────┐"
 "│Fix the flaky build                                                           │"
-"│[1]  #A  in-progress  due 2026-10-10                                          │"
+"│[1]  #A  in-progress  due in 4d, 2026-10-10                                   │"
 "│ #ci                                                                          │"
 "│                                                                              │"
 "│Project: /home/me/code/app                                                    │"

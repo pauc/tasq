@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 
 use chrono::{NaiveDate, Weekday};
+use tasq_core::config::DueFormat;
 use tasq_core::model::{Priority, Status, Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::{self, Filter, Group};
 use tasq_core::theme::Theme;
@@ -167,6 +168,8 @@ pub struct Model {
     pub today: NaiveDate,
     /// The first column of the calendar picker (`ui.week_start`).
     pub week_start: Weekday,
+    /// How list rows show a due date (`ui.due_format`).
+    pub due_format: DueFormat,
     /// The applied filter text (see [`Model::filter`]).
     pub filter: String,
     /// The selected task, when any is visible.
@@ -204,6 +207,7 @@ impl Model {
             checked: Vec::new(),
             today: NaiveDate::default(),
             week_start: Weekday::Mon,
+            due_format: DueFormat::Relative,
             filter: String::new(),
             selected: None,
             mode: Mode::Normal,
@@ -241,6 +245,13 @@ impl Model {
     #[must_use]
     pub fn with_week_start(mut self, week_start: Weekday) -> Self {
         self.week_start = week_start;
+        self
+    }
+
+    /// How list rows show a due date (`ui.due_format`).
+    #[must_use]
+    pub fn with_due_format(mut self, due_format: DueFormat) -> Self {
+        self.due_format = due_format;
         self
     }
 
@@ -560,6 +571,12 @@ mod tests {
         let m = Model::new(Workflow::default(), Theme::default(), true);
         assert_eq!(m.week_start, Weekday::Mon);
         assert_eq!(m.with_week_start(Weekday::Sun).week_start, Weekday::Sun);
+        let m = Model::new(Workflow::default(), Theme::default(), true);
+        assert_eq!(m.due_format, DueFormat::Relative);
+        assert_eq!(
+            m.with_due_format(DueFormat::Both).due_format,
+            DueFormat::Both
+        );
     }
 
     #[test]
