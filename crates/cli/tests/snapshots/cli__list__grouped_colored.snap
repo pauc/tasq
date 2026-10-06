@@ -1,9 +1,10 @@
 ---
 source: crates/cli/tests/cli.rs
+assertion_line: 134
 expression: stdout(&out)
 ---
 [1;34mIN PROGRESS[0m
-  [2m[ 1][0m [1;31m#A[0m Rewrite the tasks script in Rust [2m(due 2026-10-10)[0m [48;5;24m[38;5;231m #gitlab [0m
+  [2m[ 1][0m [1;31m#A[0m Rewrite the tasks script in Rust [2m(due in 4d)[0m [48;5;24m[38;5;231m #gitlab [0m
 
 [1;32mREADY[0m
   [2m[ 3][0m [2m#B[0m Answer the support ticket [48;5;24m[38;5;231m #support [0m

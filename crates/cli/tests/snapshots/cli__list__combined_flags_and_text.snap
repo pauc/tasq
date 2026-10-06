@@ -1,6 +1,7 @@
 ---
 source: crates/cli/tests/cli.rs
+assertion_line: 214
 expression: stdout(&out)
 ---
 in-progress
-  [ 1] #A Rewrite the tasks script in Rust (due 2026-10-10)  #gitlab
+  [ 1] #A Rewrite the tasks script in Rust (due in 4d)  #gitlab
