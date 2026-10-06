@@ -44,3 +44,4 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0016](0016-full-screen-edit-view.md) | The edit view takes the whole screen and edits the description: `form::Text`, `Ctrl+S`, `set_description` | Accepted |
 | [0017](0017-calendar-picker-for-the-due-date.md) | A calendar picker for the Due box of the edit view: `Enter` opens a month grid over the view (`ui.week_start`), arrows/PgUp/PgDn/`t`, `Enter` picks as ISO | Accepted |
 | [0018](0018-named-color-themes.md) | Named colour themes for the CLI and the TUI: every coloured thing is a `Role`, `ui.theme.preset` (dark/light/solarized/gruvbox/mono) under `[ui.theme.colors]` under `[ui.colors]` | Accepted |
+| [0019](0019-relative-due-dates.md) | Relative, coloured due dates: `dates::Due`, `ui.due_format` (relative/iso/both), `overdue` and `due-soon` theme roles; ISO in `--json` and the detail pane | Accepted |

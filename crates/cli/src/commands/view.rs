@@ -151,7 +151,12 @@ pub fn render_with_glow(
         .stderr(Stdio::piped())
         .spawn()?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(markdown.as_bytes())?;
+        // glow can exit without reading (a bad flag): its exit status and
+        // stderr below say why, a broken pipe here would hide it.
+        match stdin.write_all(markdown.as_bytes()) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => return Err(e),
+            _ => {}
+        }
     }
     let output = child.wait_with_output()?;
     if !output.status.success() {
@@ -540,6 +545,11 @@ mod tests {
         std::fs::write(&failing, "#!/bin/sh\necho 'bad flag' >&2\nexit 1\n").unwrap();
         std::fs::set_permissions(&failing, std::fs::Permissions::from_mode(0o755)).unwrap();
         let err = render_with_glow(&failing, "x", "dark", 80).unwrap_err();
+        assert_eq!(err.to_string(), "bad flag");
+        // More than a pipe buffer: the write always meets the closed pipe,
+        // and the error is still glow's, not "Broken pipe".
+        let big = "x".repeat(1 << 20);
+        let err = render_with_glow(&failing, &big, "dark", 80).unwrap_err();
         assert_eq!(err.to_string(), "bad flag");
         assert!(render_with_glow(Path::new("/nonexistent/glow"), "x", "dark", 80).is_err());
     }

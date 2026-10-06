@@ -1,5 +1,6 @@
 ---
 source: crates/cli/tests/cli.rs
+assertion_line: 508
 expression: env.normalize(&stdout(&out))
 ---
 # profile: none
@@ -35,6 +36,7 @@ env = "direnv"                               # defaults
 placement = "auto"                           # defaults
 
 [ui]
+due_format = "relative"                      # defaults
 glow_style = "light"                         # env
 no_osc8 = true                               # --set
 pager = "cat"                                # [ROOT]/home/.config/tasq/config.toml

@@ -91,16 +91,4 @@ mod tests {
         assert_eq!(plain.shell(), "sh");
         assert_eq!(assignments(&[]), "");
     }
-
-    #[test]
-    fn launch_failure_is_reported() {
-        let launcher = ShellLauncher {
-            env: vec![("SHELL".into(), "/nonexistent/shell".into())],
-        };
-        let err = launcher.launch(&ctx()).unwrap_err();
-        assert!(
-            matches!(err, LaunchError::Tool { ref tool, .. } if tool == "/nonexistent/shell"),
-            "{err}"
-        );
-    }
 }

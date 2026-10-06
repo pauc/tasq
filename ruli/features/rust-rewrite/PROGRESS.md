@@ -249,6 +249,22 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   Follow-up 8be3253: the herdr launcher focuses the workspace right after creating the pane,
   before `agent start` waits for Claude to be ready; the switch felt slow when it came last.
 
+- **Relative, coloured due dates (follow-up 2026-10-06, ADR 0019, todo 26).** Due dates
+  were dim whether three days past or three weeks away. `dates::Due::of(due, today)`
+  (`Overdue(n)`/`Today`/`Tomorrow`/`Later(n)`, a `..=-1` range arm so no `<`/`<=` mutant
+  is equivalent) and `dates::due_label` render `overdue 3d`, `due today`, `due tomorrow`,
+  `due in 4d`; `ui.due_format = relative | iso | both` (`TASQ_DUE_FORMAT`) picks the row
+  form. New roles `overdue` (bold added by the front ends) and `due-soon`, one shade per
+  preset (each preset's `blocked`/`waiting` colour, `mono` plain); `Role::of_due` maps a
+  `Due` to `overdue`/`due-soon`/`dim`. CLI: `list::Look` bundles theme, style, today and
+  format for `row`; a done task keeps its ISO date, dim. TUI: `view::due_span` for list rows
+  (`model.due_format`) and the detail pane (always `both`); the TUI lists open tasks only, so
+  it has no done case. `--json` unchanged. The CLI test harness now pins `TASQ_NOW` to
+  2026-10-06 09:00 for every command and the TUI render fixture pins `Model::today`, so
+  snapshots do not move with the calendar. Colouring past days in the calendar picker was
+  dropped from scope (the saved row already shows overdue). Mutants: `dates.rs` +
+  `theme.rs` 118 tested, 0 missed. Known limit: a long-running `tasq ui` keeps the `today`
+  it started with. Commits baf8006, e5e47bf, b460d55, 36bb278.
 - **Calendar picker for the Due box (follow-up 2026-10-06, ADR 0017, todo 14).** `Enter` on
   the Due box opens `Mode::Calendar { form, calendar }`: the edit view stays underneath, one
   month is drawn centred over it. `calendar::Calendar` is the day under the cursor plus the
@@ -616,6 +632,14 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ### Launcher decisions (T-401 to T-405)
 
+- **A failed `exec` gets a test binary of its own (2026-10-06, PR #3 CI).** `Command::exec`
+  with a custom env swaps the process-wide `environ` for a temporary array and frees it when
+  exec fails, under the env *read* lock only, so a concurrent `spawn` on another test thread
+  can read freed memory: insta's `cargo metadata` failed with `Bad address (os error 14)`,
+  fell back to the manifest dir and reported `claude_prompt_snapshot` as a new snapshot
+  (`crates/launch/crates/launch/tests/snapshots/*.snap.new`). The Claude and shell
+  failed-exec checks now live in one test in `crates/launch/tests/exec_failure.rs`; never
+  exec from a test that shares its process with other tests.
 - `tasq_core::launch`: `LaunchContext { task, file, markdown, workdir, in_worktree, env, statuses }`,
   `resolve_workdir(task, default_project, is_dir)` (first existing worktree → project if it exists,
   else a warning and the default → `NoWorkdir`/`WorkdirMissing` errors), the `Launcher` trait

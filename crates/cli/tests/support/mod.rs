@@ -70,10 +70,13 @@ impl TestEnv {
         self.nb_dir.join("home")
     }
 
-    /// The binary under test with only this environment, run from `home`.
+    /// The binary under test with only this environment, run from `home`,
+    /// on a fixed day (`TASQ_NOW`, overridable) so relative due dates do
+    /// not move.
     pub fn tasq(&self) -> assert_cmd::Command {
         let mut cmd = assert_cmd::Command::new(env!("CARGO_BIN_EXE_tasq"));
         cmd.env_clear()
+            .env("TASQ_NOW", "2026-10-06 09:00")
             .env("HOME", &self.home)
             .env("NB_DIR", &self.nb_dir)
             .env("PATH", &self.bin)

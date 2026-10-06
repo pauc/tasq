@@ -1,7 +1,7 @@
 //! The launchers against fake `direnv`, `tmux` and `herdr` executables and
 //! a recording fallback launcher. The Claude and shell launchers `exec`,
 //! which a test cannot observe, so they are checked through `command()` and
-//! `describe()`.
+//! `describe()`; a failed exec is tested alone in `exec_failure.rs`.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -289,23 +289,6 @@ fn claude_describe_and_hint() {
         bad.describe(&ctx).unwrap_err(),
         LaunchError::Template("unknown placeholder {{nope}}".into())
     );
-}
-
-#[test]
-fn claude_launch_reports_a_missing_executable() {
-    let sb = Sandbox::new();
-    let launcher = claude(&sb, EnvStrategy::Inherit);
-    // No `claude` on the fake PATH: exec fails and returns, so the error
-    // is observable (a real launch never returns here).
-    let before = std::env::current_dir().unwrap();
-    let err = launcher.launch(&sb.ctx()).unwrap_err();
-    assert!(
-        matches!(err, LaunchError::Tool { ref tool, .. } if tool == "claude"),
-        "{err}"
-    );
-    // The failed exec must not leave this process in the workdir, which
-    // is deleted with the sandbox under every later child process.
-    assert_eq!(std::env::current_dir().unwrap(), before);
 }
 
 // ---------------------------------------------------------------------------

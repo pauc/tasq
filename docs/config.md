@@ -56,6 +56,7 @@ pager = "less -RFX"
 no_osc8 = false
 glow_style = "dark"
 week_start = "monday"        # first column of the calendar picker: monday .. sunday
+due_format = "relative"      # relative (overdue 3d) | iso (due 2026-10-03) | both
 
 [ui.colors]                  # status name (or "no-status") = colour, see "Colours"
 
@@ -125,9 +126,10 @@ pre-launch = []
 | `ui.no_osc8` | bool | `false` | Disable OSC 8 hyperlinks in `tasq view`. |
 | `ui.glow_style` | string | `dark` | Style passed to `glow -s`. |
 | `ui.week_start` | weekday name | `monday` | First column of the calendar picker in `tasq ui` (`monday`, `tuesday`, ... `sunday`). |
+| `ui.due_format` | `relative` \| `iso` \| `both` | `relative` | How the rows of `tasq list` and `tasq ui` show a due date: `overdue 3d`, `due today`, `due tomorrow`, `due in 4d`; `due 2026-10-03`; or `overdue 3d, 2026-10-03`. The detail pane of `tasq ui` always shows both, `--json` always the ISO date. A done task always shows its ISO date, dim. |
 | `ui.colors.<name>` | string | empty table | Colour per status name, plus `no-status` and `done`, on top of the theme. See "Colours". |
 | `ui.theme.preset` | `dark` \| `light` \| `solarized` \| `gruvbox` \| `mono` | `dark` | The built-in colour theme of `tasq list`, `tasq view` and `tasq ui`. See "Colours". |
-| `ui.theme.colors.<role>` | string | empty table | Colour per role (`in-progress`, `ready`, `waiting`, `blocked`, `later`, `other-status`, `no-status`, `done`, `chip-bg`, `chip-fg`, `prio-a`, `focus`, `selection`, `error`, `dim`, `link`, `header`), over the preset. See "Colours". |
+| `ui.theme.colors.<role>` | string | empty table | Colour per role (`in-progress`, `ready`, `waiting`, `blocked`, `later`, `other-status`, `no-status`, `done`, `chip-bg`, `chip-fg`, `prio-a`, `focus`, `selection`, `error`, `dim`, `link`, `header`, `overdue`, `due-soon`), over the preset. See "Colours". |
 | `ui.keys.<action>` | string or array of strings | empty table | Keys of a `tasq ui` action, replacing its defaults; `[]` unbinds it. See "Key bindings". |
 | `forge.<name>.kind` | `gitlab` \| `github` | inferred from `<name>` | API the host speaks. Required when the block is not called `gitlab` or `github`. |
 | `forge.<name>.host` | string | `gitlab.com` / `github.com` by kind | Host without scheme. |
@@ -180,6 +182,7 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_NO_OSC8` | `ui.no_osc8` (`1/true/yes/on`, `0/false/no/off`) |
 | `TASQ_GLOW_STYLE` | `ui.glow_style` |
 | `TASQ_WEEK_START` | `ui.week_start` |
+| `TASQ_DUE_FORMAT` | `ui.due_format` |
 | `TASQ_THEME` | `ui.theme.preset` |
 | `TASQ_SUMMARIZER` | `report.summary.summarizer` |
 | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
@@ -291,7 +294,7 @@ pre-launch = ["~/bin/check-vpn --quiet"]
    `in-progress` blue, `ready` green, `waiting` yellow, `blocked` red, `later` magenta, any
    other configured status cyan, the no-status and done groups dim, tag chips white on dark
    blue, `#A` red, the focus border cyan, the selection reversed, errors red, links light
-   blue. `light` uses darker shades and a real grey instead of faint text, which many
+   blue, overdue dates bold red, dates due today or tomorrow yellow. `light` uses darker shades and a real grey instead of faint text, which many
    light-background terminals cannot show. `solarized` and `gruvbox` are 256-colour
    approximations of the dark variants. `mono` has no colours: bold, dim and reversed only.
 2. **`[ui.theme.colors]`**, one colour per role, over the preset.
@@ -320,7 +323,9 @@ The roles: the eight groups `in-progress`, `ready`, `waiting`, `blocked`, `later
 `#A` marker; `focus` for the focused field of the edit view and the calendar border;
 `selection` for the selected row and the chosen option; `error` for error messages and a
 refused field; `dim` for ids, dates, hints and calendar weekends; `link` for the hyperlinks of
-`tasq view`; `header` for titles and section headings (bold is always added).
+`tasq view`; `header` for titles and section headings (bold is always added); `overdue` for
+the due date of an open task that is past (bold is always added) and `due-soon` for one due
+today or tomorrow; later dates use `dim`.
 
 A colour is a name, `dim`, `reversed`, `none` or a number from 0 to 255; anything else is
 ignored, as is a role name that does not exist. An unknown preset is a config error.

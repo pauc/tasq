@@ -1,10 +1,11 @@
 ---
 source: crates/tui/tests/render.rs
+assertion_line: 89
 expression: "screen(&mut model, 120, 28)"
 ---
 "┌ Tasks (5/5) ─────────────────────────────────────────────┐┌ [1] ─────────────────────────────────────────────────────┐"
 "│IN PROGRESS                                               ││Fix the flaky build                                       │"
-"│  [ 1] #A Fix the flaky build (due 2026-10-10)  #ci       ││[1]  #A  in-progress  due 2026-10-10                      │"
+"│  [ 1] #A Fix the flaky build (due in 4d)  #ci            ││[1]  #A  in-progress  due in 4d, 2026-10-10               │"
 "│READY                                                     ││ #ci                                                      │"
 "│  [12] #B Review MR !88: paginate the export  #gitlab     ││                                                          │"
 "│           #review-request                                ││Project: /home/me/code/app                                │"

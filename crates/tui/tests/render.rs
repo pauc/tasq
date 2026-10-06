@@ -62,8 +62,10 @@ fn tasks() -> Vec<Task> {
     vec![first, second, third, later, loose]
 }
 
+/// Today is 2026-10-06 unless a test says otherwise.
 fn fixture(color: bool) -> Model {
-    let mut model = Model::new(Workflow::default(), Theme::default(), color);
+    let mut model =
+        Model::new(Workflow::default(), Theme::default(), color).with_today(date("2026-10-06"));
     update(&mut model, Msg::Loaded(tasks()));
     model
 }
@@ -87,6 +89,31 @@ fn two_pane_layout() {
     assert_snapshot!("two_pane_detail", screen(&mut model, 120, 28));
     update(&mut model, Msg::HideDetail);
     assert_snapshot!("two_pane_list", screen(&mut model, 120, 28));
+}
+
+#[test]
+fn due_dates_are_relative_and_coloured() {
+    let mut model = fixture(true);
+    let mut tasks = tasks();
+    tasks[1].due = Some(date("2026-10-03"));
+    tasks[2].due = Some(date("2026-10-07"));
+    update(&mut model, Msg::Loaded(tasks));
+    let terminal = render(&mut model, 120, 28);
+    let buffer = terminal.backend().buffer();
+    let (x, y) = find(&terminal, "(overdue 3d)", 0);
+    assert_eq!(buffer[(x, y)].fg, Color::Red);
+    assert!(buffer[(x, y)].modifier.contains(Modifier::BOLD));
+    let (x, y) = find(&terminal, "(due tomorrow)", 0);
+    assert_eq!(buffer[(x, y)].fg, Color::Yellow);
+    assert!(!buffer[(x, y)].modifier.contains(Modifier::BOLD));
+    let (x, y) = find(&terminal, "(due in 4d)", 0);
+    assert!(buffer[(x, y)].modifier.contains(Modifier::DIM));
+    // The detail pane keeps the date beside the relative form.
+    update(&mut model, Msg::Down);
+    update(&mut model, Msg::ShowDetail);
+    let terminal = render(&mut model, 120, 28);
+    let (x, y) = find(&terminal, "overdue 3d, 2026-10-03", 60);
+    assert_eq!(terminal.backend().buffer()[(x, y)].fg, Color::Red);
 }
 
 #[test]
@@ -653,7 +680,8 @@ fn colours_follow_the_theme_and_no_color() {
     // [ui.colors] override by status name.
     let mut ui = UiConfig::default();
     ui.colors.insert("in-progress".into(), "208".into());
-    let mut themed = Model::new(Workflow::default(), Theme::from_config(&ui), true);
+    let mut themed = Model::new(Workflow::default(), Theme::from_config(&ui), true)
+        .with_today(date("2026-10-06"));
     update(&mut themed, Msg::Loaded(tasks()));
     let terminal = render(&mut themed, 120, 28);
     assert_eq!(terminal.backend().buffer()[(1, 1)].fg, Color::Indexed(208));
@@ -681,7 +709,8 @@ fn presets_restyle_every_role() {
     // Light: real colours where dark used attributes, so nothing is faint.
     let mut ui = UiConfig::default();
     ui.theme.preset = Preset::Light;
-    let mut light = Model::new(Workflow::default(), Theme::from_config(&ui), true);
+    let mut light = Model::new(Workflow::default(), Theme::from_config(&ui), true)
+        .with_today(date("2026-10-06"));
     update(&mut light, Msg::Loaded(tasks()));
     update(&mut light, Msg::ShowDetail);
     let terminal = render(&mut light, 120, 28);
@@ -710,7 +739,8 @@ fn presets_restyle_every_role() {
     // turns the selection into a background colour.
     ui.theme.preset = Preset::Mono;
     ui.theme.colors.insert("selection".into(), "236".into());
-    let mut mono = Model::new(Workflow::default(), Theme::from_config(&ui), true);
+    let mut mono = Model::new(Workflow::default(), Theme::from_config(&ui), true)
+        .with_today(date("2026-10-06"));
     update(&mut mono, Msg::Loaded(tasks()));
     update(&mut mono, Msg::ShowDetail);
     let terminal = render(&mut mono, 120, 28);

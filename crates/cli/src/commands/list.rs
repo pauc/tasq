@@ -3,14 +3,18 @@
 //!
 //! Rendering reproduces `print_group` from the script: a bold, coloured
 //! group header, then one row per task
-//! `  [id] #prio Title (due YYYY-MM-DD) chips`, then a blank line. Priority
-//! `A` is bold red, `B` and `C` dim; due dates are dim; topic tags are
-//! chips (white on dark blue). When the filter names a single status the
+//! `  [id] #prio Title (due) chips`, then a blank line. Priority `A` is
+//! bold red, `B` and `C` dim; due dates read `overdue 3d` (bold red),
+//! `due today` / `due tomorrow` (yellow) or `due in 4d` (dim) under the
+//! default `ui.due_format`; topic tags are chips (white on dark blue). When the filter names a single status the
 //! header is the status name itself, uncoloured, as the script printed it.
 
+use chrono::NaiveDate;
 use tasq_core::clock::format_date;
+use tasq_core::config::DueFormat;
 #[cfg(test)]
 use tasq_core::config::UiConfig;
+use tasq_core::dates::{Due, due_label};
 use tasq_core::model::{Priority, Status, Tag, Task, Workflow};
 use tasq_core::query::{self, Filter, Group};
 use tasq_core::store::Store;
@@ -48,13 +52,13 @@ pub fn run(app: &App, args: &ListArgs) -> Result<()> {
         return app.out.print(&format!("{}\n", criteria.empty_message()));
     }
     let theme = Theme::from_config(&app.config().ui);
-    let text = render(
-        &groups,
-        &done,
-        &theme,
-        app.out.style(),
-        criteria.status.is_some(),
-    );
+    let look = Look {
+        theme: &theme,
+        style: app.out.style(),
+        today: app.clock()?.today(),
+        due_format: app.config().ui.due_format,
+    };
+    let text = render(&groups, &done, &look, criteria.status.is_some());
     app.out.page(&text)
 }
 
@@ -205,16 +209,30 @@ fn status_list(workflow: &Workflow) -> String {
         .join(" ")
 }
 
+/// What rows are drawn with: the colours, whether escape codes are
+/// written, and the day and format due dates are shown against.
+#[derive(Debug, Clone, Copy)]
+pub struct Look<'a> {
+    /// The colour of every role.
+    pub theme: &'a Theme,
+    /// Escape codes on or off.
+    pub style: Style,
+    /// The day relative due dates count from.
+    pub today: NaiveDate,
+    /// `ui.due_format`.
+    pub due_format: DueFormat,
+}
+
 /// Renders the groups, then `done` as a `DONE` group when non-empty.
 /// `single_status` reproduces the script's one-status view: the header is
 /// the status name, bold but uncoloured.
 pub fn render(
     groups: &[Group<'_>],
     done: &[&Task],
-    theme: &Theme,
-    style: Style,
+    look: &Look<'_>,
     single_status: bool,
 ) -> String {
+    let (theme, style) = (look.theme, look.style);
     let mut out = String::new();
     for group in groups {
         let header = match (&group.status, single_status) {
@@ -227,7 +245,7 @@ pub fn render(
         out.push_str(&header);
         out.push('\n');
         for task in &group.tasks {
-            out.push_str(&row(task, theme, style));
+            out.push_str(&row(task, look));
         }
         out.push('\n');
     }
@@ -235,17 +253,20 @@ pub fn render(
         out.push_str(&style.bold_color(theme.done_color(), DONE_LABEL));
         out.push('\n');
         for task in done {
-            out.push_str(&row(task, theme, style));
+            out.push_str(&row(task, look));
         }
         out.push('\n');
     }
     out
 }
 
-/// One task line: `  [id] #prio Title (due date) chips`, the id, `#B`,
-/// `#C` and the due date in the theme's `dim`, `#A` in `prio-a`, the
-/// chips in `chip-fg` on `chip-bg`.
-pub fn row(task: &Task, theme: &Theme, style: Style) -> String {
+/// One task line: `  [id] #prio Title (due) chips`, the id, `#B` and `#C`
+/// in the theme's `dim`, `#A` in `prio-a`, the chips in `chip-fg` on
+/// `chip-bg`. The due date is shown in `ui.due_format`: bold `overdue`
+/// when past, `due-soon` today and tomorrow, `dim` further ahead; a done
+/// task shows its date, dim.
+pub fn row(task: &Task, look: &Look<'_>) -> String {
+    let (theme, style) = (look.theme, look.style);
     let dim = theme.color(Role::Dim);
     let id = style.color(dim, &format!("[{:>2}]", task.id.as_str()));
     let prio = match task.priority {
@@ -254,10 +275,16 @@ pub fn row(task: &Task, theme: &Theme, style: Style) -> String {
         Priority::C => style.color(dim, "#C"),
     };
     let due = task.due.map_or_else(String::new, |d| {
-        format!(
-            " {}",
+        let due = if task.done {
             style.color(dim, &format!("(due {})", format_date(d)))
-        )
+        } else {
+            let text = format!("({})", due_label(d, look.today, look.due_format));
+            match Role::of_due(Due::of(d, look.today)) {
+                Role::Overdue => style.bold_color(theme.color(Role::Overdue), &text),
+                role => style.color(theme.color(role), &text),
+            }
+        };
+        format!(" {due}")
     });
     let (bg, fg) = (theme.color(Role::ChipBg), theme.color(Role::ChipFg));
     let chips = task.tags.iter().fold(String::new(), |mut acc, t| {
@@ -270,10 +297,19 @@ pub fn row(task: &Task, theme: &Theme, style: Style) -> String {
 
 #[cfg(test)]
 mod tests {
-    use chrono::NaiveDate;
     use tasq_core::model::TaskId;
 
     use super::*;
+
+    /// 2026-10-06, ISO dates: the rows as they were before relative dates.
+    fn look(theme: &Theme, style: Style) -> Look<'_> {
+        Look {
+            theme,
+            style,
+            today: NaiveDate::from_ymd_opt(2026, 10, 6).unwrap(),
+            due_format: DueFormat::Iso,
+        }
+    }
 
     fn args(word: Option<&str>) -> ListArgs {
         ListArgs {
@@ -406,11 +442,11 @@ mod tests {
         let done: Vec<&Task> = tasks.iter().filter(|t| t.done).collect();
         let theme = Theme::from_config(&UiConfig::default());
         assert_eq!(
-            render(&groups, &done, &theme, Style::OFF, false),
+            render(&groups, &done, &look(&theme, Style::OFF), false),
             "READY\n  [ 1] #B A\n\nDONE\n  [ 2] #B D\n\n"
         );
         assert_eq!(
-            render(&[], &done, &theme, Style::ON, false),
+            render(&[], &done, &look(&theme, Style::ON), false),
             "\x1b[1;2mDONE\x1b[0m\n  \x1b[2m[ 2]\x1b[0m \x1b[2m#B\x1b[0m D\n\n"
         );
     }
@@ -434,32 +470,85 @@ mod tests {
         t.add_tag(Tag::new("review-request").unwrap());
         let theme = Theme::default();
         assert_eq!(
-            row(&t, &theme, Style::OFF),
+            row(&t, &look(&theme, Style::OFF)),
             "  [ 3] #A Fix it (due 2026-10-10)  #gitlab   #review-request \n"
         );
         assert_eq!(
-            row(&t, &theme, Style::ON),
+            row(&t, &look(&theme, Style::ON)),
             "  \x1b[2m[ 3]\x1b[0m \x1b[1;31m#A\x1b[0m Fix it \x1b[2m(due 2026-10-10)\x1b[0m \x1b[48;5;24m\x1b[38;5;231m #gitlab \x1b[0m \x1b[48;5;24m\x1b[38;5;231m #review-request \x1b[0m\n"
         );
         let plain = Task::new(TaskId::from(12), "Plain");
-        assert_eq!(row(&plain, &theme, Style::OFF), "  [12] #B Plain\n");
+        assert_eq!(row(&plain, &look(&theme, Style::OFF)), "  [12] #B Plain\n");
         // A preset restyles the id, the marker, the date and the chips.
         let mut ui = UiConfig::default();
         ui.theme.preset = tasq_core::theme::Preset::Light;
         let light = Theme::from_config(&ui);
         assert_eq!(
-            row(&t, &light, Style::ON),
+            row(&t, &look(&light, Style::ON)),
             "  \x1b[38;5;245m[ 3]\x1b[0m \x1b[1;38;5;124m#A\x1b[0m Fix it \x1b[38;5;245m(due 2026-10-10)\x1b[0m \x1b[48;5;153m\x1b[38;5;17m #gitlab \x1b[0m \x1b[48;5;153m\x1b[38;5;17m #review-request \x1b[0m\n"
         );
         ui.theme.preset = tasq_core::theme::Preset::Mono;
         let mono = Theme::from_config(&ui);
         assert_eq!(
-            row(&plain, &mono, Style::ON),
+            row(&plain, &look(&mono, Style::ON)),
             "  \x1b[2m[12]\x1b[0m \x1b[2m#B\x1b[0m Plain\n"
         );
         assert_eq!(
-            row(&t, &mono, Style::ON),
+            row(&t, &look(&mono, Style::ON)),
             "  \x1b[2m[ 3]\x1b[0m \x1b[1m#A\x1b[0m Fix it \x1b[2m(due 2026-10-10)\x1b[0m \x1b[7m #gitlab \x1b[0m \x1b[7m #review-request \x1b[0m\n"
+        );
+    }
+
+    #[test]
+    fn row_due_dates_relative_and_coloured() {
+        let theme = Theme::default();
+        let mut on = look(&theme, Style::ON);
+        on.due_format = DueFormat::Relative;
+        let off = Look {
+            style: Style::OFF,
+            ..on
+        };
+        let due = |day: u32| {
+            let mut t = Task::new(TaskId::from(3), "T");
+            t.due = NaiveDate::from_ymd_opt(2026, 10, day);
+            t
+        };
+        assert_eq!(row(&due(3), &off), "  [ 3] #B T (overdue 3d)\n");
+        assert_eq!(row(&due(6), &off), "  [ 3] #B T (due today)\n");
+        assert_eq!(row(&due(7), &off), "  [ 3] #B T (due tomorrow)\n");
+        assert_eq!(row(&due(10), &off), "  [ 3] #B T (due in 4d)\n");
+        let id = "  \x1b[2m[ 3]\x1b[0m \x1b[2m#B\x1b[0m T";
+        assert_eq!(
+            row(&due(3), &on),
+            format!("{id} \x1b[1;31m(overdue 3d)\x1b[0m\n")
+        );
+        assert_eq!(
+            row(&due(6), &on),
+            format!("{id} \x1b[33m(due today)\x1b[0m\n")
+        );
+        assert_eq!(
+            row(&due(7), &on),
+            format!("{id} \x1b[33m(due tomorrow)\x1b[0m\n")
+        );
+        assert_eq!(
+            row(&due(10), &on),
+            format!("{id} \x1b[2m(due in 4d)\x1b[0m\n")
+        );
+        // `both`, and a done task: its date only, dim, never overdue.
+        let both = Look {
+            due_format: DueFormat::Both,
+            ..off
+        };
+        assert_eq!(
+            row(&due(3), &both),
+            "  [ 3] #B T (overdue 3d, 2026-10-03)\n"
+        );
+        let mut closed = due(3);
+        closed.done = true;
+        assert_eq!(row(&closed, &both), "  [ 3] #B T (due 2026-10-03)\n");
+        assert_eq!(
+            row(&closed, &on),
+            format!("{id} \x1b[2m(due 2026-10-03)\x1b[0m\n")
         );
     }
 
@@ -472,7 +561,7 @@ mod tests {
         let groups = query::list(&tasks, &Filter::default(), &Workflow::default());
         let theme = Theme::from_config(&UiConfig::default());
         assert_eq!(
-            render(&groups, &[], &theme, Style::OFF, false),
+            render(&groups, &[], &look(&theme, Style::OFF), false),
             "READY\n  [ 1] #B A\n\nNO STATUS\n  [ 2] #B B\n\n"
         );
         let one = query::list(
@@ -481,11 +570,11 @@ mod tests {
             &Workflow::default(),
         );
         assert_eq!(
-            render(&one, &[], &theme, Style::ON, true),
+            render(&one, &[], &look(&theme, Style::ON), true),
             "\x1b[1mready\x1b[0m\n  \x1b[2m[ 1]\x1b[0m \x1b[2m#B\x1b[0m A\n\n"
         );
         assert_eq!(
-            render(&one, &[], &theme, Style::ON, false),
+            render(&one, &[], &look(&theme, Style::ON), false),
             "\x1b[1;32mREADY\x1b[0m\n  \x1b[2m[ 1]\x1b[0m \x1b[2m#B\x1b[0m A\n\n"
         );
     }
