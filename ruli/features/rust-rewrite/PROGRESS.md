@@ -264,7 +264,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   snapshots do not move with the calendar. Colouring past days in the calendar picker was
   dropped from scope (the saved row already shows overdue). Mutants: `dates.rs` +
   `theme.rs` 118 tested, 0 missed. Known limit: a long-running `tasq ui` keeps the `today`
-  it started with.
+  it started with. Commits baf8006, e5e47bf, b460d55, 36bb278.
 - **Calendar picker for the Due box (follow-up 2026-10-06, ADR 0017, todo 14).** `Enter` on
   the Due box opens `Mode::Calendar { form, calendar }`: the edit view stays underneath, one
   month is drawn centred over it. `calendar::Calendar` is the day under the cursor plus the
