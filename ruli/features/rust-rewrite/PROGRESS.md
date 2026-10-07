@@ -220,6 +220,18 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ### Plugin and release decisions (T-901 to T-904)
 
+- **`tasq reopen` (follow-up 2026-10-07, todo 16).** Scope cut from "undo and reopen": undo
+  was dropped because every write is already a commit in the notebook and the users know git.
+  `edit::reopen(store, id, status, note, clock)` clears `done`, sets the status and logs the
+  note (default `REOPENED_NOTE`, "reopened") in one `Store::update`; the nb diff already
+  expressed reopen-with-status (`diff.rs` `reopening_a_done_task`). An open task is refused
+  with `EditError::NotDone` before any write. The status before `done` is not recovered: it
+  only survives in git history. CLI `tasq reopen ID [STATUS] [NOTE]`: the first word is the
+  status when the workflow knows it, otherwise the note, with `workflow.default_status`
+  (`reopen_args`). The `tasq pick` refusal on a done task pointed at `tasq set ID <status>`,
+  which cannot reopen (`Task::set_status` leaves `done`); it now says `tasq reopen ID`. No
+  TUI key: the TUI lists open tasks only (follow-up todo 45). Mutants on both `edit.rs`
+  files: 29 caught, 12 unviable, 0 missed. Commits 26da468, c3b676c.
 - **TUI group headers and folding (follow-up 2026-10-07, todo 29).** The list puts a blank
   line between status groups and a count in each header (`READY (2)`), so groups stay apart
   under `NO_COLOR`; `Row::Header` carries the group size, folded or not. `z`/`Space`
