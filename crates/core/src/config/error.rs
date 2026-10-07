@@ -96,6 +96,26 @@ pub enum ConfigError {
         /// Which layer set `workflow.default_status`.
         origin: Origin,
     },
+    /// A worktree template names a variable it does not have.
+    #[error("{key} (set by {origin}): {source}")]
+    UnknownTemplateVariable {
+        /// The key holding the template (`worktree.path`, ...).
+        key: String,
+        /// The name and what was available.
+        source: crate::worktree::vars::UnknownVariable,
+        /// Where the key was set.
+        origin: Origin,
+    },
+    /// A `[worktree.variables]` name that cannot be used in a template.
+    #[error("worktree.variables.{name} (set by {origin}): {reason}")]
+    BadWorktreeVariable {
+        /// The name as written.
+        name: String,
+        /// What is wrong with it.
+        reason: &'static str,
+        /// Where it was set.
+        origin: Origin,
+    },
     /// `[worktree.ports]` that cannot hold one block, or runs past 65535.
     #[error(
         "worktree.ports (set by {origin}): base = {base}, span = {span}, block = {block}: block must be at least 1, span at least block, and base + span at most 65536"

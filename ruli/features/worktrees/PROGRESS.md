@@ -5,7 +5,7 @@ Plan: [PLAN.md](PLAN.md). Decision: [ADR 0022](../../../docs/adr/0022-worktrees-
 
 ## Status
 
-**Planning.** Scope agreed with the author on 2026-10-07: core feature behind `worktree.enabled`,
+**Phase 1 done (2026-10-07).** Scope agreed with the author on 2026-10-07: core feature behind `worktree.enabled`,
 full gwm replacement, then improvements from the prior-art survey (PLAN section 7). Plugin task
 fields split out to nb todo 46. Lifecycle settled the same day (PLAN 4.2): declare at creation,
 create at launch, release at close, never remove the entry.
@@ -15,7 +15,7 @@ create at launch, release at close, never remove the entry.
 | WT-101 | Lifecycle decisions in core | done | `tasq_core::worktree::lifecycle`: `declare`, `on_launch`, `on_close` (`DirSeen`/`BranchSeen` in, `Release { WorktreeFate, BranchFate }` out); 10 table tests; 14 mutants, 11 caught, 3 unviable |
 | WT-102 | `[worktree]` config and the toggle | done | `WorktreeConfig` (+ `OnCreate`, `OnDone`, `TemplateFile`, `PortsConfig`, `WorktreeHooks`), 7 `TASQ_WORKTREE*` vars, `BadPorts`; `work.worktree_*` rejected by a `deserialize_with` guard (file:line:column); `CommandManager`/`manager_for`/`expand_template` deleted; docs, examples, CI `no-gwm` job; 17 mutants, 16 caught, 1 unviable |
 | WT-103 | Invisible when disabled | done | `App::worktrees`/`task_json` + `json::task(s)` (key dropped), `cli::command` hides `worktree` and swaps help paragraphs, `cli::completion_command` prunes it, `early_globals` loads config before clap, `LaunchContext::worktrees` + `{{#worktrees_enabled}}`, `Model::with_worktrees`, apply keeps stored worktrees on a missing key; `worktrees_disabled` CLI tests; 7 mutants, 7 caught |
-| WT-104 | Templates, variables and naming in core | todo | |
+| WT-104 | Templates, variables and naming in core | done | `tasq_core::template` (hand parser replacing the launch regexes, `names()`), `worktree::vars` (`Scope`, `check`, `Vars`, `branch_safe`, `branch_db`, `slug`, `repo_name`, `port` via FNV-1a); config rejects unknown template variables per scope and bad `[worktree.variables]` names; 102 mutants in template + worktree, 96 caught, 6 unviable |
 | WT-201 | Declaring: `tasq create --worktree` and `tasq worktree <id> [BRANCH]` | todo | |
 | WT-202 | Materializing at launch: the `tasq-worktree` crate | todo | |
 | WT-203 | Provisioning: symlinks, copies, templates | todo | |
@@ -48,6 +48,12 @@ create at launch, release at close, never remove the entry.
   subcommands, so completions use a rebuilt command without `worktree`. When disabled,
   `{{markdown}}` in the prompt still quotes the file verbatim, `## Worktrees` included; only
   users who enabled and then disabled the feature can see that.
+- WT-104: the first `next_tag` advanced an index by hand; three mutants of that arithmetic only
+  timed out (infinite loops). Iterating `char_indices` removed them. `port` is FNV-1a 64 over
+  `project NUL branch`; the pinned values were checked against a Python implementation, not the
+  Rust one. Variable scopes follow the lifecycle: `branch` cannot use `{{branch}}`, `path`
+  cannot use `{{worktree}}`, and `{{port}}` exists only with `[worktree.ports]`. `~` in a
+  rendered path is the caller's to expand (WT-201).
 - Defaults confirmed by the author 2026-10-07: `on_create = "auto"`, `on_done = "release"`,
   `delete_branch = "safe"`.
 - gwm facts (from `~/.local/bin/gwm`, read-only): `branch_safe` replaces every non-alphanumeric

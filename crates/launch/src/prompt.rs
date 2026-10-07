@@ -1,54 +1,23 @@
 //! The Claude prompt: a template with `{{name}}` placeholders and
-//! `{{#name}}...{{/name}}` sections kept only when `name` is non-empty.
+//! `{{#name}}...{{/name}}` sections kept only when `name` is non-empty,
+//! rendered by [`tasq_core::template`].
 //!
 //! The built-in template is `templates/claude.md`; `[launch.claude]
 //! prompt_file` replaces it. Prompts are data (plan section 8), so the
 //! engine is deliberately tiny and has no logic beyond substitution.
 
 use std::collections::BTreeMap;
-use std::sync::LazyLock;
 
-use regex::{Captures, Regex};
 use tasq_core::format::{format_session, format_worktree};
 use tasq_core::launch::{LaunchContext, LaunchError};
 
 /// The built-in Claude prompt template.
 pub const DEFAULT_TEMPLATE: &str = include_str!("../templates/claude.md");
 
-static SECTION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)\{\{#(\w+)\}\}(.*?)\{\{/(\w+)\}\}").unwrap());
-static PLACEHOLDER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{(\w+)\}\}").unwrap());
-
-/// Renders `template` with `vars`. A section whose variable is empty or
-/// unset disappears with its markers; an unknown placeholder, or a section
-/// whose closing tag names another variable, is an error.
+/// Renders `template` with `vars` ([`tasq_core::template::render`]); a
+/// template error is a [`LaunchError::Template`].
 pub fn render(template: &str, vars: &BTreeMap<&str, String>) -> Result<String, LaunchError> {
-    let mut error: Option<String> = None;
-    let sectioned = SECTION.replace_all(template, |c: &Captures<'_>| {
-        if c[1] != c[3] {
-            error.get_or_insert(format!(
-                "section {{{{#{}}}}} is closed by {{{{/{}}}}}",
-                &c[1], &c[3]
-            ));
-            return String::new();
-        }
-        match vars.get(&c[1]) {
-            Some(value) if !value.is_empty() => c[2].to_owned(),
-            _ => String::new(),
-        }
-    });
-    let rendered = PLACEHOLDER.replace_all(&sectioned, |c: &Captures<'_>| {
-        if let Some(value) = vars.get(&c[1]) {
-            value.clone()
-        } else {
-            error.get_or_insert(format!("unknown placeholder {{{{{}}}}}", &c[1]));
-            String::new()
-        }
-    });
-    match error {
-        Some(message) => Err(LaunchError::Template(message)),
-        None => Ok(rendered.into_owned()),
-    }
+    tasq_core::template::render(template, vars).map_err(|e| LaunchError::Template(e.to_string()))
 }
 
 /// The variables the Claude prompt uses, from a launch context.

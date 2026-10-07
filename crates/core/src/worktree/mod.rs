@@ -7,3 +7,4 @@
 //! running `git` and touching the filesystem is the caller's job.
 
 pub mod lifecycle;
+pub mod vars;

@@ -2071,7 +2071,6 @@ version = "0.1.0"
 dependencies = [
  "insta",
  "mutants",
- "regex",
  "serde_json",
  "shell-words",
  "tasq-core",

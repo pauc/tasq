@@ -281,6 +281,29 @@ Per-repository settings (links, copies, templates, hooks) belong in a `.tasq.tom
 repository or in the directory above it; the worktree commands load the configuration from the
 task's project directory.
 
+### Template variables
+
+Worktree templates use the same `{{name}}` engine as the Claude prompt (`{{#name}}...{{/name}}`
+sections included). What a template may name depends on when it is rendered:
+
+| Variable | Value | `branch` | `path` | files and hooks |
+|---|---|---|---|---|
+| `id`, `title` | the task's id and title | yes | yes | yes |
+| `slug` | the title in lowercase ASCII, other characters `-`, at most 40 bytes (`fix-the-login-form`) | yes | yes | yes |
+| `project`, `project_name`, `project_parent` | the project directory, its name, its parent | yes | yes | yes |
+| `repo` | the repository name from `remote.origin.url`, else `project_name` | yes | yes | yes |
+| `branch` | the branch | | yes | yes |
+| `branch_safe` | the branch with every character but ASCII letters and digits as `_`, runs collapsed, trimmed (`feature/x` is `feature_x`) | | yes | yes |
+| `branch_db` | `branch_safe` in lowercase, at most 63 bytes | | yes | yes |
+| `port` | with `[worktree.ports]`: the first port of the branch's block, stable for a project and branch | | yes | yes |
+| `worktree`, `worktree_name` | the worktree directory and its name | | | yes |
+| `[worktree.variables]` entries | as written | yes | yes | yes |
+
+A template naming anything else is a configuration error with the key, the file and the names
+it could use, whether or not worktrees are enabled. `[worktree.variables]` names are letters,
+digits and underscores and may not reuse a built-in name. The contents of template files are
+checked when they are rendered.
+
 ## Launchers
 
 `tasq next` and `tasq pick <id>` set the task to in-progress and open a session in the first

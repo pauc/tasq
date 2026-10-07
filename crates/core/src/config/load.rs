@@ -706,6 +706,76 @@ impl Config {
     }
 }
 
+/// Checks `[worktree]`: user variables are template names that do not
+/// shadow a built-in, and every template only names variables its scope
+/// has (ADR 0022). Checked whether or not worktrees are enabled, so turning
+/// them on never surfaces an old mistake.
+fn check_worktree_templates(loaded: &Loaded) -> Result<(), ConfigError> {
+    use crate::worktree::vars::{Scope, check, is_builtin};
+    let origin_of = |key: &str| loaded.explain(key).cloned().unwrap_or(Origin::Defaults);
+    let worktree = &loaded.config.worktree;
+    for name in worktree.variables.keys() {
+        let reason = if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            "a variable name is letters, digits and underscores"
+        } else if is_builtin(name) {
+            "a built-in variable has this name"
+        } else {
+            continue;
+        };
+        return Err(ConfigError::BadWorktreeVariable {
+            name: name.clone(),
+            reason,
+            origin: origin_of(&format!("worktree.variables.{name}")),
+        });
+    }
+    let ports = worktree.ports.is_some();
+    let hooks = &worktree.hooks;
+    let templates = [
+        (
+            "worktree.branch",
+            Scope::Branch,
+            std::slice::from_ref(&worktree.branch),
+        ),
+        (
+            "worktree.path",
+            Scope::Path,
+            std::slice::from_ref(&worktree.path),
+        ),
+        (
+            "worktree.hooks.pre-create",
+            Scope::Worktree,
+            hooks.pre_create.as_slice(),
+        ),
+        (
+            "worktree.hooks.post-create",
+            Scope::Worktree,
+            hooks.post_create.as_slice(),
+        ),
+        (
+            "worktree.hooks.pre-remove",
+            Scope::Worktree,
+            hooks.pre_remove.as_slice(),
+        ),
+        (
+            "worktree.hooks.post-remove",
+            Scope::Worktree,
+            hooks.post_remove.as_slice(),
+        ),
+    ];
+    for (key, scope, texts) in templates {
+        for text in texts {
+            check(text, scope, ports, &worktree.variables).map_err(|source| {
+                ConfigError::UnknownTemplateVariable {
+                    key: key.to_owned(),
+                    source,
+                    origin: origin_of(key),
+                }
+            })?;
+        }
+    }
+    Ok(())
+}
+
 /// Expands `~`, fills in forge defaults and checks cross-key rules.
 fn finalize(loaded: &mut Loaded, home: Option<&Path>) -> Result<(), ConfigError> {
     let origin_of =
@@ -803,7 +873,7 @@ fn finalize(loaded: &mut Loaded, home: Option<&Path>) -> Result<(), ConfigError>
             }
         }
     }
-    Ok(())
+    check_worktree_templates(loaded)
 }
 
 #[cfg(test)]

@@ -1855,3 +1855,103 @@ fn an_empty_table_is_recorded_as_a_leaf_key() {
             .is_some_and(|o| o.path().is_some())
     );
 }
+
+#[test]
+fn worktree_templates_only_name_variables_of_their_scope() {
+    let load = |text: &str| {
+        let sb = Sandbox::new();
+        let file = sb.write_project(text);
+        (
+            Config::load(&sb.opts())
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+            file,
+        )
+    };
+    // The defaults and every scope's own names pass.
+    assert_eq!(load("[worktree]\n").0, Ok(()));
+    assert_eq!(
+        load(
+            "[worktree]\nbranch = \"{{repo}}-{{id}}-{{slug}}-{{title}}-{{project}}-{{project_name}}-{{project_parent}}-{{x}}\"\n\
+             path = \"{{branch}}{{branch_safe}}{{branch_db}}{{port}}\"\n\
+             [worktree.variables]\nx = \"1\"\n[worktree.ports]\nbase = 4000\nspan = 10\nblock = 10\n\
+             [worktree.hooks]\npost-create = [\"echo {{worktree}} {{worktree_name}} {{port}}\"]\n"
+        )
+        .0,
+        Ok(())
+    );
+    let (err, file) = load("[worktree]\nbranch = \"{{id}}-{{branch}}\"\n");
+    assert_eq!(
+        err.unwrap_err(),
+        format!(
+            "worktree.branch (set by {}): unknown variable {{{{branch}}}}; known: {{{{id}}}}, {{{{project}}}}, {{{{project_name}}}}, {{{{project_parent}}}}, {{{{repo}}}}, {{{{slug}}}}, {{{{title}}}}",
+            file.display()
+        )
+    );
+    for (text, key, name) in [
+        (
+            "[worktree]\npath = \"{{worktree}}\"\n",
+            "worktree.path",
+            "worktree",
+        ),
+        ("[worktree]\npath = \"{{port}}\"\n", "worktree.path", "port"),
+        (
+            "[worktree.hooks]\npre-create = [\"ok\", \"{{nope}}\"]\n",
+            "worktree.hooks.pre-create",
+            "nope",
+        ),
+        (
+            "[worktree.hooks]\npost-create = [\"{{nope}}\"]\n",
+            "worktree.hooks.post-create",
+            "nope",
+        ),
+        (
+            "[worktree.hooks]\npre-remove = [\"{{nope}}\"]\n",
+            "worktree.hooks.pre-remove",
+            "nope",
+        ),
+        (
+            "[worktree.hooks]\npost-remove = [\"{{nope}}\"]\n",
+            "worktree.hooks.post-remove",
+            "nope",
+        ),
+    ] {
+        let err = load(text).0.unwrap_err();
+        assert!(err.starts_with(&format!("{key} (set by ")), "{err}");
+        assert!(
+            err.contains(&format!("unknown variable {{{{{name}}}}};")),
+            "{err}"
+        );
+    }
+    // Checked even with worktrees disabled, so enabling never surfaces it.
+    assert!(
+        load("[worktree]\nenabled = false\nbranch = \"{{bad}}\"\n")
+            .0
+            .is_err()
+    );
+}
+
+#[test]
+fn worktree_variables_are_names_that_shadow_no_builtin() {
+    let sb = Sandbox::new();
+    let file = sb.write_project("[worktree.variables]\nport = \"1\"\n");
+    assert_eq!(
+        Config::load(&sb.opts()).unwrap_err().to_string(),
+        format!(
+            "worktree.variables.port (set by {}): a built-in variable has this name",
+            file.display()
+        )
+    );
+    sb.write_project("[worktree.variables]\n\"db-name\" = \"1\"\n");
+    assert_eq!(
+        Config::load(&sb.opts()).unwrap_err().to_string(),
+        format!(
+            "worktree.variables.db-name (set by {}): a variable name is letters, digits and underscores",
+            file.display()
+        )
+    );
+    sb.write_project("[worktree.variables]\n\"\" = \"1\"\n");
+    assert!(Config::load(&sb.opts()).is_err());
+    sb.write_project("[worktree.variables]\ndb_name2 = \"1\"\n");
+    assert!(Config::load(&sb.opts()).is_ok());
+}

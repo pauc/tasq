@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pick --dry-run --json` `in_worktree`), the TUI detail and the Claude prompt say nothing about
   them, and sessions start in the project. `tasq apply` keeps the stored worktrees when the
   document has no `worktrees` key.
+- Worktree template variables (`id`, `title`, `slug`, `project`, `project_name`,
+  `project_parent`, `repo`, `branch`, `branch_safe`, `branch_db`, `port`, `worktree`,
+  `worktree_name` and `[worktree.variables]`), checked per template at load time. The `{{name}}`
+  engine moved to `tasq_core::template`; `tasq-launch` no longer depends on `regex`.
 - Every task created with `tasq create` or the TUI's `c` key tracks a project: `--project`
   when given, else the directory `tasq` runs in. `tasq pick` therefore always has somewhere
   to start; `tasq project <id> <path>` changes it. The original script left the section out
