@@ -47,3 +47,4 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0019](0019-relative-due-dates.md) | Relative, coloured due dates: `dates::Due`, `ui.due_format` (relative/iso/both), `overdue` and `due-soon` theme roles; ISO in `--json` and the detail pane | Accepted |
 | [0020](0020-closed-section.md) | Recording when a task was closed: `Task::closed_at`, a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`), `Task::close`, `edit::done` in one write | Accepted |
 | [0021](0021-detail-at-the-bottom.md) | The TUI detail under the list: `ui.detail_position = "right" \| "bottom"`, `LayoutKind::Stacked` from 20 rows | Accepted |
+| [0022](0022-worktrees-opt-in-core-feature.md) | Worktrees as an opt-in core feature: `worktree.enabled` hides every surface when off; `[worktree]` provisioning replaces gwm; pure plans in `tasq-core::worktree`, executed by a new `tasq-worktree` crate; trust for repo hooks | Proposed |
