@@ -381,7 +381,7 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `page-up`, `page-down` | `ctrl+u`, `pgup` / `ctrl+d`, `pgdn` | list | move ten tasks |
 | `top`, `bottom` | `g`, `home` / `G`, `end` | list | first / last task |
 | `toggle-group` | `z`, `space` | list | fold the selected task's group to its header, or unfold the folded group under the cursor (kept for the session) |
-| `toggle-done` | `a` | list | show or hide the DONE group: done tasks matching the filter, newest closed first, folded when it appears (`+done` in the list title) |
+| `toggle-done` | `a` | list | show or hide the DONE group: done tasks matching the filter, newest closed first, unfolded whenever it appears (`+done` in the list title) |
 | `filter` | `/` | list | type a filter |
 | `status`, `priority` | `t` / `p` | list | open the status / priority picker |
 | `log`, `done`, `create` | `l` / `d` / `c` | list | type a note / a final note / a title |

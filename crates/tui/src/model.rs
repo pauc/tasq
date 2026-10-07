@@ -394,12 +394,13 @@ impl Model {
             .count()
     }
 
-    /// Shows or hides the DONE group (`a`). It comes back folded, so the
-    /// open tasks stay where they were.
+    /// Shows or hides the DONE group (`a`). It always appears unfolded,
+    /// even when it was folded with `z` before it was hidden: the point of
+    /// `a` is to see the done tasks.
     pub fn toggle_done(&mut self) {
         self.toggles.done = !self.toggles.done;
         if self.toggles.done {
-            self.collapsed.insert(GroupKey::Done);
+            self.collapsed.remove(&GroupKey::Done);
         }
         self.fix_selection();
     }
@@ -797,13 +798,14 @@ mod tests {
         m.toggle_done();
         assert!(m.toggles.done);
         assert_eq!(m.total(), 6);
-        assert_eq!(m.collapsed, BTreeSet::from([done.clone()]));
-        assert_eq!(m.rows().last(), Some(&Row::Header(done.clone(), 2)));
-        assert_eq!(m.stops().last(), Some(&Cursor::Group(done.clone())));
-        m.select_last();
-        m.toggle_group();
+        assert_eq!(m.collapsed, BTreeSet::new(), "shown unfolded");
+        assert_eq!(m.rows()[7], Row::Header(done.clone(), 2));
+        assert_eq!(m.rows().len(), 10);
         let ids: Vec<&str> = m.visible().iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["1", "2", "3", "4", "7", "6"]);
+        m.select_last();
+        assert_eq!(m.selected_task().map(|t| t.id.as_str()), Some("6"));
+        m.select_offset(-1);
         assert_eq!(m.selected_task().map(|t| t.id.as_str()), Some("7"));
 
         // The filter applies to the done tasks too; `#status` never matches one.
@@ -816,15 +818,23 @@ mod tests {
         m.set_filter("Newer".into());
         assert_eq!(m.selected_task().map(|t| t.id.as_str()), Some("7"));
 
-        // Hiding it moves a cursor that was on a done task back to the top,
-        // and showing it again folds it again.
+        // Hiding it moves a cursor that was on a done task back to the top.
         m.set_filter(String::new());
         m.toggle_done();
         assert!(!m.toggles.done);
         assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
         assert_eq!(m.total(), 4);
+        // Folded with `z`, hidden and shown again: unfolded.
         m.toggle_done();
-        assert_eq!(m.collapsed, BTreeSet::from([done]));
+        m.collapsed.insert(done.clone());
+        m.toggle_done();
+        m.toggle_done();
+        assert_eq!(m.collapsed, BTreeSet::new());
+        // Other folds are left alone.
+        m.collapsed.insert(GroupKey::Status(None));
+        m.toggle_done();
+        assert_eq!(m.collapsed, BTreeSet::from([GroupKey::Status(None)]));
+        m.collapsed.clear();
         // No done task: no DONE header.
         m.set_filter("First".into());
         assert_eq!(m.rows().len(), 2);

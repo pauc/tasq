@@ -608,15 +608,7 @@ mod tests {
         closed.mark_done();
         let mut tasks = m.tasks.clone();
         tasks.push(closed);
-        feed(
-            &mut m,
-            [
-                Msg::Loaded(tasks),
-                Msg::ToggleDone,
-                Msg::Bottom,
-                Msg::ToggleGroup,
-            ],
-        );
+        feed(&mut m, [Msg::Loaded(tasks), Msg::ToggleDone, Msg::Bottom]);
         assert_eq!(m.selected_task().map(|t| t.id.as_str()), Some("9"));
         let refused = Some(Message::error(
             "[9] is done; `tasq reopen 9` brings it back",

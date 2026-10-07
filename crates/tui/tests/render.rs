@@ -195,17 +195,16 @@ fn done_tasks() -> Vec<Task> {
 
 #[test]
 fn done_group() {
-    // Colours off, so the `+done` chip, the counts and `▸` carry it.
+    // Colours off, so the `+done` chip and the counts carry it.
     let mut model = fixture(false);
     let mut all = tasks();
     all.extend(done_tasks());
     update(&mut model, Msg::Loaded(all));
     assert_snapshot!("done_hidden", screen(&mut model, 80, 18));
     update(&mut model, Msg::ToggleDone);
-    assert_snapshot!("done_folded", screen(&mut model, 80, 18));
+    assert_snapshot!("done_shown", screen(&mut model, 80, 22));
     update(&mut model, Msg::Bottom);
-    update(&mut model, Msg::ToggleGroup);
-    assert_snapshot!("done_unfolded", screen(&mut model, 80, 22));
+    update(&mut model, Msg::Up);
     update(&mut model, Msg::ShowDetail);
     assert_snapshot!("done_detail", screen(&mut model, 120, 22));
     update(&mut model, Msg::BeginStatus);
