@@ -84,13 +84,17 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::Help => model.mode = Mode::Help,
         Msg::Reload => return vec![Cmd::Load],
         Msg::BeginFilter => begin_filter(model),
-        Msg::BeginStatus | Msg::BeginPriority | Msg::BeginDone | Msg::Edit
-            if refuse_done(model) => {}
+        Msg::BeginPriority | Msg::BeginDone | Msg::Edit if refuse_done(model) => {}
         Msg::BeginStatus => {
             if let Some(task) = model.selected_task() {
-                let cursor = task
-                    .status
-                    .as_ref()
+                // A done task has no status: the picker reopens it, starting
+                // at the status new tasks get.
+                let current = if task.done {
+                    Some(&model.default_status)
+                } else {
+                    task.status.as_ref()
+                };
+                let cursor = current
                     .and_then(|s| model.workflow.position(s))
                     .unwrap_or(0);
                 model.mode = Mode::Status { cursor };
@@ -191,8 +195,8 @@ fn begin_note(model: &mut Model, target: NoteTarget) {
 }
 
 /// Whether the selected task is done, saying so in the status bar: the
-/// status and priority pickers, `done` and the edit view need an open
-/// task. A done task can still be logged on, opened and launched.
+/// priority picker, `done` and the edit view need an open task. A done
+/// task can still be reopened (`t`), logged on, opened and launched.
 fn refuse_done(model: &mut Model) -> bool {
     let Some(id) = model
         .selected_task()
@@ -201,9 +205,7 @@ fn refuse_done(model: &mut Model) -> bool {
     else {
         return false;
     };
-    model.message = Some(Message::error(format!(
-        "[{id}] is done; `tasq reopen {id}` brings it back"
-    )));
+    model.message = Some(Message::error(format!("[{id}] is done; t reopens it")));
     true
 }
 
@@ -315,7 +317,14 @@ fn status_picker(model: &mut Model, cursor: usize, msg: &Msg) -> Vec<Cmd> {
         return Vec::new();
     };
     model.mode = Mode::Normal;
-    with_selection(model, |id| Cmd::SetStatus(id, status))
+    let reopen = model.selected_task().is_some_and(|task| task.done);
+    with_selection(model, |id| {
+        if reopen {
+            Cmd::Reopen(id, status)
+        } else {
+            Cmd::SetStatus(id, status)
+        }
+    })
 }
 
 fn priority_picker(model: &mut Model, cursor: usize, msg: &Msg) -> Vec<Cmd> {
@@ -610,19 +619,27 @@ mod tests {
         tasks.push(closed);
         feed(&mut m, [Msg::Loaded(tasks), Msg::ToggleDone, Msg::Bottom]);
         assert_eq!(m.selected_task().map(|t| t.id.as_str()), Some("9"));
-        let refused = Some(Message::error(
-            "[9] is done; `tasq reopen 9` brings it back",
-        ));
-        for msg in [
-            Msg::BeginStatus,
-            Msg::BeginPriority,
-            Msg::BeginDone,
-            Msg::Edit,
-        ] {
+        let refused = Some(Message::error("[9] is done; t reopens it"));
+        for msg in [Msg::BeginPriority, Msg::BeginDone, Msg::Edit] {
             assert_eq!(update(&mut m, msg.clone()), Vec::new(), "{msg:?}");
             assert_eq!(m.mode, Mode::Normal, "{msg:?}");
             assert_eq!(m.message, refused, "{msg:?}");
         }
+        // `t` reopens it: the picker starts at the default status and
+        // confirming asks for `tasq reopen`, not `tasq set`.
+        update(&mut m, Msg::BeginStatus);
+        assert_eq!(m.mode, Mode::Status { cursor: 1 }, "ready, the default");
+        assert_eq!(m.message, None);
+        update(&mut m, Msg::Up);
+        assert_eq!(
+            update(&mut m, Msg::Enter),
+            vec![Cmd::Reopen(TaskId::from(9), Status::IN_PROGRESS)]
+        );
+        assert_eq!(m.mode, Mode::Normal);
+        m.default_status = Status::LATER;
+        update(&mut m, Msg::BeginStatus);
+        assert_eq!(m.mode, Mode::Status { cursor: 4 });
+        update(&mut m, Msg::Escape);
         // Logging a note, the editor and a session still work on it.
         update(&mut m, Msg::BeginNote);
         assert!(matches!(

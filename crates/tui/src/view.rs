@@ -60,7 +60,7 @@ pub const HELP: &[(&[Action], &str)] = &[
     ),
     (
         &[Action::Status],
-        "set the status (workflow statuses, pick by number)",
+        "set the status (workflow statuses, pick by number); reopens a done task",
     ),
     (&[Action::Priority], "set the priority (A, B, C)"),
     (&[Action::Log], "log a progress note"),
@@ -218,7 +218,11 @@ pub fn view(model: &Model, frame: &mut Frame) {
             model,
             frame,
             main,
-            "Status",
+            if model.selected_task().is_some_and(|t| t.done) {
+                "Reopen as"
+            } else {
+                "Status"
+            },
             &model
                 .status_choices()
                 .iter()

@@ -383,7 +383,7 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `toggle-group` | `z`, `space` | list | fold the selected task's group to its header, or unfold the folded group under the cursor (kept for the session) |
 | `toggle-done` | `a` | list | show or hide the DONE group: done tasks matching the filter, newest closed first, unfolded whenever it appears (`+done` in the list title) |
 | `filter` | `/` | list | type a filter |
-| `status`, `priority` | `t` / `p` | list | open the status / priority picker |
+| `status`, `priority` | `t` / `p` | list | open the status / priority picker; on a done task (DONE group) the status picker reopens it (`tasq reopen`), starting at `workflow.default_status` |
 | `log`, `done`, `create` | `l` / `d` / `c` | list | type a note / a final note / a title |
 | `edit` | `e` | list | open the edit view (title, status, priority, due, project, tags, description) |
 | `editor` | `E` | list | open the file in the editor |

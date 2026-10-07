@@ -207,8 +207,10 @@ fn done_group() {
     update(&mut model, Msg::Up);
     update(&mut model, Msg::ShowDetail);
     assert_snapshot!("done_detail", screen(&mut model, 120, 22));
+    update(&mut model, Msg::BeginPriority);
+    assert_snapshot!("done_refuses_priority", screen(&mut model, 120, 22));
     update(&mut model, Msg::BeginStatus);
-    assert_snapshot!("done_refuses_status", screen(&mut model, 120, 22));
+    assert_snapshot!("done_reopen_picker", screen(&mut model, 120, 22));
 }
 
 #[test]

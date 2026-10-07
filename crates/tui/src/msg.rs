@@ -122,6 +122,8 @@ pub enum Cmd {
     Load,
     /// `tasq set <id> <status>`.
     SetStatus(TaskId, Status),
+    /// `tasq reopen <id> <status>`: the status picker on a done task.
+    Reopen(TaskId, Status),
     /// `tasq set <id> <priority>`.
     SetPriority(TaskId, Priority),
     /// `tasq log <id> <note>`.
@@ -302,6 +304,8 @@ mod tests {
         }
         assert!(!Cmd::Load.releases_terminal());
         assert!(!Cmd::SetStatus(id.clone(), Status::READY).releases_terminal());
+        assert!(!Cmd::Reopen(id.clone(), Status::READY).releases_terminal());
+        assert!(!Cmd::Reopen(id.clone(), Status::READY).pauses_after());
         assert!(!Cmd::SetPriority(id.clone(), Priority::A).releases_terminal());
         assert!(!Cmd::Log(id.clone(), "x".into()).releases_terminal());
         assert!(!Cmd::Done(id.clone(), None).releases_terminal());

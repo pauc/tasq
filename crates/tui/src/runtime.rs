@@ -54,6 +54,9 @@ pub fn dispatch(
                 .map(|_| format!("[{id}] -> {}", value.label()))
                 .map_err(|e| e.to_string())
         }
+        Cmd::Reopen(id, status) => edit::reopen(store, id, status, None, clock)
+            .map(|_| format!("[{id}] reopened -> {status}"))
+            .map_err(|e| e.to_string()),
         Cmd::SetPriority(id, priority) => {
             let value = Value::Priority(*priority);
             edit::set(store, id, &value, None, clock)
@@ -386,6 +389,35 @@ mod tests {
         assert!(store.get(&TaskId::from(2)).unwrap().done);
         // Only a close reaches the host, once per task, after the write.
         assert_eq!(host.calls, vec!["after_done 1", "after_done 2"]);
+    }
+
+    #[test]
+    fn reopen_goes_through_edit_reopen() {
+        let mut store = store();
+        let mut host = RecordingHost::default();
+        let id = TaskId::from(2);
+        store.set_done(&id, true).unwrap();
+        let msgs = dispatch(
+            &Cmd::Reopen(id.clone(), Status::WAITING),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(msgs[0], Msg::Info("[2] reopened -> waiting".into()));
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
+        let task = store.get(&id).unwrap();
+        assert!(!task.done);
+        assert_eq!(task.status, Some(Status::WAITING));
+        assert_eq!(task.progress.last().unwrap().note, "reopened");
+        // An open task is refused by core, and nothing reaches the host.
+        let msgs = dispatch(
+            &Cmd::Reopen(id, Status::READY),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(msgs[0], Msg::Failed("task 2 is not done".into()));
+        assert_eq!(host.calls, Vec::<String>::new());
     }
 
     #[test]
