@@ -4,7 +4,9 @@
 //! Layout (T-803): the list alone until the detail is shown (`Right`,
 //! `Tab`). At [`TWO_PANE_MIN_WIDTH`](crate::model::TWO_PANE_MIN_WIDTH)
 //! columns or more the detail then sits right of the list; below that it
-//! replaces the list. List rows wrap at the pane width, continuation
+//! replaces the list. With `ui.detail_position = "bottom"` it sits under
+//! the list from [`STACKED_MIN_HEIGHT`](crate::model::STACKED_MIN_HEIGHT)
+//! rows (ADR-0021). List rows wrap at the pane width, continuation
 //! lines indented under the title. The last line is the status bar: the
 //! input being typed (scrolled under the terminal cursor), the last
 //! message, or the key hints.
@@ -208,8 +210,17 @@ pub fn view(model: &Model, frame: &mut Frame) {
             render_list(model, frame, left);
             render_detail(model, frame, right);
         }
+        LayoutKind::Stacked if model.show_detail => {
+            let [top, bottom] =
+                Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .areas(main);
+            render_list(model, frame, top);
+            render_detail(model, frame, bottom);
+        }
         LayoutKind::OnePane if model.show_detail => render_detail(model, frame, main),
-        LayoutKind::TwoPane | LayoutKind::OnePane => render_list(model, frame, main),
+        LayoutKind::TwoPane | LayoutKind::Stacked | LayoutKind::OnePane => {
+            render_list(model, frame, main);
+        }
     }
     render_status_bar(model, frame, bar);
     match &model.mode {

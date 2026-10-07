@@ -57,6 +57,7 @@ no_osc8 = false
 glow_style = "dark"
 week_start = "monday"        # first column of the calendar picker: monday .. sunday
 due_format = "relative"      # relative (overdue 3d) | iso (due 2026-10-03) | both
+detail_position = "right"    # where Right shows the task detail in tasq ui: right | bottom
 
 [ui.colors]                  # status name (or "no-status") = colour, see "Colours"
 
@@ -127,6 +128,7 @@ pre-launch = []
 | `ui.glow_style` | string | `dark` | Style passed to `glow -s`. |
 | `ui.week_start` | weekday name | `monday` | First column of the calendar picker in `tasq ui` (`monday`, `tuesday`, ... `sunday`). |
 | `ui.due_format` | `relative` \| `iso` \| `both` | `relative` | How the rows of `tasq list` and `tasq ui` show a due date: `overdue 3d`, `due today`, `due tomorrow`, `due in 4d`; `due 2026-10-03`; or `overdue 3d, 2026-10-03`. The detail pane of `tasq ui` always shows both, `--json` always the ISO date. A done task always shows its ISO date, dim. |
+| `ui.detail_position` | `right` \| `bottom` | `right` | Where `tasq ui` shows the selected task's detail (`Right`, `Tab`): beside the list from 100 columns, or under it (list on top, half the height each) from 20 rows. Narrower or shorter terminals show the detail instead of the list. |
 | `ui.colors.<name>` | string | empty table | Colour per status name, plus `no-status` and `done`, on top of the theme. See "Colours". |
 | `ui.theme.preset` | `dark` \| `light` \| `solarized` \| `gruvbox` \| `mono` | `dark` | The built-in colour theme of `tasq list`, `tasq view` and `tasq ui`. See "Colours". |
 | `ui.theme.colors.<role>` | string | empty table | Colour per role (`in-progress`, `ready`, `waiting`, `blocked`, `later`, `other-status`, `no-status`, `done`, `chip-bg`, `chip-fg`, `prio-a`, `focus`, `selection`, `error`, `dim`, `link`, `header`, `overdue`, `due-soon`), over the preset. See "Colours". |
@@ -183,6 +185,7 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_GLOW_STYLE` | `ui.glow_style` |
 | `TASQ_WEEK_START` | `ui.week_start` |
 | `TASQ_DUE_FORMAT` | `ui.due_format` |
+| `TASQ_DETAIL_POSITION` | `ui.detail_position` |
 | `TASQ_THEME` | `ui.theme.preset` |
 | `TASQ_SUMMARIZER` | `report.summary.summarizer` |
 | `TASQ_SUMMARY_MODEL` | `report.summary.model` |

@@ -1,6 +1,5 @@
 ---
 source: crates/cli/tests/cli.rs
-assertion_line: 491
 expression: env.normalize(&stdout(&out))
 ---
 # profile: none
@@ -30,6 +29,7 @@ env = "direnv"                               # defaults
 placement = "auto"                           # defaults
 
 [ui]
+detail_position = "right"                    # defaults
 due_format = "relative"                      # defaults
 glow_style = "dark"                          # defaults
 no_osc8 = false                              # defaults

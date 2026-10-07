@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use chrono::{NaiveDate, Weekday};
-use tasq_core::config::DueFormat;
+use tasq_core::config::{DetailPosition, DueFormat};
 use tasq_core::model::{Priority, Status, Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::{self, Filter, Group};
 use tasq_core::theme::Theme;
@@ -19,6 +19,10 @@ use crate::keys::KeyMap;
 /// Terminal width from which the list and the detail pane sit side by
 /// side (T-803: single pane below 100 columns).
 pub const TWO_PANE_MIN_WIDTH: u16 = 100;
+
+/// Terminal height from which the detail sits under the list, with
+/// `ui.detail_position = "bottom"` (ADR-0021).
+pub const STACKED_MIN_HEIGHT: u16 = 20;
 
 /// How many rows `PageUp`/`PageDown` move.
 pub const PAGE: usize = 10;
@@ -128,6 +132,9 @@ impl Message {
 pub enum LayoutKind {
     /// Wide enough for the detail beside the list.
     TwoPane,
+    /// Tall enough for the detail under the list (`ui.detail_position =
+    /// "bottom"`).
+    Stacked,
     /// One pane: the list, or the detail of the selected task.
     OnePane,
 }
@@ -211,6 +218,8 @@ pub struct Model {
     pub week_start: Weekday,
     /// How list rows show a due date (`ui.due_format`).
     pub due_format: DueFormat,
+    /// Where the detail goes (`ui.detail_position`).
+    pub detail_position: DetailPosition,
     /// The applied filter text (see [`Model::filter`]).
     pub filter: String,
     /// The list cursor, when anything is visible.
@@ -255,6 +264,7 @@ impl Model {
             today: NaiveDate::default(),
             week_start: Weekday::Mon,
             due_format: DueFormat::Relative,
+            detail_position: DetailPosition::Right,
             filter: String::new(),
             selected: None,
             collapsed: BTreeSet::new(),
@@ -345,11 +355,18 @@ impl Model {
 
     /// The layout for the current width.
     pub fn layout(&self) -> LayoutKind {
-        if self.width >= TWO_PANE_MIN_WIDTH {
-            LayoutKind::TwoPane
-        } else {
-            LayoutKind::OnePane
+        match self.detail_position {
+            DetailPosition::Right if self.width >= TWO_PANE_MIN_WIDTH => LayoutKind::TwoPane,
+            DetailPosition::Bottom if self.height >= STACKED_MIN_HEIGHT => LayoutKind::Stacked,
+            DetailPosition::Right | DetailPosition::Bottom => LayoutKind::OnePane,
         }
+    }
+
+    /// Where the detail goes (`ui.detail_position`).
+    #[must_use]
+    pub fn with_detail_position(mut self, detail_position: DetailPosition) -> Self {
+        self.detail_position = detail_position;
+        self
     }
 
     /// The core filter for the filter text: `#word` is a status, priority
@@ -618,6 +635,19 @@ mod tests {
         m.width = 99;
         assert_eq!(m.layout(), LayoutKind::OnePane);
         m.width = 100;
+        assert_eq!(m.layout(), LayoutKind::TwoPane);
+        // At the bottom, the height decides and the width does not.
+        let mut m = m.with_detail_position(DetailPosition::Bottom);
+        m.height = 19;
+        assert_eq!(m.layout(), LayoutKind::OnePane);
+        m.height = 20;
+        assert_eq!(m.layout(), LayoutKind::Stacked);
+        m.width = 40;
+        assert_eq!(m.layout(), LayoutKind::Stacked);
+        // And on the right, the height does not.
+        let mut m = m.with_detail_position(DetailPosition::Right);
+        m.width = 100;
+        m.height = 5;
         assert_eq!(m.layout(), LayoutKind::TwoPane);
     }
 

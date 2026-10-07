@@ -8,8 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use tasq_core::config::{
-    Bookkeeper, Config, ConfigError, DueFormat, EnvStrategy, ForgeKind, KeySpec, LoadOptions,
-    Origin, SourceKind, Summarizer, WeekStart, WorktreeManager, expand_tilde,
+    Bookkeeper, Config, ConfigError, DetailPosition, DueFormat, EnvStrategy, ForgeKind, KeySpec,
+    LoadOptions, Origin, SourceKind, Summarizer, WeekStart, WorktreeManager, expand_tilde,
 };
 use tasq_core::model::Status;
 use tasq_core::theme::Preset;
@@ -129,6 +129,7 @@ fn defaults_match_the_script() {
     assert_eq!(c.ui.week_start, WeekStart::Monday);
     assert_eq!(c.ui.week_start.weekday(), chrono::Weekday::Mon);
     assert_eq!(c.ui.due_format, DueFormat::Relative);
+    assert_eq!(c.ui.detail_position, DetailPosition::Right);
     assert!(c.ui.colors.is_empty());
     assert_eq!(c.ui.theme.preset, Preset::Dark);
     assert!(c.ui.theme.colors.is_empty());
@@ -175,6 +176,7 @@ no_osc8 = false
 glow_style = \"dark\"
 week_start = \"monday\"
 due_format = \"relative\"
+detail_position = \"right\"
 
 [ui.colors]
 
@@ -313,6 +315,26 @@ colours = {}
     );
     let err = Config::load(&sb.opts()).unwrap_err().to_string();
     assert!(err.contains("unknown field `colours`"), "{err}");
+}
+
+#[test]
+fn detail_position_values_and_errors() {
+    for (name, position) in [
+        ("right", DetailPosition::Right),
+        ("bottom", DetailPosition::Bottom),
+    ] {
+        let sb = Sandbox::new();
+        sb.write_project(&format!("[ui]\ndetail_position = \"{name}\"\n"));
+        let c = Config::load(&sb.opts()).unwrap().config;
+        assert_eq!(c.ui.detail_position, position);
+    }
+    let sb = Sandbox::new();
+    sb.write_project("[ui]\ndetail_position = \"left\"\n");
+    let err = Config::load(&sb.opts()).unwrap_err().to_string();
+    assert!(
+        err.ends_with(".tasq.toml:2:19: unknown variant `left`, expected `right` or `bottom`"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -948,6 +970,7 @@ fn env_overrides_files() {
         ("TASQ_GLOW_STYLE", "light"),
         ("TASQ_WEEK_START", "saturday"),
         ("TASQ_DUE_FORMAT", "both"),
+        ("TASQ_DETAIL_POSITION", "bottom"),
         ("TASQ_THEME", "gruvbox"),
         ("TASQ_SUMMARIZER", "raw"),
         ("TASQ_SUMMARY_MODEL", "opus"),
@@ -975,6 +998,7 @@ fn env_overrides_files() {
     assert_eq!(c.ui.week_start, WeekStart::Saturday);
     assert_eq!(c.ui.week_start.weekday(), chrono::Weekday::Sat);
     assert_eq!(c.ui.due_format, DueFormat::Both);
+    assert_eq!(c.ui.detail_position, DetailPosition::Bottom);
     assert_eq!(c.ui.theme.preset, Preset::Gruvbox);
     assert_eq!(c.report.summary.summarizer, Summarizer::Raw);
     assert_eq!(c.report.summary.model, Some("opus".to_owned()));
@@ -987,7 +1011,7 @@ fn env_overrides_files() {
     assert_eq!(loaded.explain("ui.pager"), Some(&Origin::Env));
     let env_layer = loaded.layers.last().unwrap();
     assert_eq!(env_layer.origin, Origin::Env);
-    assert_eq!(env_layer.keys.len(), 19);
+    assert_eq!(env_layer.keys.len(), 20);
     assert_eq!(Origin::Env.to_string(), "env");
 }
 
@@ -1006,6 +1030,7 @@ fn every_documented_env_key_is_a_real_key() {
             "report.summary.summarizer" => "raw",
             "ui.week_start" => "sunday",
             "ui.due_format" => "iso",
+            "ui.detail_position" => "bottom",
             "ui.theme.preset" => "mono",
             _ => "value",
         };

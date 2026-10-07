@@ -46,3 +46,4 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0018](0018-named-color-themes.md) | Named colour themes for the CLI and the TUI: every coloured thing is a `Role`, `ui.theme.preset` (dark/light/solarized/gruvbox/mono) under `[ui.theme.colors]` under `[ui.colors]` | Accepted |
 | [0019](0019-relative-due-dates.md) | Relative, coloured due dates: `dates::Due`, `ui.due_format` (relative/iso/both), `overdue` and `due-soon` theme roles; ISO in `--json` and the detail pane | Accepted |
 | [0020](0020-closed-section.md) | Recording when a task was closed: `Task::closed_at`, a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`), `Task::close`, `edit::done` in one write | Accepted |
+| [0021](0021-detail-at-the-bottom.md) | The TUI detail under the list: `ui.detail_position = "right" \| "bottom"`, `LayoutKind::Stacked` from 20 rows | Accepted |

@@ -40,6 +40,7 @@ pub const ENV_SET: &str = "TASQ_SET";
 /// | `TASQ_GLOW_STYLE` | `ui.glow_style` |
 /// | `TASQ_WEEK_START` | `ui.week_start` |
 /// | `TASQ_DUE_FORMAT` | `ui.due_format` |
+/// | `TASQ_DETAIL_POSITION` | `ui.detail_position` |
 /// | `TASQ_THEME` | `ui.theme.preset` |
 /// | `TASQ_SUMMARIZER` | `report.summary.summarizer` |
 /// | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
@@ -66,6 +67,7 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_GLOW_STYLE", "ui.glow_style"),
     ("TASQ_WEEK_START", "ui.week_start"),
     ("TASQ_DUE_FORMAT", "ui.due_format"),
+    ("TASQ_DETAIL_POSITION", "ui.detail_position"),
     ("TASQ_THEME", "ui.theme.preset"),
     ("TASQ_SUMMARIZER", "report.summary.summarizer"),
     ("TASQ_SUMMARY_MODEL", "report.summary.model"),

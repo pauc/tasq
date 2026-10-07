@@ -8,7 +8,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
 use tasq_core::clock::FixedClock;
-use tasq_core::config::UiConfig;
+use tasq_core::config::{DetailPosition, UiConfig};
 use tasq_core::model::{Link, Priority, Session, Status, Tag, Task, TaskId, Workflow, Worktree};
 use tasq_core::theme::{Preset, Theme};
 use tasq_tui::{Model, Msg, SourceChoice, update, view};
@@ -231,6 +231,16 @@ fn today_view() {
     assert_snapshot!("today_view", screen(&mut model, 80, 14));
     update(&mut model, Msg::ToggleDone);
     assert_snapshot!("today_view_with_done", screen(&mut model, 80, 16));
+}
+
+#[test]
+fn detail_at_the_bottom() {
+    // `ui.detail_position = "bottom"`: the list on top, the detail under
+    // it, whatever the width; too short a terminal shows one pane.
+    let mut model = fixture(false).with_detail_position(DetailPosition::Bottom);
+    update(&mut model, Msg::ShowDetail);
+    assert_snapshot!("detail_bottom", screen(&mut model, 80, 30));
+    assert_snapshot!("detail_bottom_too_short", screen(&mut model, 80, 12));
 }
 
 #[test]
