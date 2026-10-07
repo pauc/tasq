@@ -172,6 +172,15 @@ fn selection_and_filter() {
 }
 
 #[test]
+fn folded_groups() {
+    // Colours off: the count, the blank lines and `▸` carry the grouping.
+    let mut model = fixture(false);
+    update(&mut model, Msg::Down);
+    update(&mut model, Msg::ToggleGroup);
+    assert_snapshot!("folded_group", screen(&mut model, 80, 14));
+}
+
+#[test]
 fn overlays() {
     let mut model = fixture(true);
     update(&mut model, Msg::Help);

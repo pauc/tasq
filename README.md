@@ -130,7 +130,7 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    tasq ui
    ```
 
-   `j`/`k` move, `/` filters, `c` creates a task from a title, `t`/`p` set status and
+   `j`/`k` move, `z` or `Space` folds the group to its header and back, `/` filters, `c` creates a task from a title, `t`/`p` set status and
    priority, `e` opens the edit view (every field and the description, `Enter` on the due
    date opens a calendar, `Ctrl+S` saves), `l`
    logs a note, `d` marks done, `E` opens the file in `$EDITOR`, `Enter` starts

@@ -1,13 +1,13 @@
 ---
 source: crates/tui/tests/render.rs
-assertion_line: 178
+assertion_line: 187
 expression: "screen(&mut model, 120, 28)"
 ---
-"┌ Tasks (5/5) ─────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│IN PROGRESS ┌ Keys ─────────────────────────────────────────────────────────────────────────────────────┐             │"
-"│  [ 1] #A Fi│k/Up, j/Down        move the selection                                                     │             │"
-"│            │g/Home, G/End       first / last task                                                      │             │"
-"│READY (2)   │C-u/PgUp, C-d/PgDn  move ten tasks                                                         │             │"
+"┌ Tasks (5/5)┌ Keys ─────────────────────────────────────────────────────────────────────────────────────┐─────────────┐"
+"│IN PROGRESS │k/Up, j/Down        move the selection                                                     │             │"
+"│  [ 1] #A Fi│g/Home, G/End       first / last task                                                      │             │"
+"│            │C-u/PgUp, C-d/PgDn  move ten tasks                                                         │             │"
+"│READY (2)   │z/Space             fold / unfold the group                                                │             │"
 "│  [12] #B Re│/                   filter: text matches titles, #word a status, tag or priority           │             │"
 "│  [ 3] #C Wr│Esc                 clear the filter, close the detail or a dialog                         │             │"
 "│            │c                   create a task from a title (then t, p to refine)                       │             │"
