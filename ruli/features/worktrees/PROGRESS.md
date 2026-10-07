@@ -12,7 +12,7 @@ create at launch, release at close, never remove the entry.
 
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
-| WT-101 | Lifecycle decisions in core | todo | |
+| WT-101 | Lifecycle decisions in core | done | `tasq_core::worktree::lifecycle`: `declare`, `on_launch`, `on_close` (`DirSeen`/`BranchSeen` in, `Release { WorktreeFate, BranchFate }` out); 10 table tests; 14 mutants, 11 caught, 3 unviable |
 | WT-102 | `[worktree]` config and the toggle | todo | |
 | WT-103 | Invisible when disabled | todo | |
 | WT-104 | Templates, variables and naming in core | todo | |
@@ -31,6 +31,15 @@ create at launch, release at close, never remove the entry.
 
 ## Learnings
 
+- WT-101: clippy's `struct_excessive_bools` shaped the close input into two enums. `DirSeen`
+  encodes the precedence main > locked > dirty, so the caller checks in that order and can skip
+  `git status` for the main checkout. `on_launch` reuses the first existing worktree before
+  creating the first declared one (today's `resolve_workdir` order). For WT-206: a directory
+  removed by hand leaves git's worktree registration behind, and `git branch -d` refuses a
+  branch "checked out" there, so release must run `git worktree prune` before deleting a branch
+  whose directory is `Absent`.
+- Defaults confirmed by the author 2026-10-07: `on_create = "auto"`, `on_done = "release"`,
+  `delete_branch = "safe"`.
 - gwm facts (from `~/.local/bin/gwm`, read-only): `branch_safe` replaces every non-alphanumeric
   with `_`, collapses runs and trims; undefined `{{vars}}` are left in the output; `create`
   without `-b` falls back to `origin/<branch>` with `--track -b`; `remove` runs `post_remove`

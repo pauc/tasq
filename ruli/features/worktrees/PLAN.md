@@ -411,5 +411,5 @@ the task lands in the worktree.
 - Is a `.tasq.toml` in the workspace parent (gwm's location) enough, or do we also want a
   committed in-repo file for teams? The layered loader already supports both.
 - Settled 2026-10-07: no removal of `## Worktrees` entries ever; worktrees are declared at
-  creation, created at launch, released at close (4.2). Defaults proposed: `on_create = "auto"`,
+  creation, created at launch, released at close (4.2). Defaults confirmed: `on_create = "auto"`,
   `on_done = "release"`, `delete_branch = "safe"`.
