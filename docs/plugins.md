@@ -55,7 +55,7 @@ Read with `--json`, write through the commands:
 | a day's progress notes per task | `tasq summary --json --raw [DAY]` |
 | resolve a date range | `tasq dates --json [SPEC]` (`from`, `to`, `days`, `working_days`) |
 | the effective configuration | `tasq config show --json` |
-| create / edit / close | `tasq create ... --json`, `tasq set`, `tasq log`, `tasq done`, `tasq mr`, `tasq session`, `tasq worktree`, `tasq project` |
+| create / edit / close | `tasq create ... --json`, `tasq set`, `tasq log`, `tasq done`, `tasq reopen`, `tasq mr`, `tasq session`, `tasq worktree`, `tasq project` |
 | arbitrary edit of a task | `tasq view <id> --json`, change the `task`, `tasq apply` (refuses what the store cannot express) |
 
 Every document carries `"schema": 1`; check it and refuse anything else. Exit codes: `0`,

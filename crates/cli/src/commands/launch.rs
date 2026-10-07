@@ -128,7 +128,7 @@ fn open_session(
     let mut task = store.get(id)?;
     if task.done {
         return Err(CliError::user(format!(
-            "task {id} is done; reopen it first (tasq set {id} <status>)"
+            "task {id} is done; reopen it first (tasq reopen {id})"
         )));
     }
     if task.status.as_ref() != Some(&Status::IN_PROGRESS) {

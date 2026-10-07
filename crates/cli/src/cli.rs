@@ -37,6 +37,7 @@ Examples:
   tasq set 12 in-progress    change status (or A/B/C for priority)
   tasq log 12 \"found the cause\"
   tasq done 12 \"merged\"
+  tasq reopen 12 ready \"not merged after all\"
   tasq ui                    full-screen UI over the same tasks
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
@@ -161,6 +162,22 @@ pub enum Command {
         #[arg(value_name = "ID")]
         id: String,
         /// Final progress note, appended before closing.
+        #[arg(value_name = "NOTE")]
+        note: Option<String>,
+    },
+
+    /// Reopen a done task (`# [ ]`), with a status, logging a note.
+    ///
+    /// STATUS defaults to workflow.default_status; a first word that is not
+    /// a status is the note. The note defaults to "reopened".
+    Reopen {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Status to reopen with, or the note when it is not a status.
+        #[arg(value_name = "STATUS")]
+        status: Option<String>,
+        /// Progress note to append.
         #[arg(value_name = "NOTE")]
         note: Option<String>,
     },

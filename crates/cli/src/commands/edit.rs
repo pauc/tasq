@@ -1,4 +1,5 @@
-//! `tasq set`, `tasq log` and `tasq done`: the small edits of the script.
+//! `tasq set`, `tasq log`, `tasq done` and `tasq reopen`: the small edits
+//! of the script, plus the inverse of `done`.
 //!
 //! The work is [`tasq_core::edit`], which the TUI calls too; this module
 //! parses the arguments, maps the errors and prints the result (or, with
@@ -19,12 +20,7 @@ pub fn parse_value(value: &str, workflow: &Workflow) -> Result<Value> {
     Value::parse(value, workflow).ok_or_else(|| {
         CliError::user(format!(
             "unknown status or priority '{value}' (statuses: {}; priorities: A B C)",
-            workflow
-                .statuses
-                .iter()
-                .map(Status::as_str)
-                .collect::<Vec<_>>()
-                .join(" ")
+            status_names(workflow)
         ))
     })
 }
@@ -68,6 +64,58 @@ pub fn done(app: &App, id: &str, note: Option<&str>) -> Result<()> {
     finish(app, &store, &id, &format!("[{id}] done: {}\n", task.title))
 }
 
+/// Splits `tasq reopen`'s optional words into a status and a note: a first
+/// word that is a status of `workflow` is the status, otherwise `default`
+/// is and the word is the note. Two words where the first is not a status
+/// is a user error.
+pub fn reopen_args<'a>(
+    first: Option<&'a str>,
+    second: Option<&'a str>,
+    workflow: &Workflow,
+    default: &Status,
+) -> Result<(Status, Option<&'a str>)> {
+    match (first.map(|w| (w, workflow.parse_status(w))), second) {
+        (None, _) => Ok((default.clone(), None)),
+        (Some((_, Some(status))), note) => Ok((status, note)),
+        (Some((word, None)), None) => Ok((default.clone(), Some(word))),
+        (Some((word, None)), Some(_)) => Err(CliError::user(format!(
+            "unknown status '{word}' (statuses: {})",
+            status_names(workflow)
+        ))),
+    }
+}
+
+/// `tasq reopen <id> [status] [note]`.
+pub fn reopen(app: &App, id: &str, first: Option<&str>, second: Option<&str>) -> Result<()> {
+    let id = App::task_id(id)?;
+    let workflow = app.workflow();
+    let (status, note) = reopen_args(
+        first,
+        second,
+        &workflow,
+        &app.config().workflow.default_status,
+    )?;
+    let mut store = app.open_store()?;
+    let clock = app.clock()?;
+    let task = edit::reopen(&mut store, &id, &status, note, clock.as_ref())?;
+    finish(
+        app,
+        &store,
+        &id,
+        &format!("[{id}] reopened -> {status}: {}\n", task.title),
+    )
+}
+
+/// The workflow's statuses, space separated, for error messages.
+fn status_names(workflow: &Workflow) -> String {
+    workflow
+        .statuses
+        .iter()
+        .map(Status::as_str)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl From<EditError> for CliError {
     fn from(e: EditError) -> Self {
         Self::User(e.to_string())
@@ -91,6 +139,34 @@ mod tests {
         assert_eq!(
             parse_value("nope", &wf).unwrap_err().to_string(),
             "unknown status or priority 'nope' (statuses: in-progress ready waiting blocked later; priorities: A B C)"
+        );
+    }
+
+    #[test]
+    fn reopen_args_split_status_and_note() {
+        let wf = Workflow::default();
+        let ready = Status::READY;
+        assert_eq!(
+            reopen_args(None, None, &wf, &ready).unwrap(),
+            (ready.clone(), None)
+        );
+        assert_eq!(
+            reopen_args(Some("#blocked"), None, &wf, &ready).unwrap(),
+            (Status::BLOCKED, None)
+        );
+        assert_eq!(
+            reopen_args(Some("later"), Some("next quarter"), &wf, &ready).unwrap(),
+            (Status::LATER, Some("next quarter"))
+        );
+        assert_eq!(
+            reopen_args(Some("not merged"), None, &wf, &ready).unwrap(),
+            (ready.clone(), Some("not merged"))
+        );
+        assert_eq!(
+            reopen_args(Some("soon"), Some("x"), &wf, &ready)
+                .unwrap_err()
+                .to_string(),
+            "unknown status 'soon' (statuses: in-progress ready waiting blocked later)"
         );
     }
 

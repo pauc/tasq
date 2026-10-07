@@ -66,6 +66,9 @@ pub fn run(cli: Cli) -> Result<()> {
                 Some(Command::Done { id, note }) => {
                     commands::edit::done(&app, &id, note.as_deref())
                 }
+                Some(Command::Reopen { id, status, note }) => {
+                    commands::edit::reopen(&app, &id, status.as_deref(), note.as_deref())
+                }
                 Some(Command::Next {
                     launcher,
                     detached,
@@ -137,6 +140,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::Set { .. } => "set",
         Command::Log { .. } => "log",
         Command::Done { .. } => "done",
+        Command::Reopen { .. } => "reopen",
         Command::Next { .. } => "next",
         Command::Pick { .. } => "pick",
         Command::View { .. } => "view",

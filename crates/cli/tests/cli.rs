@@ -678,6 +678,92 @@ mod edit {
         assert_eq!(after, before);
     }
 
+    fn release_file(env: &TestEnv) -> String {
+        std::fs::read_to_string(env.notebook().join("20260903110000.todo.md")).unwrap()
+    }
+
+    #[test]
+    fn reopen_with_the_default_status() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["reopen", "4"])
+            .assert()
+            .success()
+            .stdout("[4] reopened -> ready: Ship the release notes\n");
+        assert_eq!(
+            release_file(&env),
+            "# [ ] Ship the release notes\n\n## Tags\n\n#gitlab #C #ready\n\n## Progress\n\n\
+             - 2026-10-03 11:00: created via tasks create\n- 2026-10-03 16:30: shipped\n\
+             - 2026-10-07 09:30: reopened\n"
+        );
+        env.tasq()
+            .args(["reopen", "4"])
+            .assert()
+            .code(1)
+            .stderr("tasq: task 4 is not done\n");
+    }
+
+    #[test]
+    fn reopen_with_a_status_and_a_note() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["reopen", "4", "#blocked", "typo in the notes"])
+            .assert()
+            .success()
+            .stdout("[4] reopened -> blocked: Ship the release notes\n");
+        let file = release_file(&env);
+        assert!(file.starts_with("# [ ] Ship the release notes\n"), "{file}");
+        assert!(file.contains("\n#gitlab #C #blocked\n"), "{file}");
+        assert!(
+            file.ends_with("- 2026-10-07 09:30: typo in the notes\n"),
+            "{file}"
+        );
+    }
+
+    #[test]
+    fn reopen_takes_a_lone_non_status_word_as_the_note() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["--json", "reopen", "4", "not shipped"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["task"]["id"], "4");
+        assert_eq!(value["task"]["done"], false);
+        assert_eq!(value["task"]["status"], "ready");
+        let progress = value["task"]["progress"].as_array().unwrap();
+        assert_eq!(progress.last().unwrap()["note"], "not shipped");
+    }
+
+    #[test]
+    fn reopen_rejects_an_unknown_status_and_empty_notes() {
+        let env = TestEnv::fixture();
+        let before = release_file(&env);
+        env.tasq()
+            .args(["reopen", "4", "soon", "x"])
+            .assert()
+            .code(1)
+            .stderr(
+                "tasq: unknown status 'soon' (statuses: in-progress ready waiting blocked later)\n",
+            );
+        env.tasq()
+            .args(["reopen", "4", "ready", " "])
+            .assert()
+            .code(1)
+            .stderr("tasq: the note must not be empty\n");
+        assert_eq!(release_file(&env), before);
+        env.tasq()
+            .args(["reopen", "99"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+
     #[test]
     fn invalid_tasq_now_is_a_user_error() {
         let env = TestEnv::fixture();
@@ -1429,7 +1515,7 @@ mod launch {
             .args(["pick", "4", "--dry-run"])
             .assert()
             .code(1)
-            .stderr("tasq: task 4 is done; reopen it first (tasq set 4 <status>)\n");
+            .stderr("tasq: task 4 is done; reopen it first (tasq reopen 4)\n");
         env.tasq()
             .args(["pick", "3", "--dry-run"])
             .assert()
