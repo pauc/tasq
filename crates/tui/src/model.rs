@@ -173,6 +173,10 @@ pub enum Cursor {
 pub struct Toggles {
     /// The DONE group is listed (`a`, `+done`).
     pub done: bool,
+    /// The Today view (`T`, `+today`): only open tasks in the first
+    /// status or due by [`Model::today`] ([`query::is_today`]), and the
+    /// tasks closed that day in the DONE group.
+    pub today: bool,
 }
 
 /// The whole state of the UI.
@@ -366,7 +370,8 @@ impl Model {
     /// that pass the same filter, newest first ([`query::sort_done`]).
     pub fn groups(&self) -> Vec<ListGroup<'_>> {
         let filter = self.filter();
-        let mut groups: Vec<ListGroup<'_>> = query::list(&self.tasks, &filter, &self.workflow)
+        let in_scope = self.tasks.iter().filter(|t| self.in_scope(t));
+        let mut groups: Vec<ListGroup<'_>> = query::list(in_scope.clone(), &filter, &self.workflow)
             .into_iter()
             .map(|Group { status, tasks }| ListGroup {
                 key: GroupKey::Status(status),
@@ -374,7 +379,7 @@ impl Model {
             })
             .collect();
         if self.toggles.done {
-            let done = query::sort_done(query::filter(&self.tasks, &filter.done(true)));
+            let done = query::sort_done(query::filter(in_scope, &filter.done(true)));
             if !done.is_empty() {
                 groups.push(ListGroup {
                     key: GroupKey::Done,
@@ -385,13 +390,28 @@ impl Model {
         groups
     }
 
-    /// How many tasks the list could show with no filter: the open ones,
-    /// plus the done ones with [`Toggles::done`].
+    /// Whether the toggles let `task` into the list, before the filter:
+    /// open tasks (only today's with [`Toggles::today`]), and done ones
+    /// with [`Toggles::done`] (only those closed today with both).
+    fn in_scope(&self, task: &Task) -> bool {
+        match (task.done, self.toggles.today) {
+            (false, false) => true,
+            (false, true) => query::is_today(task, self.today, &self.workflow),
+            (true, false) => self.toggles.done,
+            (true, true) => self.toggles.done && query::closed_on(task, self.today),
+        }
+    }
+
+    /// How many tasks the list could show with no filter: the tasks the
+    /// toggles let in.
     pub fn total(&self) -> usize {
-        self.tasks
-            .iter()
-            .filter(|t| self.toggles.done || !t.done)
-            .count()
+        self.tasks.iter().filter(|t| self.in_scope(t)).count()
+    }
+
+    /// Switches the Today view (`T`) on or off.
+    pub fn toggle_today(&mut self) {
+        self.toggles.today = !self.toggles.today;
+        self.fix_selection();
     }
 
     /// Shows or hides the DONE group (`a`). It always appears unfolded,
@@ -838,6 +858,48 @@ mod tests {
         // No done task: no DONE header.
         m.set_filter("First".into());
         assert_eq!(m.rows().len(), 2);
+    }
+
+    #[test]
+    fn the_today_view_keeps_doing_due_and_overdue_and_today_s_closes() {
+        use tasq_core::clock::FixedClock;
+        let day = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let mut m = model().with_today(day("2026-10-07"));
+        let mut tasks = m.tasks.clone();
+        tasks[1].due = Some(day("2026-10-07")); // 2, ready, due today
+        tasks[2].due = Some(day("2026-10-08")); // 3, ready, due tomorrow
+        tasks[3].due = Some(day("2026-10-01")); // 4, no status, overdue
+        let mut today = task(6, "Closed today", None);
+        today.close(&FixedClock::at("2026-10-07 09:00"));
+        let mut earlier = task(7, "Closed earlier", None);
+        earlier.close(&FixedClock::at("2026-10-06 09:00"));
+        tasks.extend([today, earlier]);
+        m.set_tasks(tasks);
+        let ids =
+            |m: &Model| -> Vec<String> { m.visible().iter().map(|t| t.id.to_string()).collect() };
+
+        m.toggle_today();
+        assert!(m.toggles.today);
+        assert_eq!(ids(&m), ["1", "2", "4"]);
+        assert_eq!(m.total(), 3);
+        // With the DONE group: only what was closed today.
+        m.toggle_done();
+        assert_eq!(ids(&m), ["1", "2", "4", "6"]);
+        assert_eq!(m.total(), 4);
+        // The filter still applies on top.
+        m.set_filter("first".into());
+        assert_eq!(ids(&m), ["1"]);
+        m.set_filter(String::new());
+        // Off again: everything, the selection kept when still listed.
+        m.select_task(TaskId::from(4));
+        m.toggle_today();
+        assert!(!m.toggles.today);
+        assert_eq!(ids(&m), ["1", "2", "3", "4", "6", "7"]);
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(4))));
+        // A selected task that the view hides: the cursor goes to the top.
+        m.select_task(TaskId::from(3));
+        m.toggle_today();
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
     }
 
     #[test]

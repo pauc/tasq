@@ -381,6 +381,7 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `page-up`, `page-down` | `ctrl+u`, `pgup` / `ctrl+d`, `pgdn` | list | move ten tasks |
 | `top`, `bottom` | `g`, `home` / `G`, `end` | list | first / last task |
 | `toggle-group` | `z`, `space` | list | fold the selected task's group to its header, or unfold the folded group under the cursor (kept for the session) |
+| `toggle-today` | `T` | list | the Today view: open tasks in the workflow's first status (`in-progress`) or due today or earlier, across statuses; with `toggle-done`, the tasks closed today (`+today` in the list title) |
 | `toggle-done` | `a` | list | show or hide the DONE group: done tasks matching the filter, newest closed first, unfolded whenever it appears (`+done` in the list title) |
 | `filter` | `/` | list | type a filter |
 | `status`, `priority` | `t` / `p` | list | open the status / priority picker; on a done task (DONE group) the status picker reopens it (`tasq reopen`), starting at `workflow.default_status` |

@@ -214,6 +214,26 @@ fn done_group() {
 }
 
 #[test]
+fn today_view() {
+    // Today is 2026-10-06: task 1 is in progress, task 3 gets due today
+    // and task 4 is overdue; tasks 12 and 5 drop out. With `a`, only
+    // task 8, closed today, of the done tasks.
+    let mut model = fixture(false);
+    let mut all = tasks();
+    all[2].due = Some(date("2026-10-06"));
+    all[3].due = Some(date("2026-10-02"));
+    all.extend(done_tasks());
+    let mut closed = Task::new(TaskId::from(8), "Answer the auditor");
+    closed.close(&FixedClock::at("2026-10-06 08:45"));
+    all.push(closed);
+    update(&mut model, Msg::Loaded(all));
+    update(&mut model, Msg::ToggleToday);
+    assert_snapshot!("today_view", screen(&mut model, 80, 14));
+    update(&mut model, Msg::ToggleDone);
+    assert_snapshot!("today_view_with_done", screen(&mut model, 80, 16));
+}
+
+#[test]
 fn overlays() {
     let mut model = fixture(true);
     update(&mut model, Msg::Help);

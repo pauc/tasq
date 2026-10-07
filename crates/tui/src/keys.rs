@@ -37,6 +37,8 @@ pub enum Action {
     ToggleGroup,
     /// Show or hide the DONE group.
     ToggleDone,
+    /// Switch the Today view on or off.
+    ToggleToday,
     /// Start typing a filter.
     Filter,
     /// Open the status picker.
@@ -91,6 +93,7 @@ pub const NORMAL: &[Action] = &[
     Action::Bottom,
     Action::ToggleGroup,
     Action::ToggleDone,
+    Action::ToggleToday,
     Action::Filter,
     Action::Status,
     Action::Priority,
@@ -133,6 +136,7 @@ impl Action {
         Action::Bottom,
         Action::ToggleGroup,
         Action::ToggleDone,
+        Action::ToggleToday,
         Action::Filter,
         Action::Status,
         Action::Priority,
@@ -167,6 +171,7 @@ impl Action {
             Self::Bottom => "bottom",
             Self::ToggleGroup => "toggle-group",
             Self::ToggleDone => "toggle-done",
+            Self::ToggleToday => "toggle-today",
             Self::Filter => "filter",
             Self::Status => "status",
             Self::Priority => "priority",
@@ -207,6 +212,7 @@ impl Action {
             Self::Bottom => &["G", "end"],
             Self::ToggleGroup => &["z", "space"],
             Self::ToggleDone => &["a"],
+            Self::ToggleToday => &["T"],
             Self::Filter => &["/"],
             Self::Status => &["t"],
             Self::Priority => &["p"],
@@ -241,6 +247,7 @@ impl Action {
             Self::Bottom => Msg::Bottom,
             Self::ToggleGroup => Msg::ToggleGroup,
             Self::ToggleDone => Msg::ToggleDone,
+            Self::ToggleToday => Msg::ToggleToday,
             Self::Filter => Msg::BeginFilter,
             Self::Status => Msg::BeginStatus,
             Self::Priority => Msg::BeginPriority,
@@ -788,6 +795,11 @@ mod tests {
             (ch('z'), Msg::ToggleGroup),
             (ch(' '), Msg::ToggleGroup),
             (ch('a'), Msg::ToggleDone),
+            (ch('T'), Msg::ToggleToday),
+            (
+                KeyEvent::new(KeyCode::Char('T'), KeyModifiers::SHIFT),
+                Msg::ToggleToday,
+            ),
             (ch('/'), Msg::BeginFilter),
             (ch('t'), Msg::BeginStatus),
             (ch('p'), Msg::BeginPriority),
@@ -1058,8 +1070,8 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), Action::ALL.len(), "names are unique");
-        assert_eq!(Action::ALL.len(), 29);
-        assert_eq!(NORMAL.len(), 28);
+        assert_eq!(Action::ALL.len(), 30);
+        assert_eq!(NORMAL.len(), 29);
         assert!(!NORMAL.contains(&Action::Confirm));
         assert_eq!(
             PICKER,

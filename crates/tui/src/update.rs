@@ -71,6 +71,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::Bottom => model.select_last(),
         Msg::ToggleGroup => model.toggle_group(),
         Msg::ToggleDone => model.toggle_done(),
+        Msg::ToggleToday => model.toggle_today(),
         Msg::Escape => {
             if model.show_detail {
                 model.show_detail = false;

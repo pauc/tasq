@@ -96,6 +96,8 @@ pub enum Msg {
     ToggleGroup,
     /// `a`: show or hide the DONE group.
     ToggleDone,
+    /// `T`: switch the Today view on or off.
+    ToggleToday,
     /// `Right`: show the selected task's detail.
     ShowDetail,
     /// `Left`: hide the detail.

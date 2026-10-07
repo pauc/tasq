@@ -43,8 +43,8 @@ pub const HELP: &[(&[Action], &str)] = &[
     (&[Action::PageUp, Action::PageDown], "move ten tasks"),
     (&[Action::ToggleGroup], "fold / unfold the group"),
     (
-        &[Action::ToggleDone],
-        "show / hide the DONE group (newest first)",
+        &[Action::ToggleDone, Action::ToggleToday],
+        "show / hide done tasks; only today's work (doing, due, overdue)",
     ),
     (
         &[Action::Filter],
@@ -533,6 +533,9 @@ pub fn list_title(model: &Model, shown: usize, total: usize) -> String {
     }
     if model.toggles.done {
         title.push_str("+done ");
+    }
+    if model.toggles.today {
+        title.push_str("+today ");
     }
     title
 }
@@ -1596,7 +1599,10 @@ mod tests {
         assert_eq!(rows[3], ("z/Space".to_owned(), "fold / unfold the group"));
         assert_eq!(
             rows[4],
-            ("a".to_owned(), "show / hide the DONE group (newest first)")
+            (
+                "a, T".to_owned(),
+                "show / hide done tasks; only today's work (doing, due, overdue)"
+            )
         );
         assert_eq!(
             rows[12],
