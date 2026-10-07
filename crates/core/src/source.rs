@@ -450,7 +450,7 @@ fn apply_one(
         Change::Close { id, note } => {
             let mut task = store.get(id)?;
             task.log(note.as_str(), clock);
-            task.mark_done();
+            task.close(clock);
             store.update(&task)?;
             Ok(Applied {
                 id: id.clone(),
@@ -898,6 +898,7 @@ mod tests {
         let closed = store.get(&TaskId::from(1)).unwrap();
         assert!(closed.done);
         assert_eq!(closed.status, None);
+        assert_eq!(closed.closed_at, Some(clock.now()));
         assert_eq!(closed.progress.last().unwrap().note, "sync(x): merged");
         assert!(
             store

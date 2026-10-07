@@ -137,9 +137,10 @@ fn create_defaults_the_note_and_writes_done_drafts_closed() {
     assert_eq!(done.id, TaskId::from(9));
     assert!(done.done);
     assert_eq!(done.status, None, "done drafts carry no status");
+    assert_eq!(done.closed_at, Some(FixedClock::at("2026-10-04 12:34").0));
     assert_eq!(
         nb.read("20261004123401.todo.md"),
-        "# [x] Already done\n\n## Tags\n\n#ops #B\n\n## Progress\n\n- 2026-10-04 12:34: created via tasq create\n"
+        "# [x] Already done\n\n## Closed\n\n2026-10-04 12:34\n\n## Tags\n\n#ops #B\n\n## Progress\n\n- 2026-10-04 12:34: created via tasq create\n"
     );
     // A status other than the default and no priority change.
     let waiting = store

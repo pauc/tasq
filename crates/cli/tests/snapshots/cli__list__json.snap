@@ -6,6 +6,7 @@ expression: text
   "schema": 1,
   "tasks": [
     {
+      "closed_at": null,
       "description": "Port the bash script to a Rust workspace.\nKeep the nb files unchanged.",
       "done": false,
       "due": "2026-10-10",
@@ -60,6 +61,7 @@ expression: text
       ]
     },
     {
+      "closed_at": null,
       "description": "Customer asks about the export format.",
       "done": false,
       "due": null,
@@ -84,6 +86,7 @@ expression: text
       "worktrees": []
     },
     {
+      "closed_at": null,
       "description": null,
       "done": false,
       "due": null,
@@ -106,6 +109,7 @@ expression: text
       "worktrees": []
     },
     {
+      "closed_at": null,
       "description": null,
       "done": false,
       "due": null,

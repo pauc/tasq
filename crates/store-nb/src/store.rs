@@ -540,6 +540,7 @@ impl Store for NbStore {
             format::ops::set_done(&mut parsed.document, &self.workflow);
         } else {
             format::ops::set_open(&mut parsed.document);
+            format::ops::clear_closed(&mut parsed.document);
         }
         let after = format::render(&parsed.document);
         if after == before {

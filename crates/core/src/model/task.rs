@@ -6,7 +6,7 @@ use chrono::{NaiveDate, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 
 use super::{Priority, Status, Tag, TaskId};
-use crate::clock::{Clock, When};
+use crate::clock::{Clock, When, to_minute};
 
 /// A URL with an optional human label (`- [label](url)` or `- url` in the file).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -172,6 +172,11 @@ pub struct Task {
     pub progress: Vec<ProgressEntry>,
     /// `## Source`, for synced tasks.
     pub origin: Option<Origin>,
+    /// `## Closed`: when the task was closed, to the minute (local time).
+    /// `None` on open tasks and on tasks closed without it (`nb todo do`,
+    /// the original script, tasq before ADR 0020). Absent from older JSON.
+    #[serde(default, with = "crate::clock::timestamp_serde::option")]
+    pub closed_at: Option<NaiveDateTime>,
 }
 
 impl Task {
@@ -195,6 +200,7 @@ impl Task {
             sessions: Vec::new(),
             progress: Vec::new(),
             origin: None,
+            closed_at: None,
         }
     }
 
@@ -230,6 +236,16 @@ impl Task {
     pub fn mark_done(&mut self) {
         self.done = true;
         self.status = None;
+    }
+
+    /// [`mark_done`](Self::mark_done) and stamps `closed_at` with
+    /// `clock.now()` to the minute. A task already done keeps its
+    /// `closed_at`: closing it again does not move it in the DONE list.
+    pub fn close(&mut self, clock: &dyn Clock) {
+        if !self.done {
+            self.closed_at = Some(to_minute(clock.now()));
+        }
+        self.mark_done();
     }
 
     /// Whether the task carries topic tag `tag`.
@@ -410,9 +426,9 @@ impl TaskDraft {
 
     /// Materialises the task once the store has assigned `id`.
     ///
-    /// A `done` draft gets no status (same shape `tasks done` leaves). The
-    /// note, when present, becomes the first progress entry stamped at
-    /// `clock.now()`.
+    /// A `done` draft gets no status (same shape `tasks done` leaves) and
+    /// is closed at `clock.now()`. The note, when present, becomes the
+    /// first progress entry stamped at `clock.now()`.
     pub fn into_task(self, id: TaskId, clock: &dyn Clock) -> Task {
         let mut task = Task {
             id,
@@ -430,6 +446,7 @@ impl TaskDraft {
             sessions: Vec::new(),
             progress: Vec::new(),
             origin: self.origin,
+            closed_at: self.done.then(|| to_minute(clock.now())),
         };
         if let Some(note) = self.note {
             task.log(note, clock);
@@ -578,6 +595,21 @@ mod tests {
         assert!(t.done);
         assert_eq!(t.status, None);
         assert_eq!(t.priority, Priority::A);
+        assert_eq!(t.closed_at, None, "mark_done has no clock");
+    }
+
+    #[test]
+    fn close_stamps_closed_at_once() {
+        let mut t = task();
+        t.set_status(Status::READY);
+        let at = FixedClock::at("2026-10-07 14:32").0;
+        t.close(&FixedClock(at + chrono::Duration::seconds(42)));
+        assert!(t.done);
+        assert_eq!(t.status, None);
+        assert_eq!(t.closed_at, Some(at));
+        // Closing a done task again keeps the first time.
+        t.close(&FixedClock::at("2026-10-08 09:00"));
+        assert_eq!(t.closed_at, Some(at));
     }
 
     #[test]
@@ -754,11 +786,13 @@ mod tests {
             .into_task(TaskId::from(1), &clock());
         assert!(t.done);
         assert_eq!(t.status, None);
+        assert_eq!(t.closed_at, Some(clock().now()));
         let open = TaskDraft::new("T")
             .with_done(false)
             .into_task(TaskId::from(1), &clock());
         assert!(!open.done);
         assert_eq!(open.status, Some(Status::READY));
+        assert_eq!(open.closed_at, None);
     }
 
     #[test]
@@ -777,8 +811,13 @@ mod tests {
             external_id: "1".into(),
             url: None,
         });
+        t.closed_at = Some(clock().now());
         let json = serde_json::to_string(&t).unwrap();
         assert!(json.contains("\"status\":\"ready\""), "{json}");
+        assert!(
+            json.ends_with(",\"closed_at\":\"2026-10-04 10:15\"}"),
+            "{json}"
+        );
         assert!(json.contains("\"tags\":[\"gitlab\"]"), "{json}");
         assert!(json.contains("\"at\":\"2026-10-04 10:15\""), "{json}");
         assert!(json.contains("\"at\":\"2026-10-04\""), "{json}");
@@ -788,6 +827,10 @@ mod tests {
         );
         let back: Task = serde_json::from_str(&json).unwrap();
         assert_eq!(back, t);
+        // JSON written before `closed_at` existed still reads.
+        let older = json.replace(",\"closed_at\":\"2026-10-04 10:15\"", "");
+        let back: Task = serde_json::from_str(&older).unwrap();
+        assert_eq!(back.closed_at, None);
         let draft = TaskDraft::new("T").with_tag(tag("x"));
         let back: TaskDraft =
             serde_json::from_str(&serde_json::to_string(&draft).unwrap()).unwrap();
@@ -809,5 +852,9 @@ mod tests {
         assert_eq!(s.at, base);
         assert_eq!(s.id, "sid");
         assert_eq!((s.launcher, s.description), (None, None));
+        let done = TaskDraft::new("T")
+            .with_done(true)
+            .into_task(TaskId::from(1), &seconds);
+        assert_eq!(done.closed_at, Some(base));
     }
 }

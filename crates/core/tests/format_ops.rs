@@ -41,6 +41,11 @@ fn due() -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd_opt(2026, 11, 1).unwrap()
 }
 
+/// The timestamp every `closed_*` scenario writes.
+fn closed() -> chrono::NaiveDateTime {
+    at("2026-10-07 14:32")
+}
+
 fn xy() -> Vec<Tag> {
     vec![Tag::new("x").unwrap(), Tag::new("y").unwrap()]
 }
@@ -600,6 +605,78 @@ const SCENARIOS: &[(&str, Op, Option<bool>)] = &[
             Some(r)
         },
         Some(true),
+    ),
+    (
+        "closed_replaces",
+        |d, _| {
+            ops::set_closed(d, closed());
+            None
+        },
+        None,
+    ),
+    (
+        "closed_after_source",
+        |d, _| {
+            ops::set_closed(d, closed());
+            None
+        },
+        None,
+    ),
+    (
+        "closed_after_due",
+        |d, _| {
+            ops::set_closed(d, closed());
+            None
+        },
+        None,
+    ),
+    (
+        "closed_after_project",
+        |d, _| {
+            ops::set_closed(d, closed());
+            None
+        },
+        None,
+    ),
+    (
+        "closed_after_description",
+        |d, _| {
+            ops::set_closed(d, closed());
+            None
+        },
+        None,
+    ),
+    (
+        "closed_after_title",
+        |d, _| {
+            ops::set_closed(d, closed());
+            None
+        },
+        None,
+    ),
+    (
+        "clear_closed_middle",
+        |d, _| {
+            let r = ops::clear_closed(d);
+            Some(r)
+        },
+        Some(true),
+    ),
+    (
+        "clear_closed_last",
+        |d, _| {
+            let r = ops::clear_closed(d);
+            Some(r)
+        },
+        Some(true),
+    ),
+    (
+        "clear_closed_missing",
+        |d, _| {
+            let r = ops::clear_closed(d);
+            Some(r)
+        },
+        Some(false),
     ),
     (
         "clear_project_middle",

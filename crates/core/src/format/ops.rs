@@ -12,9 +12,9 @@
 
 use std::path::Path;
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime};
 
-use crate::clock::format_date;
+use crate::clock::{format_date, format_timestamp};
 use crate::model::{Link, Priority, ProgressEntry, Session, Status, Tag, Workflow, Worktree};
 
 use super::document::{DONE_PREFIX, Document, OPEN_PREFIX, heading_name};
@@ -356,6 +356,34 @@ fn trim_trailing_blank_lines(doc: &mut Document) {
 /// one. `tasq` only.
 pub fn clear_due(doc: &mut Document) -> bool {
     remove_sections(doc, section::DUE)
+}
+
+/// `set_closed`: replaces the body of every `## Closed` with a blank line
+/// and the `YYYY-MM-DD HH:MM` timestamp, like [`set_due`]; a missing section
+/// is inserted after `## Source`, else `## Due`, else `## Project`, else
+/// `## Description`, else right after the title line (where
+/// [`Document::from_task`] puts it). `tasq` only (ADR 0020).
+pub fn set_closed(doc: &mut Document, at: NaiveDateTime) {
+    let value = format_timestamp(at);
+    if replace_bodies(doc, section::CLOSED, &value) {
+        return;
+    }
+    let insafter = [
+        section::SOURCE,
+        section::DUE,
+        section::PROJECT,
+        section::DESCRIPTION,
+    ]
+    .iter()
+    .find_map(|name| doc.find_first(&heading(name)))
+    .map_or(1, |h| doc.section_end(h));
+    insert_section(doc, section::CLOSED, &[&value], insafter);
+}
+
+/// `clear_closed`: removes every `## Closed` section. Returns whether there
+/// was one. `tasq` only.
+pub fn clear_closed(doc: &mut Document) -> bool {
+    remove_sections(doc, section::CLOSED)
 }
 
 /// `clear_project`: removes every `## Project` section. Returns whether

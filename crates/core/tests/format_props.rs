@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use proptest::prelude::*;
-use tasq_core::clock::When;
+use tasq_core::clock::{FixedClock, When};
 use tasq_core::format::{self, Document, ops};
 use tasq_core::model::{
     Link, Origin, Priority, ProgressEntry, Session, Status, Tag, Task, TaskId, Workflow, Worktree,
@@ -99,6 +99,7 @@ prop_compose! {
         sessions in proptest::collection::vec((date_time(), "s[0-9]{1,6}", proptest::option::of("[A-Za-z0-9 é!,.-]{1,20}")), 0..3),
         progress in proptest::collection::vec((when(), note()), 0..4),
         origin in proptest::option::of(origin()),
+        closed_at in proptest::option::of(date_time()),
     ) -> Task {
         let mut t = Task::new(TaskId::from(1), title);
         t.done = done;
@@ -114,6 +115,7 @@ prop_compose! {
         t.sessions = unique_by(sessions.into_iter().map(|(at, id, description)| Session { at, id, launcher: None, description }).collect(), |s| s.id.clone());
         t.progress = progress.into_iter().map(|(at, note)| ProgressEntry { at, note }).collect();
         t.origin = origin;
+        t.closed_at = closed_at.filter(|_| done);
         t
     }
 }
@@ -280,7 +282,14 @@ fn from_task_minimal_done_and_source() {
         format::render(&Document::from_task(&task, &wf)),
         "# [x] Minimal\n\n## Source\n\ngitlab: !1 https://gl.invalid/1\n\n## Tags\n\n#B\n\n## Progress\n"
     );
+    task.closed_at = Some(FixedClock::at("2026-10-07 14:32").0);
+    assert_eq!(
+        format::render(&Document::from_task(&task, &wf)),
+        "# [x] Minimal\n\n## Source\n\ngitlab: !1 https://gl.invalid/1\n\n## Closed\n\n2026-10-07 14:32\n\n## Tags\n\n#B\n\n## Progress\n"
+    );
     task.done = false;
+    // An open task is not closed: `closed_at` is not written.
+    assert!(!format::render(&Document::from_task(&task, &wf)).contains("## Closed"));
     assert!(format::render(&Document::from_task(&task, &wf)).contains("#B #ready\n"));
     let parsed = format::parse(
         &format::render(&Document::from_task(&task, &wf)),
