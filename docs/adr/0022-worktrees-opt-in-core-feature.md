@@ -32,11 +32,18 @@ Worktrees are a core feature behind `worktree.enabled` (default `false`).
   never shows the section, the default Claude prompt drops its worktree line, and
   `resolve_workdir` ignores tracked worktrees. Files are never rewritten because of the toggle;
   an existing `## Worktrees` section is preserved byte for byte and used again when re-enabled.
-- **On** provides the command family of the plan (`create`, `add`, `ls`, `rm`, `prune`, `switch`,
-  `path`, `shell-init`, `trust`) and a provisioning model like gwm's (symlinks, copies,
+- **On** provides the command family of the plan (`tasq worktree <id> [BRANCH]` to declare, `up`,
+  `release`, `ls`, `prune`, `switch`, `path`, `shell-init`, `trust`) and a provisioning model like gwm's (symlinks, copies,
   templates, variables, hooks) configured under `[worktree]` in the existing layered config.
   Worktree commands load that config from the task's project directory, so a `.tasq.toml` next
   to a repo or in its workspace directory plays the role of `gwm.yml`.
+- A `## Worktrees` entry is a declaration, never removed by tasq, and the file format does not
+  change. Declaring (`tasq create --worktree [BRANCH]`, or automatically from the `{{id}}-{{slug}}`
+  template) writes the path and branch only. Launching the task creates the worktree when it does
+  not exist and provisions it. Closing the task removes the worktree when it is clean and deletes
+  its branch when that loses nothing (integrated into the default branch, or pushed); dirty work
+  and unsafe branches are kept with a warning. Launching again recreates it from the kept branch,
+  the remote branch, or the base.
 - `tasq-core::worktree` holds the pure part: templates and variables, naming, path resolution,
   the provisioning plan (a list of steps), merged-check decisions and prune selection. A new
   `tasq-worktree` crate executes plans (git, filesystem, hooks) and replaces
@@ -66,8 +73,8 @@ Worktrees are a core feature behind `worktree.enabled` (default `false`).
 - `docs/json.md` changes: `"worktrees"` becomes conditional. `tasq apply` keeps accepting
   documents with or without it, and an absent key never drops stored worktrees.
 - Removing `work.worktree_*` breaks configs that set them; the error names the replacement.
-- Existing sessions call `tasq worktree <id> <path>` and `--create`; both stay as hidden aliases
-  for one release.
+- Existing sessions call `tasq worktree <id> <path>` (kept as is) and `--create` (a hidden alias
+  of declare-then-`up` for one release).
 
 ## Alternatives considered
 
@@ -81,11 +88,15 @@ Worktrees are a core feature behind `worktree.enabled` (default `false`).
 - **Keep the `command` manager as a generic escape hatch, or ship an `import-gwm` converter.**
   Either keeps gwm (or its config format) as something tasq supports. Rejected: the author wants
   gwm gone; three config files are converted once by hand.
+- **Create the worktree at task creation and untrack it on removal.** Creates directories for
+  tasks that may never be worked on, and loses the declaration when the worktree is cleaned up,
+  so relaunching a closed or reopened task cannot recreate it. Rejected for the declare /
+  materialize-at-launch / release-at-close lifecycle.
 - **A separate config file (`.tasq-worktree.toml`).** A second loader, a second error format.
   Rejected in favour of a `[worktree]` table in the existing layers.
 
 ## References
 
-- `ruli/features/worktrees/PLAN.md` (tasks WT-101 to WT-306, prior-art survey)
+- `ruli/features/worktrees/PLAN.md` (tasks WT-101 to WT-304, prior-art survey)
 - ADR 0003 (core traits), ADR 0006 (plugin mechanism), ADR 0009 (TUI acts through the CLI)
 - `crates/core/src/work.rs`, `crates/launch/src/worktree.rs`, `crates/cli/src/commands/worktree.rs`

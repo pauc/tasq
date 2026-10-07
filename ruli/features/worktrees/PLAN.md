@@ -23,19 +23,21 @@ Claude prompt, not in the files.
    feature below.
 2. Everything worktree-related lives behind it: the `tasq worktree` command family, the config,
    the `## Worktrees` section's display and use in `next`/`pick`.
-3. Name a worktree when creating a task (`tasq create --worktree [BRANCH]`), or let it be named
-   automatically from the task (`{id}-{slug}` by default).
+3. Declare a worktree when creating a task (`tasq create --worktree [BRANCH]`), or let it be
+   named automatically from the task (`{{id}}-{{slug}}` by default). Declaring writes the entry
+   only; the worktree is created when the task is launched (4.2).
 4. Configurable location: siblings of the project, subfolders of it, or a global tree, through a
    path template.
-5. Sessions for a task with a worktree start in it (already true; kept, and extended to recreate
-   a missing one through the new provisioning).
+5. Launching a task (`next`, `pick`, the TUI's Enter) creates its declared worktree if it does
+   not exist and starts the session in it. Closing the task deletes the worktree and its branch
+   when that loses nothing; the entry stays, so launching it again recreates it the same way.
 6. gwm parity: symlinks, copies, rendered templates, custom variables, `post_create` and
    `post_remove` hooks, `switch` with a shell `cd` wrapper and fzf, `list` with dirty state,
    `remove` refusing a dirty tree, completions. The author's three `gwm.yml` workspaces
    (`~/code/SF/silverfin_worspace`, `~/code/zantop_atelier`, `~/code/tasq_lab`) are the
    acceptance tests.
 7. Improvements over gwm: merged-branch detection that understands squash and rebase merges,
-   `prune`, cleanup offered when a task is closed, a status-rich `ls` joined with task data,
+   `prune`, cleanup when a task is closed, a status-rich `ls` joined with task data,
    trust for hooks that come from a repo, reflink copies of gitignored files, a stable port block
    per worktree.
 
@@ -44,7 +46,7 @@ Claude prompt, not in the files.
 - Any dependency on gwm. After this feature nothing in the repository runs, reads, imports or
   mentions gwm as a supported tool: no `command` worktree manager, no `gwm.yml` reader or
   importer, no test that needs gwm on `PATH`, no example config that uses it. The author's three
-  `gwm.yml` files are converted to `.tasq.toml` by hand once (WT-206), outside the repository.
+  `gwm.yml` files are converted to `.tasq.toml` by hand once (WT-208), outside the repository.
   The plan and PROGRESS of the rust rewrite keep their historical mentions.
 - tmux/herdr window handling inside the worktree commands: the existing launchers own that
   (`tasq pick --detached`).
@@ -57,17 +59,51 @@ Claude prompt, not in the files.
 
 | Layer | Content | Rule |
 |---|---|---|
-| `tasq-core::worktree` (new, replaces `work.rs`) | `WorktreeConfig`, template rendering and variables, naming (`branch_safe`, `branch_db`, `slug`), path resolution, the **provisioning plan** (`Vec<Step>`: `GitAdd`, `Symlink`, `Copy`, `Render`, `Hook`), merged-check decision logic over git outputs, prune selection, hook trust fingerprints | Pure. No I/O, no processes. Everything mutation-tested to zero missed. |
-| `tasq-core::format::ops` | `remove_worktree` | Lossless, fixture round trips. |
-| `tasq-store-nb::diff` | worktree removals | `Store::update` with fewer worktrees removes the lines; removing the last one removes the section. |
+| `tasq-core::worktree` (new, replaces `work.rs`) | `WorktreeConfig`, template rendering and variables, naming (`branch_safe`, `branch_db`, `slug`), path resolution, the **lifecycle decisions** (declare, materialize at launch, release at close; 4.2), the **provisioning plan** (`Vec<Step>`: `GitAdd`, `Symlink`, `Copy`, `Render`, `Hook`), merged-check decision logic over git outputs, prune selection, hook trust fingerprints | Pure. No I/O, no processes. Everything mutation-tested to zero missed. |
 | `tasq-worktree` (new crate, replaces `tasq_launch::worktree`) | Executes a plan: runs `git`, creates links, copies (reflink when possible), writes rendered files, runs hooks; reads `git worktree list --porcelain -z`, `git status --porcelain=v2 --branch`, `git cherry`/`patch-id` for status and merged checks | The only new crate that runs `git`. Injected PATH/env like the launchers. `#[mutants::skip]` only on the pure I/O wrappers. |
-| `tasq-cli::commands::worktree` | The command family, `create --worktree`, `done` cleanup prompt, shell-init and completions | Thin: plan in core, execute in `tasq-worktree`, render. |
+| `tasq-cli::commands::worktree` | The command family, `create --worktree`, materializing in `next`/`pick`, releasing in `done`, shell-init and completions | Thin: plan in core, execute in `tasq-worktree`, render. |
 | `tasq-tui` | Detail section and later actions, only when enabled | Through the CLI (ADR 0009). |
 
 The crate split keeps the "core has no I/O" rule and makes the provisioning logic cheap to test:
 a test asserts the plan for a config and a task, without touching git.
 
-### 4.2 The toggle
+### 4.2 Lifecycle: declared, materialized, released
+
+The `## Worktrees` entry is a **declaration**: the path and branch a task works in. The file
+format does not change (``- /path (`branch`)``), and `tasq` never removes an entry; a worktree
+directory comes and goes, the declaration stays.
+
+1. **Declare.** `tasq create --worktree [BRANCH]`, `on_create = "auto"`, or later
+   `tasq worktree <id> [BRANCH]` write the entry. The branch defaults to the `branch` template
+   (`{{id}}-{{slug}}`); the path is rendered from the `path` template **now** and stored, so a
+   later layout change never orphans an existing task. No git command runs; nothing is created
+   on disk.
+2. **Materialize at launch.** `next`/`pick` (and the TUI's Enter, which runs `pick`) look at the
+   first declared worktree. If its directory exists, the session starts there, as today. If not,
+   it is created at the stored path before the `pre-launch` hooks run, without asking (today's
+   "tracked worktree is gone, recreate?" prompt goes away): the branch is reused when it exists
+   locally, tracked from `origin/<branch>` when only the remote has it, else created from
+   `base`; then the provisioning plan runs (symlinks, copies, templates, `post_create`). A
+   failure aborts the launch with the error; the session never silently starts in the main
+   checkout instead. `--dry-run` lists these steps.
+3. **Release at close.** `tasq done` and the TUI's `d` (`on_done = "release"`, the default) go
+   through every declared worktree that exists:
+   - dirty (modified, staged or untracked files) or locked: kept, with a warning naming it;
+   - otherwise: `pre_remove`, `git worktree remove`, `post_remove`;
+   - then the local branch is deleted only when nothing is lost: its tip is integrated into
+     the default branch (the checks of WT-205) or contained in its upstream on the remote.
+     Otherwise the branch is kept and named in a warning.
+   The entry stays in `## Worktrees`. The main worktree (the project checkout) is never removed.
+4. **Rematerialize.** Launching the task again (after `tasq reopen`, or `pick` on any task whose
+   worktree is gone) is step 2 again: a kept local branch is reused, a pushed one is tracked
+   from the remote, and a branch that is gone everywhere (merged, remote deleted) starts fresh
+   from `base` with a note saying so.
+
+Consequences: the store needs no removal operation; `tasq worktree <id> <path>` (tracking a
+worktree made outside tasq) follows the same lifecycle; `prune` only releases worktrees of done
+tasks that a close left behind (dirty at the time, or closed outside tasq).
+
+### 4.3 The toggle
 
 With `worktree.enabled = false` (default):
 
@@ -87,7 +123,7 @@ With `worktree.enabled = false` (default):
 `[worktree]` keys other than `enabled` are still validated when the feature is off, so turning it
 on never surfaces an old typo.
 
-### 4.3 Configuration
+### 4.4 Configuration
 
 Two kinds of settings, in the existing layered config (no second config system):
 
@@ -105,8 +141,9 @@ path = "{{project_parent}}/{{project_name}}-{{branch_safe}}"   # gwm default lay
 # path = "~/worktrees/{{repo}}/{{branch_safe}}"                # a global tree
 branch = "{{id}}-{{slug}}"     # branch name when none is given
 base = "origin/HEAD"           # start point for a new branch (--from overrides)
-on_create = "never"            # never | ask | always: make one in `tasq create`
-on_done = "ask"                # keep | ask | remove: in `tasq done` and the TUI's d key
+on_create = "auto"             # auto | never: declare one in `tasq create` without --worktree
+on_done = "release"            # release | keep: in `tasq done` and the TUI's d key
+delete_branch = "safe"         # safe | never: on release, delete the branch when nothing is lost
 
 symlinks = ["node_modules", "CLAUDE.local.md"]
 copies = [".envrc"]
@@ -140,7 +177,7 @@ call gwm. A config that still sets them fails with a message pointing to `[workt
 `docs/config.md`. Every gwm mention in code, tests, examples and current docs goes with them
 (WT-102).
 
-### 4.4 Hook trust
+### 4.5 Hook trust
 
 Hooks from `~/.config/tasq/config.toml` or `--config` run without asking. Hooks from a
 `.tasq.toml` (which can come from a cloned repo) run only after approval: the first time, `tasq`
@@ -149,48 +186,53 @@ the file path and a hash of each command line, so editing a command asks again. 
 for one run, `tasq worktree trust [DIR]` approves ahead of time, non-interactive runs without
 approval skip the hooks with a warning.
 
-### 4.5 Commands
+### 4.6 Commands
 
 ```
-tasq worktree create <id> [BRANCH] [--from REF] [--path DIR] [--no-hooks] [--switch]
-tasq worktree add <id> <PATH>                 # track an existing worktree (today's form)
-tasq worktree ls [<id>] [--all] [--json]      # worktrees joined with task id, title, status
-tasq worktree rm <id|path> [--force] [--with-branch] [--keep-tracking]
-tasq worktree prune [--gone] [--merged] [--remote-deleted] [--min-age 1d] [--dry-run]
+tasq create ... --worktree [BRANCH]           # declare at creation
+tasq worktree <id> [BRANCH] [--path DIR]      # declare on an existing task (no git, nothing on disk)
+tasq worktree <id> <EXISTING_DIR>             # declare a worktree made elsewhere (today's form)
+tasq worktree up <id> [--from REF]            # materialize now, without launching
+tasq worktree release <id> [--force]          # what a close does, without closing
+tasq worktree ls [<id>] [--all] [--json]      # declared worktrees: exists or not, git state, task status
+tasq worktree prune [--dry-run]               # release what closes left behind on done tasks
 tasq worktree switch [TARGET]                 # TARGET: task:<id>, branch, path, ^ (main), - (previous); fzf without one
 tasq worktree path <TARGET>                   # prints the path, for scripts
 tasq worktree shell-init <bash|zsh|fish>      # wrapper that turns switch into a cd
 tasq worktree trust [DIR]
-tasq create ... --worktree [BRANCH]
 ```
 
-The current forms `tasq worktree <id> <path>` and `tasq worktree <id> --create <branch>` stay as
-hidden aliases of `add` and `create` for one release, because the Claude prompt of existing
-sessions and the `/tasq:wrapup` skill call them.
+`tasq worktree <id> <path>` keeps its meaning (an argument naming an existing directory is a
+path, anything else a branch). `tasq worktree <id> --create <branch>` stays as a hidden alias of
+"declare, then `up`" for one release, because the Claude prompt of existing sessions and the
+`/tasq:wrapup` skill call it.
 
 ## 5. Tasks
 
 ### Phase 1: core foundations
 
-#### WT-101: The store can stop tracking a worktree
-**Description:** `format::ops::remove_worktree` and removal support in `store-nb/src/diff.rs`.
+#### WT-101: Lifecycle decisions in core
+**Description:** The pure part of 4.2: given a task, the config and observed state (directory
+exists, dirty, locked, branch local/remote/integrated), decide what to do. `declare` returns the
+`Worktree` to store; `on_launch` returns `Reuse(path)` or `Materialize { path, branch, start }`
+with `start` one of `Local`, `Track(remote)`, `New(base)`; `on_close` returns, per worktree,
+`Remove { delete_branch: bool }` or `Keep(reason)`.
 
 **Acceptance criteria:**
-- [ ] Removing one of several entries removes exactly its line; removing the last removes the
-      `## Worktrees` section and the blank line before it; fixtures in
-      `crates/core/tests/fixtures/ops/worktree_remove_*.{before,after}.md`
-- [ ] `Store::update` with a task whose `worktrees` lost an entry writes the file, and
-      `Task::remove_worktree(path) -> bool` exists
-- [ ] Zero missed mutants in `format/ops.rs` and `store-nb/src/diff.rs`
+- [ ] A table test per decision covering every branch of 4.2 (dirty, locked, main worktree,
+      branch integrated, pushed, neither; branch local, remote only, gone)
+- [ ] Never `Remove` for a dirty or locked worktree or the main checkout; never
+      `delete_branch` when the tip is neither integrated nor on its upstream
+- [ ] Zero missed mutants in `core/src/worktree/lifecycle.rs`
 
 #### WT-102: `[worktree]` config and the toggle
-**Description:** `WorktreeConfig` with every key of 4.3, `TASQ_WORKTREE_*` env mapping,
+**Description:** `WorktreeConfig` with every key of 4.4, `TASQ_WORKTREE_*` env mapping,
 validation (unknown template variables, `on_*` enums, port ranges), removal of
 `work.worktree_manager`/`worktree_command` and the `CommandManager` with the migration error, and
 removal of every gwm mention outside historical records.
 
 **Acceptance criteria:**
-- [ ] Defaults: `enabled = false`, layout and branch templates as in 4.3
+- [ ] Defaults: `enabled = false`, the other keys as in 4.4
 - [ ] Errors carry file:line:column like the rest of the config
 - [ ] `docs/config.md` documents every key with its default; `config_load` tests cover each layer
 - [ ] `grep -rni gwm` over `crates/`, `examples/`, `plugins/`, `README.md` and `docs/` finds
@@ -198,7 +240,7 @@ removal of every gwm mention outside historical records.
       gwm and `[worktree]` replaces it; a CI check keeps it so
 
 #### WT-103: Invisible when disabled
-**Description:** Gate every surface listed in 4.2.
+**Description:** Gate every surface listed in 4.3.
 
 **Acceptance criteria:**
 - [ ] CLI test: with the default config, `tasq --help`, `tasq create --help`, `tasq view --json`
@@ -209,7 +251,7 @@ removal of every gwm mention outside historical records.
 - [ ] `tasq apply` round trip of a document without `"worktrees"` keeps the stored entries
 
 #### WT-104: Templates, variables and naming in core
-**Description:** Move the `{{name}}` renderer to core; implement the variables of 4.3,
+**Description:** Move the `{{name}}` renderer to core; implement the variables of 4.4,
 `branch_safe`, `branch_db`, `slug`, `port`.
 
 **Acceptance criteria:**
@@ -219,19 +261,33 @@ removal of every gwm mention outside historical records.
 - [ ] Unknown placeholder is an error naming the variable and the template
 - [ ] Zero missed mutants in `core/src/worktree/*`
 
-### Phase 2: parity with today's workflow
+### Phase 2: the lifecycle, at parity with today's workflow
 
-#### WT-201: `tasq-worktree` crate and `create`
-**Description:** New crate; branch resolution: local branch, else `origin/<branch>` with
-tracking, else new from `base`/`--from`, path from the template, `git worktree add`, tracking on
-the task. Replaces `tasq_launch::worktree`.
+#### WT-201: Declaring: `tasq create --worktree` and `tasq worktree <id> [BRANCH]`
+**Description:** Step 1 of 4.2. `--worktree [BRANCH]`, `on_create = "auto"`, the `branch` and
+`path` templates rendered at declaration time and stored.
 
 **Acceptance criteria:**
-- [ ] Tests against temporary repos with a bare "origin" for all three branch cases
-- [ ] Refuses an existing target path; a failed `git worktree add` leaves nothing tracked
-- [ ] `next`/`pick` recreate a missing worktree through the same code
+- [ ] `tasq create "Fix login" --worktree` writes ``- <rendered path> (`<id>-fix-login`)`` and
+      runs no process (test with an empty `PATH`)
+- [ ] `on_create = "auto"` declares one for every task whose project is inside a git work tree
+      (detected on the filesystem, no `git` process); `never` declares only with `--worktree`
+- [ ] `tasq worktree <id> <existing dir>` keeps today's behaviour; any other argument is a branch
+- [ ] TUI create form gets a worktree field when enabled
 
-#### WT-202: Provisioning: symlinks, copies, templates
+#### WT-202: Materializing at launch: the `tasq-worktree` crate
+**Description:** Step 2 of 4.2. New crate executing the `on_launch` decision: branch start
+(local, `origin/<branch>` tracking, new from `base`/`--from`), `git worktree add` at the stored
+path. Wired into `next`/`pick` before `pre-launch`, replacing the recreate prompt, and into
+`tasq worktree up`. Replaces `tasq_launch::worktree`.
+
+**Acceptance criteria:**
+- [ ] Temp repos with a bare "origin" cover the three branch starts
+- [ ] A launch of a task whose worktree does not exist creates it and starts the session there;
+      `--dry-run` lists the steps and creates nothing
+- [ ] A failure aborts the launch with the git error; nothing is left half-created at the path
+
+#### WT-203: Provisioning: symlinks, copies, templates
 **Acceptance criteria:**
 - [ ] Fixture configs modelled on the author's three workspaces (a sibling layout with symlinks
       and an `.envrc` template, a `{{project_name}}-` layout with per-branch databases, a copy of a
@@ -240,76 +296,76 @@ the task. Replaces `tasq_launch::worktree`.
       `.envrc` bytes), checked against fixtures, never against another tool's output
 - [ ] Missing symlink/copy sources are warnings; a missing template source is an error
 
-#### WT-203: Hooks and trust
+#### WT-204: Hooks and trust
 **Acceptance criteria:**
-- [ ] `pre_*` failure aborts and leaves nothing tracked; `post_*` failure is a warning
+- [ ] `pre_*` failure aborts the step (the launch, or the removal); `post_*` failure is a warning
 - [ ] Hooks run in the worktree with `TASQ_WORKTREE`, `TASQ_BRANCH`, `TASQ_TASK_ID` and the
       variables as `TASQ_VAR_<NAME>`
-- [ ] Trust store behaviour of 4.4, including re-asking after a command changes
+- [ ] Trust store behaviour of 4.5, including re-asking after a command changes
 
-#### WT-204: `add`, `ls`, `rm`, `switch`, `path`, `shell-init`, completions
+#### WT-205: Integration checks
+**Description:** What "nothing is lost" means for a branch. Integrated into the default branch
+when any check passes, cheapest first: same commit, ancestor, empty three-dot diff, same tree,
+merge would add nothing, every commit's patch-id present upstream (squash and rebase merges).
+Or contained in its upstream on the remote (pushed).
+
 **Acceptance criteria:**
-- [ ] `rm` refuses a dirty worktree without `--force`, runs `pre_remove`/`post_remove`, untracks
-- [ ] `ls --json` documented in `docs/json.md`
+- [ ] One temp-repo test per check, a pushed-but-unmerged case, and a neither case
+
+#### WT-206: Releasing at close
+**Description:** Step 3 of 4.2 in `tasq done`, the TUI's `d` and `tasq worktree release`;
+`on_done`, `delete_branch`.
+
+**Acceptance criteria:**
+- [ ] Closing a task with a clean, merged worktree removes the directory and the local branch;
+      the `## Worktrees` entry is byte for byte unchanged
+- [ ] Dirty, locked, unpushed-and-unmerged cases keep what they must and print one warning per
+      kept item naming it and the command to finish (`tasq worktree release <id> --force`)
+- [ ] The task is closed even when a removal fails (as with `post-done` hooks today)
+- [ ] Reopen and launch rematerializes: kept branch reused, pushed branch tracked, gone branch
+      fresh from `base` with a note
+
+#### WT-207: `ls`, `switch`, `path`, `shell-init`, completions
+**Acceptance criteria:**
+- [ ] `ls` shows every declared worktree, whether it exists, and dirty state; `--json`
+      documented in `docs/json.md`
 - [ ] `shell-init` output tested for bash, zsh and fish; `switch` without a target uses fzf when
-      present, a numbered list otherwise
+      present, a numbered list otherwise; `switch task:<id>` materializes first if needed
 
-#### WT-205: Worktrees from `tasq create`
-**Description:** `--worktree [BRANCH]`, `on_create`, automatic naming.
-
-**Acceptance criteria:**
-- [ ] `tasq create "Fix login" --worktree` on a git project creates `<id>-fix-login` and tracks it
-- [ ] A failure to create the worktree after the task is written is a warning with the manual
-      command, never a lost task
-- [ ] TUI create form gets a worktree field when enabled
-
-#### WT-206: Switch the author's workspaces off gwm (manual acceptance)
+#### WT-208: Switch the author's workspaces off gwm (manual acceptance)
 **Description:** Not shipped code. Write a `.tasq.toml` `[worktree]` table for each of
 `~/code/SF/silverfin_worspace`, `~/code/zantop_atelier` and `~/code/tasq_lab` equivalent to its
 `gwm.yml`, set `worktree.enabled = true` in the author's config, and stop calling gwm.
 **Acceptance criteria:**
-- [ ] Each workspace creates, lists, switches to and removes a worktree through `tasq` with the
-      same files, links, `.envrc` and hook effects as before; recorded in PROGRESS.md
+- [ ] In each workspace, a task declared, launched, closed and launched again goes through the
+      whole lifecycle with the same files, links, `.envrc` and hook effects as gwm gave; recorded
+      in PROGRESS.md
 - [ ] No tasq command, config, skill or prompt the author uses calls gwm; uninstalling it
       (`~/.local/bin/gwm`, the shell-init line) breaks nothing
 - [ ] `gwm.yml` files are left for the author to delete; tasq never reads them
 
 ### Phase 3: improvements
 
-#### WT-301: Merged detection and safe removal
-**Description:** A branch counts as integrated into the default branch when any check passes,
-cheapest first: same commit, ancestor, empty three-dot diff, same tree, merge would add nothing,
-every commit's patch-id present upstream (squash and rebase merges).
+#### WT-301: `prune`
 **Acceptance criteria:**
-- [ ] One temp-repo test per check, plus a not-merged case
-- [ ] `rm --with-branch` deletes the branch only when integrated, unless `--force`
-
-#### WT-302: `prune`
-**Acceptance criteria:**
-- [ ] `--gone` untracks entries whose directory is gone (and runs `git worktree prune`)
-- [ ] `--merged` and `--remote-deleted` remove clean, integrated worktrees older than `--min-age`
+- [ ] Releases the existing worktrees of done tasks (kept at close, or closed outside tasq) with
+      the same rules as WT-206, and runs `git worktree prune`
 - [ ] `--dry-run` lists the plan; nothing dirty is ever removed
 
-#### WT-303: Cleanup when a task closes
-**Description:** `on_done` in `tasq done` and the TUI's `d`.
-**Acceptance criteria:**
-- [ ] `ask` lists the task's worktrees with their state and removes the chosen clean ones
-- [ ] `remove` only removes clean, integrated worktrees and reports the rest
-
-#### WT-304: Status-rich `ls`
+#### WT-302: Status-rich `ls`
 **Acceptance criteria:**
 - [ ] Columns: task id, title, status, branch, dirty, ahead/behind upstream, integrated, age
 - [ ] `--all` across every project the notebook's tasks track
 - [ ] MR state through the configured `[forge.*]`/sources when available
 
-#### WT-305: Fast copies of ignored files
+#### WT-303: Fast copies of ignored files
 **Acceptance criteria:**
 - [ ] `copy_ignored` copies gitignored files from the main worktree, narrowed by
       `.worktreeinclude` (gitignore syntax), skipping VCS and tool-state directories
 - [ ] Reflink (`FICLONE`) when the filesystem supports it, plain copy otherwise; measured on a
       real `node_modules` and recorded
 
-#### WT-306: Port blocks and database names
+#### WT-304: Port blocks and database names
 **Acceptance criteria:**
 - [ ] `{{port}}` stable per branch and project, collision-checked against other tracked worktrees
 - [ ] The zantop workspace's `post_remove` `dropdb` hooks expressed with `{{branch_db}}`
@@ -322,9 +378,11 @@ session runs; TUI worktree actions (create, switch, remove) through the CLI.
 
 ## 6. Delivery order and rationale
 
-WT-101 first: without removal, nothing else can clean up. WT-102/103 next so the toggle shapes
-every later task instead of being retrofitted. Phase 2 reaches parity, at which point the author
-uninstalls gwm (WT-206 is the real acceptance). Phase 3 improvements are independent and can land
+WT-101 first: the lifecycle decisions are the heart of the feature and pure, so they are pinned
+down before any git code exists. WT-102/103 next so the toggle shapes every later task instead of
+being retrofitted. Phase 2 follows the lifecycle in order (declare, materialize, provision,
+release) and reaches parity, at which point the author uninstalls gwm (WT-208 is the real
+acceptance). Phase 3 improvements are independent and can land
 in any order.
 
 ## 7. Prior art
@@ -352,4 +410,6 @@ the task lands in the worktree.
   or subfolders? Sibling is proposed because it needs no `.git/info/exclude` entry.
 - Is a `.tasq.toml` in the workspace parent (gwm's location) enough, or do we also want a
   committed in-repo file for teams? The layered loader already supports both.
-- `on_done = "ask"` default when enabled, or `keep`?
+- Settled 2026-10-07: no removal of `## Worktrees` entries ever; worktrees are declared at
+  creation, created at launch, released at close (4.2). Defaults proposed: `on_create = "auto"`,
+  `on_done = "release"`, `delete_branch = "safe"`.
