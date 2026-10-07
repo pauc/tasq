@@ -141,8 +141,10 @@ fn edit_file(store: &mut dyn Store, host: &mut dyn Host, id: &TaskId) -> Result<
     }
 }
 
+/// Open and done tasks: the model decides what the list shows, so the
+/// DONE group (`a`) needs no store call of its own.
 fn reload(store: &dyn Store) -> Msg {
-    match store.list(&Filter::default()) {
+    match store.list(&Filter::default().any_done()) {
         Ok(tasks) => Msg::Loaded(tasks),
         Err(e) => Msg::Failed(e.to_string()),
     }
@@ -305,7 +307,7 @@ mod tests {
         FixedClock::at("2026-10-04 10:15")
     }
 
-    fn open_ids(msgs: &[Msg]) -> Vec<&str> {
+    fn loaded_ids(msgs: &[Msg]) -> Vec<&str> {
         match msgs.last() {
             Some(Msg::Loaded(tasks)) => tasks.iter().map(|t| t.id.as_str()).collect(),
             other => panic!("expected a Loaded last, got {other:?}"),
@@ -313,12 +315,15 @@ mod tests {
     }
 
     #[test]
-    fn load_lists_open_tasks() {
+    fn load_lists_open_and_done_tasks() {
         let mut store = store();
         let mut host = RecordingHost::default();
         let msgs = dispatch(&Cmd::Load, &mut store, &clock(), &mut host);
         assert_eq!(msgs.len(), 1);
-        assert_eq!(open_ids(&msgs), ["1", "2"]);
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
+        store.set_done(&TaskId::from(2), true).unwrap();
+        let msgs = dispatch(&Cmd::Load, &mut store, &clock(), &mut host);
+        assert_eq!(loaded_ids(&msgs), ["1", "2"], "the model hides done tasks");
         assert_eq!(host.calls, Vec::<String>::new());
     }
 
@@ -335,7 +340,7 @@ mod tests {
         );
         assert_eq!(msgs[0], Msg::Info("[1] -> blocked".into()));
         assert_eq!(store.get(&id).unwrap().status, Some(Status::BLOCKED));
-        assert_eq!(open_ids(&msgs), ["1", "2"]);
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
 
         let msgs = dispatch(
             &Cmd::SetPriority(id.clone(), Priority::A),
@@ -368,7 +373,7 @@ mod tests {
         let task = store.get(&id).unwrap();
         assert!(task.done);
         assert_eq!(task.progress.len(), 2);
-        assert_eq!(open_ids(&msgs), ["2"]);
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
 
         let msgs = dispatch(
             &Cmd::Done(TaskId::from(2), None),
@@ -377,7 +382,8 @@ mod tests {
             &mut host,
         );
         assert_eq!(msgs[0], Msg::Info("[2] done: B".into()));
-        assert_eq!(open_ids(&msgs), Vec::<&str>::new());
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
+        assert!(store.get(&TaskId::from(2)).unwrap().done);
         // Only a close reaches the host, once per task, after the write.
         assert_eq!(host.calls, vec!["after_done 1", "after_done 2"]);
     }
@@ -462,7 +468,7 @@ mod tests {
         assert_eq!(task.status, Some(Status::LATER));
         assert_eq!(task.priority, Priority::B);
         assert_eq!(task.progress, Vec::new());
-        assert_eq!(open_ids(&msgs[..2]), ["1", "2", "3"]);
+        assert_eq!(loaded_ids(&msgs[..2]), ["1", "2", "3"]);
         assert_eq!(host.calls, vec!["after_create 3"]);
     }
 
@@ -547,7 +553,7 @@ mod tests {
             Msg::Failed("[1] done: A (post-done hook \"x\" failed: exit status 4)".into())
         );
         assert!(store.get(&TaskId::from(1)).unwrap().done);
-        assert_eq!(open_ids(&msgs), ["2"]);
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
         assert_eq!(host.calls, vec!["after_done 1"]);
     }
 
@@ -576,7 +582,7 @@ mod tests {
             &mut host,
         );
         assert_eq!(msgs[0], Msg::Failed("no task with id 9".into()));
-        assert_eq!(open_ids(&msgs), ["1", "2"]);
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
         let msgs = dispatch(
             &Cmd::Log(TaskId::from(1), "  ".into()),
             &mut store,
@@ -597,7 +603,7 @@ mod tests {
             &mut host,
         );
         assert_eq!(msgs[0], Msg::Info("ok".into()));
-        assert_eq!(open_ids(&msgs), ["1", "2"]);
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
         for focus in [true, false] {
             let msgs = dispatch(
                 &Cmd::Launch(TaskId::from(1), LaunchTarget::Detached { focus }),
@@ -699,6 +705,6 @@ mod tests {
         );
         assert_eq!(msgs[0], Msg::Info("ok".into()));
         assert_eq!(host.calls, vec!["edit 2 /nb/2.todo.md"]);
-        assert_eq!(open_ids(&msgs), ["1", "2"]);
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
     }
 }

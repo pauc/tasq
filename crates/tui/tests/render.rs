@@ -180,6 +180,38 @@ fn folded_groups() {
     assert_snapshot!("folded_group", screen(&mut model, 80, 14));
 }
 
+/// Two done tasks for the DONE group: one closed by tasq (with a past due
+/// date, not overdue once done), one closed by `nb todo do` (no time).
+fn done_tasks() -> Vec<Task> {
+    let mut shipped = Task::new(TaskId::from(7), "Ship the export fix");
+    shipped.due = Some(date("2026-10-01"));
+    shipped.log("merged", &FixedClock::at("2026-10-05 17:10"));
+    shipped.close(&FixedClock::at("2026-10-05 17:10"));
+    let mut old = Task::new(TaskId::from(2), "Rotate the API keys");
+    old.log("done by hand", &FixedClock::at("2026-09-30 11:00"));
+    old.mark_done();
+    vec![shipped, old]
+}
+
+#[test]
+fn done_group() {
+    // Colours off, so the `+done` chip, the counts and `▸` carry it.
+    let mut model = fixture(false);
+    let mut all = tasks();
+    all.extend(done_tasks());
+    update(&mut model, Msg::Loaded(all));
+    assert_snapshot!("done_hidden", screen(&mut model, 80, 18));
+    update(&mut model, Msg::ToggleDone);
+    assert_snapshot!("done_folded", screen(&mut model, 80, 18));
+    update(&mut model, Msg::Bottom);
+    update(&mut model, Msg::ToggleGroup);
+    assert_snapshot!("done_unfolded", screen(&mut model, 80, 22));
+    update(&mut model, Msg::ShowDetail);
+    assert_snapshot!("done_detail", screen(&mut model, 120, 22));
+    update(&mut model, Msg::BeginStatus);
+    assert_snapshot!("done_refuses_status", screen(&mut model, 120, 22));
+}
+
 #[test]
 fn overlays() {
     let mut model = fixture(true);

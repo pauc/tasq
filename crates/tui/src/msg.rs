@@ -94,6 +94,8 @@ pub enum Msg {
     ToggleDetail,
     /// `z`/`Space`: fold or unfold the group under the cursor.
     ToggleGroup,
+    /// `a`: show or hide the DONE group.
+    ToggleDone,
     /// `Right`: show the selected task's detail.
     ShowDetail,
     /// `Left`: hide the detail.

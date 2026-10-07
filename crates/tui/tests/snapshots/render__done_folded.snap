@@ -1,0 +1,22 @@
+---
+source: crates/tui/tests/render.rs
+expression: "screen(&mut model, 80, 18)"
+---
+"┌ Tasks (7/7) +done ───────────────────────────────────────────────────────────┐"
+"│IN PROGRESS (1)                                                               │"
+"│  [ 1] #A Fix the flaky build (due in 4d)  #ci                                │"
+"│                                                                              │"
+"│READY (2)                                                                     │"
+"│  [12] #B Review MR !88: paginate the export  #gitlab   #review-request       │"
+"│  [ 3] #C Write the release notes                                             │"
+"│                                                                              │"
+"│LATER (1)                                                                     │"
+"│  [ 4] #B Try the new profiler                                                │"
+"│                                                                              │"
+"│NO STATUS (1)                                                                 │"
+"│  [ 5] #B Call the bank                                                       │"
+"│                                                                              │"
+"│DONE (2) ▸                                                                    │"
+"│                                                                              │"
+"└──────────────────────────────────────────────────────────────────────────────┘"
+"j/k  /  c t p l d e  Enter open  s/S sync  ? help  q quit                       "

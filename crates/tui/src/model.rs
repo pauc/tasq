@@ -132,12 +132,29 @@ pub enum LayoutKind {
     OnePane,
 }
 
+/// Which group of the list: a status group or the DONE group.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum GroupKey {
+    /// The open tasks in a status (`None` is the no-status group).
+    Status(Option<Status>),
+    /// The done tasks (`a`), newest first.
+    Done,
+}
+
+/// One group of the list, never empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListGroup<'a> {
+    /// Which group.
+    pub key: GroupKey,
+    /// Its tasks, in list order.
+    pub tasks: Vec<&'a Task>,
+}
+
 /// One line of the task list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row<'a> {
-    /// A status group header (`None` is the no-status group) and the
-    /// number of tasks in the group, folded or not.
-    Header(Option<Status>, usize),
+    /// A group header and the number of tasks in the group, folded or not.
+    Header(GroupKey, usize),
     /// A task of the group above.
     Task(&'a Task),
 }
@@ -147,14 +164,22 @@ pub enum Row<'a> {
 pub enum Cursor {
     /// A task of an unfolded group.
     Task(TaskId),
-    /// The header of a folded group (`None` is the no-status group).
-    Group(Option<Status>),
+    /// The header of a folded group.
+    Group(GroupKey),
+}
+
+/// The list views switched on and off by a key, shown in the list title.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Toggles {
+    /// The DONE group is listed (`a`, `+done`).
+    pub done: bool,
 }
 
 /// The whole state of the UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
-    /// Open tasks as last loaded from the store.
+    /// Open and done tasks as last loaded from the store; the list shows
+    /// the done ones only with [`Toggles::done`].
     pub tasks: Vec<Task>,
     /// The configured statuses, for grouping and the status picker.
     pub workflow: Workflow,
@@ -187,7 +212,9 @@ pub struct Model {
     /// The list cursor, when anything is visible.
     pub selected: Option<Cursor>,
     /// The groups folded to their header (`z`), kept for the session.
-    pub collapsed: BTreeSet<Option<Status>>,
+    pub collapsed: BTreeSet<GroupKey>,
+    /// The list views that are on; all off at start.
+    pub toggles: Toggles,
     /// What the keys do.
     pub mode: Mode,
     /// What the prompts submitted this session, for `Up`/`Down`.
@@ -227,6 +254,7 @@ impl Model {
             filter: String::new(),
             selected: None,
             collapsed: BTreeSet::new(),
+            toggles: Toggles::default(),
             mode: Mode::Normal,
             history: Histories::default(),
             message: None,
@@ -333,17 +361,55 @@ impl Model {
         }
     }
 
-    /// The status groups of the visible tasks, in CLI order.
-    pub fn groups(&self) -> Vec<Group<'_>> {
-        query::list(&self.tasks, &self.filter(), &self.workflow)
+    /// The groups of the visible tasks: the status groups of the open
+    /// ones in CLI order, then, with [`Toggles::done`], the done ones
+    /// that pass the same filter, newest first ([`query::sort_done`]).
+    pub fn groups(&self) -> Vec<ListGroup<'_>> {
+        let filter = self.filter();
+        let mut groups: Vec<ListGroup<'_>> = query::list(&self.tasks, &filter, &self.workflow)
+            .into_iter()
+            .map(|Group { status, tasks }| ListGroup {
+                key: GroupKey::Status(status),
+                tasks,
+            })
+            .collect();
+        if self.toggles.done {
+            let done = query::sort_done(query::filter(&self.tasks, &filter.done(true)));
+            if !done.is_empty() {
+                groups.push(ListGroup {
+                    key: GroupKey::Done,
+                    tasks: done,
+                });
+            }
+        }
+        groups
+    }
+
+    /// How many tasks the list could show with no filter: the open ones,
+    /// plus the done ones with [`Toggles::done`].
+    pub fn total(&self) -> usize {
+        self.tasks
+            .iter()
+            .filter(|t| self.toggles.done || !t.done)
+            .count()
+    }
+
+    /// Shows or hides the DONE group (`a`). It comes back folded, so the
+    /// open tasks stay where they were.
+    pub fn toggle_done(&mut self) {
+        self.toggles.done = !self.toggles.done;
+        if self.toggles.done {
+            self.collapsed.insert(GroupKey::Done);
+        }
+        self.fix_selection();
     }
 
     /// The list, headers included; a folded group is its header alone.
     pub fn rows(&self) -> Vec<Row<'_>> {
         let mut rows = Vec::new();
         for group in self.groups() {
-            rows.push(Row::Header(group.status.clone(), group.tasks.len()));
-            if !self.collapsed.contains(&group.status) {
+            rows.push(Row::Header(group.key.clone(), group.tasks.len()));
+            if !self.collapsed.contains(&group.key) {
                 rows.extend(group.tasks.into_iter().map(Row::Task));
             }
         }
@@ -355,8 +421,8 @@ impl Model {
     pub fn stops(&self) -> Vec<Cursor> {
         let mut stops = Vec::new();
         for group in self.groups() {
-            if self.collapsed.contains(&group.status) {
-                stops.push(Cursor::Group(group.status));
+            if self.collapsed.contains(&group.key) {
+                stops.push(Cursor::Group(group.key));
             } else {
                 stops.extend(group.tasks.iter().map(|t| Cursor::Task(t.id.clone())));
             }
@@ -365,7 +431,7 @@ impl Model {
     }
 
     /// The group the visible task `id` is listed under.
-    fn group_of(&self, id: &TaskId) -> Option<Group<'_>> {
+    fn group_of(&self, id: &TaskId) -> Option<ListGroup<'_>> {
         self.groups()
             .into_iter()
             .find(|g| g.tasks.iter().any(|t| t.id == *id))
@@ -398,7 +464,7 @@ impl Model {
         let cursor = self.selected.as_ref()?;
         self.rows().iter().position(|row| match (row, cursor) {
             (Row::Task(t), Cursor::Task(id)) => t.id == *id,
-            (Row::Header(status, _), Cursor::Group(group)) => status == group,
+            (Row::Header(key, _), Cursor::Group(group)) => key == group,
             _ => false,
         })
     }
@@ -422,9 +488,7 @@ impl Model {
     pub fn fix_selection(&mut self) {
         let cursor = self.selected.take().map(|cursor| match cursor {
             Cursor::Task(id) => match self.group_of(&id) {
-                Some(group) if self.collapsed.contains(&group.status) => {
-                    Cursor::Group(group.status)
-                }
+                Some(group) if self.collapsed.contains(&group.key) => Cursor::Group(group.key),
                 _ => Cursor::Task(id),
             },
             group @ Cursor::Group(_) => group,
@@ -438,8 +502,8 @@ impl Model {
     /// Selects the visible task `id`, unfolding its group; a task hidden
     /// by the filter stays unselected.
     pub fn select_task(&mut self, id: TaskId) {
-        if let Some(status) = self.group_of(&id).map(|g| g.status) {
-            self.collapsed.remove(&status);
+        if let Some(key) = self.group_of(&id).map(|g| g.key) {
+            self.collapsed.remove(&key);
             self.selected = Some(Cursor::Task(id));
         }
     }
@@ -449,17 +513,17 @@ impl Model {
     pub fn toggle_group(&mut self) {
         match self.selected.take() {
             Some(Cursor::Task(id)) => {
-                if let Some(status) = self.group_of(&id).map(|g| g.status) {
-                    self.collapsed.insert(status.clone());
-                    self.selected = Some(Cursor::Group(status));
+                if let Some(key) = self.group_of(&id).map(|g| g.key) {
+                    self.collapsed.insert(key.clone());
+                    self.selected = Some(Cursor::Group(key));
                 }
             }
-            Some(Cursor::Group(status)) => {
-                self.collapsed.remove(&status);
+            Some(Cursor::Group(key)) => {
+                self.collapsed.remove(&key);
                 self.selected = self
                     .groups()
                     .into_iter()
-                    .find(|g| g.status == status)
+                    .find(|g| g.key == key)
                     .and_then(|g| g.tasks.first().map(|t| Cursor::Task(t.id.clone())));
             }
             None => {}
@@ -541,12 +605,18 @@ mod tests {
         let m = model();
         let rows = m.rows();
         assert_eq!(rows.len(), 7);
-        assert_eq!(rows[0], Row::Header(Some(Status::IN_PROGRESS), 1));
+        assert_eq!(
+            rows[0],
+            Row::Header(GroupKey::Status(Some(Status::IN_PROGRESS)), 1)
+        );
         assert!(matches!(rows[1], Row::Task(t) if t.id == TaskId::from(1)));
-        assert_eq!(rows[2], Row::Header(Some(Status::READY), 2));
+        assert_eq!(
+            rows[2],
+            Row::Header(GroupKey::Status(Some(Status::READY)), 2)
+        );
         assert!(matches!(rows[3], Row::Task(t) if t.id == TaskId::from(2)));
         assert!(matches!(rows[4], Row::Task(t) if t.id == TaskId::from(3)));
-        assert_eq!(rows[5], Row::Header(None, 1));
+        assert_eq!(rows[5], Row::Header(GroupKey::Status(None), 1));
         assert!(matches!(rows[6], Row::Task(t) if t.id == TaskId::from(4)));
         let ids: Vec<&str> = m.visible().iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["1", "2", "3", "4"]);
@@ -628,17 +698,23 @@ mod tests {
 
     #[test]
     fn folded_groups_are_one_stop() {
-        let ready = Cursor::Group(Some(Status::READY));
+        let ready = Cursor::Group(GroupKey::Status(Some(Status::READY)));
         let mut m = model();
         m.selected = Some(Cursor::Task(TaskId::from(3)));
         m.toggle_group();
         assert_eq!(m.selected, Some(ready.clone()));
-        assert_eq!(m.collapsed, BTreeSet::from([Some(Status::READY)]));
+        assert_eq!(
+            m.collapsed,
+            BTreeSet::from([GroupKey::Status(Some(Status::READY))])
+        );
         assert_eq!(m.selected_task(), None, "a header is not a task");
         let rows = m.rows();
         assert_eq!(rows.len(), 5);
-        assert_eq!(rows[2], Row::Header(Some(Status::READY), 2));
-        assert_eq!(rows[3], Row::Header(None, 1));
+        assert_eq!(
+            rows[2],
+            Row::Header(GroupKey::Status(Some(Status::READY)), 2)
+        );
+        assert_eq!(rows[3], Row::Header(GroupKey::Status(None), 1));
         assert_eq!(
             m.stops(),
             [
@@ -653,9 +729,9 @@ mod tests {
         assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(4))));
         m.select_offset(-1);
         assert_eq!(m.selected, Some(ready.clone()));
-        m.collapsed.insert(None);
+        m.collapsed.insert(GroupKey::Status(None));
         m.select_last();
-        assert_eq!(m.selected, Some(Cursor::Group(None)));
+        assert_eq!(m.selected, Some(Cursor::Group(GroupKey::Status(None))));
         assert_eq!(m.selected_row(), Some(3));
         m.toggle_group();
         assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(4))));
@@ -672,7 +748,7 @@ mod tests {
     #[test]
     fn the_cursor_follows_tasks_into_folded_groups() {
         let mut m = model();
-        m.collapsed.insert(Some(Status::READY));
+        m.collapsed.insert(GroupKey::Status(Some(Status::READY)));
         // A reload that moves the selected task into a folded group.
         m.selected = Some(Cursor::Task(TaskId::from(1)));
         m.set_tasks(vec![
@@ -681,7 +757,10 @@ mod tests {
             task(2, "Second", Some(Status::READY)),
             task(4, "Loose", None),
         ]);
-        assert_eq!(m.selected, Some(Cursor::Group(Some(Status::READY))));
+        assert_eq!(
+            m.selected,
+            Some(Cursor::Group(GroupKey::Status(Some(Status::READY))))
+        );
         // A filter that empties the folded group sends the cursor to the top.
         m.set_filter("Loose".into());
         assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(4))));
@@ -693,6 +772,62 @@ mod tests {
         assert_eq!(m.collapsed, BTreeSet::new());
         m.select_task(TaskId::from(99));
         assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(2))));
+    }
+
+    #[test]
+    fn the_done_group_is_on_demand_folded_filtered_and_newest_first() {
+        use tasq_core::clock::FixedClock;
+        let done_at = |id: u64, title: &str, at: &str| {
+            let mut t = task(id, title, None);
+            t.close(&FixedClock::at(at));
+            t
+        };
+        let mut m = model();
+        let mut tasks = m.tasks.clone();
+        tasks.push(done_at(6, "Older second", "2026-10-01 09:00"));
+        tasks.push(done_at(7, "Newer", "2026-10-05 17:10"));
+        m.set_tasks(tasks);
+        let done = GroupKey::Done;
+
+        // Hidden by default: the list and the total are the open tasks.
+        assert_eq!(m.rows().len(), 7);
+        assert_eq!(m.total(), 4);
+        assert_eq!(m.visible().len(), 4);
+
+        m.toggle_done();
+        assert!(m.toggles.done);
+        assert_eq!(m.total(), 6);
+        assert_eq!(m.collapsed, BTreeSet::from([done.clone()]));
+        assert_eq!(m.rows().last(), Some(&Row::Header(done.clone(), 2)));
+        assert_eq!(m.stops().last(), Some(&Cursor::Group(done.clone())));
+        m.select_last();
+        m.toggle_group();
+        let ids: Vec<&str> = m.visible().iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["1", "2", "3", "4", "7", "6"]);
+        assert_eq!(m.selected_task().map(|t| t.id.as_str()), Some("7"));
+
+        // The filter applies to the done tasks too; `#status` never matches one.
+        m.set_filter("second".into());
+        let ids: Vec<&str> = m.visible().iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["2", "6"]);
+        m.set_filter("#ready".into());
+        let ids: Vec<&str> = m.visible().iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["2", "3"]);
+        m.set_filter("Newer".into());
+        assert_eq!(m.selected_task().map(|t| t.id.as_str()), Some("7"));
+
+        // Hiding it moves a cursor that was on a done task back to the top,
+        // and showing it again folds it again.
+        m.set_filter(String::new());
+        m.toggle_done();
+        assert!(!m.toggles.done);
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
+        assert_eq!(m.total(), 4);
+        m.toggle_done();
+        assert_eq!(m.collapsed, BTreeSet::from([done]));
+        // No done task: no DONE header.
+        m.set_filter("First".into());
+        assert_eq!(m.rows().len(), 2);
     }
 
     #[test]

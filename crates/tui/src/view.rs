@@ -23,12 +23,14 @@ use tasq_core::clock::format_timestamp;
 use tasq_core::config::DueFormat;
 use tasq_core::dates::{Due, due_label};
 use tasq_core::model::{Priority, Status, Task};
-use tasq_core::theme::{self, Role, group_label};
+use tasq_core::theme::{self, DONE_LABEL, Role, group_label};
 
 use crate::calendar::{self, Calendar, DAYS_PER_WEEK};
 use crate::form::{Field, Form, Text};
 use crate::keys::{Action, KeyMap};
-use crate::model::{Cursor, LayoutKind, Mode, Model, NoteTarget, Row, TWO_PANE_MIN_WIDTH};
+use crate::model::{
+    Cursor, GroupKey, LayoutKind, Mode, Model, NoteTarget, Row, TWO_PANE_MIN_WIDTH,
+};
 
 /// How many progress notes the detail pane shows (the most recent ones).
 pub const PROGRESS_SHOWN: usize = 8;
@@ -40,6 +42,10 @@ pub const HELP: &[(&[Action], &str)] = &[
     (&[Action::Top, Action::Bottom], "first / last task"),
     (&[Action::PageUp, Action::PageDown], "move ten tasks"),
     (&[Action::ToggleGroup], "fold / unfold the group"),
+    (
+        &[Action::ToggleDone],
+        "show / hide the DONE group (newest first)",
+    ),
     (
         &[Action::Filter],
         "filter: text matches titles, #word a status, tag or priority",
@@ -347,8 +353,8 @@ fn chip(model: &Model) -> Style {
 }
 
 /// A due date in `format` (`overdue 3d`): bold `overdue` when past,
-/// `due-soon` today and tomorrow, `dim` further ahead. The TUI lists open
-/// tasks only, so there is no done case. `wrap` adds parentheses.
+/// `due-soon` today and tomorrow, `dim` further ahead. `wrap` adds
+/// parentheses. A done task is not overdue: [`done_due_span`].
 fn due_span(model: &Model, due: NaiveDate, format: DueFormat, wrap: bool) -> Span<'static> {
     let style = match Role::of_due(Due::of(due, model.today)) {
         Role::Overdue => role(model, Role::Overdue).add_modifier(Modifier::BOLD),
@@ -357,6 +363,24 @@ fn due_span(model: &Model, due: NaiveDate, format: DueFormat, wrap: bool) -> Spa
     };
     let text = due_label(due, model.today, format);
     Span::styled(if wrap { format!("({text})") } else { text }, style)
+}
+
+/// The due date of a done task: its ISO date, dim, as `tasq list --done`
+/// shows it (ADR 0019).
+fn done_due_span(model: &Model, due: NaiveDate, wrap: bool) -> Span<'static> {
+    let text = due_label(due, model.today, DueFormat::Iso);
+    Span::styled(if wrap { format!("({text})") } else { text }, dim(model))
+}
+
+/// The header label and colour of a list group.
+fn group_heading(model: &Model, key: &GroupKey) -> (String, theme::Color) {
+    match key {
+        GroupKey::Status(status) => (
+            group_label(status.as_ref()),
+            model.theme.status_color(status.as_ref()),
+        ),
+        GroupKey::Done => (DONE_LABEL.to_owned(), model.theme.done_color()),
+    }
 }
 
 fn priority_span(model: &Model, priority: Priority) -> Span<'static> {
@@ -379,8 +403,16 @@ pub fn task_lines<'a>(model: &Model, task: &'a Task, width: u16) -> Vec<Line<'a>
     ];
     let indent: usize = prefix.iter().map(Span::width).sum::<usize>() + 1;
     let mut atoms: Vec<Span<'a>> = task.title.split_whitespace().map(Span::raw).collect();
-    if let Some(due) = task.due {
-        atoms.push(due_span(model, due, model.due_format, true));
+    match (task.due, task.done) {
+        (Some(due), false) => atoms.push(due_span(model, due, model.due_format, true)),
+        (Some(due), true) => atoms.push(done_due_span(model, due, true)),
+        (None, _) => {}
+    }
+    if let Some(at) = task.closed_at.filter(|_| task.done) {
+        atoms.push(Span::styled(
+            format!("(closed {})", at.date().format("%Y-%m-%d")),
+            dim(model),
+        ));
     }
     for tag in &task.tags {
         atoms.push(Span::styled(format!(" {} ", tag.to_hash()), chip(model)));
@@ -420,17 +452,17 @@ pub fn list_lines(model: &Model, width: u16) -> (Vec<Line<'_>>, Option<Range<usi
     let mut selected_lines = None;
     for row in model.rows() {
         match row {
-            Row::Header(status, count) => {
+            Row::Header(key, count) => {
                 if !lines.is_empty() {
                     lines.push(Line::default());
                 }
-                let mut label = format!("{} ({count})", group_label(status.as_ref()));
-                let mut style = colored(model, model.theme.status_color(status.as_ref()))
-                    .add_modifier(Modifier::BOLD);
-                if model.collapsed.contains(&status) {
+                let (name, color) = group_heading(model, &key);
+                let mut label = format!("{name} ({count})");
+                let mut style = colored(model, color).add_modifier(Modifier::BOLD);
+                if model.collapsed.contains(&key) {
                     label.push_str(" ▸");
                 }
-                if selected == Some(&Cursor::Group(status)) {
+                if selected == Some(&Cursor::Group(key)) {
                     selected_lines = Some(lines.len()..lines.len() + 1);
                     style = style.patch(selection(model));
                 }
@@ -461,20 +493,23 @@ pub fn scroll_offset(selected: Option<Range<usize>>, height: usize) -> usize {
 
 fn render_list(model: &Model, frame: &mut Frame, area: Rect) {
     let shown = model.visible().len();
-    let mut title = format!(" Tasks ({shown}/{}) ", model.tasks.len());
-    if !model.filter.is_empty() {
-        let _ = write!(title, "/{} ", model.filter);
-    }
-    let block = Block::bordered().title(title);
+    let total = model.total();
+    let frame_title = list_title(model, shown, total);
+    let block = Block::bordered().title(frame_title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    if model.tasks.is_empty() {
-        frame.render_widget(Paragraph::new("No open todos."), inner);
+    let todos = if model.toggles.done {
+        "todos"
+    } else {
+        "open todos"
+    };
+    if total == 0 {
+        frame.render_widget(Paragraph::new(format!("No {todos}.")), inner);
         return;
     }
     if shown == 0 {
         frame.render_widget(
-            Paragraph::new(format!("No open todos match /{}.", model.filter)),
+            Paragraph::new(format!("No {todos} match /{}.", model.filter)),
             inner,
         );
         return;
@@ -483,6 +518,19 @@ fn render_list(model: &Model, frame: &mut Frame, area: Rect) {
     let offset = scroll_offset(selected, inner.height as usize);
     let visible: Vec<Line<'_>> = lines.into_iter().skip(offset).collect();
     frame.render_widget(Paragraph::new(visible), inner);
+}
+
+/// The list's border title: `Tasks (shown/total)`, then the filter and
+/// the view toggles that are on (`+done`).
+pub fn list_title(model: &Model, shown: usize, total: usize) -> String {
+    let mut title = format!(" Tasks ({shown}/{total}) ");
+    if !model.filter.is_empty() {
+        let _ = write!(title, "/{} ", model.filter);
+    }
+    if model.toggles.done {
+        title.push_str("+done ");
+    }
+    title
 }
 
 /// The detail pane lines for `task`.
@@ -503,13 +551,24 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
         }
         None if task.done => {
             head.push(Span::raw("  "));
-            head.push(Span::styled("done", dim(model)));
+            let done = match task.closed_at {
+                Some(at) => format!("done {}", format_timestamp(at)),
+                None => "done".to_owned(),
+            };
+            head.push(Span::styled(done, dim(model)));
         }
         None => {}
     }
-    if let Some(due) = task.due {
-        head.push(Span::raw("  "));
-        head.push(due_span(model, due, DueFormat::Both, false));
+    match (task.due, task.done) {
+        (Some(due), false) => {
+            head.push(Span::raw("  "));
+            head.push(due_span(model, due, DueFormat::Both, false));
+        }
+        (Some(due), true) => {
+            head.push(Span::raw("  "));
+            head.push(done_due_span(model, due, false));
+        }
+        (None, _) => {}
     }
     lines.push(Line::from(head));
     if !task.tags.is_empty() {
@@ -1532,47 +1591,51 @@ mod tests {
         assert_eq!(rows[2], ("C-u/PgUp, C-d/PgDn".to_owned(), "move ten tasks"));
         assert_eq!(rows[3], ("z/Space".to_owned(), "fold / unfold the group"));
         assert_eq!(
-            rows[11],
+            rows[4],
+            ("a".to_owned(), "show / hide the DONE group (newest first)")
+        );
+        assert_eq!(
+            rows[12],
             (
                 "e".to_owned(),
                 "edit the task in a form (title, status, priority, due, project, tags)"
             )
         );
-        assert_eq!(rows[12], ("E".to_owned(), "open the task file in $EDITOR"));
-        assert_eq!(rows[14].0, "C-Enter");
-        assert_eq!(rows[15].0, "S-Enter");
+        assert_eq!(rows[13], ("E".to_owned(), "open the task file in $EDITOR"));
+        assert_eq!(rows[15].0, "C-Enter");
+        assert_eq!(rows[16].0, "S-Enter");
         assert_eq!(
-            rows[16],
+            rows[17],
             (
                 "s".to_owned(),
                 "run the sources that run by default (tasq sync)"
             )
         );
         assert_eq!(
-            rows[17],
+            rows[18],
             (
                 "S".to_owned(),
                 "pick the sources to run: Space toggles, Enter runs"
             )
         );
         assert_eq!(
-            rows[19],
+            rows[20],
             (
                 "Right, Left".to_owned(),
                 "show / hide the selected task's detail"
             )
         );
         assert_eq!(
-            rows[21],
+            rows[22],
             ("Enter".to_owned(), "in a picker: apply the choice")
         );
-        assert_eq!(rows[23], ("q, C-c".to_owned(), "quit"));
+        assert_eq!(rows[24], ("q, C-c".to_owned(), "quit"));
         let mut table = BTreeMap::new();
         table.insert("quit".to_owned(), KeySpec::Many(Vec::new()));
         table.insert("sync".to_owned(), KeySpec::One("f5".to_owned()));
         let rows = help_rows(&KeyMap::from_config(&table).unwrap());
-        assert_eq!(rows[23], ("none, C-c".to_owned(), "quit"));
-        assert_eq!(rows[16].0, "F5");
+        assert_eq!(rows[24], ("none, C-c".to_owned(), "quit"));
+        assert_eq!(rows[17].0, "F5");
     }
 
     #[test]

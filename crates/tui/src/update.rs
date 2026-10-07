@@ -70,6 +70,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::Top => model.select_first(),
         Msg::Bottom => model.select_last(),
         Msg::ToggleGroup => model.toggle_group(),
+        Msg::ToggleDone => model.toggle_done(),
         Msg::Escape => {
             if model.show_detail {
                 model.show_detail = false;
@@ -83,6 +84,8 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::Help => model.mode = Mode::Help,
         Msg::Reload => return vec![Cmd::Load],
         Msg::BeginFilter => begin_filter(model),
+        Msg::BeginStatus | Msg::BeginPriority | Msg::BeginDone | Msg::Edit
+            if refuse_done(model) => {}
         Msg::BeginStatus => {
             if let Some(task) = model.selected_task() {
                 let cursor = task
@@ -185,6 +188,23 @@ fn begin_note(model: &mut Model, target: NoteTarget) {
     } else {
         model.message = Some(Message::error(NO_SELECTION));
     }
+}
+
+/// Whether the selected task is done, saying so in the status bar: the
+/// status and priority pickers, `done` and the edit view need an open
+/// task. A done task can still be logged on, opened and launched.
+fn refuse_done(model: &mut Model) -> bool {
+    let Some(id) = model
+        .selected_task()
+        .filter(|task| task.done)
+        .map(|task| task.id.clone())
+    else {
+        return false;
+    };
+    model.message = Some(Message::error(format!(
+        "[{id}] is done; `tasq reopen {id}` brings it back"
+    )));
+    true
 }
 
 /// A command on the selected task (one that is visible, not merely a
@@ -579,6 +599,57 @@ mod tests {
 
     fn chars(text: &str) -> Vec<Msg> {
         text.chars().map(Msg::Char).collect()
+    }
+
+    #[test]
+    fn a_done_task_refuses_the_open_only_edits_but_not_the_rest() {
+        let mut m = model();
+        let mut closed = task(9, "Closed", None);
+        closed.mark_done();
+        let mut tasks = m.tasks.clone();
+        tasks.push(closed);
+        feed(
+            &mut m,
+            [
+                Msg::Loaded(tasks),
+                Msg::ToggleDone,
+                Msg::Bottom,
+                Msg::ToggleGroup,
+            ],
+        );
+        assert_eq!(m.selected_task().map(|t| t.id.as_str()), Some("9"));
+        let refused = Some(Message::error(
+            "[9] is done; `tasq reopen 9` brings it back",
+        ));
+        for msg in [
+            Msg::BeginStatus,
+            Msg::BeginPriority,
+            Msg::BeginDone,
+            Msg::Edit,
+        ] {
+            assert_eq!(update(&mut m, msg.clone()), Vec::new(), "{msg:?}");
+            assert_eq!(m.mode, Mode::Normal, "{msg:?}");
+            assert_eq!(m.message, refused, "{msg:?}");
+        }
+        // Logging a note, the editor and a session still work on it.
+        update(&mut m, Msg::BeginNote);
+        assert!(matches!(
+            m.mode,
+            Mode::Note {
+                target: NoteTarget::Log,
+                ..
+            }
+        ));
+        update(&mut m, Msg::Escape);
+        assert_eq!(
+            update(&mut m, Msg::Editor),
+            vec![Cmd::Editor(TaskId::from(9))]
+        );
+        // An open task is not refused.
+        update(&mut m, Msg::Top);
+        update(&mut m, Msg::BeginStatus);
+        assert!(matches!(m.mode, Mode::Status { .. }));
+        assert_eq!(m.message, None);
     }
 
     #[test]

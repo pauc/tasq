@@ -29,7 +29,7 @@ pub use calendar::Calendar;
 pub use form::{Field, Form, FormError};
 pub use history::{Histories, History};
 pub use keys::{Action, Chord, Key, KeyError, KeyMap};
-pub use model::{Cursor, Mode, Model, NoteTarget, SourceChoice};
+pub use model::{Cursor, GroupKey, ListGroup, Mode, Model, NoteTarget, SourceChoice, Toggles};
 pub use msg::{Cmd, Host, HostResult, LaunchTarget, Msg, NoHost, RecordingHost};
 pub use runtime::{dispatch, run};
 pub use update::update;

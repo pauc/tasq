@@ -35,6 +35,8 @@ pub enum Action {
     Bottom,
     /// Fold or unfold the group under the cursor.
     ToggleGroup,
+    /// Show or hide the DONE group.
+    ToggleDone,
     /// Start typing a filter.
     Filter,
     /// Open the status picker.
@@ -88,6 +90,7 @@ pub const NORMAL: &[Action] = &[
     Action::Top,
     Action::Bottom,
     Action::ToggleGroup,
+    Action::ToggleDone,
     Action::Filter,
     Action::Status,
     Action::Priority,
@@ -129,6 +132,7 @@ impl Action {
         Action::Top,
         Action::Bottom,
         Action::ToggleGroup,
+        Action::ToggleDone,
         Action::Filter,
         Action::Status,
         Action::Priority,
@@ -162,6 +166,7 @@ impl Action {
             Self::Top => "top",
             Self::Bottom => "bottom",
             Self::ToggleGroup => "toggle-group",
+            Self::ToggleDone => "toggle-done",
             Self::Filter => "filter",
             Self::Status => "status",
             Self::Priority => "priority",
@@ -201,6 +206,7 @@ impl Action {
             Self::Top => &["g", "home"],
             Self::Bottom => &["G", "end"],
             Self::ToggleGroup => &["z", "space"],
+            Self::ToggleDone => &["a"],
             Self::Filter => &["/"],
             Self::Status => &["t"],
             Self::Priority => &["p"],
@@ -234,6 +240,7 @@ impl Action {
             Self::Top => Msg::Top,
             Self::Bottom => Msg::Bottom,
             Self::ToggleGroup => Msg::ToggleGroup,
+            Self::ToggleDone => Msg::ToggleDone,
             Self::Filter => Msg::BeginFilter,
             Self::Status => Msg::BeginStatus,
             Self::Priority => Msg::BeginPriority,
@@ -780,6 +787,7 @@ mod tests {
             (key(KeyCode::End), Msg::Bottom),
             (ch('z'), Msg::ToggleGroup),
             (ch(' '), Msg::ToggleGroup),
+            (ch('a'), Msg::ToggleDone),
             (ch('/'), Msg::BeginFilter),
             (ch('t'), Msg::BeginStatus),
             (ch('p'), Msg::BeginPriority),
@@ -1050,8 +1058,8 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), Action::ALL.len(), "names are unique");
-        assert_eq!(Action::ALL.len(), 28);
-        assert_eq!(NORMAL.len(), 27);
+        assert_eq!(Action::ALL.len(), 29);
+        assert_eq!(NORMAL.len(), 28);
         assert!(!NORMAL.contains(&Action::Confirm));
         assert_eq!(
             PICKER,
