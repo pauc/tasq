@@ -1,5 +1,6 @@
 //! The small edits of the original script, `set`, `log` and `done`, as
-//! operations on a [`Store`], plus [`revise`], the TUI form's save.
+//! operations on a [`Store`], plus [`reopen`], the inverse of `done`, and
+//! [`revise`], the TUI form's save.
 //!
 //! The CLI (`tasq set/log/done`) and the TUI (`t`, `p`, `l`, `d`) both call
 //! these, so the two front ends cannot drift (FR-10): a status change is
@@ -172,6 +173,9 @@ pub enum EditError {
     /// The form's title holds no text.
     #[error("the title must not be empty")]
     EmptyTitle,
+    /// `reopen` was asked for a task that is still open.
+    #[error("task {0} is not done")]
+    NotDone(TaskId),
     /// The store refused or failed.
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -226,6 +230,33 @@ pub fn done(
         store.update(&task)?;
     }
     store.set_done(id, true)?;
+    Ok(store.get(id)?)
+}
+
+/// The note [`reopen`] logs when the caller gives none.
+pub const REOPENED_NOTE: &str = "reopened";
+
+/// `tasq reopen <id> [status] [note]`: the inverse of [`done`]. Clears
+/// `# [x]`, puts `status` back (the caller picks it, usually the given one or
+/// `workflow.default_status`; the status the task had before `done` is gone
+/// from the file) and logs `note`, or [`REOPENED_NOTE`], in one write.
+/// A task that is not done is refused before anything is written.
+pub fn reopen(
+    store: &mut dyn Store,
+    id: &TaskId,
+    status: &Status,
+    note: Option<&str>,
+    clock: &dyn Clock,
+) -> Result<Task, EditError> {
+    let note = checked_note(note)?.unwrap_or(REOPENED_NOTE);
+    let mut task = store.get(id)?;
+    if !task.done {
+        return Err(EditError::NotDone(id.clone()));
+    }
+    task.done = false;
+    task.set_status(status.clone());
+    task.log(note, clock);
+    store.update(&task)?;
     Ok(store.get(id)?)
 }
 
@@ -400,6 +431,53 @@ mod tests {
         assert_eq!(err.to_string(), "the note must not be empty");
         assert!(!store.get(&TaskId::from(1)).unwrap().done);
         let err = done(&mut store, &TaskId::from(9), None, &clock()).unwrap_err();
+        assert_eq!(err.to_string(), "no task with id 9");
+    }
+
+    #[test]
+    fn reopen_clears_done_sets_the_status_and_logs() {
+        let mut store = store();
+        let id = TaskId::from(1);
+        done(&mut store, &id, None, &clock()).unwrap();
+        let task = reopen(&mut store, &id, &Status::IN_PROGRESS, None, &clock()).unwrap();
+        assert!(!task.done);
+        assert_eq!(task.status, Some(Status::IN_PROGRESS));
+        assert_eq!(task.progress, vec![entry(REOPENED_NOTE)]);
+        assert_eq!(REOPENED_NOTE, "reopened");
+        assert_eq!(store.get(&id).unwrap(), task);
+
+        done(&mut store, &id, None, &clock()).unwrap();
+        let task = reopen(
+            &mut store,
+            &id,
+            &Status::READY,
+            Some("not merged"),
+            &clock(),
+        )
+        .unwrap();
+        assert_eq!(task.status, Some(Status::READY));
+        assert_eq!(
+            task.progress,
+            vec![entry(REOPENED_NOTE), entry("not merged")]
+        );
+        assert_eq!(store.get(&id).unwrap(), task);
+    }
+
+    #[test]
+    fn reopen_refuses_open_tasks_empty_notes_and_missing_tasks() {
+        let mut store = store();
+        let id = TaskId::from(1);
+        let mut read_only = NoWrite(store.clone());
+        let err = reopen(&mut read_only, &id, &Status::READY, None, &clock()).unwrap_err();
+        assert_eq!(err.to_string(), "task 1 is not done");
+        assert!(matches!(err, EditError::NotDone(ref i) if *i == id));
+
+        done(&mut store, &id, None, &clock()).unwrap();
+        let before = store.get(&id).unwrap();
+        let err = reopen(&mut store, &id, &Status::READY, Some(" "), &clock()).unwrap_err();
+        assert_eq!(err.to_string(), "the note must not be empty");
+        assert_eq!(store.get(&id).unwrap(), before);
+        let err = reopen(&mut store, &TaskId::from(9), &Status::READY, None, &clock()).unwrap_err();
         assert_eq!(err.to_string(), "no task with id 9");
     }
 
