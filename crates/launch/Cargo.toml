@@ -24,7 +24,7 @@ mutants = "0.0.4"
 # Prompt template placeholders and sections.
 regex = "1"
 serde_json = { version = "1", optional = true }
-# Splits `work.worktree_command` into argv without a shell.
+# Splits `report.summary.command` into argv without a shell.
 shell-words = "1"
 
 [dev-dependencies]

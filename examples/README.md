@@ -10,7 +10,7 @@ items into tasks is in `docs/sources.md`.
 without nb: native bookkeeping, the shell launcher with an inherited environment, raw summaries
 and no sources, with the two commands that create the notebook directory. `author.toml` is the
 author's setup with the real key names: a self-hosted GitLab forge with `glab auth token`,
-gwm worktrees through `work.worktree_command`, `launch.default = "auto"`, the LLM summarizer
+worktrees per task (`[worktree]`), `launch.default = "auto"`, the LLM summarizer
 and a `[hooks]` entry pointing at the example hook. Every key is defined in
 `docs/config.md`; an unknown key is an error.
 

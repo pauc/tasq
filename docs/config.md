@@ -22,7 +22,7 @@ text otherwise. A key that does not exist is an error.
 ## Defaults
 
 Serialising the default configuration gives this document. Keys whose default is unset
-(`work.default_project`, `work.worktree_command`, `launch.claude.prompt_file`,
+(`work.default_project`, `worktree.ports`, `launch.claude.prompt_file`,
 `report.summary.model`, `report.summary.prompt_file`) are shown commented out.
 
 ```toml
@@ -36,8 +36,6 @@ statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
 default_status = "ready"
 
 [work]
-worktree_manager = "git"     # git | command
-# worktree_command = "gwm create {new} {branch} --no-tmux -s"   # required with "command"
 # default_project = "~/code/..."
 
 [launch]
@@ -116,8 +114,6 @@ pre-launch = []
 | `workflow.statuses` | array of strings | `["in-progress", "ready", "waiting", "blocked", "later"]` | Statuses in display and `next` search order. Lowercase kebab-case. |
 | `workflow.default_status` | string | `ready` | Status of new tasks. Must be one of `statuses`. |
 | `work.default_project` | path | unset | Directory a session starts in when the task tracks neither a worktree nor a project. `~` expanded. |
-| `work.worktree_manager` | `git` \| `command` | `git` | How `tasq worktree --create` makes a worktree. |
-| `work.worktree_command` | string | unset | Template run by the `command` manager; required with it. See "Worktree managers". |
 | `launch.default` | string | `claude` | Launcher for `next`/`pick`: `auto`, `claude`, `shell`, `tmux`, `herdr`. Not validated at load time. |
 | `launch.detached` | string | `auto` | Launcher for `next`/`pick --detached` (the TUI's `Ctrl+Enter` and `Shift+Enter`): `herdr`, `tmux`, or `auto` for whichever the terminal runs in; an error when neither. See "Launchers". |
 | `launch.env` | `inherit` \| `direnv` | `direnv` | Where the session's environment comes from. |
@@ -174,8 +170,6 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_NOTEBOOK` | `store.notebook` |
 | `TASQ_BOOKKEEPER` | `store.bookkeeper` |
 | `TASQ_DEFAULT_PROJECT` | `work.default_project` |
-| `TASQ_WORKTREE_MANAGER` | `work.worktree_manager` |
-| `TASQ_WORKTREE_COMMAND` | `work.worktree_command` |
 | `TASQ_LAUNCHER` | `launch.default` |
 | `TASQ_LAUNCH_DETACHED` | `launch.detached` |
 | `TASQ_LAUNCH_ENV` | `launch.env` |
@@ -191,6 +185,13 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
 | `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
 | `TASQ_SUMMARY_PROMPT_FILE` | `report.summary.prompt_file` |
+| `TASQ_WORKTREES` | `worktree.enabled` |
+| `TASQ_WORKTREE_PATH` | `worktree.path` |
+| `TASQ_WORKTREE_BRANCH` | `worktree.branch` |
+| `TASQ_WORKTREE_BASE` | `worktree.base` |
+| `TASQ_WORKTREE_ON_CREATE` | `worktree.on_create` |
+| `TASQ_WORKTREE_ON_DONE` | `worktree.on_done` |
+| `TASQ_WORKTREE_DELETE_BRANCH` | `worktree.delete_branch` |
 
 Empty values count as unset. `XDG_CONFIG_HOME` is honoured for the global file location.
 
@@ -203,24 +204,74 @@ sessions; `TASQ_BIN`, `TASQ_HOOK` and `TASQ_TASK_ID` are set for plugins and hoo
 ## Validation
 
 - `workflow.default_status` must be one of `workflow.statuses`.
-- `work.worktree_manager = "command"` needs a non-empty `work.worktree_command`.
+- `[worktree.ports]` needs `block` of at least 1, `span` of at least `block`, and
+  `base + span` at most 65536.
+- `work.worktree_manager` and `work.worktree_command` no longer exist; setting them is an error
+  pointing here.
 - A `[forge.<name>]` named `gitlab` or `github` infers `kind` and `host`; any other name needs `kind`.
 - Forge-backed sources need `forge` pointing at a forge of the matching kind; `llm-bridge` needs `command`.
 - `~` is expanded in paths.
 
-## Worktree managers
+## Worktrees
 
-`tasq worktree <id> --create <branch>` makes a worktree for the task's project (its `## Project`,
-else `work.default_project`) and tracks it. `work.worktree_manager` picks how:
+Worktrees per task are off by default (ADR 0022). With `worktree.enabled = false` nothing about
+them shows anywhere; turn them on to declare a worktree for a task, create it when the task is
+launched and release it when the task is closed.
 
-- `git` (default): `git worktree add` into `<project>-<branch>` next to the project, with `-b`
-  when the branch exists neither locally nor on `origin`. The directory is reused if it exists.
-- `command`: runs `work.worktree_command` inside the project. The value is a template split
-  like a shell command line (quotes allowed, no shell), with `{branch}`, `{project}` (absolute
-  path) and `{new}` substituted; `{new}` is `-b` when the branch does not exist yet and nothing
-  otherwise (`{new:<text>}` substitutes `<text>` instead). The command must print the worktree
-  path as its last line of standard output; earlier lines are shown to the user. Example for
-  gwm: `"gwm create {new} {branch} --no-tmux -s"`.
+**Status:** the `[worktree]` keys are read and validated. The lifecycle that uses them is being
+built (`ruli/features/worktrees/PLAN.md`); until it lands, `tasq worktree <id> --create
+<branch>` runs `git worktree add` into `<project>-<branch>` next to the project (with `-b` when
+the branch exists neither locally nor on `origin`) and tracks the result.
+
+```toml
+[worktree]
+enabled = true
+path = "{{project_parent}}/{{project_name}}-{{branch_safe}}"   # where a declared worktree lives
+branch = "{{id}}-{{slug}}"     # branch of a worktree declared without one
+base = "origin/HEAD"           # start point of a new branch
+on_create = "auto"             # auto | never
+on_done = "release"            # release | keep
+delete_branch = "safe"         # safe | never
+symlinks = ["node_modules"]    # linked from the project into a new worktree
+copies = [".envrc"]            # copied from the project
+copy_ignored = false           # copy gitignored files, narrowed by .worktreeinclude
+templates = [{ source = "templates/.envrc.template", target = ".envrc" }]
+
+[worktree.variables]           # extra {{name}} variables
+db_prefix = "app"
+
+[worktree.ports]               # {{port}}: a stable block per branch
+base = 4000
+span = 4000
+block = 10
+
+[worktree.hooks]               # command lines run inside the worktree
+pre-create = []
+post-create = ["direnv allow ."]
+pre-remove = []
+post-remove = []
+```
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `worktree.enabled` | bool | `false` | Whether the feature exists. Off hides the commands, the JSON field and the TUI section; files are never rewritten because of it. |
+| `worktree.path` | template | `{{project_parent}}/{{project_name}}-{{branch_safe}}` | Where a declared worktree lives. Rendered when it is declared and stored on the task. |
+| `worktree.branch` | template | `{{id}}-{{slug}}` | Branch of a worktree declared without one. |
+| `worktree.base` | string | `origin/HEAD` | Ref a new branch starts from. |
+| `worktree.on_create` | `auto` \| `never` | `auto` | `auto` declares a worktree for every new task whose project is a git checkout; `never` only with `--worktree`. |
+| `worktree.on_done` | `release` \| `keep` | `release` | Closing a task removes its clean worktrees (`release`) or leaves them (`keep`). |
+| `worktree.delete_branch` | `safe` \| `never` | `safe` | On release, delete the branch when it is merged into the default branch or pushed (`safe`), or never. |
+| `worktree.symlinks` | array of paths | `[]` | Paths in the project linked into a new worktree. |
+| `worktree.copies` | array of paths | `[]` | Paths in the project copied into a new worktree. |
+| `worktree.copy_ignored` | bool | `false` | Copy the project's gitignored files into a new worktree, narrowed by `.worktreeinclude`. |
+| `worktree.templates` | array of `{source, target}` | `[]` | Files rendered into a new worktree; `source` relative to the config file, `target` to the worktree. |
+| `worktree.variables` | table of strings | empty | Extra template variables. |
+| `worktree.ports` | `{base, span, block}` | unset | Enables `{{port}}`: `base` plus a stable per-branch offset below `span`, a multiple of `block`. |
+| `worktree.hooks.pre-create`, `post-create`, `pre-remove`, `post-remove` | arrays of command lines | `[]` | Run inside the worktree. A failing `pre-*` hook aborts the step; a failing `post-*` hook is a warning. |
+
+Per-repository settings (links, copies, templates, hooks) belong in a `.tasq.toml` next to the
+repository or in the directory above it; the worktree commands load the configuration from the
+task's project directory.
 
 ## Launchers
 

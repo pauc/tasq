@@ -1,4 +1,4 @@
-# The author's setup: nb for bookkeeping, a self-hosted GitLab, gwm worktrees,
+# The author's setup: nb for bookkeeping, a self-hosted GitLab, worktrees per task,
 # Claude Code sessions (herdr when inside herdr), an LLM-summarised standup
 # and a time-log plugin fed by hooks. Plan section 4.6, with the key names
 # the tool actually has. Full reference: docs/config.md.
@@ -16,9 +16,6 @@ default_status = "ready"
 
 [work]
 default_project = "~/code/silverfin"       # sessions start here when a task tracks nothing
-worktree_manager = "command"               # gwm provisions worktrees (linked files, .envrc)
-worktree_command = "gwm create {new} {branch} --no-tmux -s"
-# {new} becomes -b when the branch does not exist yet; gwm prints the worktree path last.
 
 [launch]
 default = "auto"             # herdr workspace when HERDR_ENV is set, else Claude Code
@@ -86,3 +83,12 @@ model = "sonnet"             # passed as --model sonnet
 post-create = []
 post-done = ["~/code/tasq/examples/plugins/hooks/log-event.sh"]
 pre-launch = []
+
+[worktree]
+# Every task in a git project gets a declared worktree, created when the task is
+# launched and released when it is closed (docs/config.md, "Worktrees").
+# Per-repository links, copies, templates and hooks go in a .tasq.toml next to
+# the repository; these are the personal defaults.
+enabled = true
+path = "{{project_parent}}/{{branch_safe}}"   # siblings of the main checkout
+branch = "{{id}}-{{slug}}"

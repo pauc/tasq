@@ -46,7 +46,6 @@
 //! default_status = "ready"
 //!
 //! [work]
-//! worktree_manager = "git"
 //!
 //! [launch]
 //! default = "claude"
@@ -85,6 +84,27 @@
 //! post-create = []
 //! post-done = []
 //! pre-launch = []
+//!
+//! [worktree]
+//! enabled = false
+//! path = "{{project_parent}}/{{project_name}}-{{branch_safe}}"
+//! branch = "{{id}}-{{slug}}"
+//! base = "origin/HEAD"
+//! on_create = "auto"
+//! on_done = "release"
+//! delete_branch = "safe"
+//! symlinks = []
+//! copies = []
+//! copy_ignored = false
+//! templates = []
+//!
+//! [worktree.variables]
+//!
+//! [worktree.hooks]
+//! pre-create = []
+//! post-create = []
+//! pre-remove = []
+//! post-remove = []
 //! ```
 
 mod error;
@@ -98,6 +118,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{Status, Workflow};
 use crate::theme::Preset;
+use crate::worktree::lifecycle::DeleteBranch;
 
 pub use self::error::ConfigError;
 pub use self::load::{
@@ -133,6 +154,8 @@ pub struct Config {
     pub report: ReportConfig,
     /// Commands run around CLI events (`[hooks]`).
     pub hooks: HooksConfig,
+    /// Worktrees per task, off unless `enabled` (`[worktree]`, ADR 0022).
+    pub worktree: WorktreeConfig,
 }
 
 /// `[store]`: where tasks live.
@@ -215,27 +238,149 @@ pub struct WorkConfig {
     /// worktree nor a project. `~` is expanded. Default: unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_project: Option<PathBuf>,
-    /// How `tasq worktree --create` makes a worktree. Default: `git`.
-    pub worktree_manager: WorktreeManager,
-    /// The command run by the `command` manager, a template with `{branch}`,
-    /// `{project}` and `{new}` (`-b` for a branch that does not exist yet;
-    /// `{new:<text>}` for another flag). It runs inside the project and must
-    /// print the worktree path as its last line. Required when
-    /// `worktree_manager = "command"`. Default: unset.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub worktree_command: Option<String>,
+    /// Removed with ADR 0022; setting it is an error naming `[worktree]`.
+    #[serde(skip_serializing, deserialize_with = "removed_for_worktree")]
+    worktree_manager: Removed,
+    /// Removed with ADR 0022; setting it is an error naming `[worktree]`.
+    #[serde(skip_serializing, deserialize_with = "removed_for_worktree")]
+    worktree_command: Removed,
 }
 
-/// How `tasq worktree --create` makes a worktree.
+/// A key that no longer exists. It deserialises only from its absence, so a
+/// file that still sets it fails with the file, line and column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Removed;
+
+fn removed_for_worktree<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Removed, D::Error> {
+    Err(serde::de::Error::custom(
+        "work.worktree_manager and work.worktree_command were removed; \
+         worktrees are configured under [worktree] (docs/config.md, \"Worktrees\")",
+    ))
+}
+
+/// `[worktree]`: worktrees per task (ADR 0022, `docs/config.md`).
+///
+/// Templates use `{{name}}` placeholders; the variables are listed in
+/// `docs/config.md`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorktreeConfig {
+    /// Whether the feature exists at all. Off hides every worktree command,
+    /// field and section display. Default: `false`.
+    pub enabled: bool,
+    /// Where a declared worktree lives, rendered when it is declared.
+    /// Default: `{{project_parent}}/{{project_name}}-{{branch_safe}}`.
+    pub path: String,
+    /// The branch of a worktree declared without one. Default:
+    /// `{{id}}-{{slug}}`.
+    pub branch: String,
+    /// The ref a new branch starts from. Default: `origin/HEAD`.
+    pub base: String,
+    /// Whether `tasq create` declares a worktree without `--worktree`.
+    /// Default: `auto`.
+    pub on_create: OnCreate,
+    /// What closing a task does with its worktrees. Default: `release`.
+    pub on_done: OnDone,
+    /// Whether a release deletes branches. Default: `safe`.
+    pub delete_branch: DeleteBranch,
+    /// Paths in the project linked into a new worktree. Default: none.
+    pub symlinks: Vec<String>,
+    /// Paths in the project copied into a new worktree. Default: none.
+    pub copies: Vec<String>,
+    /// Copy the project's gitignored files into a new worktree, narrowed by
+    /// `.worktreeinclude`. Default: `false`.
+    pub copy_ignored: bool,
+    /// Files rendered into a new worktree. Default: none.
+    pub templates: Vec<TemplateFile>,
+    /// Extra template variables. Default: none.
+    pub variables: BTreeMap<String, String>,
+    /// The `{{port}}` block. Default: unset (no `{{port}}`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ports: Option<PortsConfig>,
+    /// Commands run around creating and removing a worktree.
+    pub hooks: WorktreeHooks,
+}
+
+impl Default for WorktreeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: "{{project_parent}}/{{project_name}}-{{branch_safe}}".to_owned(),
+            branch: "{{id}}-{{slug}}".to_owned(),
+            base: "origin/HEAD".to_owned(),
+            on_create: OnCreate::default(),
+            on_done: OnDone::default(),
+            delete_branch: DeleteBranch::Safe,
+            symlinks: Vec::new(),
+            copies: Vec::new(),
+            copy_ignored: false,
+            templates: Vec::new(),
+            variables: BTreeMap::new(),
+            ports: None,
+            hooks: WorktreeHooks::default(),
+        }
+    }
+}
+
+/// `worktree.on_create`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum WorktreeManager {
-    /// `git worktree add` into `<project>-<branch>` next to the project.
+pub enum OnCreate {
+    /// Declare a worktree for every task whose project is a git checkout.
     #[default]
-    Git,
-    /// A user-supplied command (`work.worktree_command`), for tools such as
-    /// gwm that provision the new worktree (linked files, `.envrc`, hooks).
-    Command,
+    Auto,
+    /// Declare one only with `--worktree`.
+    Never,
+}
+
+/// `worktree.on_done`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OnDone {
+    /// Remove clean worktrees and delete their branches when nothing is lost.
+    #[default]
+    Release,
+    /// Leave worktrees alone.
+    Keep,
+}
+
+/// One `[[worktree.templates]]` entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TemplateFile {
+    /// The template, relative to the config file that declares it.
+    pub source: PathBuf,
+    /// Where the rendered file goes, relative to the worktree.
+    pub target: PathBuf,
+}
+
+/// `[worktree.ports]`: `{{port}}` is `base` plus a stable per-branch offset
+/// below `span`, a multiple of `block`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PortsConfig {
+    /// First port of the range.
+    pub base: u16,
+    /// Size of the range.
+    pub span: u16,
+    /// Ports reserved per worktree.
+    pub block: u16,
+}
+
+/// `[worktree.hooks]`: command lines run inside the worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct WorktreeHooks {
+    /// Before `git worktree add`; a failure aborts. Default: none.
+    pub pre_create: Vec<String>,
+    /// After the worktree is provisioned; a failure is a warning.
+    /// Default: none.
+    pub post_create: Vec<String>,
+    /// Before `git worktree remove`; a failure keeps the worktree.
+    /// Default: none.
+    pub pre_remove: Vec<String>,
+    /// After the worktree is removed; a failure is a warning. Default: none.
+    pub post_remove: Vec<String>,
 }
 
 /// `[launch]`: how `next` and `pick` open a task.

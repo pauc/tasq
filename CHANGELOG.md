@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `[worktree]` configuration for worktrees per task (ADR 0022): `enabled` (default `false`),
+  `path` and `branch` templates, `base`, `on_create`, `on_done`, `delete_branch`, `symlinks`,
+  `copies`, `copy_ignored`, `templates`, `variables`, `ports` and `[worktree.hooks]`, with
+  `TASQ_WORKTREES` and `TASQ_WORKTREE_*` variables. The keys are validated; the lifecycle that
+  uses them is still being built.
 - Every task created with `tasq create` or the TUI's `c` key tracks a project: `--project`
   when given, else the directory `tasq` runs in. `tasq pick` therefore always has somewhere
   to start; `tasq project <id> <path>` changes it. The original script left the section out
@@ -51,8 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `tasq` CLI with every editing command of the original script: `list` (default, with
   status/tag/priority/text filters), `create`, `set`, `log`, `done`, `view` (glow rendering
-  with OSC 8 links on a terminal), `project`, `worktree` (track, or `--create` through gwm or
-  git), `session`, `mr`, `apply` (JSON in), `store info`, `store sync`, `doctor`,
+  with OSC 8 links on a terminal), `project`, `worktree` (track, or `--create` with
+  `git worktree add`), `session`, `mr`, `apply` (JSON in), `store info`, `store sync`, `doctor`,
   `config show` and `completions`; `--json` on every command (`docs/json.md`),
   `--color`/`--no-color`/`--no-pager`, `--profile`/`--config`/`--set`, `TASQ_NOW` for
   reproducible timestamps.
@@ -77,3 +82,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Core domain model, lossless markdown format, queries and layered TOML config.
 - Cargo workspace with the `tasq-core`, `tasq-store-nb`, `tasq-sources`,
   `tasq-launch`, `tasq` and `tasq-tui` crates, shared lints and quality gates.
+
+### Removed
+
+- `work.worktree_manager`, `work.worktree_command` and their `TASQ_WORKTREE_MANAGER` and
+  `TASQ_WORKTREE_COMMAND` variables: `tasq worktree --create` always runs `git worktree add`,
+  and worktree provisioning moves to `[worktree]`. A config that still sets them fails with the
+  file, line and column and a pointer to `[worktree]` (ADR 0022).

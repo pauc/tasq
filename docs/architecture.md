@@ -231,7 +231,7 @@ Process-running adapters. Every process gets an explicitly injected environment,
 | `shell`, `tmux`, `claude`, `herdr` | The four `Launcher`s. `herdr` is behind the default-on `herdr` feature; `launch.herdr.placement` says whether it opens a workspace or a tab. `tmux` and `herdr` honour `LaunchContext::focus` (ADR-0012). |
 | `prompt` | The tiny template engine (`{{name}}`, `{{#name}}…{{/name}}`) behind the Claude prompt. Templates are data, in `templates/`. |
 | `env` | Environment strategy: run through `direnv exec` so the session gets the target directory's `.envrc`, or inherit. |
-| `worktree` | `WorktreeManager`s: `git worktree add`, or a user command (`work.worktree_command`) such as gwm. |
+| `worktree` | `GitManager`, the `WorktreeManager` behind `tasq worktree --create`: `git worktree add`. |
 | `summarizer` | `CommandSummarizer`: the configured command (default `claude -p`) that distils a day's notes for `tasq summary`. |
 | `process` | Running external programs with an injected environment. |
 

@@ -1,8 +1,8 @@
 //! Process-running adapters for `tasq`: the
 //! [`Launcher`](tasq_core::launch::Launcher) implementations (shell, Claude
 //! Code, tmux, herdr; plan Phase 4), the
-//! [`WorktreeManager`](tasq_core::work::WorktreeManager) implementations:
-//! plain `git`, or a user-configured command such as gwm (plan T-306), and
+//! [`WorktreeManager`](tasq_core::work::WorktreeManager) implementation,
+//! plain `git` (plan T-306), and
 //! the command [`Summarizer`](tasq_core::report::Summarizer) behind
 //! `tasq summary` (plan T-601).
 //!
@@ -33,6 +33,4 @@ pub use self::registry::{
 pub use self::shell::ShellLauncher;
 pub use self::summarizer::{CommandSummarizer, summarizer_for};
 pub use self::tmux::TmuxLauncher;
-pub use self::worktree::{
-    CommandManager, GitManager, current_branch, expand_template, manager_for,
-};
+pub use self::worktree::{GitManager, current_branch};

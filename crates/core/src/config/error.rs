@@ -96,12 +96,18 @@ pub enum ConfigError {
         /// Which layer set `workflow.default_status`.
         origin: Origin,
     },
-    /// `work.worktree_manager = "command"` without a `work.worktree_command`.
+    /// `[worktree.ports]` that cannot hold one block, or runs past 65535.
     #[error(
-        "work.worktree_manager = \"command\" (set by {origin}) requires work.worktree_command, e.g. \"gwm create {{new}} {{branch}} --no-tmux -s\""
+        "worktree.ports (set by {origin}): base = {base}, span = {span}, block = {block}: block must be at least 1, span at least block, and base + span at most 65536"
     )]
-    WorktreeCommandRequired {
-        /// Which layer selected the command manager.
+    BadPorts {
+        /// `worktree.ports.base`.
+        base: u16,
+        /// `worktree.ports.span`.
+        span: u16,
+        /// `worktree.ports.block`.
+        block: u16,
+        /// Where the table was set.
         origin: Origin,
     },
     /// A `[[source]]` lacks a key its `kind` needs.

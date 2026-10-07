@@ -26,6 +26,21 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  no-gwm:
+    # ADR 0022: tasq provisions worktrees itself; gwm is not a dependency in
+    # any form. ADRs and the one migration row about the original script may
+    # name it.
+    name: no gwm references
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          if grep -rniI gwm crates examples plugins README.md docs \
+              --exclude-dir=adr | grep -v '^docs/migration.md:.*The script called gwm'; then
+            echo "gwm is referenced outside ADRs (ADR 0022)" >&2
+            exit 1
+          fi
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest

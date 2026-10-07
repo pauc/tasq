@@ -253,10 +253,8 @@ pub enum Command {
     ///
     /// `tasq worktree <ID> <PATH>` records an existing directory and its
     /// current branch (idempotent). `tasq worktree <ID> --create <BRANCH>`
-    /// makes the worktree with work.worktree_manager (git: `git worktree add`
-    /// into `<project>-<branch>` next to the project; command: your own tool,
-    /// e.g. work.worktree_command = "gwm create {new} {branch} --no-tmux -s",
-    /// run in the project, printing the worktree path last) and tracks it.
+    /// makes the worktree with `git worktree add` into `<project>-<branch>`
+    /// next to the project and tracks it.
     Worktree {
         /// Task id.
         #[arg(value_name = "ID")]

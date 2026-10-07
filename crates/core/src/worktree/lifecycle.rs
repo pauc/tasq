@@ -146,7 +146,8 @@ pub fn on_launch(
 }
 
 /// Whether a release may delete branches (`worktree.delete_branch`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DeleteBranch {
     /// Delete a branch when nothing is lost: it is integrated into the
     /// default branch, or its upstream contains it.

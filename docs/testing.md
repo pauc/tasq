@@ -46,8 +46,8 @@ The CLI harness (`crates/cli/tests/support/mod.rs`, `TestEnv`) copies the same f
 notebook, sets `HOME` to an isolated directory and `PATH` to a directory holding only a `git`
 symlink, so the binary never sees the real config or a real `nb` and its output is identical
 whether or not nb is installed (doctor's `nb` check is always `WARN` there). `fake_tool(name,
-body)` installs a script on that `PATH` to stand in for `claude`, `glow`, `tmux`, `herdr` or
-`gwm`; fakes must use absolute paths for anything that is not a shell builtin. Snapshots
+body)` installs a script on that `PATH` to stand in for `claude`, `glow`, `tmux` or `herdr`;
+fakes must use absolute paths for anything that is not a shell builtin. Snapshots
 normalise the temp root to `[ROOT]`.
 
 ## Claude Code plugin

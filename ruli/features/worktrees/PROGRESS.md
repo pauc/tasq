@@ -13,7 +13,7 @@ create at launch, release at close, never remove the entry.
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
 | WT-101 | Lifecycle decisions in core | done | `tasq_core::worktree::lifecycle`: `declare`, `on_launch`, `on_close` (`DirSeen`/`BranchSeen` in, `Release { WorktreeFate, BranchFate }` out); 10 table tests; 14 mutants, 11 caught, 3 unviable |
-| WT-102 | `[worktree]` config and the toggle | todo | |
+| WT-102 | `[worktree]` config and the toggle | done | `WorktreeConfig` (+ `OnCreate`, `OnDone`, `TemplateFile`, `PortsConfig`, `WorktreeHooks`), 7 `TASQ_WORKTREE*` vars, `BadPorts`; `work.worktree_*` rejected by a `deserialize_with` guard (file:line:column); `CommandManager`/`manager_for`/`expand_template` deleted; docs, examples, CI `no-gwm` job; 17 mutants, 16 caught, 1 unviable |
 | WT-103 | Invisible when disabled | todo | |
 | WT-104 | Templates, variables and naming in core | todo | |
 | WT-201 | Declaring: `tasq create --worktree` and `tasq worktree <id> [BRANCH]` | todo | |
@@ -38,6 +38,10 @@ create at launch, release at close, never remove the entry.
   removed by hand leaves git's worktree registration behind, and `git branch -d` refuses a
   branch "checked out" there, so release must run `git worktree prune` before deleting a branch
   whose directory is `Absent`.
+- WT-102: removed keys are private `Removed` fields whose `deserialize_with` always fails, so
+  the error keeps toml's span. Via `--set`/env they are simply unknown keys. Validating that
+  templates only name known variables waits for the renderer (WT-104). An empty `[work]` table
+  now "explains" its unset children (`Loaded::explain`), as `[launch.claude]` already did.
 - Defaults confirmed by the author 2026-10-07: `on_create = "auto"`, `on_done = "release"`,
   `delete_branch = "safe"`.
 - gwm facts (from `~/.local/bin/gwm`, read-only): `branch_safe` replaces every non-alphanumeric

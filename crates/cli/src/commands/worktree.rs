@@ -5,7 +5,8 @@ use std::path::Path;
 use tasq_core::model::{TaskId, Worktree};
 use tasq_core::store::Store;
 use tasq_core::work;
-use tasq_launch::{current_branch, manager_for};
+use tasq_core::work::WorktreeManager;
+use tasq_launch::{GitManager, current_branch};
 use tasq_store_nb::NbStore;
 
 use crate::app::App;
@@ -39,12 +40,7 @@ pub fn create_and_track(app: &App, store: &mut NbStore, id: &TaskId, branch: &st
                 "task {id} tracks no project and work.default_project is unset; set one with tasq project {id} <path>"
             ))
         })?;
-    let manager = manager_for(
-        app.config().work.worktree_manager,
-        app.config().work.worktree_command.as_deref(),
-        app.env_vec(),
-    )
-    .map_err(|e| CliError::user(e.to_string()))?;
+    let manager = GitManager { env: app.env_vec() };
     let created = manager
         .create(&project, branch)
         .map_err(|e| CliError::user(e.to_string()))?;
