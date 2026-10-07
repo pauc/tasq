@@ -220,6 +220,26 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ### Plugin and release decisions (T-901 to T-904)
 
+- **TUI DONE group, reopen, Today view, detail position (follow-up 2026-10-07, todo 33).**
+  `Task::closed_at` (ADR 0020): a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`, read
+  like `## Due`, `None` on open tasks whatever the file says). `Task::close(clock)` stamps it
+  (kept when already done); `edit::done` now logs and closes in one `Store::update` instead
+  of `update` + `set_done`; sync's `Close` and done drafts stamp it; `edit::reopen` and the
+  nb store's `set_done(false)` drop it. `Store::set_done` keeps writing what `nb todo do`
+  writes. Learning: the diff must compare `closed_at` against the task as read, not the
+  projection after `set_open` (which already reads `None`), or a reopen leaves the section.
+  TUI: the runtime loads open and done tasks (`Filter::any_done`; +14 ms on a 147-task
+  notebook, debug build) and the model filters. Groups are keyed by `GroupKey`
+  (`Status(Option<Status>)` or `Done`). `a` (`toggle-done`) adds a DONE group, always
+  unfolded (the user found a folded header pointless), newest first by `query::closed_key`
+  (`closed_at`, else the last progress entry). `t` on a done task opens a "Reopen as"
+  picker at `workflow.default_status` (`Cmd::Reopen` -> `edit::reopen`); `p`, `d`, `e` say
+  "t reopens it". `T` (`toggle-today`): open tasks in the first workflow status or due by
+  `Model::today` (`query::is_today`), plus tasks closed today in DONE (`query::closed_on`).
+  `+done`/`+today` in the list title (`model.toggles`, a struct because clippy caps a
+  struct at three bools). `ui.detail_position = right|bottom` (ADR 0021): `Stacked` layout
+  from 20 rows. Mutants: 0 missed on every touched function (TUI with `--no-config -F`).
+  Commits 1bee9a4 .. 651134e.
 - **`tasq reopen` (follow-up 2026-10-07, todo 16).** Scope cut from "undo and reopen": undo
   was dropped because every write is already a commit in the notebook and the users know git.
   `edit::reopen(store, id, status, note, clock)` clears `done`, sets the status and logs the

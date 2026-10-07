@@ -8,7 +8,8 @@
 //!   text. Like the script, a default filter keeps **open** tasks only.
 //! - [`sort`] and [`sort_key`] order tasks the way `sorted_group` did:
 //!   priority `A` before `B` before `C`, then earliest due date first with
-//!   undated tasks last, then by id.
+//!   undated tasks last, then by id. [`sort_done`] orders done tasks newest
+//!   first by [`closed_key`].
 //! - [`group_by_status`] buckets tasks per status in workflow order, with the
 //!   tasks that have no status last; empty groups are dropped.
 //! - [`next`] picks the task to work on: the first task of the first non-empty
@@ -19,7 +20,7 @@
 
 use std::cmp::Ordering;
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime};
 
 use crate::model::{ModelError, Priority, Status, Tag, Task, TaskId, Workflow};
 
@@ -272,6 +273,42 @@ where
     out
 }
 
+/// When `task` was closed, as far as the file tells: its `closed_at`, else
+/// the time of its last progress entry (the note of `tasks done`, for tasks
+/// closed before `## Closed` existed), else nothing.
+pub fn closed_key(task: &Task) -> Option<NaiveDateTime> {
+    task.closed_at
+        .or_else(|| task.latest_progress().map(|entry| entry.at.date_time()))
+}
+
+/// Done tasks newest first: by [`closed_key`] descending, tasks with
+/// neither time last, then by id descending (a later id was created later).
+pub fn sort_done<'a, I>(tasks: I) -> Vec<&'a Task>
+where
+    I: IntoIterator<Item = &'a Task>,
+{
+    let mut out: Vec<&Task> = tasks.into_iter().collect();
+    out.sort_by(|a, b| {
+        closed_key(b)
+            .cmp(&closed_key(a))
+            .then_with(|| compare_ids(&b.id, &a.id))
+    });
+    out
+}
+
+/// Whether `task` belongs in the Today view (TUI `T`) on `today`: open,
+/// and either in the workflow's first status (`in-progress` by default, the
+/// one [`next`] looks at first) or due on or before `today`.
+pub fn is_today(task: &Task, today: NaiveDate, workflow: &Workflow) -> bool {
+    let doing = task.status.is_some() && task.status.as_ref() == workflow.statuses.first();
+    !task.done && (doing || task.due.is_some_and(|due| due <= today))
+}
+
+/// Whether `task` was closed on `today`, by its [`closed_key`].
+pub fn closed_on(task: &Task, today: NaiveDate) -> bool {
+    task.done && closed_key(task).is_some_and(|at| at.date() == today)
+}
+
 // ---------------------------------------------------------------------------
 // Grouping
 // ---------------------------------------------------------------------------
@@ -451,6 +488,93 @@ mod tests {
             done,
             task("10", "Hotfix", Some("in-progress"), A, None, &["ci"]),
         ]
+    }
+
+    // -- Done ordering -------------------------------------------------------
+
+    #[test]
+    fn done_tasks_sort_newest_first_by_closing_time_then_last_note() {
+        use crate::clock::FixedClock;
+        use crate::model::ProgressEntry;
+        let at = |s: &str| FixedClock::at(s).0;
+        let mut stamped = task("3", "Stamped", None, Priority::B, None, &[]);
+        stamped.closed_at = Some(at("2026-10-07 14:32"));
+        // A later note does not move a task that has a closing time.
+        stamped
+            .progress
+            .push(ProgressEntry::new(at("2026-10-09 08:00"), "late note"));
+        let mut noted = task("8", "Noted", None, Priority::B, None, &[]);
+        noted
+            .progress
+            .push(ProgressEntry::new(at("2026-10-01 09:00"), "first"));
+        noted
+            .progress
+            .push(ProgressEntry::new(at("2026-10-08 09:00"), "shipped"));
+        let mut legacy = task("9", "Legacy", None, Priority::B, None, &[]);
+        legacy
+            .progress
+            .push(ProgressEntry::dated(date("2026-10-07"), "dated only"));
+        let bare_low = task("2", "Bare", None, Priority::B, None, &[]);
+        let bare_high = task("10", "Bare too", None, Priority::B, None, &[]);
+
+        assert_eq!(closed_key(&stamped), Some(at("2026-10-07 14:32")));
+        assert_eq!(closed_key(&noted), Some(at("2026-10-08 09:00")));
+        assert_eq!(closed_key(&legacy), Some(at("2026-10-07 00:00")));
+        assert_eq!(closed_key(&bare_low), None);
+
+        let tasks = [&bare_low, &legacy, &stamped, &bare_high, &noted];
+        assert_eq!(
+            ids(&sort_done(tasks.iter().copied())),
+            ["8", "3", "9", "10", "2"]
+        );
+    }
+
+    #[test]
+    fn today_is_doing_or_due_by_today_and_closed_on_is_the_day() {
+        use crate::clock::FixedClock;
+        let today = date("2026-10-07");
+        let wf = Workflow::default();
+        let check = |status: Option<&str>, due: Option<&str>| {
+            is_today(&task("1", "T", status, Priority::B, due, &[]), today, &wf)
+        };
+        assert!(check(Some("in-progress"), None));
+        assert!(check(Some("ready"), Some("2026-10-07")), "due today");
+        assert!(check(Some("waiting"), Some("2026-10-01")), "overdue");
+        assert!(check(None, Some("2026-10-06")), "any status, none included");
+        assert!(!check(Some("ready"), Some("2026-10-08")), "due tomorrow");
+        assert!(!check(Some("ready"), None));
+        assert!(!check(None, None), "no status is not the first status");
+        let mut done = task("2", "T", None, Priority::B, Some("2026-10-01"), &[]);
+        done.done = true;
+        assert!(
+            !is_today(&done, today, &wf),
+            "done tasks are not today's work"
+        );
+        // The first status of a custom workflow, not the literal in-progress.
+        let custom = Workflow::new(vec![Status::new("doing").unwrap(), Status::READY]);
+        assert!(is_today(
+            &task("3", "T", Some("doing"), Priority::B, None, &[]),
+            today,
+            &custom
+        ));
+        assert!(!is_today(
+            &task("4", "T", Some("in-progress"), Priority::B, None, &[]),
+            today,
+            &custom
+        ));
+        assert!(!is_today(
+            &task("5", "T", None, Priority::B, None, &[]),
+            today,
+            &Workflow::new(Vec::new())
+        ));
+
+        let mut closed = task("6", "T", None, Priority::B, None, &[]);
+        closed.close(&FixedClock::at("2026-10-07 18:00"));
+        assert!(closed_on(&closed, today));
+        assert!(!closed_on(&closed, date("2026-10-08")));
+        closed.done = false;
+        assert!(!closed_on(&closed, today), "an open task was not closed");
+        assert!(!closed_on(&done, today), "no closing time, no note");
     }
 
     // -- Filter --------------------------------------------------------------

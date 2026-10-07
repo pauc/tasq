@@ -55,6 +55,17 @@ pub fn apply(
             }
         }
     }
+    // Against the task as read: reopening drops `## Closed` even though the
+    // projection after `set_open` already reads `None`. A stale section on
+    // an open file reads as `None` too, so it is left alone.
+    if wanted.closed_at != current.closed_at {
+        match wanted.closed_at {
+            Some(at) => ops::set_closed(doc, at),
+            None => {
+                ops::clear_closed(doc);
+            }
+        }
+    }
     if wanted.due != current.due {
         match wanted.due {
             Some(due) => ops::set_due(doc, due),
@@ -119,7 +130,7 @@ pub fn apply(
 
 /// Names of the fields in which `a` and `b` differ, in declaration order.
 pub fn differing_fields(a: &Task, b: &Task) -> Vec<&'static str> {
-    let checks: [(&'static str, bool); 15] = [
+    let checks: [(&'static str, bool); 16] = [
         ("id", a.id != b.id),
         ("title", a.title != b.title),
         ("done", a.done != b.done),
@@ -135,6 +146,7 @@ pub fn differing_fields(a: &Task, b: &Task) -> Vec<&'static str> {
         ("sessions", a.sessions != b.sessions),
         ("progress", a.progress != b.progress),
         ("origin", a.origin != b.origin),
+        ("closed_at", a.closed_at != b.closed_at),
     ];
     checks
         .into_iter()
@@ -214,6 +226,31 @@ mod tests {
         assert_eq!(out, "# [ ] Title\n\n## Tags\n\n#gitlab #B #ready\n");
         let out = apply_to(done, |t| t.done = false).unwrap();
         assert_eq!(out, "# [ ] Title\n\n## Tags\n\n#gitlab #B\n");
+    }
+
+    #[test]
+    fn closing_writes_closed_and_reopening_removes_it() {
+        let clock = FixedClock::at("2026-10-07 14:32");
+        let out = apply_to(TEXT, |t| t.close(&clock)).unwrap();
+        assert_eq!(
+            out,
+            "# [x] Title\n\n## Closed\n\n2026-10-07 14:32\n\n## Tags\n\n#gitlab #B\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+        );
+        let reopened = apply_to(&out, |t| {
+            t.done = false;
+            t.closed_at = None;
+            t.set_status(Status::READY);
+        })
+        .unwrap();
+        assert_eq!(reopened, TEXT);
+        // A stale section on an open file reads as `None`, so it is left.
+        let stale = "# [ ] T\n\n## Closed\n\n2026-10-07 14:32\n\n## Tags\n\n#B\n";
+        assert_eq!(apply_to(stale, |_| {}).unwrap(), stale);
+        // An open task cannot carry a closing time.
+        assert_eq!(
+            apply_to(TEXT, |t| t.closed_at = Some(clock.now())),
+            Err(vec!["closed_at"])
+        );
     }
 
     #[test]
@@ -354,6 +391,7 @@ mod tests {
             external_id: "e".into(),
             url: None,
         });
+        b.closed_at = Some(FixedClock::at("2026-10-04 10:15").0);
         assert_eq!(
             differing_fields(&a, &b),
             vec![
@@ -372,6 +410,7 @@ mod tests {
                 "sessions",
                 "progress",
                 "origin",
+                "closed_at",
             ]
         );
     }

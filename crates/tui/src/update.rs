@@ -70,6 +70,8 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::Top => model.select_first(),
         Msg::Bottom => model.select_last(),
         Msg::ToggleGroup => model.toggle_group(),
+        Msg::ToggleDone => model.toggle_done(),
+        Msg::ToggleToday => model.toggle_today(),
         Msg::Escape => {
             if model.show_detail {
                 model.show_detail = false;
@@ -83,11 +85,17 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::Help => model.mode = Mode::Help,
         Msg::Reload => return vec![Cmd::Load],
         Msg::BeginFilter => begin_filter(model),
+        Msg::BeginPriority | Msg::BeginDone | Msg::Edit if refuse_done(model) => {}
         Msg::BeginStatus => {
             if let Some(task) = model.selected_task() {
-                let cursor = task
-                    .status
-                    .as_ref()
+                // A done task has no status: the picker reopens it, starting
+                // at the status new tasks get.
+                let current = if task.done {
+                    Some(&model.default_status)
+                } else {
+                    task.status.as_ref()
+                };
+                let cursor = current
                     .and_then(|s| model.workflow.position(s))
                     .unwrap_or(0);
                 model.mode = Mode::Status { cursor };
@@ -185,6 +193,21 @@ fn begin_note(model: &mut Model, target: NoteTarget) {
     } else {
         model.message = Some(Message::error(NO_SELECTION));
     }
+}
+
+/// Whether the selected task is done, saying so in the status bar: the
+/// priority picker, `done` and the edit view need an open task. A done
+/// task can still be reopened (`t`), logged on, opened and launched.
+fn refuse_done(model: &mut Model) -> bool {
+    let Some(id) = model
+        .selected_task()
+        .filter(|task| task.done)
+        .map(|task| task.id.clone())
+    else {
+        return false;
+    };
+    model.message = Some(Message::error(format!("[{id}] is done; t reopens it")));
+    true
 }
 
 /// A command on the selected task (one that is visible, not merely a
@@ -295,7 +318,14 @@ fn status_picker(model: &mut Model, cursor: usize, msg: &Msg) -> Vec<Cmd> {
         return Vec::new();
     };
     model.mode = Mode::Normal;
-    with_selection(model, |id| Cmd::SetStatus(id, status))
+    let reopen = model.selected_task().is_some_and(|task| task.done);
+    with_selection(model, |id| {
+        if reopen {
+            Cmd::Reopen(id, status)
+        } else {
+            Cmd::SetStatus(id, status)
+        }
+    })
 }
 
 fn priority_picker(model: &mut Model, cursor: usize, msg: &Msg) -> Vec<Cmd> {
@@ -579,6 +609,57 @@ mod tests {
 
     fn chars(text: &str) -> Vec<Msg> {
         text.chars().map(Msg::Char).collect()
+    }
+
+    #[test]
+    fn a_done_task_refuses_the_open_only_edits_but_not_the_rest() {
+        let mut m = model();
+        let mut closed = task(9, "Closed", None);
+        closed.mark_done();
+        let mut tasks = m.tasks.clone();
+        tasks.push(closed);
+        feed(&mut m, [Msg::Loaded(tasks), Msg::ToggleDone, Msg::Bottom]);
+        assert_eq!(m.selected_task().map(|t| t.id.as_str()), Some("9"));
+        let refused = Some(Message::error("[9] is done; t reopens it"));
+        for msg in [Msg::BeginPriority, Msg::BeginDone, Msg::Edit] {
+            assert_eq!(update(&mut m, msg.clone()), Vec::new(), "{msg:?}");
+            assert_eq!(m.mode, Mode::Normal, "{msg:?}");
+            assert_eq!(m.message, refused, "{msg:?}");
+        }
+        // `t` reopens it: the picker starts at the default status and
+        // confirming asks for `tasq reopen`, not `tasq set`.
+        update(&mut m, Msg::BeginStatus);
+        assert_eq!(m.mode, Mode::Status { cursor: 1 }, "ready, the default");
+        assert_eq!(m.message, None);
+        update(&mut m, Msg::Up);
+        assert_eq!(
+            update(&mut m, Msg::Enter),
+            vec![Cmd::Reopen(TaskId::from(9), Status::IN_PROGRESS)]
+        );
+        assert_eq!(m.mode, Mode::Normal);
+        m.default_status = Status::LATER;
+        update(&mut m, Msg::BeginStatus);
+        assert_eq!(m.mode, Mode::Status { cursor: 4 });
+        update(&mut m, Msg::Escape);
+        // Logging a note, the editor and a session still work on it.
+        update(&mut m, Msg::BeginNote);
+        assert!(matches!(
+            m.mode,
+            Mode::Note {
+                target: NoteTarget::Log,
+                ..
+            }
+        ));
+        update(&mut m, Msg::Escape);
+        assert_eq!(
+            update(&mut m, Msg::Editor),
+            vec![Cmd::Editor(TaskId::from(9))]
+        );
+        // An open task is not refused.
+        update(&mut m, Msg::Top);
+        update(&mut m, Msg::BeginStatus);
+        assert!(matches!(m.mode, Mode::Status { .. }));
+        assert_eq!(m.message, None);
     }
 
     #[test]

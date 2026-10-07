@@ -1,0 +1,16 @@
+---
+source: crates/tui/tests/render.rs
+expression: "screen(&mut model, 80, 12)"
+---
+"┌ [1] ─────────────────────────────────────────────────────────────────────────┐"
+"│Fix the flaky build                                                           │"
+"│[1]  #A  in-progress  due in 4d, 2026-10-10                                   │"
+"│ #ci                                                                          │"
+"│                                                                              │"
+"│Project: /home/me/code/app                                                    │"
+"│                                                                              │"
+"│Description                                                                   │"
+"│The nightly job fails one time in three.                                      │"
+"│Suspect the cache.                                                            │"
+"└────────────────────────────────────────────────────────────────── Left: list ┘"
+"j/k  /  c t p l d e  Enter open  s/S sync  ? help  q quit                       "

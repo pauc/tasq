@@ -237,6 +237,7 @@ impl Store for MemoryStore {
             self.tasks[at].mark_done();
         } else {
             self.tasks[at].done = false;
+            self.tasks[at].closed_at = None;
         }
         Ok(())
     }
@@ -472,6 +473,9 @@ mod tests {
         #[test]
         fn set_done_closes_and_reopens() {
             let mut store = store();
+            let mut closed = store.get(&TaskId::from(1)).unwrap();
+            closed.close(&crate::clock::FixedClock::at("2026-10-07 14:32"));
+            store.update(&closed).unwrap();
             store.set_done(&TaskId::from(1), true).unwrap();
             let task = store.get(&TaskId::from(1)).unwrap();
             assert!(task.done);
@@ -480,6 +484,7 @@ mod tests {
             let task = store.get(&TaskId::from(1)).unwrap();
             assert!(!task.done);
             assert_eq!(task.status, None);
+            assert_eq!(task.closed_at, None, "an open task has no closing time");
             assert_eq!(
                 store
                     .set_done(&TaskId::from(9), true)

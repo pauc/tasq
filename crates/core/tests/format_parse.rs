@@ -103,6 +103,33 @@ fn due_takes_the_first_non_empty_line() {
 }
 
 #[test]
+fn closed_takes_the_first_non_empty_line_of_a_done_task() {
+    let at = FixedClock::at("2026-10-07 14:32").0;
+    assert_eq!(
+        task("# [x] T\n\n## Closed\n\n\n  2026-10-07 14:32  \nignored\n").closed_at,
+        Some(at)
+    );
+    assert_eq!(
+        task("# [x] T\n\n## Closed\n\n2026-10-07 14:32\n\n## Closed\n\n2026-10-08 09:00\n")
+            .closed_at,
+        Some(at)
+    );
+    // A date alone, or anything else, is not a closing time.
+    assert_eq!(task("# [x] T\n\n## Closed\n\n2026-10-07\n").closed_at, None);
+    assert_eq!(task("# [x] T\n\n## Closed\n\nyesterday\n").closed_at, None);
+    assert_eq!(
+        task("# [x] T\n\n## Closed\n\n## Tags\n\n#B\n").closed_at,
+        None
+    );
+    assert_eq!(task("# [x] T\n\n## Tags\n\n#B\n").closed_at, None);
+    // An open task was not closed, whatever the file says (`nb todo undo`).
+    assert_eq!(
+        task("# [ ] T\n\n## Closed\n\n2026-10-07 14:32\n").closed_at,
+        None
+    );
+}
+
+#[test]
 fn project_takes_the_first_non_empty_line_and_the_second_section_is_ignored() {
     let t = task("# [ ] T\n\n## Project\n\n\n/a/b\n/c\n\n## Project\n\n/d\n");
     assert_eq!(t.project, Some(PathBuf::from("/a/b")));

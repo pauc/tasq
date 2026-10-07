@@ -169,6 +169,18 @@ When the only value after the colon is an `http(s)://` URL it serves as both
 id and URL. `Document::from_task` writes the section after `## Due`. One origin
 per task is read; **TBD:** more than one origin per task.
 
+### Closed (new, optional)
+
+Written only by `tasq` (ADR 0020), ignored by nb and the script. When a done
+task was closed, local time: one `YYYY-MM-DD HH:MM` line. Reading takes the
+first non-empty line of the first `## Closed` section; a bare date or any other
+text gives `closed_at = None` and is preserved. An open task has no closing
+time whatever the file says (a stale section left by `nb todo undo`).
+`tasq done`, sync and creating a done task write it; `Document::from_task` puts
+it after `## Source`, and `set_closed` inserts it after `## Source`, else
+`## Due`, `## Project`, `## Description`, else after the title line. Reopening
+removes it. Files closed by `nb todo do` or the script have none.
+
 ### HTML comments (new, optional)
 
 `<!-- tasq: {...} -->` is reserved for metadata the model needs but humans

@@ -8,7 +8,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
 use tasq_core::clock::FixedClock;
-use tasq_core::config::UiConfig;
+use tasq_core::config::{DetailPosition, UiConfig};
 use tasq_core::model::{Link, Priority, Session, Status, Tag, Task, TaskId, Workflow, Worktree};
 use tasq_core::theme::{Preset, Theme};
 use tasq_tui::{Model, Msg, SourceChoice, update, view};
@@ -178,6 +178,69 @@ fn folded_groups() {
     update(&mut model, Msg::Down);
     update(&mut model, Msg::ToggleGroup);
     assert_snapshot!("folded_group", screen(&mut model, 80, 14));
+}
+
+/// Two done tasks for the DONE group: one closed by tasq (with a past due
+/// date, not overdue once done), one closed by `nb todo do` (no time).
+fn done_tasks() -> Vec<Task> {
+    let mut shipped = Task::new(TaskId::from(7), "Ship the export fix");
+    shipped.due = Some(date("2026-10-01"));
+    shipped.log("merged", &FixedClock::at("2026-10-05 17:10"));
+    shipped.close(&FixedClock::at("2026-10-05 17:10"));
+    let mut old = Task::new(TaskId::from(2), "Rotate the API keys");
+    old.log("done by hand", &FixedClock::at("2026-09-30 11:00"));
+    old.mark_done();
+    vec![shipped, old]
+}
+
+#[test]
+fn done_group() {
+    // Colours off, so the `+done` chip and the counts carry it.
+    let mut model = fixture(false);
+    let mut all = tasks();
+    all.extend(done_tasks());
+    update(&mut model, Msg::Loaded(all));
+    assert_snapshot!("done_hidden", screen(&mut model, 80, 18));
+    update(&mut model, Msg::ToggleDone);
+    assert_snapshot!("done_shown", screen(&mut model, 80, 22));
+    update(&mut model, Msg::Bottom);
+    update(&mut model, Msg::Up);
+    update(&mut model, Msg::ShowDetail);
+    assert_snapshot!("done_detail", screen(&mut model, 120, 22));
+    update(&mut model, Msg::BeginPriority);
+    assert_snapshot!("done_refuses_priority", screen(&mut model, 120, 22));
+    update(&mut model, Msg::BeginStatus);
+    assert_snapshot!("done_reopen_picker", screen(&mut model, 120, 22));
+}
+
+#[test]
+fn today_view() {
+    // Today is 2026-10-06: task 1 is in progress, task 3 gets due today
+    // and task 4 is overdue; tasks 12 and 5 drop out. With `a`, only
+    // task 8, closed today, of the done tasks.
+    let mut model = fixture(false);
+    let mut all = tasks();
+    all[2].due = Some(date("2026-10-06"));
+    all[3].due = Some(date("2026-10-02"));
+    all.extend(done_tasks());
+    let mut closed = Task::new(TaskId::from(8), "Answer the auditor");
+    closed.close(&FixedClock::at("2026-10-06 08:45"));
+    all.push(closed);
+    update(&mut model, Msg::Loaded(all));
+    update(&mut model, Msg::ToggleToday);
+    assert_snapshot!("today_view", screen(&mut model, 80, 14));
+    update(&mut model, Msg::ToggleDone);
+    assert_snapshot!("today_view_with_done", screen(&mut model, 80, 16));
+}
+
+#[test]
+fn detail_at_the_bottom() {
+    // `ui.detail_position = "bottom"`: the list on top, the detail under
+    // it, whatever the width; too short a terminal shows one pane.
+    let mut model = fixture(false).with_detail_position(DetailPosition::Bottom);
+    update(&mut model, Msg::ShowDetail);
+    assert_snapshot!("detail_bottom", screen(&mut model, 80, 30));
+    assert_snapshot!("detail_bottom_too_short", screen(&mut model, 80, 12));
 }
 
 #[test]

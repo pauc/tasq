@@ -147,6 +147,33 @@ pub mod timestamp_serde {
             ))),
         }
     }
+
+    /// The same for an optional field: `null` or `YYYY-MM-DD HH:MM`
+    /// (`#[serde(default, with = "tasq_core::clock::timestamp_serde::option")]`).
+    pub mod option {
+        use chrono::NaiveDateTime;
+        use serde::{Deserialize, Deserializer, Serializer};
+
+        /// Writes `null` or `YYYY-MM-DD HH:MM`.
+        pub fn serialize<S: Serializer>(
+            at: &Option<NaiveDateTime>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            match at {
+                Some(at) => super::serialize(at, serializer),
+                None => serializer.serialize_none(),
+            }
+        }
+
+        /// Reads `null` or `YYYY-MM-DD HH:MM`; anything else is an error.
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Option<NaiveDateTime>, D::Error> {
+            #[derive(Deserialize)]
+            struct Stamp(#[serde(with = "super")] NaiveDateTime);
+            Ok(Option::<Stamp>::deserialize(deserializer)?.map(|Stamp(at)| at))
+        }
+    }
 }
 
 /// Errors from the timestamp helpers.
@@ -433,6 +460,36 @@ mod tests {
         );
         assert!(serde_json::from_str::<Stamped>("{\"at\":\"2026-10-04T10:15:00\"}").is_err());
         assert!(serde_json::from_str::<Stamped>("{\"at\":7}").is_err());
+    }
+
+    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct MaybeStamped {
+        #[serde(default, with = "super::timestamp_serde::option")]
+        at: Option<NaiveDateTime>,
+    }
+
+    #[test]
+    fn optional_timestamp_serde_is_null_or_the_file_shape() {
+        let some = MaybeStamped {
+            at: Some(FixedClock::at("2026-10-04 10:15").0),
+        };
+        let none = MaybeStamped { at: None };
+        assert_eq!(
+            serde_json::to_string(&some).unwrap(),
+            "{\"at\":\"2026-10-04 10:15\"}"
+        );
+        assert_eq!(serde_json::to_string(&none).unwrap(), "{\"at\":null}");
+        let back: MaybeStamped = serde_json::from_str("{\"at\":\"2026-10-04 10:15\"}").unwrap();
+        assert_eq!(back, some);
+        let back: MaybeStamped = serde_json::from_str("{\"at\":null}").unwrap();
+        assert_eq!(back, none);
+        let back: MaybeStamped = serde_json::from_str("{}").unwrap();
+        assert_eq!(back, none);
+        let err = serde_json::from_str::<MaybeStamped>("{\"at\":\"2026-10-04\"}").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "invalid timestamp \"2026-10-04\" (expected YYYY-MM-DD HH:MM) at line 1 column 19"
+        );
     }
 
     #[test]

@@ -2,12 +2,13 @@
 //!
 //! Follows the script's `parse_todo` awk: a section is a line starting with
 //! `## `, all `## Tags` lines are concatenated, the first non-empty `## Due`
-//! line wins, and the last status or priority tag seen wins.
+//! line wins, and the last status or priority tag seen wins. `## Closed`
+//! (tasq only) reads like `## Due`, as a `YYYY-MM-DD HH:MM` timestamp.
 
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use crate::clock::parse_date;
+use crate::clock::{When, parse_date, parse_timestamp};
 use crate::model::{Priority, Tag, Task, TaskId, Workflow};
 
 use super::document::{Document, Section};
@@ -35,6 +36,8 @@ pub mod section {
     pub const SESSIONS: &str = "Sessions";
     /// `## Source` (written only by tasq).
     pub const SOURCE: &str = "Source";
+    /// `## Closed` (written only by tasq, ADR 0020).
+    pub const CLOSED: &str = "Closed";
 }
 
 /// Builds the typed task from the document.
@@ -69,6 +72,12 @@ pub fn project(doc: &Document, id: TaskId, workflow: &Workflow) -> Task {
             section::SOURCE if task.origin.is_none() => {
                 task.origin = section.body.iter().find_map(|l| entry::parse_origin(l));
             }
+            section::CLOSED if task.closed_at.is_none() => {
+                task.closed_at = first_non_empty(&section).and_then(|l| match parse_timestamp(l) {
+                    Ok(When::DateTime(at)) => Some(at),
+                    Ok(When::Date(_)) | Err(_) => None,
+                });
+            }
             _ => {}
         }
     }
@@ -76,6 +85,10 @@ pub fn project(doc: &Document, id: TaskId, workflow: &Workflow) -> Task {
         // Done tasks carry no status in the model; a stale tag left by
         // `nb todo do` without the script's strip stays in the document only.
         task.status = None;
+    } else {
+        // An open task was not closed; a `## Closed` left by `nb todo undo`
+        // stays in the document only.
+        task.closed_at = None;
     }
     task
 }

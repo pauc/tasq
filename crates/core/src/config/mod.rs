@@ -64,6 +64,7 @@
 //! glow_style = "dark"
 //! week_start = "monday"
 //! due_format = "relative"
+//! detail_position = "right"
 //!
 //! [ui.colors]
 //!
@@ -336,6 +337,10 @@ pub struct UiConfig {
     /// How list rows show a due date: `relative` (`overdue 3d`), `iso`
     /// (`due 2026-10-03`) or `both` (ADR-0019). Default: `relative`.
     pub due_format: DueFormat,
+    /// Where the TUI shows the selected task's detail (`Right`):
+    /// `right` of the list or at the `bottom`, under it (ADR-0021).
+    /// Default: `right`.
+    pub detail_position: DetailPosition,
     /// `[ui.theme]`: the colour theme of both front ends (ADR-0018).
     pub theme: ThemeConfig,
 }
@@ -402,6 +407,17 @@ pub enum DueFormat {
     Both,
 }
 
+/// Where the TUI's detail pane goes (`ui.detail_position`, ADR-0021).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DetailPosition {
+    /// Beside the list, from 100 columns.
+    #[default]
+    Right,
+    /// Under the list, from 20 rows.
+    Bottom,
+}
+
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
@@ -412,6 +428,7 @@ impl Default for UiConfig {
             keys: BTreeMap::new(),
             week_start: WeekStart::Monday,
             due_format: DueFormat::Relative,
+            detail_position: DetailPosition::Right,
             theme: ThemeConfig::default(),
         }
     }

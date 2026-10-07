@@ -5,8 +5,8 @@
 //! The CLI (`tasq set/log/done`) and the TUI (`t`, `p`, `l`, `d`) both call
 //! these, so the two front ends cannot drift (FR-10): a status change is
 //! always "read the task, change the field, optionally log the note, write
-//! the whole task back", and `done` is always "log the note first, then
-//! close with the store's own `done` semantics".
+//! the whole task back", and `done` is always "log the note, close the task
+//! with its closing time, write it back".
 
 use std::path::PathBuf;
 
@@ -215,8 +215,9 @@ pub fn log(
     Ok(store.get(id)?)
 }
 
-/// `tasq done <id> [note]`: logs `note` when given, then closes the task
-/// (`# [x]`, status tag removed) and returns it as stored.
+/// `tasq done <id> [note]`: logs `note` when given and closes the task
+/// (`# [x]`, status tag removed, `closed_at` stamped with `clock.now()`,
+/// see [`Task::close`]) in one write, and returns it as stored.
 pub fn done(
     store: &mut dyn Store,
     id: &TaskId,
@@ -227,9 +228,9 @@ pub fn done(
     let mut task = store.get(id)?;
     if let Some(note) = note {
         task.log(note, clock);
-        store.update(&task)?;
     }
-    store.set_done(id, true)?;
+    task.close(clock);
+    store.update(&task)?;
     Ok(store.get(id)?)
 }
 
@@ -239,7 +240,8 @@ pub const REOPENED_NOTE: &str = "reopened";
 /// `tasq reopen <id> [status] [note]`: the inverse of [`done`]. Clears
 /// `# [x]`, puts `status` back (the caller picks it, usually the given one or
 /// `workflow.default_status`; the status the task had before `done` is gone
-/// from the file) and logs `note`, or [`REOPENED_NOTE`], in one write.
+/// from the file), drops `closed_at` and logs `note`, or [`REOPENED_NOTE`],
+/// in one write.
 /// A task that is not done is refused before anything is written.
 pub fn reopen(
     store: &mut dyn Store,
@@ -254,6 +256,7 @@ pub fn reopen(
         return Err(EditError::NotDone(id.clone()));
     }
     task.done = false;
+    task.closed_at = None;
     task.set_status(status.clone());
     task.log(note, clock);
     store.update(&task)?;
@@ -416,12 +419,20 @@ mod tests {
         let task = done(&mut store, &id, Some("merged"), &clock()).unwrap();
         assert!(task.done);
         assert_eq!(task.status, None);
+        assert_eq!(task.closed_at, Some(clock().now()));
         assert_eq!(task.progress, vec![entry("merged")]);
         assert_eq!(store.get(&id).unwrap(), task);
 
         let task = done(&mut store, &TaskId::from(2), None, &clock()).unwrap();
         assert!(task.done);
+        assert_eq!(task.closed_at, Some(clock().now()));
         assert_eq!(task.progress, Vec::new());
+
+        // Done again later: the note is logged, the closing time stays.
+        let later = FixedClock::at("2026-10-09 08:00");
+        let task = done(&mut store, &id, Some("follow-up"), &later).unwrap();
+        assert_eq!(task.closed_at, Some(clock().now()));
+        assert_eq!(task.progress.len(), 2);
     }
 
     #[test]
@@ -441,6 +452,7 @@ mod tests {
         done(&mut store, &id, None, &clock()).unwrap();
         let task = reopen(&mut store, &id, &Status::IN_PROGRESS, None, &clock()).unwrap();
         assert!(!task.done);
+        assert_eq!(task.closed_at, None);
         assert_eq!(task.status, Some(Status::IN_PROGRESS));
         assert_eq!(task.progress, vec![entry(REOPENED_NOTE)]);
         assert_eq!(REOPENED_NOTE, "reopened");

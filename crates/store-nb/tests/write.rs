@@ -318,6 +318,26 @@ fn set_done_is_idempotent_and_reopens() {
 }
 
 #[test]
+fn closing_through_update_records_the_time_and_set_done_false_drops_it() {
+    let nb = NbEnv::fixture();
+    let mut store = nb.open();
+    let mut task = store.get(&TaskId::from(id::SUPPORT)).unwrap();
+    task.close(&FixedClock::at("2026-10-07 14:32"));
+    store.update(&task).unwrap();
+    assert_eq!(
+        nb.read(file_name(id::SUPPORT)),
+        "# [x] Answer the support ticket\n\n## Description\n\nCustomer asks about the export format.\n\n## Closed\n\n2026-10-07 14:32\n\n## Tags\n\n#support #B\n\n## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+    );
+    assert_eq!(store.get(&TaskId::from(id::SUPPORT)).unwrap(), task);
+
+    store.set_done(&TaskId::from(id::SUPPORT), false).unwrap();
+    assert_eq!(
+        nb.read(file_name(id::SUPPORT)),
+        "# [ ] Answer the support ticket\n\n## Description\n\nCustomer asks about the export format.\n\n## Tags\n\n#support #B\n\n## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+    );
+}
+
+#[test]
 fn set_done_invalidates_tasks_read_before_it() {
     let nb = NbEnv::fixture();
     let mut store = nb.open();

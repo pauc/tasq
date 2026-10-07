@@ -45,7 +45,8 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
     {"at": "2025-03-01", "note": "legacy note without time"},
     {"at": "2026-10-04 10:15", "note": "created via tasks create"}
   ],
-  "origin": null
+  "origin": null,
+  "closed_at": null
 }
 ```
 
@@ -56,12 +57,14 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
   entry may carry only `YYYY-MM-DD`.
 - `tags` holds topic tags only; status and priority are fields, never tags.
 - `origin` is `{"source", "external_id", "url"}` for tasks created by `tasq sync`.
+- `closed_at` is when a done task was closed (`YYYY-MM-DD HH:MM`), `null` on open tasks and
+  on tasks closed outside tasq (ADR 0020). It may be left out on input.
 
 ## `tasq apply`
 
 `tasq apply` reads `{"schema": 1, "task": Task}` from stdin (or a file) and writes the task
 through the store, which applies the differences it can express: title, description, status,
-priority, due, project, topic tags, done, and appended progress entries, worktrees, sessions,
+priority, due, project, topic tags, done, `closed_at`, and appended progress entries, worktrees, sessions,
 related links and merge requests. Anything else (a dropped progress entry, a removed link) is
 refused with an error naming the fields, and nothing is written. Piping `tasq view --json <id>` straight back into
 `tasq apply` changes nothing.

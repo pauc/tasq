@@ -1,0 +1,18 @@
+---
+source: crates/tui/tests/render.rs
+expression: "screen(&mut model, 80, 14)"
+---
+"┌ Tasks (3/3) +today ──────────────────────────────────────────────────────────┐"
+"│IN PROGRESS (1)                                                               │"
+"│  [ 1] #A Fix the flaky build (due in 4d)  #ci                                │"
+"│                                                                              │"
+"│READY (1)                                                                     │"
+"│  [ 3] #C Write the release notes (due today)                                 │"
+"│                                                                              │"
+"│LATER (1)                                                                     │"
+"│  [ 4] #B Try the new profiler (overdue 4d)                                   │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"└──────────────────────────────────────────────────────────────────────────────┘"
+"j/k  /  c t p l d e  Enter open  s/S sync  ? help  q quit                       "

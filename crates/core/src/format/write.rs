@@ -13,7 +13,8 @@ impl Document {
     /// `cmd_create` wrote them (Description, Project, Due, Related, Tags,
     /// Progress), then the sections the script added with later commands
     /// (merge requests, Worktrees, Sessions) through the same operations the
-    /// commands used. `## Source` goes after `## Due`.
+    /// commands used. `## Source` goes after `## Due`, then `## Closed` on a
+    /// done task that has a `closed_at`.
     ///
     /// Only `## Tags` and `## Progress` are always present; `## Tags` holds
     /// topic tags, then the priority, then the status (omitted on done tasks).
@@ -39,6 +40,9 @@ impl Document {
         }
         if let Some(origin) = &task.origin {
             section(section::SOURCE, &[entry::format_origin(origin)]);
+        }
+        if let Some(at) = task.closed_at.filter(|_| task.done) {
+            section(section::CLOSED, &[crate::clock::format_timestamp(at)]);
         }
         if !task.related.is_empty() {
             let related: Vec<String> = task.related.iter().map(entry::format_link).collect();
