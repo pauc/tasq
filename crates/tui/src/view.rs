@@ -410,18 +410,25 @@ pub fn task_lines<'a>(model: &Model, task: &'a Task, width: u16) -> Vec<Line<'a>
 }
 
 /// The list, headers included, as styled lines wrapped to `width`
-/// columns, plus the range of lines the selected task takes.
+/// columns, plus the range of lines the selected task takes. Each header
+/// carries its group's task count, and a blank line separates groups so
+/// they stay apart without colour.
 pub fn list_lines(model: &Model, width: u16) -> (Vec<Line<'_>>, Option<Range<usize>>) {
     let selected = model.selected.as_ref();
     let mut lines = Vec::new();
     let mut selected_lines = None;
     for row in model.rows() {
         match row {
-            Row::Header(status) => lines.push(Line::styled(
-                group_label(status.as_ref()),
-                colored(model, model.theme.status_color(status.as_ref()))
-                    .add_modifier(Modifier::BOLD),
-            )),
+            Row::Header(status, count) => {
+                if !lines.is_empty() {
+                    lines.push(Line::default());
+                }
+                lines.push(Line::styled(
+                    format!("{} ({count})", group_label(status.as_ref())),
+                    colored(model, model.theme.status_color(status.as_ref()))
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
             Row::Task(task) => {
                 let rows = task_lines(model, task, width);
                 if selected == Some(&task.id) {
@@ -1228,6 +1235,44 @@ mod tests {
             text(task_lines(&model, &task, 0)),
             ["  [ 7] #B one", "          two", "          three"]
         );
+    }
+
+    #[test]
+    fn groups_are_counted_and_set_apart() {
+        use tasq_core::model::{Status, TaskId, Workflow};
+        let mut model = Model::new(Workflow::default(), theme::Theme::default(), false);
+        let task = |id: u64, title: &str, status: Option<Status>| {
+            let mut task = Task::new(TaskId::from(id), title);
+            if let Some(status) = status {
+                task.set_status(status);
+            }
+            task
+        };
+        model.set_tasks(vec![
+            task(1, "First", Some(Status::IN_PROGRESS)),
+            task(2, "Second", Some(Status::READY)),
+            task(3, "Third", Some(Status::READY)),
+            task(4, "Loose", None),
+        ]);
+        model.selected = Some(TaskId::from(3));
+        let (lines, selected) = list_lines(&model, 80);
+        let text: Vec<String> = lines.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            text,
+            [
+                "IN PROGRESS (1)",
+                "  [ 1] #B First",
+                "",
+                "READY (2)",
+                "  [ 2] #B Second",
+                "  [ 3] #B Third",
+                "",
+                "NO STATUS (1)",
+                "  [ 4] #B Loose",
+            ]
+        );
+        // The selected range counts the blank lines above it.
+        assert_eq!(selected, Some(5..6));
     }
 
     #[test]

@@ -131,7 +131,7 @@ fn long_rows_wrap_under_the_title() {
     tasks.push(long);
     update(&mut model, Msg::Loaded(tasks));
     update(&mut model, Msg::Bottom);
-    assert_snapshot!("wrapped_rows", screen(&mut model, 60, 14));
+    assert_snapshot!("wrapped_rows", screen(&mut model, 60, 17));
     // A wrapped selected row at the bottom scrolls fully into view.
     assert_snapshot!("wrapped_rows_scrolled", screen(&mut model, 60, 9));
 }

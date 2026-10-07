@@ -1,9 +1,10 @@
 ---
 source: crates/tui/tests/render.rs
+assertion_line: 165
 expression: "screen(&mut model, 120, 20)"
 ---
 "┌ Tasks (1/5) /#later ─────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│LATER                                                                                                                 │"
+"│LATER (1)                                                                                                             │"
 "│  [ 4] #B Try the new profiler                                                                                        │"
 "│                                                                                                                      │"
 "│                                                                                                                      │"

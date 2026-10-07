@@ -134,8 +134,9 @@ pub enum LayoutKind {
 /// One line of the task list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row<'a> {
-    /// A status group header (`None` is the no-status group).
-    Header(Option<Status>),
+    /// A status group header (`None` is the no-status group) and the
+    /// number of tasks in the group.
+    Header(Option<Status>, usize),
     /// A task of the group above.
     Task(&'a Task),
 }
@@ -328,7 +329,7 @@ impl Model {
     pub fn rows(&self) -> Vec<Row<'_>> {
         let mut rows = Vec::new();
         for group in self.groups() {
-            rows.push(Row::Header(group.status.clone()));
+            rows.push(Row::Header(group.status.clone(), group.tasks.len()));
             rows.extend(group.tasks.into_iter().map(Row::Task));
         }
         rows
@@ -462,12 +463,12 @@ mod tests {
         let m = model();
         let rows = m.rows();
         assert_eq!(rows.len(), 7);
-        assert_eq!(rows[0], Row::Header(Some(Status::IN_PROGRESS)));
+        assert_eq!(rows[0], Row::Header(Some(Status::IN_PROGRESS), 1));
         assert!(matches!(rows[1], Row::Task(t) if t.id == TaskId::from(1)));
-        assert_eq!(rows[2], Row::Header(Some(Status::READY)));
+        assert_eq!(rows[2], Row::Header(Some(Status::READY), 2));
         assert!(matches!(rows[3], Row::Task(t) if t.id == TaskId::from(2)));
         assert!(matches!(rows[4], Row::Task(t) if t.id == TaskId::from(3)));
-        assert_eq!(rows[5], Row::Header(None));
+        assert_eq!(rows[5], Row::Header(None, 1));
         assert!(matches!(rows[6], Row::Task(t) if t.id == TaskId::from(4)));
         let ids: Vec<&str> = m.visible().iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["1", "2", "3", "4"]);
