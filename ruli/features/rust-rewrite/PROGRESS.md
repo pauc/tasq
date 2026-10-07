@@ -220,6 +220,20 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ### Plugin and release decisions (T-901 to T-904)
 
+- **TUI group headers and folding (follow-up 2026-10-07, todo 29).** The list puts a blank
+  line between status groups and a count in each header (`READY (2)`), so groups stay apart
+  under `NO_COLOR`; `Row::Header` carries the group size, folded or not. `z`/`Space`
+  (`toggle-group`, rebindable) folds the selected task's group to its header or unfolds the
+  folded group under the cursor; folded headers end in `▸`. The selection is now
+  `Model::selected: Option<Cursor>` (`Task(id)` or `Group(status)`) and moves over
+  `Model::stops()`: tasks of unfolded groups and headers of folded ones, so `j`/`k` behave
+  as before until something is folded. A task that a reload or a status change moves into
+  a folded group leaves the cursor on that header; `Msg::Select` (after `c`) unfolds the
+  task's group. Folds are session-only (`Model::collapsed`). The spacer lines go through
+  `list_lines`' `lines`, so `scroll_offset` needed no change. Learning: `cargo mutants
+  --in-diff` without `--no-config` reports "No mutants to filter" for this crate set and
+  leaves a stale `mutants.out/missed.txt`; target functions with `--no-config -f ... -F ...`
+  instead. Mutants on every touched function: 0 missed. Commits 134660d, 0c3f37a (PR #6).
 - **Wrapped rows in `tasq list` (follow-up 2026-10-07).** On a terminal, a row longer than
   the terminal breaks between words and continuation lines start under the title (indent =
   `  [id] #B `, so a three-digit id moves it). The due date and each chip are unbreakable
