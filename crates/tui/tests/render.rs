@@ -131,7 +131,7 @@ fn long_rows_wrap_under_the_title() {
     tasks.push(long);
     update(&mut model, Msg::Loaded(tasks));
     update(&mut model, Msg::Bottom);
-    assert_snapshot!("wrapped_rows", screen(&mut model, 60, 14));
+    assert_snapshot!("wrapped_rows", screen(&mut model, 60, 17));
     // A wrapped selected row at the bottom scrolls fully into view.
     assert_snapshot!("wrapped_rows_scrolled", screen(&mut model, 60, 9));
 }
@@ -169,6 +169,15 @@ fn selection_and_filter() {
         update(&mut model, Msg::Char(c));
     }
     assert_snapshot!("nothing_matches", screen(&mut model, 120, 20));
+}
+
+#[test]
+fn folded_groups() {
+    // Colours off: the count, the blank lines and `▸` carry the grouping.
+    let mut model = fixture(false);
+    update(&mut model, Msg::Down);
+    update(&mut model, Msg::ToggleGroup);
+    assert_snapshot!("folded_group", screen(&mut model, 80, 14));
 }
 
 #[test]

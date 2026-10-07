@@ -1,9 +1,10 @@
 ---
 source: crates/tui/tests/render.rs
+assertion_line: 157
 expression: "screen(&mut model, 120, 20)"
 ---
 "┌ Tasks (2/5) /re ─────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│READY                                                                                                                 │"
+"│READY (2)                                                                                                             │"
 "│  [12] #B Review MR !88: paginate the export  #gitlab   #review-request                                               │"
 "│  [ 3] #C Write the release notes                                                                                     │"
 "│                                                                                                                      │"

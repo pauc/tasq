@@ -24,9 +24,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         Msg::Select(id) => {
             // A task hidden by the filter stays unselected: the message
             // line already says it was created.
-            if model.visible().iter().any(|t| t.id == id) {
-                model.selected = Some(id);
-            }
+            model.select_task(id);
             Vec::new()
         }
         Msg::Info(text) => {
@@ -71,6 +69,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::PageUp => model.select_offset(-PAGE.cast_signed()),
         Msg::Top => model.select_first(),
         Msg::Bottom => model.select_last(),
+        Msg::ToggleGroup => model.toggle_group(),
         Msg::Escape => {
             if model.show_detail {
                 model.show_detail = false;
@@ -550,7 +549,7 @@ pub fn one_line(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::form::Text;
-    use crate::model::SourceChoice;
+    use crate::model::{Cursor, SourceChoice};
     use tasq_core::edit::Fields;
     use tasq_core::model::{Status, Tag, Task, TaskDraft, Workflow};
     use tasq_core::theme::Theme;
@@ -604,19 +603,19 @@ mod tests {
     #[test]
     fn navigation() {
         let mut m = model();
-        assert_eq!(m.selected, Some(TaskId::from(1)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
         update(&mut m, Msg::Down);
-        assert_eq!(m.selected, Some(TaskId::from(2)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(2))));
         update(&mut m, Msg::Up);
-        assert_eq!(m.selected, Some(TaskId::from(1)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
         update(&mut m, Msg::Bottom);
-        assert_eq!(m.selected, Some(TaskId::from(3)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(3))));
         update(&mut m, Msg::Top);
-        assert_eq!(m.selected, Some(TaskId::from(1)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
         update(&mut m, Msg::PageDown);
-        assert_eq!(m.selected, Some(TaskId::from(3)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(3))));
         update(&mut m, Msg::PageUp);
-        assert_eq!(m.selected, Some(TaskId::from(1)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
         assert_eq!(update(&mut m, Msg::Reload), vec![Cmd::Load]);
         assert!(!m.quit);
         update(&mut m, Msg::Quit);
@@ -669,7 +668,7 @@ mod tests {
         assert_eq!(m.mode, Mode::Normal);
         assert_eq!(
             m.selected,
-            Some(TaskId::from(1)),
+            Some(Cursor::Task(TaskId::from(1))),
             "the key only closed the help"
         );
         update(&mut m, Msg::Help);
@@ -689,7 +688,7 @@ mod tests {
         );
         feed(&mut m, chars("sec"));
         assert_eq!(m.filter, "sec");
-        assert_eq!(m.selected, Some(TaskId::from(2)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(2))));
         assert_eq!(m.visible().len(), 1);
         update(&mut m, Msg::Backspace);
         assert_eq!(m.filter, "se");
@@ -840,7 +839,7 @@ mod tests {
         update(&mut m, Msg::DeleteWord);
         assert_eq!(m.filter, "second ");
         assert_eq!(m.visible().len(), 1);
-        assert_eq!(m.selected, Some(TaskId::from(2)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(2))));
         feed(&mut m, [Msg::Home, Msg::Right, Msg::Right, Msg::Right]);
         update(&mut m, Msg::KillToEnd);
         assert_eq!(m.filter, "sec");
@@ -861,7 +860,7 @@ mod tests {
         update(&mut m, Msg::Char('e'));
         assert_eq!(m.filter, "second");
         assert_eq!(m.visible().len(), 1);
-        assert_eq!(m.selected, Some(TaskId::from(2)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(2))));
         feed(&mut m, [Msg::End, Msg::Left, Msg::Left, Msg::Delete]);
         assert_eq!(m.filter, "secod");
         assert_eq!(m.visible().len(), 0);
@@ -1223,11 +1222,11 @@ mod tests {
         );
         assert_eq!(
             m.selected,
-            Some(TaskId::from(1)),
+            Some(Cursor::Task(TaskId::from(1))),
             "the reload keeps the first"
         );
         update(&mut m, Msg::Select(TaskId::from(7)));
-        assert_eq!(m.selected, Some(TaskId::from(7)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(7))));
         assert_eq!(
             m.message,
             Some(Message::info("[7] created: New")),
@@ -1236,11 +1235,11 @@ mod tests {
         // A new task hidden by the filter is not selected.
         m.set_filter("First".into());
         update(&mut m, Msg::Select(TaskId::from(7)));
-        assert_eq!(m.selected, Some(TaskId::from(1)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
         // An unknown id is ignored too.
         m.set_filter(String::new());
         update(&mut m, Msg::Select(TaskId::from(99)));
-        assert_eq!(m.selected, Some(TaskId::from(1)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
     }
 
     fn today() -> chrono::NaiveDate {
@@ -1632,7 +1631,7 @@ mod tests {
     #[test]
     fn a_stale_selected_id_counts_as_no_selection() {
         let mut m = model();
-        m.selected = Some(TaskId::from(42));
+        m.selected = Some(Cursor::Task(TaskId::from(42)));
         assert_eq!(update(&mut m, Msg::Launch), Vec::new());
         assert_eq!(m.message, Some(Message::error("no task selected")));
     }
@@ -1659,11 +1658,11 @@ mod tests {
         assert_eq!(update(&mut m, Msg::Up), Vec::new());
         assert_eq!(prompt(&m), ("thi".into(), 3), "cursor at the end");
         assert_eq!(m.filter, "thi");
-        assert_eq!(m.selected, Some(TaskId::from(3)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(3))));
         update(&mut m, Msg::Up);
         assert_eq!(prompt(&m), ("se".into(), 2));
         assert_eq!(m.filter, "se");
-        assert_eq!(m.selected, Some(TaskId::from(2)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(2))));
         update(&mut m, Msg::Up);
         assert_eq!(prompt(&m), ("se".into(), 2), "at the oldest");
         update(&mut m, Msg::Down);
@@ -1671,7 +1670,7 @@ mod tests {
         update(&mut m, Msg::Down);
         assert_eq!(prompt(&m), ("f".into(), 1), "the draft, cursor at the end");
         assert_eq!(m.filter, "f");
-        assert_eq!(m.selected, Some(TaskId::from(1)));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
         update(&mut m, Msg::Down);
         assert_eq!(prompt(&m), ("f".into(), 1), "at the draft");
         update(&mut m, Msg::Enter);

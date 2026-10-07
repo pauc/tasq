@@ -1,14 +1,15 @@
 ---
 source: crates/tui/tests/render.rs
+assertion_line: 531
 expression: terminal.backend().to_string()
 ---
 "┌ Tasks (5/5) ─────────────────────────────────────────────────────────────────┐"
-"│IN PROGRESS                                                                   │"
+"│IN PROGRESS (1)                                                               │"
 "│  [ 1] #A Fix the flaky build (due in 4d)  #ci                                │"
-"│READY                                                                         │"
+"│                                                                              │"
+"│READY (2)                                                                     │"
 "│  [12] #B Review MR !88: paginate the export  #gitlab   #review-request       │"
 "│  [ 3] #C Write the release notes                                             │"
-"│LATER                                                                         │"
-"│  [ 4] #B Try the new profiler                                                │"
+"│                                                                              │"
 "└──────────────────────────────────────────────────────────────────────────────┘"
 "log: lockfile but not the toolchain file, so a rustup bump reuses a stale cache "

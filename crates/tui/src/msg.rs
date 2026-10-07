@@ -92,6 +92,8 @@ pub enum Msg {
     Help,
     /// `Tab`: switch between list and detail.
     ToggleDetail,
+    /// `z`/`Space`: fold or unfold the group under the cursor.
+    ToggleGroup,
     /// `Right`: show the selected task's detail.
     ShowDetail,
     /// `Left`: hide the detail.

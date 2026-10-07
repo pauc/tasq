@@ -28,7 +28,7 @@ use tasq_core::theme::{self, Role, group_label};
 use crate::calendar::{self, Calendar, DAYS_PER_WEEK};
 use crate::form::{Field, Form, Text};
 use crate::keys::{Action, KeyMap};
-use crate::model::{LayoutKind, Mode, Model, NoteTarget, Row, TWO_PANE_MIN_WIDTH};
+use crate::model::{Cursor, LayoutKind, Mode, Model, NoteTarget, Row, TWO_PANE_MIN_WIDTH};
 
 /// How many progress notes the detail pane shows (the most recent ones).
 pub const PROGRESS_SHOWN: usize = 8;
@@ -39,6 +39,7 @@ pub const HELP: &[(&[Action], &str)] = &[
     (&[Action::Up, Action::Down], "move the selection"),
     (&[Action::Top, Action::Bottom], "first / last task"),
     (&[Action::PageUp, Action::PageDown], "move ten tasks"),
+    (&[Action::ToggleGroup], "fold / unfold the group"),
     (
         &[Action::Filter],
         "filter: text matches titles, #word a status, tag or priority",
@@ -410,21 +411,34 @@ pub fn task_lines<'a>(model: &Model, task: &'a Task, width: u16) -> Vec<Line<'a>
 }
 
 /// The list, headers included, as styled lines wrapped to `width`
-/// columns, plus the range of lines the selected task takes.
+/// columns, plus the range of lines the cursor takes. Each header
+/// carries its group's task count, a folded one ends in `▸`, and a blank
+/// line separates groups so they stay apart without colour.
 pub fn list_lines(model: &Model, width: u16) -> (Vec<Line<'_>>, Option<Range<usize>>) {
     let selected = model.selected.as_ref();
     let mut lines = Vec::new();
     let mut selected_lines = None;
     for row in model.rows() {
         match row {
-            Row::Header(status) => lines.push(Line::styled(
-                group_label(status.as_ref()),
-                colored(model, model.theme.status_color(status.as_ref()))
-                    .add_modifier(Modifier::BOLD),
-            )),
+            Row::Header(status, count) => {
+                if !lines.is_empty() {
+                    lines.push(Line::default());
+                }
+                let mut label = format!("{} ({count})", group_label(status.as_ref()));
+                let mut style = colored(model, model.theme.status_color(status.as_ref()))
+                    .add_modifier(Modifier::BOLD);
+                if model.collapsed.contains(&status) {
+                    label.push_str(" ▸");
+                }
+                if selected == Some(&Cursor::Group(status)) {
+                    selected_lines = Some(lines.len()..lines.len() + 1);
+                    style = style.patch(selection(model));
+                }
+                lines.push(Line::styled(label, style));
+            }
             Row::Task(task) => {
                 let rows = task_lines(model, task, width);
-                if selected == Some(&task.id) {
+                if matches!(selected, Some(Cursor::Task(id)) if *id == task.id) {
                     selected_lines = Some(lines.len()..lines.len() + rows.len());
                     lines.extend(rows.into_iter().map(|line| line.style(selection(model))));
                 } else {
@@ -1231,6 +1245,61 @@ mod tests {
     }
 
     #[test]
+    fn groups_are_counted_and_set_apart() {
+        use tasq_core::model::{Status, TaskId, Workflow};
+        let mut model = Model::new(Workflow::default(), theme::Theme::default(), false);
+        let task = |id: u64, title: &str, status: Option<Status>| {
+            let mut task = Task::new(TaskId::from(id), title);
+            if let Some(status) = status {
+                task.set_status(status);
+            }
+            task
+        };
+        model.set_tasks(vec![
+            task(1, "First", Some(Status::IN_PROGRESS)),
+            task(2, "Second", Some(Status::READY)),
+            task(3, "Third", Some(Status::READY)),
+            task(4, "Loose", None),
+        ]);
+        model.selected = Some(Cursor::Task(TaskId::from(3)));
+        let (lines, selected) = list_lines(&model, 80);
+        let text: Vec<String> = lines.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            text,
+            [
+                "IN PROGRESS (1)",
+                "  [ 1] #B First",
+                "",
+                "READY (2)",
+                "  [ 2] #B Second",
+                "  [ 3] #B Third",
+                "",
+                "NO STATUS (1)",
+                "  [ 4] #B Loose",
+            ]
+        );
+        // The selected range counts the blank lines above it.
+        assert_eq!(selected, Some(5..6));
+        // A folded group is its header, marked, and the cursor can rest on it.
+        model.toggle_group();
+        let (lines, selected) = list_lines(&model, 80);
+        let text: Vec<String> = lines.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            text,
+            [
+                "IN PROGRESS (1)",
+                "  [ 1] #B First",
+                "",
+                "READY (2) ▸",
+                "",
+                "NO STATUS (1)",
+                "  [ 4] #B Loose",
+            ]
+        );
+        assert_eq!(selected, Some(3..4));
+    }
+
+    #[test]
     fn prompts_scroll_under_the_cursor() {
         use tasq_core::model::Workflow;
         let mut model = Model::new(Workflow::default(), theme::Theme::default(), false);
@@ -1461,48 +1530,49 @@ mod tests {
         assert_eq!(rows[0], ("k/Up, j/Down".to_owned(), "move the selection"));
         assert_eq!(rows[1], ("g/Home, G/End".to_owned(), "first / last task"));
         assert_eq!(rows[2], ("C-u/PgUp, C-d/PgDn".to_owned(), "move ten tasks"));
+        assert_eq!(rows[3], ("z/Space".to_owned(), "fold / unfold the group"));
         assert_eq!(
-            rows[10],
+            rows[11],
             (
                 "e".to_owned(),
                 "edit the task in a form (title, status, priority, due, project, tags)"
             )
         );
-        assert_eq!(rows[11], ("E".to_owned(), "open the task file in $EDITOR"));
-        assert_eq!(rows[13].0, "C-Enter");
-        assert_eq!(rows[14].0, "S-Enter");
+        assert_eq!(rows[12], ("E".to_owned(), "open the task file in $EDITOR"));
+        assert_eq!(rows[14].0, "C-Enter");
+        assert_eq!(rows[15].0, "S-Enter");
         assert_eq!(
-            rows[15],
+            rows[16],
             (
                 "s".to_owned(),
                 "run the sources that run by default (tasq sync)"
             )
         );
         assert_eq!(
-            rows[16],
+            rows[17],
             (
                 "S".to_owned(),
                 "pick the sources to run: Space toggles, Enter runs"
             )
         );
         assert_eq!(
-            rows[18],
+            rows[19],
             (
                 "Right, Left".to_owned(),
                 "show / hide the selected task's detail"
             )
         );
         assert_eq!(
-            rows[20],
+            rows[21],
             ("Enter".to_owned(), "in a picker: apply the choice")
         );
-        assert_eq!(rows[22], ("q, C-c".to_owned(), "quit"));
+        assert_eq!(rows[23], ("q, C-c".to_owned(), "quit"));
         let mut table = BTreeMap::new();
         table.insert("quit".to_owned(), KeySpec::Many(Vec::new()));
         table.insert("sync".to_owned(), KeySpec::One("f5".to_owned()));
         let rows = help_rows(&KeyMap::from_config(&table).unwrap());
-        assert_eq!(rows[22], ("none, C-c".to_owned(), "quit"));
-        assert_eq!(rows[15].0, "F5");
+        assert_eq!(rows[23], ("none, C-c".to_owned(), "quit"));
+        assert_eq!(rows[16].0, "F5");
     }
 
     #[test]

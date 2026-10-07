@@ -1,29 +1,19 @@
 ---
 source: crates/tui/tests/render.rs
-assertion_line: 142
-expression: "screen(&mut model, 80, 24)"
+assertion_line: 180
+expression: "screen(&mut model, 80, 14)"
 ---
 "┌ Tasks (5/5) ─────────────────────────────────────────────────────────────────┐"
 "│IN PROGRESS (1)                                                               │"
 "│  [ 1] #A Fix the flaky build (due in 4d)  #ci                                │"
 "│                                                                              │"
-"│READY (2)                                                                     │"
-"│  [12] #B Review MR !88: paginate the export  #gitlab   #review-request       │"
-"│  [ 3] #C Write the release notes                                             │"
+"│READY (2) ▸                                                                   │"
 "│                                                                              │"
 "│LATER (1)                                                                     │"
 "│  [ 4] #B Try the new profiler                                                │"
 "│                                                                              │"
 "│NO STATUS (1)                                                                 │"
 "│  [ 5] #B Call the bank                                                       │"
-"│                                                                              │"
-"│                                                                              │"
-"│                                                                              │"
-"│                                                                              │"
-"│                                                                              │"
-"│                                                                              │"
-"│                                                                              │"
-"│                                                                              │"
 "│                                                                              │"
 "└──────────────────────────────────────────────────────────────────────────────┘"
 "j/k  /  c t p l d e  Enter open  s/S sync  ? help  q quit                       "
