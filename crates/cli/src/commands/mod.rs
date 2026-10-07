@@ -38,7 +38,7 @@ pub fn finish(app: &App, store: &NbStore, id: &TaskId, line: &str) -> Result<()>
         let task = store.get(id)?;
         return app
             .out
-            .json(&json::document([("task", json::to_value(&task))]));
+            .json(&json::document([("task", app.task_json(&task))]));
     }
     app.out.print(line)
 }

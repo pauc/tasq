@@ -17,7 +17,7 @@ pub fn run(app: &App, id: &str, path: Option<&Path>) -> Result<()> {
         let task = store.get(&id)?;
         if app.out.json_mode() {
             return app.out.json(&json::document([
-                ("task", json::to_value(&task)),
+                ("task", app.task_json(&task)),
                 (
                     "default_project",
                     json::to_value(&app.config().work.default_project),

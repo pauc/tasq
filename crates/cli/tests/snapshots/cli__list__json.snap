@@ -52,13 +52,7 @@ expression: text
       "tags": [
         "gitlab"
       ],
-      "title": "Rewrite the tasks script in Rust",
-      "worktrees": [
-        {
-          "branch": "feature-a",
-          "path": "/home/pau/code/tasks-wt/feature-a"
-        }
-      ]
+      "title": "Rewrite the tasks script in Rust"
     },
     {
       "closed_at": null,
@@ -82,8 +76,7 @@ expression: text
       "tags": [
         "support"
       ],
-      "title": "Answer the support ticket",
-      "worktrees": []
+      "title": "Answer the support ticket"
     },
     {
       "closed_at": null,
@@ -105,8 +98,7 @@ expression: text
       "sessions": [],
       "status": "waiting",
       "tags": [],
-      "title": "Wait for the security review",
-      "worktrees": []
+      "title": "Wait for the security review"
     },
     {
       "closed_at": null,
@@ -128,8 +120,7 @@ expression: text
       "sessions": [],
       "status": null,
       "tags": [],
-      "title": "Task without a tags section",
-      "worktrees": []
+      "title": "Task without a tags section"
     }
   ]
 }

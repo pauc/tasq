@@ -65,7 +65,7 @@ pub fn run(app: &App, args: &CreateArgs) -> Result<()> {
     if app.out.json_mode() {
         return app
             .out
-            .json(&json::document([("task", json::to_value(&task))]));
+            .json(&json::document([("task", app.task_json(&task))]));
     }
     let tail = if closed {
         format!("done, {}", task.priority.to_hash())

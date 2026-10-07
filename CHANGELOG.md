@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `copies`, `copy_ignored`, `templates`, `variables`, `ports` and `[worktree.hooks]`, with
   `TASQ_WORKTREES` and `TASQ_WORKTREE_*` variables. The keys are validated; the lifecycle that
   uses them is still being built.
+- Worktrees are invisible unless `worktree.enabled = true`: `tasq worktree` is hidden from
+  help and completions and refused, task JSON and hook documents leave out `worktrees` (and
+  `pick --dry-run --json` `in_worktree`), the TUI detail and the Claude prompt say nothing about
+  them, and sessions start in the project. `tasq apply` keeps the stored worktrees when the
+  document has no `worktrees` key.
 - Every task created with `tasq create` or the TUI's `c` key tracks a project: `--project`
   when given, else the directory `tasq` runs in. `tasq pick` therefore always has somewhere
   to start; `tasq project <id> <path>` changes it. The original script left the section out

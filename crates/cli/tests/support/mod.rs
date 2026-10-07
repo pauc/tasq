@@ -84,6 +84,13 @@ impl TestEnv {
         cmd
     }
 
+    /// [`Self::tasq`] with worktrees enabled (`TASQ_WORKTREES=1`, ADR 0022).
+    pub fn tasq_wt(&self) -> assert_cmd::Command {
+        let mut cmd = self.tasq();
+        cmd.env("TASQ_WORKTREES", "1");
+        cmd
+    }
+
     /// Writes a file inside the notebook.
     pub fn write_task(&self, name: &str, text: &str) {
         std::fs::write(self.notebook().join(name), text).unwrap();

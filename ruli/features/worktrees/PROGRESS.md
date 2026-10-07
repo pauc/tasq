@@ -14,7 +14,7 @@ create at launch, release at close, never remove the entry.
 |------|-------|--------|-------|
 | WT-101 | Lifecycle decisions in core | done | `tasq_core::worktree::lifecycle`: `declare`, `on_launch`, `on_close` (`DirSeen`/`BranchSeen` in, `Release { WorktreeFate, BranchFate }` out); 10 table tests; 14 mutants, 11 caught, 3 unviable |
 | WT-102 | `[worktree]` config and the toggle | done | `WorktreeConfig` (+ `OnCreate`, `OnDone`, `TemplateFile`, `PortsConfig`, `WorktreeHooks`), 7 `TASQ_WORKTREE*` vars, `BadPorts`; `work.worktree_*` rejected by a `deserialize_with` guard (file:line:column); `CommandManager`/`manager_for`/`expand_template` deleted; docs, examples, CI `no-gwm` job; 17 mutants, 16 caught, 1 unviable |
-| WT-103 | Invisible when disabled | todo | |
+| WT-103 | Invisible when disabled | done | `App::worktrees`/`task_json` + `json::task(s)` (key dropped), `cli::command` hides `worktree` and swaps help paragraphs, `cli::completion_command` prunes it, `early_globals` loads config before clap, `LaunchContext::worktrees` + `{{#worktrees_enabled}}`, `Model::with_worktrees`, apply keeps stored worktrees on a missing key; `worktrees_disabled` CLI tests; 7 mutants, 7 caught |
 | WT-104 | Templates, variables and naming in core | todo | |
 | WT-201 | Declaring: `tasq create --worktree` and `tasq worktree <id> [BRANCH]` | todo | |
 | WT-202 | Materializing at launch: the `tasq-worktree` crate | todo | |
@@ -42,6 +42,12 @@ create at launch, release at close, never remove the entry.
   the error keeps toml's span. Via `--set`/env they are simply unknown keys. Validating that
   templates only name known variables waits for the renderer (WT-104). An empty `[work]` table
   now "explains" its unset children (`Loaded::explain`), as `[launch.claude]` already did.
+- WT-103: `--help` and completions run before any command, so `main` loads the config once
+  early (`cli::early_globals` pre-scans `--config/--profile/--set`; a broken config counts as
+  disabled there and the command reports it). clap_complete's zsh generator lists hidden
+  subcommands, so completions use a rebuilt command without `worktree`. When disabled,
+  `{{markdown}}` in the prompt still quotes the file verbatim, `## Worktrees` included; only
+  users who enabled and then disabled the feature can see that.
 - Defaults confirmed by the author 2026-10-07: `on_create = "auto"`, `on_done = "release"`,
   `delete_branch = "safe"`.
 - gwm facts (from `~/.local/bin/gwm`, read-only): `branch_safe` replaces every non-alphanumeric

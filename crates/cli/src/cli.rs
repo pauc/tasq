@@ -237,8 +237,7 @@ pub enum Command {
 
     /// Show or set the task's project directory.
     ///
-    /// Sessions start there when the task tracks no existing worktree.
-    /// Without PATH the tracked directory is printed, or
+    /// Sessions start there. Without PATH the tracked directory is printed, or
     /// `no project tracked (default: ...)` with work.default_project.
     Project {
         /// Task id.
@@ -325,8 +324,8 @@ pub enum Command {
     ///
     /// The document is `{"schema": 1, "task": {...}}`; see docs/json.md.
     /// The store applies the differences it can express (status, priority,
-    /// project, done, appended progress, worktrees, sessions, links) and
-    /// refuses anything else without writing.
+    /// project, done, appended progress, sessions, links) and refuses
+    /// anything else without writing.
     Apply {
         /// File to read instead of stdin.
         #[arg(value_name = "FILE")]
@@ -418,10 +417,8 @@ need a title; until a forge lookup exists the title falls back to
 Prints `[id] created: Title (#status #prio)`.";
 
 const LAUNCH_HELP: &str = "\
-The task is set to in-progress, then a session starts in the first tracked
-worktree that exists, else the task's project, else work.default_project.
-When every tracked worktree is gone, the newest one is named and, on a
-terminal, you are offered to recreate it on its recorded branch.
+The task is set to in-progress, then a session starts in the task's
+project, else work.default_project.
 
 Launchers (--launcher, or launch.default): claude runs Claude Code with the
 task prompt (template: launch.claude.prompt_file), through `direnv exec`
@@ -433,6 +430,14 @@ or auto for whichever the terminal runs in) and --no-focus leaves the new
 window in the background; launch.herdr.placement says whether a herdr
 window is a workspace or a tab. The session gets TASQ_TASK_ID,
 TASQ_NOTEBOOK and, when selected, TASQ_PROFILE.";
+
+/// [`LAUNCH_HELP`] when worktrees are enabled.
+const LAUNCH_HELP_WORKTREES: &str = "\
+The task is set to in-progress, then a session starts in the first tracked
+worktree that exists, else the task's project, else work.default_project.
+When every tracked worktree is gone, the newest one is named and, on a
+terminal, you are offered to recreate it on its recorded branch.
+";
 
 const SYNC_HELP: &str = "\
 Every enabled [[source]] with `auto = true` (the default) runs in config
@@ -625,6 +630,104 @@ pub enum PluginsCommand {
     /// List the `tasq-<name>` executables on PATH (first match per name)
     /// and the hooks configured under `[hooks]`.
     List,
+}
+
+/// The clap command, with what the configuration turns off hidden from
+/// `--help` and completions: the `worktree` command unless worktrees are
+/// enabled (ADR 0022). Hidden commands still parse; running one is refused
+/// by the command itself.
+pub fn command(worktrees: bool) -> clap::Command {
+    let command = <Cli as clap::CommandFactory>::command();
+    if !worktrees {
+        return command.mut_subcommand("worktree", |c| c.hide(true));
+    }
+    command
+        .mut_subcommand("next", launch_help_with_worktrees)
+        .mut_subcommand("pick", launch_help_with_worktrees)
+        .mut_subcommand("project", |c| {
+            add_long_about(
+                c,
+                "With worktrees enabled, a tracked worktree that exists comes first.",
+            )
+        })
+        .mut_subcommand("apply", |c| {
+            add_long_about(
+                c,
+                "With worktrees enabled, added worktrees are applied too; a document without \
+                 `worktrees` leaves them unchanged.",
+            )
+        })
+}
+
+/// The command completions are generated from: [`command`], minus the
+/// `worktree` subcommand unless worktrees are enabled. Hiding is not enough
+/// there, as the zsh generator still lists hidden subcommands.
+pub fn completion_command(worktrees: bool) -> clap::Command {
+    let full = command(true);
+    if worktrees {
+        return full;
+    }
+    let mut pruned = clap::Command::new("tasq").version(env!("CARGO_PKG_VERSION"));
+    if let Some(about) = full.get_about() {
+        pruned = pruned.about(about.clone());
+    }
+    for arg in full.get_arguments() {
+        pruned = pruned.arg(arg.clone());
+    }
+    for sub in full
+        .get_subcommands()
+        .filter(|s| s.get_name() != "worktree")
+    {
+        pruned = pruned.subcommand(sub.clone());
+    }
+    pruned
+}
+
+/// Appends a paragraph to a command's long description.
+fn add_long_about(command: clap::Command, paragraph: &str) -> clap::Command {
+    let about = command
+        .get_long_about()
+        .or_else(|| command.get_about())
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    command.long_about(format!("{about}\n\n{paragraph}"))
+}
+
+/// `next`/`pick` help with the worktree paragraph in place of the first one.
+fn launch_help_with_worktrees(command: clap::Command) -> clap::Command {
+    let launchers = LAUNCH_HELP
+        .split_once("\n\n")
+        .map_or(LAUNCH_HELP, |(_, rest)| rest);
+    command.after_help(format!("{LAUNCH_HELP_WORKTREES}\n{launchers}"))
+}
+
+/// `--config`, `--profile` and `--set` wherever they appear in `argv`
+/// (program name first, up to a `--`), so the configuration can be loaded
+/// before clap parses. Malformed values are skipped; clap reports them.
+pub fn early_globals(argv: &[std::ffi::OsString]) -> GlobalArgs {
+    let mut global = GlobalArgs::default();
+    let mut rest = argv.iter().skip(1).map(|a| a.to_string_lossy());
+    while let Some(arg) = rest.next() {
+        if arg == "--" {
+            break;
+        }
+        let (flag, inline) = match arg.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f.to_owned(), Some(v.to_owned())),
+            _ => (arg.clone().into_owned(), None),
+        };
+        if !matches!(flag.as_str(), "--config" | "--profile" | "--set") {
+            continue;
+        }
+        let Some(value) = inline.or_else(|| rest.next().map(std::borrow::Cow::into_owned)) else {
+            break;
+        };
+        match flag.as_str() {
+            "--config" => global.config = Some(PathBuf::from(value)),
+            "--profile" => global.profile = Some(value),
+            _ => global.set.extend(parse_key_value(&value).ok()),
+        }
+    }
+    global
 }
 
 /// Parses `KEY=VALUE` for `--set`.

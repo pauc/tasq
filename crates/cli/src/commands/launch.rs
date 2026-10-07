@@ -147,6 +147,11 @@ fn open_session(
         source,
     })?;
 
+    if !app.worktrees() {
+        // Disabled worktrees are ignored, never rewritten (ADR 0022): the
+        // in-memory task drops them, the file keeps them.
+        task.worktrees.clear();
+    }
     let default_project = app.config().work.default_project.as_deref();
     let mut resolution = resolve_workdir(&task, default_project, Path::is_dir)
         .map_err(|e| CliError::user(e.to_string()))?;
@@ -198,6 +203,7 @@ fn open_session(
         markdown,
         workdir: resolution.workdir,
         in_worktree: resolution.in_worktree,
+        worktrees: app.worktrees(),
         env,
         focus: how.focus,
     };
@@ -210,11 +216,13 @@ fn launch_or_describe(app: &App, ctx: &LaunchContext, name: &str, dry_run: bool)
     let settings = launch_settings(app)?;
     let resolved = resolve_name(name, &settings.env).to_owned();
     let launcher = launcher_for(name, &settings).map_err(|e| CliError::user(e.to_string()))?;
-    let hook_fields = [
+    let mut hook_fields = vec![
         ("workdir", json::to_value(&ctx.workdir)),
-        ("in_worktree", Value::from(ctx.in_worktree)),
         ("launcher", Value::from(resolved.as_str())),
     ];
+    if ctx.worktrees {
+        hook_fields.push(("in_worktree", Value::from(ctx.in_worktree)));
+    }
 
     if dry_run {
         let mut steps = launcher
@@ -224,14 +232,17 @@ fn launch_or_describe(app: &App, ctx: &LaunchContext, name: &str, dry_run: bool)
             steps.insert(0, format!("pre-launch hook (skipped: dry run): {hook}"));
         }
         if app.out.json_mode() {
-            return app.out.json(&json::document([
-                ("task", json::to_value(&ctx.task)),
+            let mut fields = vec![
+                ("task", app.task_json(&ctx.task)),
                 ("workdir", json::to_value(&ctx.workdir)),
-                ("in_worktree", Value::from(ctx.in_worktree)),
                 ("launcher", Value::from(resolved)),
                 ("env", json::to_value(&ctx.env)),
                 ("steps", json::to_value(&steps)),
-            ]));
+            ];
+            if ctx.worktrees {
+                fields.push(("in_worktree", Value::from(ctx.in_worktree)));
+            }
+            return app.out.json(&json::document(fields));
         }
         let mut text = format!("Launcher: {resolved} (dry run)\n");
         for step in steps {

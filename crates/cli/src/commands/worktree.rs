@@ -14,7 +14,13 @@ use crate::commands::{existing_dir, finish};
 use crate::error::{CliError, Result};
 
 /// Tracks `path`, or creates a worktree for `create` and tracks that.
+/// Refused when worktrees are disabled (ADR 0022).
 pub fn run(app: &App, id: &str, path: Option<&Path>, create: Option<&str>) -> Result<()> {
+    if !app.worktrees() {
+        return Err(CliError::user(
+            "worktrees are disabled; set worktree.enabled = true (docs/config.md, \"Worktrees\")",
+        ));
+    }
     let id = App::task_id(id)?;
     let mut store = app.open_store()?;
     if let Some(branch) = create {

@@ -164,7 +164,9 @@ pub struct Task {
     pub related: Vec<Link>,
     /// `### Merge requests` under `## Related`.
     pub merge_requests: Vec<Link>,
-    /// `## Worktrees`.
+    /// `## Worktrees`. Absent from JSON when worktrees are disabled
+    /// (ADR 0022); missing on input means "unchanged" to `tasq apply`.
+    #[serde(default)]
     pub worktrees: Vec<Worktree>,
     /// `## Sessions`.
     pub sessions: Vec<Session>,

@@ -187,6 +187,9 @@ pub struct Toggles {
 }
 
 /// The whole state of the UI.
+// Independent switches (`color`, `worktrees`, `quit`, ...) set from
+// configuration and events; an enum per switch would not read better.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
     /// Open and done tasks as last loaded from the store; the list shows
@@ -220,6 +223,9 @@ pub struct Model {
     pub due_format: DueFormat,
     /// Where the detail goes (`ui.detail_position`).
     pub detail_position: DetailPosition,
+    /// Whether worktrees are enabled (`worktree.enabled`); off, the detail
+    /// never shows them.
+    pub worktrees: bool,
     /// The applied filter text (see [`Model::filter`]).
     pub filter: String,
     /// The list cursor, when anything is visible.
@@ -265,6 +271,7 @@ impl Model {
             week_start: Weekday::Mon,
             due_format: DueFormat::Relative,
             detail_position: DetailPosition::Right,
+            worktrees: false,
             filter: String::new(),
             selected: None,
             collapsed: BTreeSet::new(),
@@ -366,6 +373,13 @@ impl Model {
     #[must_use]
     pub fn with_detail_position(mut self, detail_position: DetailPosition) -> Self {
         self.detail_position = detail_position;
+        self
+    }
+
+    /// Whether worktrees are enabled (`worktree.enabled`).
+    #[must_use]
+    pub fn with_worktrees(mut self, worktrees: bool) -> Self {
+        self.worktrees = worktrees;
         self
     }
 

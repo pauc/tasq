@@ -9,7 +9,7 @@ refuse anything else; a future shape change bumps the number.
 | `tasq [list ...]` | `"tasks": [Task, ...]` in display order (group order, then priority, due, id); done tasks only with `--all` (after the open ones) or `--done` |
 | `tasq create`, `set`, `log`, `done`, `view`, `project`, `worktree`, `session`, `mr`, `apply` | `"task": Task` as stored after the command |
 | `tasq project <id>` (show) | `"task": Task`, `"default_project": path or null` |
-| `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool`, `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
+| `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool` (only with worktrees enabled), `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
 | `tasq store info` | `"store": {name, location, task_count, id_scheme, ids_may_change_on_reconcile}`, `"bookkeeper": "nb" \| "native" \| "none"` |
 | `tasq store sync` | `"synced": bool`, `"detail": string` |
 | `tasq doctor` | `"checks": [{name, status: "ok" \| "warn" \| "fail", detail, fix}]`, `"ok": bool` |
@@ -59,13 +59,16 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
 - `origin` is `{"source", "external_id", "url"}` for tasks created by `tasq sync`.
 - `closed_at` is when a done task was closed (`YYYY-MM-DD HH:MM`), `null` on open tasks and
   on tasks closed outside tasq (ADR 0020). It may be left out on input.
+- `worktrees` is present only when worktrees are enabled (`worktree.enabled`, ADR 0022), in
+  every document that carries a task, hook documents included. It may be left out on input,
+  which leaves the stored worktrees unchanged.
 
 ## `tasq apply`
 
 `tasq apply` reads `{"schema": 1, "task": Task}` from stdin (or a file) and writes the task
 through the store, which applies the differences it can express: title, description, status,
 priority, due, project, topic tags, done, `closed_at`, and appended progress entries, worktrees, sessions,
-related links and merge requests. Anything else (a dropped progress entry, a removed link) is
+related links and merge requests. A task without a `worktrees` key keeps its stored worktrees. Anything else (a dropped progress entry, a removed link) is
 refused with an error naming the fields, and nothing is written. Piping `tasq view --json <id>` straight back into
 `tasq apply` changes nothing.
 

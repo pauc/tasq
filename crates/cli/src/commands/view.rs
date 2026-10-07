@@ -67,7 +67,7 @@ pub fn run(app: &App, id: &str, raw: bool) -> Result<()> {
         let task = store.get(&id)?;
         return app
             .out
-            .json(&json::document([("task", json::to_value(&task))]));
+            .json(&json::document([("task", app.task_json(&task))]));
     }
     if raw {
         return app.out.print(&text);

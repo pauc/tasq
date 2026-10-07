@@ -1061,7 +1061,7 @@ mod worktree {
         env.git_repo(&wt);
         env.git(&wt, &["checkout", "-q", "-b", "feature/x"]);
         let out = env
-            .tasq()
+            .tasq_wt()
             .args(["worktree", "3", wt.to_str().unwrap()])
             .output()
             .unwrap();
@@ -1079,7 +1079,7 @@ mod worktree {
                 .contains("- [ROOT]/home/wt (`feature/x`)\n"),
         );
         let again = env
-            .tasq()
+            .tasq_wt()
             .args(["worktree", "3", wt.to_str().unwrap()])
             .output()
             .unwrap();
@@ -1091,7 +1091,7 @@ mod worktree {
         let plain = env.home.join("plain");
         std::fs::create_dir(&plain).unwrap();
         let out = env
-            .tasq()
+            .tasq_wt()
             .args(["worktree", "3", plain.to_str().unwrap()])
             .output()
             .unwrap();
@@ -1099,12 +1099,12 @@ mod worktree {
             env.normalize(&stdout(&out)),
             "[3] worktree: [ROOT]/home/plain\n"
         );
-        env.tasq()
+        env.tasq_wt()
             .args(["worktree", "3", "/definitely/not/here"])
             .assert()
             .code(1)
             .stderr("tasq: worktree path not found: /definitely/not/here\n");
-        env.tasq().args(["worktree", "3"]).assert().code(2);
+        env.tasq_wt().args(["worktree", "3"]).assert().code(2);
     }
 
     #[test]
@@ -1112,12 +1112,12 @@ mod worktree {
         let env = TestEnv::fixture();
         let project = env.home.join("proj");
         env.git_repo(&project);
-        env.tasq()
+        env.tasq_wt()
             .args(["project", "3", project.to_str().unwrap()])
             .assert()
             .success();
         let out = env
-            .tasq()
+            .tasq_wt()
             .args(["worktree", "3", "--create", "feature/y"])
             .output()
             .unwrap();
@@ -1132,7 +1132,7 @@ mod worktree {
     #[test]
     fn create_errors() {
         let env = TestEnv::fixture();
-        env.tasq()
+        env.tasq_wt()
             .args(["worktree", "3", "--create", "b"])
             .assert()
             .code(1)
@@ -1140,7 +1140,7 @@ mod worktree {
         let project = env.home.join("proj");
         std::fs::create_dir(&project).unwrap();
         // The removed command manager keys name their replacement.
-        env.tasq()
+        env.tasq_wt()
             .args([
                 "worktree",
                 "3",
@@ -1153,7 +1153,7 @@ mod worktree {
             .code(1)
             .stderr("tasq: --set: unknown config key \"work.worktree_manager\"\n");
         // git needs a repository.
-        env.tasq()
+        env.tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
             .args(["worktree", "3", "--create", "b"])
             .assert()
@@ -1335,7 +1335,7 @@ mod launch {
         let env = TestEnv::fixture();
         let before = env.read_task("20260902100000.todo.md");
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .args(["pick", "3", "--dry-run"])
             .output()
@@ -1394,7 +1394,7 @@ mod launch {
     fn next_picks_the_first_in_progress_task() {
         let env = TestEnv::fixture();
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .args(["next", "--dry-run", "--launcher", "shell"])
             .output()
@@ -1427,7 +1427,7 @@ mod launch {
     fn missing_worktree_is_not_asked_about_without_a_terminal() {
         let env = TestEnv::fixture();
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .args(["pick", "1", "--launcher", "shell", "--dry-run"])
             .output()
@@ -1435,7 +1435,7 @@ mod launch {
         assert!(out.status.success());
         // stdin is a pipe here, so even without --dry-run no prompt appears.
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .env("SHELL", "/nonexistent/shell")
             .args(["pick", "1", "--launcher", "shell"])
@@ -1610,7 +1610,7 @@ mod launch {
     fn auto_launcher_is_herdr_inside_herdr() {
         let env = TestEnv::fixture();
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .env("HERDR_ENV", "1")
             .env("TASQ_LAUNCHER", "auto")
@@ -1637,7 +1637,7 @@ mod launch {
                 .any(|s| s.as_str().unwrap().contains("herdr workspace rename"))
         );
         let outside = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .env("TASQ_LAUNCHER", "auto")
             .args(["pick", "3", "--dry-run", "--json"])
@@ -2768,7 +2768,7 @@ mod plugins {
         let read_log = || env.normalize(&std::fs::read_to_string(&log).unwrap_or_default());
 
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_NOW", "2026-10-07 09:30")
             .args(["create", "Hooked", "--tag", "x"])
             .output()
@@ -2784,7 +2784,7 @@ mod plugins {
         assert!(logged.contains("\"title\":\"Hooked\""), "{logged}");
 
         std::fs::remove_file(&log).unwrap();
-        env.tasq()
+        env.tasq_wt()
             .args(["done", "8", "shipped"])
             .assert()
             .success()
@@ -2797,7 +2797,7 @@ mod plugins {
         // A dry run lists the hook as a skipped step and runs nothing.
         std::fs::remove_file(&log).unwrap();
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .args(["pick", "3", "--dry-run", "--launcher", "shell"])
             .output()
@@ -2814,7 +2814,7 @@ mod plugins {
 
         // The real launch runs it with the resolved directory and launcher.
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .env("TASQ_LAUNCH_ENV", "inherit")
             .args(["pick", "3"])
@@ -2969,5 +2969,117 @@ mod plugins {
             .output()
             .unwrap();
         assert!(stdout(&out).contains("  tlogs  "), "{}", stdout(&out));
+    }
+}
+
+/// ADR 0022: with the default configuration nothing mentions worktrees.
+mod worktrees_disabled {
+    use super::*;
+
+    fn mentions_worktrees(text: &str) -> bool {
+        text.to_lowercase().contains("worktree")
+    }
+
+    #[test]
+    fn help_completions_and_json_say_nothing_about_worktrees() {
+        let env = TestEnv::fixture();
+        for args in [
+            vec!["--help"],
+            vec!["create", "--help"],
+            vec!["help", "pick"],
+            vec!["view", "1", "--json"],
+            vec!["list", "--all", "--json"],
+            vec!["completions", "zsh"],
+            vec!["completions", "bash"],
+        ] {
+            let out = env.tasq().args(&args).output().unwrap();
+            assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+            assert!(
+                !mentions_worktrees(&stdout(&out)),
+                "{args:?}: {}",
+                stdout(&out)
+            );
+        }
+        // Enabled, the same commands show them.
+        let help = env.tasq_wt().arg("--help").output().unwrap();
+        assert!(stdout(&help).contains("  worktree "), "{}", stdout(&help));
+        let zsh = env.tasq_wt().args(["completions", "zsh"]).output().unwrap();
+        assert!(stdout(&zsh).contains("worktree"));
+        let view = env
+            .tasq_wt()
+            .args(["view", "1", "--json"])
+            .output()
+            .unwrap();
+        assert!(stdout(&view).contains("\"worktrees\""), "{}", stdout(&view));
+        // `--set` and `--config` before parsing decide too.
+        let set = env
+            .tasq()
+            .args(["--set", "worktree.enabled=true", "--help"])
+            .output()
+            .unwrap();
+        assert!(stdout(&set).contains("  worktree "), "{}", stdout(&set));
+    }
+
+    #[test]
+    fn the_worktree_command_is_refused() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["worktree", "3", "--create", "b"])
+            .assert()
+            .code(1)
+            .stderr("tasq: worktrees are disabled; set worktree.enabled = true (docs/config.md, \"Worktrees\")\n");
+    }
+
+    #[test]
+    fn apply_without_the_key_keeps_the_stored_worktrees() {
+        let env = TestEnv::fixture();
+        let before = env.read_task("20260901090000.todo.md");
+        let json = env.tasq().args(["view", "1", "--json"]).output().unwrap();
+        assert!(!mentions_worktrees(&stdout(&json)));
+        env.tasq()
+            .arg("apply")
+            .write_stdin(json.stdout)
+            .assert()
+            .success()
+            .stdout("[1] applied\n");
+        assert_eq!(env.read_task("20260901090000.todo.md"), before);
+        let on = env
+            .tasq_wt()
+            .args(["view", "1", "--json"])
+            .output()
+            .unwrap();
+        assert!(
+            stdout(&on).contains("tasks-wt/feature-a"),
+            "{}",
+            stdout(&on)
+        );
+    }
+
+    #[test]
+    fn launch_ignores_tracked_worktrees() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["pick", "1", "--dry-run", "--launcher", "claude"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let text = format!("{}{}", stdout(&out), stderr(&out));
+        // The task file is quoted verbatim in the prompt; outside it the
+        // launch says nothing about worktrees.
+        let without_file: String = text
+            .lines()
+            .filter(|l| !l.contains("tasks-wt") && *l != "## Worktrees")
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!mentions_worktrees(&without_file), "{text}");
+        let json = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["pick", "1", "--dry-run", "--launcher", "shell", "--json"])
+            .output()
+            .unwrap();
+        assert!(!mentions_worktrees(&stdout(&json)), "{}", stdout(&json));
     }
 }

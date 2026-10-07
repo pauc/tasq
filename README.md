@@ -101,11 +101,11 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    tasq pick 12 --launcher shell    # a specific task, in a plain shell
    ```
 
-   The task is set to in-progress and a session opens in the first tracked worktree that
-   exists, else the task's project, else `work.default_project`. The default launcher is
-   Claude Code with a prompt built from the task; `shell`, `tmux`, `herdr` and `auto` are the
-   others (`launch.default`). `tasq worktree 12 --create my-branch` makes and tracks a git
-   worktree first.
+   The task is set to in-progress and a session opens in the task's project, else
+   `work.default_project`. The default launcher is Claude Code with a prompt built from the
+   task; `shell`, `tmux`, `herdr` and `auto` are the others (`launch.default`). With
+   worktrees enabled (`[worktree] enabled = true`), the session opens in the task's worktree
+   instead, and `tasq worktree 12 --create my-branch` makes and tracks one first.
 
 5. Pull in work from outside: declare `[forge.<name>]` and `[[source]]` blocks (see
    [`docs/sources.md`](docs/sources.md) and [`examples/sources/`](examples/sources/)), then
@@ -215,7 +215,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq pick ID [--launcher NAME] [--dry-run]` | Open a session on a specific task |
 | `tasq view ID [--raw]` | Show a task (glow on a terminal, plain markdown otherwise; `--raw` is verbatim) |
 | `tasq project ID [PATH]` | Show or set the task's project directory |
-| `tasq worktree ID PATH` / `tasq worktree ID --create BRANCH` | Track an existing git worktree, or create one and track it |
+| `tasq worktree ID PATH` / `tasq worktree ID --create BRANCH` | Track an existing git worktree, or create one and track it (with `worktree.enabled`) |
 | `tasq session ID SESSION_ID [DESC] [--launcher NAME]` | Track an agent session |
 | `tasq mr ID URL [TITLE]` | Track a merge request |
 | `tasq sync [--source NAME] [--dry-run] [ID]...` | Refresh tasks from the configured sources, or re-check the given tasks |

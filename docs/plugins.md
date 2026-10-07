@@ -135,8 +135,8 @@ The hook reads its document on stdin:
 {"schema": 1, "hook": "post-create", "task": { ...the Task of docs/json.md... }}
 ```
 
-`pre-launch` adds `"workdir"` (the directory the session will start in), `"in_worktree"` and
-`"launcher"` (the resolved name, `claude`, `shell`, `tmux` or `herdr`). The hook's stdout is
+`pre-launch` adds `"workdir"` (the directory the session will start in), `"in_worktree"` (only
+with worktrees enabled) and `"launcher"` (the resolved name, `claude`, `shell`, `tmux` or `herdr`). The hook's stdout is
 shown only with `-v`; a non-zero exit reports its stderr (else stdout). Commands run in order;
 after a failing `post-*` hook the remaining ones still run. `--dry-run` lists the `pre-launch`
 hooks as skipped steps and runs nothing. A command line that cannot be split (an unbalanced

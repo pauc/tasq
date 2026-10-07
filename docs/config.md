@@ -218,6 +218,14 @@ Worktrees per task are off by default (ADR 0022). With `worktree.enabled = false
 them shows anywhere; turn them on to declare a worktree for a task, create it when the task is
 launched and release it when the task is closed.
 
+Off (the default) means invisible: `tasq worktree` is hidden from `--help` and completions and
+refused with the key to set, task JSON has no `worktrees` key (hook documents included) and
+`next`/`pick --dry-run --json` no `in_worktree`, the terminal UI shows no Worktrees section, the
+Claude prompt drops its worktree instructions, and sessions start in the project even when the
+task file lists worktrees. Task files are never rewritten because of the setting: a
+`## Worktrees` section stays as it is (`tasq view` still prints the file) and is used again
+once worktrees are enabled.
+
 **Status:** the `[worktree]` keys are read and validated. The lifecycle that uses them is being
 built (`ruli/features/worktrees/PLAN.md`); until it lands, `tasq worktree <id> --create
 <branch>` runs `git worktree add` into `<project>-<branch>` next to the project (with `-b` when

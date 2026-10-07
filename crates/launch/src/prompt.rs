@@ -52,9 +52,15 @@ pub fn render(template: &str, vars: &BTreeMap<&str, String>) -> Result<String, L
 }
 
 /// The variables the Claude prompt uses, from a launch context.
-/// `in_herdr` adds the workspace-renaming instruction.
+/// `in_herdr` adds the workspace-renaming instruction. With worktrees
+/// disabled, `worktrees` and `worktrees_enabled` are empty, so their
+/// sections drop out.
 pub fn variables(ctx: &LaunchContext, in_herdr: bool) -> BTreeMap<&'static str, String> {
-    let worktrees: Vec<String> = ctx.task.worktrees.iter().map(format_worktree).collect();
+    let worktrees: Vec<String> = if ctx.worktrees {
+        ctx.task.worktrees.iter().map(format_worktree).collect()
+    } else {
+        Vec::new()
+    };
     let sessions: Vec<String> = ctx.task.sessions.iter().map(format_session).collect();
     BTreeMap::from([
         ("id", ctx.task.id.to_string()),
@@ -63,17 +69,16 @@ pub fn variables(ctx: &LaunchContext, in_herdr: bool) -> BTreeMap<&'static str, 
         ("markdown", ctx.markdown.trim_end().to_owned()),
         ("workdir", ctx.workdir.display().to_string()),
         ("worktrees", worktrees.join("\n")),
+        ("worktrees_enabled", flag(ctx.worktrees)),
         ("sessions", sessions.join("\n")),
         ("statuses", ctx.statuses.join("|")),
-        (
-            "herdr",
-            if in_herdr {
-                "1".to_owned()
-            } else {
-                String::new()
-            },
-        ),
+        ("herdr", flag(in_herdr)),
     ])
+}
+
+/// A section switch: `"1"` keeps `{{#name}}...{{/name}}`, empty drops it.
+fn flag(on: bool) -> String {
+    if on { "1".to_owned() } else { String::new() }
 }
 
 #[cfg(test)]

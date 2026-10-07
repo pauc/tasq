@@ -609,7 +609,7 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
         lines.push(Line::styled("Description", header(model)));
         lines.extend(description.lines().map(Line::raw));
     }
-    for (heading, items) in link_sections(task) {
+    for (heading, items) in link_sections(task, model.worktrees) {
         if !items.is_empty() {
             lines.push(Line::default());
             lines.push(Line::styled(heading, header(model)));
@@ -639,8 +639,9 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
 }
 
 /// The list sections of the detail pane: related links, merge requests,
-/// worktrees and sessions, each as `(heading, entries)`.
-pub fn link_sections(task: &Task) -> Vec<(&'static str, Vec<String>)> {
+/// worktrees (only when `worktrees` are enabled) and sessions, each as
+/// `(heading, entries)`.
+pub fn link_sections(task: &Task, worktrees: bool) -> Vec<(&'static str, Vec<String>)> {
     let as_text = |l: &tasq_core::model::Link| match &l.label {
         Some(label) => format!("{label} <{}>", l.url),
         None => l.url.clone(),
@@ -655,6 +656,7 @@ pub fn link_sections(task: &Task) -> Vec<(&'static str, Vec<String>)> {
             "Worktrees",
             task.worktrees
                 .iter()
+                .filter(|_| worktrees)
                 .map(|w| match &w.branch {
                     Some(branch) => format!("{} ({branch})", w.path.display()),
                     None => w.path.display().to_string(),

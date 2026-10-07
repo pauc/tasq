@@ -45,7 +45,7 @@ pub fn run(cli: Cli) -> Result<()> {
     }
     let opts = load_options(&global)?;
     match command {
-        Some(Command::Completions { shell }) => commands::completions::run(shell),
+        Some(Command::Completions { shell }) => commands::completions::run(shell, &global),
         Some(Command::Doctor) => commands::doctor::run(global, opts),
         other => {
             let app = App::load(global, opts)?;
@@ -161,6 +161,16 @@ fn command_name(command: &Command) -> &'static str {
     }
 }
 
+/// Whether worktrees are enabled for these flags, for decisions taken
+/// before a command runs (`--help`, completions). A configuration that does
+/// not load counts as disabled here; the command then reports the error.
+pub fn worktrees_enabled(global: &GlobalArgs) -> bool {
+    load_options(global)
+        .ok()
+        .and_then(|opts| Config::load(&opts).ok())
+        .is_some_and(|loaded| loaded.config.worktree.enabled)
+}
+
 /// [`LoadOptions`] from the process (cwd, `$HOME`, environment) plus the
 /// `--config`, `--profile` and `--set` flags.
 pub fn load_options(global: &GlobalArgs) -> Result<LoadOptions> {
@@ -197,6 +207,16 @@ impl App {
     /// The configured status workflow.
     pub fn workflow(&self) -> Workflow {
         self.config().workflow.workflow()
+    }
+
+    /// Whether worktrees are enabled (`worktree.enabled`, ADR 0022).
+    pub fn worktrees(&self) -> bool {
+        self.config().worktree.enabled
+    }
+
+    /// A task as JSON, without `worktrees` when they are disabled.
+    pub fn task_json(&self, task: &tasq_core::model::Task) -> serde_json::Value {
+        crate::json::task(task, self.worktrees())
     }
 
     /// The environment as the store wants it.
