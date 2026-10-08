@@ -847,6 +847,10 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ### No nb at runtime (ADR 0023, nb todos 22 and 48, 2026-10-08)
 
+Commits 97611f0 (store, CLI, docs), 39e550f (format duplicate checks), fa6fc13 (example
+configs). 920 workspace tests with `TASQ_REQUIRE_NB=1`; store-nb 244 mutants, 0 missed after
+the lock tests were tightened; `format/ops.rs` 124 mutants, 0 missed.
+
 - **Why:** `tasq done` took 5-6 s on the author's notebook. `NbCliBookkeeper::checkpoint` ran
   `nb git checkpoint --wait`, and with nb's `auto_sync` on (nb's default) `_git_checkpoint`
   runs a full `_git sync` (`git ls-remote` 1.5 s, `git fetch` 2.3 s, push) inside the subshell
