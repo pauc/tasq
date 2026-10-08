@@ -243,8 +243,17 @@ path; `--dry-run` lists the step and fetches and creates nothing. `tasq worktree
 [--from REF] [--dry-run]` does the same without launching, and the hidden `tasq worktree <id>
 --create <branch>` declares on `branch` and creates it at once.
 
-**Status:** releasing worktrees at close and provisioning (links, copies, templates, hooks) are
-being built (`ruli/features/worktrees/PLAN.md`).
+Once git has created it, the worktree is provisioned: `copies` first, then `symlinks`, then
+`templates` (so a template can replace a copied file). Copies and links come from the
+repository's main checkout at the same relative path; a copied directory keeps its files and
+links. A copy or link whose source does not exist, or whose target the checkout already has (a
+tracked file), is skipped with a warning. Templates are rendered with the variables below before
+git runs, so a missing template or an unknown `{{variable}}` in one stops the launch with nothing
+created; a rendered file replaces what the checkout has. Copy, link and template targets must be
+relative paths that stay inside the worktree. `--dry-run` lists every step.
+
+**Status:** releasing worktrees at close and the `pre-create`/`post-create` hooks are being built
+(`ruli/features/worktrees/PLAN.md`).
 
 ```toml
 [worktree]
@@ -284,8 +293,8 @@ post-remove = []
 | `worktree.on_create` | `auto` \| `never` | `auto` | `auto` declares a worktree for every new task whose project is a git checkout; `never` only with `--worktree`. |
 | `worktree.on_done` | `release` \| `keep` | `release` | Closing a task removes its clean worktrees (`release`) or leaves them (`keep`). |
 | `worktree.delete_branch` | `safe` \| `never` | `safe` | On release, delete the branch when it is merged into the default branch or pushed (`safe`), or never. |
-| `worktree.symlinks` | array of paths | `[]` | Paths in the project linked into a new worktree. |
-| `worktree.copies` | array of paths | `[]` | Paths in the project copied into a new worktree. |
+| `worktree.symlinks` | array of paths | `[]` | Paths in the main checkout linked into a new worktree, at the same relative path. |
+| `worktree.copies` | array of paths | `[]` | Paths in the main checkout (files or directories) copied into a new worktree. |
 | `worktree.copy_ignored` | bool | `false` | Copy the project's gitignored files into a new worktree, narrowed by `.worktreeinclude`. |
 | `worktree.templates` | array of `{source, target}` | `[]` | Files rendered into a new worktree; `source` relative to the config file, `target` to the worktree. |
 | `worktree.variables` | table of strings | empty | Extra template variables. |
@@ -294,7 +303,9 @@ post-remove = []
 
 Per-repository settings (links, copies, templates, hooks) belong in a `.tasq.toml` next to the
 repository or in the directory above it; the worktree commands load the configuration from the
-task's project directory.
+repository's main checkout (the task's project, or the checkout it is a worktree of), not from
+the directory tasq runs in, so the right file applies from anywhere. A relative template
+`source` starts at the directory of the file that set `worktree.templates`.
 
 ### Template variables
 

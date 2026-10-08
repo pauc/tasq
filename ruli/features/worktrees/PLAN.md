@@ -159,10 +159,10 @@ span = 4000
 block = 10
 
 [worktree.hooks]
-pre_create = []
-post_create = ["direnv allow ."]
-pre_remove = []
-post_remove = []
+pre-create = []
+post-create = ["direnv allow ."]
+pre-remove = []
+post-remove = []
 ```
 
 Template variables: `id`, `title`, `slug`, `branch`, `branch_safe` (non-alphanumerics to `_`, runs collapsed, trimmed), `branch_db`

@@ -18,7 +18,7 @@ create at launch, release at close, never remove the entry.
 | WT-104 | Templates, variables and naming in core | done | `tasq_core::template` (hand parser replacing the launch regexes, `names()`), `worktree::vars` (`Scope`, `check`, `Vars`, `branch_safe`, `branch_db`, `slug`, `repo_name`, `port` via FNV-1a); config rejects unknown template variables per scope and bad `[worktree.variables]` names; 102 mutants in template + worktree, 96 caught, 6 unviable |
 | WT-201 | Declaring: `tasq create --worktree` and `tasq worktree <id> [BRANCH]` | done | af9b74c, 012c28b, then the TUI create view. `worktree::declaration` (`declare`, `wanted`, `is_path`), `worktree::git` (`work_tree_root`, `gitdir`, `origin_url`), `lifecycle::branch_name`; CLI `Repo::of` probes `.git` without a process; `--create` hidden; TUI `c` opens the edit view empty (`Form::new_task`, Worktree box), `Host::worktree`, `edit::Fields::draft`; 906 tests green; 0 missed mutants (core 82+8, CLI 23, TUI slice 64) |
 | WT-202 | Materializing at launch: the `tasq-worktree` crate | done | fa33080 + CLI wiring. `tasq_worktree::Git` (`branch_state` local / `ls-remote` + fetch / offline `origin/<b>` / absent, `resolve_start`, `add` with cleanup, `current_branch`); `materialize` in `next`/`pick` before the status change, `tasq worktree up [--from] [--dry-run]`, `--create` = declare + create; recreate prompt, `GitManager`, `WorktreeManager`, `work::{branch_slug, sibling_worktree}` deleted; 915 tests green; 0 missed mutants (crate 27, diff 33) |
-| WT-203 | Provisioning: symlinks, copies, templates | todo | |
+| WT-203 | Provisioning: symlinks, copies, templates | done | 46ef57d (core `provision::plan`, three workspace fixture configs), 9b37c1a (`tasq_worktree::provision::{prepare, apply}`, tree checked against fixture files), then the CLI: `RepoSettings` loads `[worktree]` from the main checkout (`App::config_at`), templates relative to the file that set them, rendered before `git worktree add`; dry runs list the steps; 0 missed mutants (core 4+2, crate 7+1, CLI diff 13+10) |
 | WT-204 | Hooks and trust | todo | |
 | WT-205 | Integration checks | todo | |
 | WT-206 | Releasing at close | todo | |
@@ -73,6 +73,15 @@ create at launch, release at close, never remove the entry.
   (no `origin`, offline) falls back to an already fetched `origin/<b>`. The worktree is created
   before the task is set in-progress, so a git failure leaves the file untouched. `tasq worktree
   up` needs `args_conflicts_with_subcommands` next to the `<ID> [TARGET]` positionals.
+- WT-203: the fixtures are modelled on the plan's description of the author's three workspaces,
+  not on their `gwm.yml` files (outside the repository; WT-208 converts the real ones). Hook
+  keys are kebab-case (`post-create`), as `docs/config.md` always said; PLAN 4.4 showed
+  snake_case and is fixed. Templates render in `prepare`, before git runs, so a broken template
+  costs nothing; a filesystem failure in `apply` leaves the created worktree and says so. The
+  per-repository config is loaded from the main checkout for declaring too, so `worktree.path`
+  in a repository's `.tasq.toml` applies when tasq runs elsewhere. Copies come from the main
+  checkout, not the task's project subdirectory, since the worktree is a checkout of the whole
+  repository.
 - Defaults confirmed by the author 2026-10-08 (TUI): `c` opens a full create view like the edit
   view, not the title prompt; the title prompt and its history are gone.
 - Defaults confirmed by the author 2026-10-07: `on_create = "auto"`, `on_done = "release"`,

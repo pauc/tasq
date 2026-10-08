@@ -242,7 +242,9 @@ fn launch_or_describe(
             steps.insert(0, format!("pre-launch hook (skipped: dry run): {hook}"));
         }
         if let Some(created) = created {
-            steps.insert(0, format!("create worktree {}", created.line));
+            let worktree = std::iter::once(format!("create worktree {}", created.line))
+                .chain(created.steps.iter().cloned());
+            steps.splice(0..0, worktree);
         }
         if app.out.json_mode() {
             let mut fields = vec![

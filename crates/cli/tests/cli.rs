@@ -1435,6 +1435,105 @@ mod worktree {
         );
     }
 
+    /// Task 3 in a repository at `<home>/proj` whose own `.tasq.toml` (not
+    /// the one in the directory tasq runs from) sets the layout and the
+    /// provisioning; templates live next to that file.
+    fn provisioned_project(env: &TestEnv, template: &str) -> std::path::PathBuf {
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        std::fs::write(
+            project.join(".gitignore"),
+            "node_modules/\n.env\n.tasq.toml\ntpl/\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(project.join("node_modules/pkg")).unwrap();
+        std::fs::write(project.join(".env"), "SECRET=1\n").unwrap();
+        std::fs::create_dir(project.join("tpl")).unwrap();
+        std::fs::write(project.join("tpl/envrc"), template).unwrap();
+        std::fs::write(
+            project.join(".tasq.toml"),
+            "[worktree]\n\
+             path = \"{{project_parent}}/wt-{{branch_safe}}\"\n\
+             symlinks = [\"node_modules\", \"missing\"]\n\
+             copies = [\".env\"]\n\
+             templates = [{ source = \"tpl/envrc\", target = \".envrc\" }]\n",
+        )
+        .unwrap();
+        env.tasq_wt()
+            .args(["project", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(["worktree", "3", "b"])
+            .assert()
+            .success();
+        project
+    }
+
+    #[test]
+    fn up_provisions_from_the_repository_config() {
+        let env = TestEnv::fixture();
+        let project = provisioned_project(&env, "export BRANCH={{branch}} TASK={{id}}\n");
+        let wt = env.home.join("wt-b");
+        let dry = env
+            .tasq_wt()
+            .args(["worktree", "up", "3", "--dry-run"])
+            .output()
+            .unwrap();
+        assert!(dry.status.success(), "{}", stderr(&dry));
+        assert_eq!(
+            env.normalize(&stdout(&dry)),
+            "[3] would create worktree [ROOT]/home/wt-b on b (new from HEAD)\n  \
+             copy .env from [ROOT]/home/proj/.env\n  \
+             link node_modules -> [ROOT]/home/proj/node_modules\n  \
+             link missing -> [ROOT]/home/proj/missing\n  \
+             render .envrc from [ROOT]/home/proj/tpl/envrc\n"
+        );
+        assert!(!wt.exists());
+        let out = env
+            .tasq_wt()
+            .args(["worktree", "up", "3"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(
+            env.normalize(&stderr(&out))
+                .contains("tasq: warning: link: [ROOT]/home/proj/missing not found, skipped\n"),
+            "{}",
+            stderr(&out)
+        );
+        assert_eq!(
+            std::fs::read_link(wt.join("node_modules")).unwrap(),
+            project.join("node_modules")
+        );
+        assert_eq!(
+            std::fs::read_to_string(wt.join(".env")).unwrap(),
+            "SECRET=1\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(wt.join(".envrc")).unwrap(),
+            "export BRANCH=b TASK=3\n"
+        );
+    }
+
+    #[test]
+    fn a_broken_template_stops_before_git_runs() {
+        let env = TestEnv::fixture();
+        provisioned_project(&env, "{{nope}}\n");
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::ends_with(
+                "/home/proj/tpl/envrc: unknown placeholder {{nope}}\n",
+            ));
+        assert!(!env.home.join("wt-b").exists());
+        env.tasq_wt()
+            .args(["worktree", "up", "3", "--dry-run"])
+            .assert()
+            .code(1);
+    }
+
     #[test]
     fn up_creates_the_declared_worktree() {
         let env = TestEnv::fixture();

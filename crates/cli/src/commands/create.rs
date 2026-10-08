@@ -154,16 +154,16 @@ pub fn new_task_worktree(app: &App, task: &Task, asked: Asked) -> Result<Option<
         Err(_) if asked == Asked::No => return Ok(None),
         Err(e) => return Err(e),
     };
-    let repo = worktree::Repo::of(&project);
-    let on_create = app.config().worktree.on_create;
-    if !declaration::wanted(on_create, asked != Asked::No, repo.is_some()) {
+    let settings = worktree::RepoSettings::load(app, &project)?;
+    let in_work_tree = settings.repo.is_some();
+    if !declaration::wanted(settings.config.on_create, asked != Asked::No, in_work_tree) {
         return Ok(None);
     }
     let branch = match asked {
         Asked::Branch(branch) => Some(branch),
         Asked::No | Asked::Default => None,
     };
-    let (declared, _) = worktree::declare_in(app, task, branch, &project, repo.as_ref())?;
+    let (declared, _) = worktree::declare_in(app, task, branch, &settings)?;
     Ok(Some(declared))
 }
 

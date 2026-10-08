@@ -4,12 +4,15 @@
 
 use std::path::{Path, PathBuf};
 
+use tasq_core::config::WorktreeConfig;
 use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::store::Store;
 use tasq_core::work;
 use tasq_core::worktree::lifecycle::{self, BranchState, Declared, LaunchAction};
-use tasq_core::worktree::{declaration, git, vars};
+use tasq_core::worktree::vars::Vars;
+use tasq_core::worktree::{declaration, git, provision, vars};
 use tasq_store_nb::NbStore;
+use tasq_worktree::provision::{apply, prepare};
 use tasq_worktree::{Git, describe as describe_start};
 
 use crate::app::App;
@@ -104,33 +107,30 @@ pub fn project_of(app: &App, task: &Task) -> Result<PathBuf> {
 }
 
 /// Declares a worktree for `task` from `project` on `branch` (the
-/// configured default without one); also whether it is new. Templates see
-/// the repository's main checkout as `{{project}}` when `project` is in a
-/// git work tree.
+/// configured default without one); also whether it is new.
 pub fn declare(
     app: &App,
     task: &Task,
     branch: Option<&str>,
     project: &Path,
 ) -> Result<(Worktree, bool)> {
-    let repo = Repo::of(project);
-    declare_in(app, task, branch, project, repo.as_ref())
+    declare_in(app, task, branch, &RepoSettings::load(app, project)?)
 }
 
-/// [`declare`] with the repository already probed.
+/// [`declare`] with the repository's settings loaded already. Templates
+/// see the repository's main checkout as `{{project}}`.
 pub fn declare_in(
     app: &App,
     task: &Task,
     branch: Option<&str>,
-    project: &Path,
-    repo: Option<&Repo>,
+    settings: &RepoSettings,
 ) -> Result<(Worktree, bool)> {
     let declared = declaration::declare(
         task,
         branch,
-        &app.config().worktree,
-        repo.map_or(project, |r| &r.main),
-        repo.and_then(|r| r.name.as_deref()),
+        &settings.config,
+        &settings.main,
+        settings.name(),
         app.opts.home.as_deref(),
     )
     .map_err(|e| CliError::user(e.to_string()))?;
@@ -138,6 +138,49 @@ pub fn declare_in(
         Declared::New(worktree) => (worktree, true),
         Declared::Already(worktree) => (worktree, false),
     })
+}
+
+/// The worktree settings of the repository a task works in: `[worktree]`
+/// as loaded from its main checkout, so the `.tasq.toml` next to the
+/// repository applies wherever tasq runs (plan 4.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoSettings {
+    /// The task's project directory, where `git` runs.
+    pub project: PathBuf,
+    /// The repository, when `project` is inside one.
+    pub repo: Option<Repo>,
+    /// The main checkout (`project` outside a repository).
+    pub main: PathBuf,
+    /// `[worktree]` as configured for the main checkout.
+    pub config: WorktreeConfig,
+    /// Where relative template sources start: the directory of the file
+    /// that set `worktree.templates`, else the main checkout.
+    pub templates_dir: PathBuf,
+}
+
+impl RepoSettings {
+    /// The settings for `project`.
+    pub fn load(app: &App, project: &Path) -> Result<Self> {
+        let repo = Repo::of(project);
+        let main = repo.as_ref().map_or(project, |r| &r.main).to_path_buf();
+        let loaded = app.config_at(&main)?;
+        let templates_dir = loaded
+            .file_for("worktree.templates")
+            .and_then(Path::parent)
+            .map_or_else(|| main.clone(), Path::to_path_buf);
+        Ok(Self {
+            project: project.to_path_buf(),
+            repo,
+            main,
+            config: loaded.config.worktree,
+            templates_dir,
+        })
+    }
+
+    /// The repository name for `{{repo}}`, when known.
+    pub fn name(&self) -> Option<&str> {
+        self.repo.as_ref().and_then(|r| r.name.as_deref())
+    }
 }
 
 /// A git repository as found on disk, without running `git`.
@@ -207,7 +250,11 @@ pub fn up(app: &App, id: &str, from: Option<&str>, dry_run: bool) -> Result<()> 
     let store = app.open_store()?;
     let task = store.get(&id)?;
     let line = match materialize(app, &task, from, dry_run)? {
-        Some(created) if dry_run => format!("[{id}] would create worktree {}\n", created.line),
+        Some(created) if dry_run => {
+            let mut lines = vec![format!("[{id}] would create worktree {}", created.line)];
+            lines.extend(created.steps.iter().map(|step| format!("  {step}")));
+            lines.join("\n") + "\n"
+        }
         Some(created) => format!("[{id}] created worktree {}\n", created.line),
         None => match task.worktrees.iter().find(|w| w.path.is_dir()) {
             Some(existing) => format!("[{id}] worktree exists: {}\n", describe(existing)),
@@ -228,14 +275,18 @@ pub struct Created {
     pub path: PathBuf,
     /// `<path> on <branch> (<where the branch comes from>)`.
     pub line: String,
+    /// The provisioning steps, one line each (`link node_modules -> ...`).
+    pub steps: Vec<String>,
 }
 
 /// Step 2 of the lifecycle: when none of `task`'s declared worktrees
 /// exists, creates the first one that records a branch, in the task's
-/// project repository; a new branch starts from `from`, else
-/// `worktree.base`. A dry run decides without fetching or creating
-/// anything. `None` when a declared worktree exists or none can be
-/// created. The caller checks that worktrees are enabled.
+/// project repository, and provisions it (copies, links, templates). A new
+/// branch starts from `from`, else `worktree.base`. Templates are rendered
+/// before git runs, so a broken one stops everything. A dry run decides
+/// and renders without fetching or creating anything. `None` when a
+/// declared worktree exists or none can be created. The caller checks
+/// that worktrees are enabled.
 pub fn materialize(
     app: &App,
     task: &Task,
@@ -243,16 +294,25 @@ pub fn materialize(
     dry_run: bool,
 ) -> Result<Option<Created>> {
     let git = Git { env: app.env_vec() };
-    let base = from.unwrap_or(&app.config().worktree.base);
+    let settings = match project_of(app, task) {
+        Ok(project) => Some(RepoSettings::load(app, &project)?),
+        Err(_) => None,
+    };
+    let configured = settings
+        .as_ref()
+        .map_or(&app.config().worktree, |s| &s.config);
+    let base = from.unwrap_or(&configured.base);
     let mut failed = None;
     let action = lifecycle::on_launch(
         &task.worktrees,
         Path::is_dir,
         |branch| {
-            let state = project_of(app, task).and_then(|repo| {
-                git.branch_state(&repo, branch, !dry_run)
-                    .map_err(|e| CliError::user(e.to_string()))
-            });
+            let state = match &settings {
+                Some(s) => git
+                    .branch_state(&s.project, branch, !dry_run)
+                    .map_err(|e| CliError::user(e.to_string())),
+                None => project_of(app, task).map(|_| BranchState::Absent),
+            };
             state.unwrap_or_else(|e| {
                 failed = Some(e);
                 BranchState::Absent
@@ -263,25 +323,46 @@ pub fn materialize(
     if let Some(e) = failed {
         return Err(e);
     }
-    let LaunchAction::Materialize {
-        path,
-        branch,
-        start,
-    } = action
+    let (
+        LaunchAction::Materialize {
+            path,
+            branch,
+            start,
+        },
+        Some(s),
+    ) = (action, settings)
     else {
         return Ok(None);
     };
-    let repo = project_of(app, task)?;
-    let (start, note) = git.resolve_start(&repo, &branch, &start);
+    let (start, note) = git.resolve_start(&s.project, &branch, &start);
     if let Some(note) = note {
         app.out.warn(&note);
     }
+    let user = |e: &dyn std::fmt::Display| CliError::user(e.to_string());
+    let steps =
+        provision::plan(&s.config, &s.main, &path, &s.templates_dir).map_err(|e| user(&e))?;
+    let vars = Vars::for_task(task, &s.main, s.name(), &s.config.variables)
+        .with_branch(&branch, s.config.ports)
+        .with_worktree(&path);
+    let ready = prepare(&steps, &vars).map_err(|e| user(&e))?;
     if !dry_run {
-        git.add(&repo, &path, &branch, &start)
-            .map_err(|e| CliError::user(e.to_string()))?;
+        git.add(&s.project, &path, &branch, &start)
+            .map_err(|e| user(&e))?;
+        let warnings = apply(&ready).map_err(|e| {
+            CliError::user(format!(
+                "worktree {} was created, but provisioning it failed: {e}",
+                path.display()
+            ))
+        })?;
+        for warning in warnings {
+            app.out.warn(&warning);
+        }
     }
-    let line = describe_start(&path, &branch, &start);
-    Ok(Some(Created { path, line }))
+    Ok(Some(Created {
+        line: describe_start(&path, &branch, &start),
+        steps: steps.iter().map(|step| step.describe(&path)).collect(),
+        path,
+    }))
 }
 
 /// Records `path` (which must exist) with its current branch, unless it is
