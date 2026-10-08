@@ -264,12 +264,27 @@ Hooks from the global file, `--config`, `--set` or the environment run without a
 repository's own `.tasq.toml` sets (it may have come with a clone) run only once approved: on a
 terminal tasq lists them and asks, and a yes is kept in `$XDG_STATE_HOME/tasq/trust.toml` (else
 `~/.local/state/tasq/trust.toml`) with each line as written, so editing a line asks again.
-`--yes` on `next`, `pick` and `tasq worktree up` approves them for one run without storing it;
-`tasq worktree trust [DIR]` approves them ahead of time. Without a terminal or approval they are
-skipped with a warning that says how to approve them.
+`--yes` on `next`, `pick`, `done`, `tasq worktree up` and `tasq worktree release` approves them
+for one run without storing it; `tasq worktree trust [DIR]` approves them ahead of time. Without
+a terminal or approval they are skipped with a warning that says how to approve them; the
+terminal UI never asks.
 
-**Status:** releasing worktrees at close (and so the `pre-remove`/`post-remove` hooks) is being
-built (`ruli/features/worktrees/PLAN.md`).
+Closing a task (`tasq done`, the terminal UI's `d`) releases its worktrees when `on_done =
+"release"`; `tasq worktree release <id>` does the same without closing it. Each declared worktree
+that exists is removed with `git worktree remove` unless it is the main checkout, is not a
+worktree of the repository, contains the current directory (a session running `tasq done` from
+inside it), is locked, or has modified, staged or untracked files. Files that provisioning wrote
+(copies, links, rendered templates) do not count: they can be made again, and they go with the
+worktree. `pre-remove` runs inside the worktree first (a failure keeps it), `post-remove` in the
+main checkout after (a failure is a warning). Then, with `delete_branch = "safe"`, the local
+branch is deleted when nothing is lost: it is merged into the default branch (`origin/HEAD`'s
+branch, remote or local, else the local `main` or `master`; a squash or rebase merge counts), or
+its upstream on the remote (else `origin/<branch>`) contains it. Nothing is fetched first: the
+remote branches are as last fetched. Whatever is kept is named in a warning; `tasq worktree
+release <id> --force` removes a dirty worktree and deletes a branch that is neither merged nor
+pushed, nothing else. `--dry-run` lists what would go. The task is closed even when a release
+fails, and the `## Worktrees` entries always stay: launching the task again creates the worktree
+again, on the kept local branch, the pushed one, or a new one from `base`.
 
 ```toml
 [worktree]

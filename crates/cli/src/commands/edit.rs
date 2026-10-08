@@ -11,6 +11,8 @@ use tasq_core::store::Store;
 
 use crate::app::App;
 use crate::commands::finish;
+use crate::commands::worktree::{self, Releasing};
+use crate::commands::worktree_hooks::{self, Approval};
 use crate::error::{CliError, Result};
 use crate::plugins::{self, Hook};
 
@@ -52,8 +54,10 @@ pub fn log(app: &App, id: &str, note: &str) -> Result<()> {
 
 /// `tasq done <id> [note]`: the note first, then `# [x]` with the status
 /// tag removed, as the script did (`append_progress`, `nb todo do`,
-/// `strip_status_tag`).
-pub fn done(app: &App, id: &str, note: Option<&str>) -> Result<()> {
+/// `strip_status_tag`). Then, with worktrees enabled, the task's worktrees
+/// are released (plan 4.2 step 3); a failure there is a warning, the task
+/// is closed either way.
+pub fn done(app: &App, id: &str, note: Option<&str>, yes: bool) -> Result<()> {
     let id = App::task_id(id)?;
     let mut store = app.open_store()?;
     let clock = app.clock()?;
@@ -61,7 +65,20 @@ pub fn done(app: &App, id: &str, note: Option<&str>) -> Result<()> {
     if !app.config().hooks.post_done.is_empty() {
         plugins::run_hooks(app, Hook::PostDone, &store.get(&id)?, &[])?;
     }
-    finish(app, &store, &id, &format!("[{id}] done: {}\n", task.title))
+    let mut text = format!("[{id}] done: {}\n", task.title);
+    if app.worktrees() {
+        let how = Releasing {
+            force: false,
+            approval: Approval::from_yes(yes),
+            dry_run: false,
+            closing: true,
+        };
+        match worktree::release(app, &task, how, &mut worktree_hooks::to_terminal(app)) {
+            Ok(lines) => text.push_str(&worktree::prefixed(&id, &lines)),
+            Err(e) => app.out.warn(&format!("worktrees not released: {e}")),
+        }
+    }
+    finish(app, &store, &id, &text)
 }
 
 /// Splits `tasq reopen`'s optional words into a status and a note: a first

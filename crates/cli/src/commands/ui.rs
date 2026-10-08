@@ -28,6 +28,8 @@ use tasq_tui::{Host, HostResult, KeyMap, LaunchTarget, Model, SourceChoice};
 use crate::app::App;
 use crate::cli::GlobalArgs;
 use crate::commands::create::{Asked, new_task_worktree};
+use crate::commands::worktree::{self, Releasing};
+use crate::commands::worktree_hooks::Approval;
 use crate::error::{CliError, Result};
 use crate::plugins::{self, Hook, HookEvent};
 
@@ -139,9 +141,34 @@ impl Host for CliHost<'_> {
             .map(|()| "sync finished".to_owned())
     }
 
-    /// The same `post-done` hooks as `tasq done`, with the same document.
+    /// The same `post-done` hooks as `tasq done`, with the same document,
+    /// then the same release of its worktrees, never asking about hooks
+    /// (the UI owns the terminal): unapproved ones are skipped.
     fn after_done(&mut self, task: &Task) -> std::result::Result<(), String> {
-        self.hooks(Hook::PostDone, task)
+        let hooks = self.hooks(Hook::PostDone, task);
+        if !self.app.worktrees() {
+            return hooks;
+        }
+        let mut warnings: Vec<String> = hooks.err().into_iter().collect();
+        let how = Releasing {
+            force: false,
+            approval: Approval::Skip,
+            dry_run: false,
+            closing: true,
+        };
+        let mut collect = |event| {
+            if let HookEvent::Warning(text) = event {
+                warnings.push(text);
+            }
+        };
+        if let Err(e) = worktree::release(self.app, task, how, &mut collect) {
+            warnings.push(format!("worktrees not released: {e}"));
+        }
+        if warnings.is_empty() {
+            Ok(())
+        } else {
+            Err(warnings.join("; "))
+        }
     }
 
     /// The worktree `tasq create` would declare: on `branch` when one was
@@ -332,6 +359,77 @@ mod tests {
             std::fs::read_to_string(&log).unwrap(),
             "--profile x sync\n--profile x sync --source gitlab --source inbox\n"
         );
+    }
+
+    /// A repository at `<dir>/proj` with worktree `b` at `<dir>/proj-b`,
+    /// an app with worktrees on (`git` from this process's `PATH`), and
+    /// task 8 closed with that worktree declared.
+    fn released(dir: &Path) -> (App, Task, PathBuf) {
+        let project = dir.join("proj");
+        let wt = dir.join("proj-b");
+        std::fs::create_dir(&project).unwrap();
+        let git = |cwd: &Path, args: &[&str]| {
+            let out = Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+                .args(args)
+                .current_dir(cwd)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}");
+        };
+        git(&project, &["init", "-q", "-b", "main"]);
+        git(&project, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        git(
+            &project,
+            &["worktree", "add", "-q", "-b", "b", wt.to_str().unwrap()],
+        );
+        let mut app = app_in(dir, "[worktree]\nenabled = true\n");
+        for key in ["PATH", "HOME"] {
+            if let Ok(value) = std::env::var(key) {
+                app.opts.env.insert(key.to_owned(), value);
+            }
+        }
+        let mut task = closed_task();
+        task.project = Some(project);
+        task.add_worktree(Worktree::on_branch(&wt, "b"));
+        (app, task, wt)
+    }
+
+    #[test]
+    fn after_done_releases_the_worktrees_without_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path().canonicalize().unwrap();
+        let (app, task, wt) = released(&dir);
+        std::fs::write(wt.join("scratch"), "x").unwrap();
+        assert_eq!(
+            host(&app).after_done(&task),
+            Err(format!(
+                "kept worktree {}: it has uncommitted or untracked changes; \
+                 tasq worktree release 8 --force removes it",
+                wt.display()
+            ))
+        );
+        std::fs::remove_file(wt.join("scratch")).unwrap();
+        // Hooks of the repository's own file are never asked about here.
+        std::fs::write(
+            dir.join("proj").join(".git").join("info").join("exclude"),
+            ".tasq.toml\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("proj").join(".tasq.toml"),
+            "[worktree.hooks]\npre-remove = [\"/bin/false\"]\n",
+        )
+        .unwrap();
+        let warning = host(&app).after_done(&task).unwrap_err();
+        assert!(
+            warning.starts_with("hooks from ") && warning.contains("were skipped"),
+            "{warning}"
+        );
+        assert!(!wt.exists(), "removed");
+        assert_eq!(host(&app).after_done(&task), Ok(()), "nothing left");
+        let off = app_in(&dir, "");
+        assert_eq!(host(&off).after_done(&task), Ok(()), "disabled: untouched");
     }
 
     fn closed_task() -> Task {

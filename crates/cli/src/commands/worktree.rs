@@ -1,18 +1,24 @@
 //! `tasq worktree <id> [BRANCH|PATH]`: declare a worktree or track an
 //! existing one; `tasq worktree up <id>` creates the declared one now, as a
-//! launch does; `--create <branch>` (hidden) is "declare, then up".
+//! launch does; `--create <branch>` (hidden) is "declare, then up";
+//! `tasq worktree release <id>` does what closing the task does to its
+//! worktrees ([`release`], also run by `tasq done` and the TUI's `d`).
 
 use std::path::{Path, PathBuf};
 
-use crate::commands::worktree_hooks;
-use tasq_core::config::{WorktreeConfig, project_file};
+use crate::commands::worktree_hooks::{self, Approval, Hooks};
+use tasq_core::config::{OnDone, WorktreeConfig, project_file};
 use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::store::Store;
 use tasq_core::work;
 use tasq_core::worktree::hooks::{self, Kind};
-use tasq_core::worktree::lifecycle::{self, BranchState, Declared, LaunchAction};
+use tasq_core::worktree::integration::Safety;
+use tasq_core::worktree::lifecycle::{
+    self, BranchFate, BranchSeen, BranchState, Declared, KeepBranch, KeepWorktree, LaunchAction,
+    WorktreeFate,
+};
 use tasq_core::worktree::vars::Vars;
-use tasq_core::worktree::{declaration, git, provision, vars};
+use tasq_core::worktree::{declaration, git, provision, status, vars};
 use tasq_store_nb::NbStore;
 use tasq_worktree::provision::{apply, prepare};
 use tasq_worktree::{Git, describe as describe_start};
@@ -21,6 +27,7 @@ use crate::app::App;
 use crate::cli::{Command, WorktreeAction};
 use crate::commands::{existing_dir, finish};
 use crate::error::{CliError, Result};
+use crate::plugins::HookEvent;
 
 /// `tasq worktree`: a subcommand, else declare or track (`run`).
 pub fn dispatch(app: &App, command: &Command) -> Result<()> {
@@ -41,6 +48,12 @@ pub fn dispatch(app: &App, command: &Command) -> Result<()> {
             yes,
         }) => up(app, id, from.as_deref(), *yes, *dry_run),
         Some(WorktreeAction::Trust { dir }) => trust(app, dir.as_deref()),
+        Some(WorktreeAction::Release {
+            id,
+            force,
+            dry_run,
+            yes,
+        }) => release_command(app, id, *force, *yes, *dry_run),
         None => run(
             app,
             id.as_deref().unwrap_or_default(),
@@ -398,12 +411,15 @@ pub fn materialize(
         .with_worktree(&path);
     let ready = prepare(&steps, &vars).map_err(|e| user(&e))?;
     let kinds = [Kind::PreCreate, Kind::PostCreate];
-    let [pre, post] = worktree_hooks::prepare(app, &s, &kinds, &vars, yes, dry_run)?
-        .try_into()
-        .unwrap_or_else(|_| unreachable!("one Hooks per kind"));
+    let mut report = worktree_hooks::to_terminal(app);
+    let approval = Approval::from_yes(yes);
+    let [pre, post] =
+        worktree_hooks::prepare(app, &s, &kinds, &vars, approval, dry_run, &mut report)?
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("one Hooks per kind"));
     if !dry_run {
         let env = hooks::env(&vars);
-        pre.run(app, &s.main, &env)?;
+        pre.run(app, &s.main, &env, &mut report)?;
         git.add(&s.project, &path, &branch, &start)
             .map_err(|e| user(&e))?;
         let warnings = apply(&ready).map_err(|e| {
@@ -415,7 +431,7 @@ pub fn materialize(
         for warning in warnings {
             app.out.warn(&warning);
         }
-        post.run(app, &path, &env)?;
+        post.run(app, &path, &env, &mut report)?;
     }
     let mut lines = pre.describe();
     lines.extend(steps.iter().map(|step| step.describe(&path)));
@@ -454,4 +470,284 @@ fn track(app: &App, store: &mut NbStore, id: &TaskId, path: &Path) -> Result<()>
         id,
         &format!("[{id}] worktree: {}{suffix}\n", dir.display()),
     )
+}
+
+/// `tasq worktree release <id> [--force] [--dry-run] [--yes]`: what closing
+/// the task does to its worktrees, whatever its status and `on_done`.
+pub fn release_command(app: &App, id: &str, force: bool, yes: bool, dry_run: bool) -> Result<()> {
+    if !app.worktrees() {
+        return Err(disabled());
+    }
+    let id = App::task_id(id)?;
+    let store = app.open_store()?;
+    let task = store.get(&id)?;
+    let how = Releasing {
+        force,
+        approval: Approval::from_yes(yes),
+        dry_run,
+        closing: false,
+    };
+    let lines = release(app, &task, how, &mut worktree_hooks::to_terminal(app))?;
+    let text = if lines.is_empty() {
+        format!("[{id}] nothing released\n")
+    } else {
+        prefixed(&id, &lines)
+    };
+    finish(app, &store, &id, &text)
+}
+
+/// `lines`, one per line, each prefixed with `[id] ` unless indented (the
+/// steps under a dry run's line).
+pub fn prefixed(id: &TaskId, lines: &[String]) -> String {
+    lines
+        .iter()
+        .map(|l| {
+            if l.starts_with(' ') {
+                format!("{l}\n")
+            } else {
+                format!("[{id}] {l}\n")
+            }
+        })
+        .collect::<Vec<_>>()
+        .concat()
+}
+
+/// How [`release`] runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Releasing {
+    /// Remove dirty worktrees and delete unmerged, unpushed branches too.
+    pub force: bool,
+    /// For the repository's own `pre-remove`/`post-remove` hooks.
+    pub approval: Approval,
+    /// Say what would happen; change nothing.
+    pub dry_run: bool,
+    /// Called for a close: `worktree.on_done = "keep"` skips it all.
+    pub closing: bool,
+}
+
+/// Step 3 of the lifecycle for every declared worktree of `task`: a clean
+/// one is removed (with the `pre-remove` hook in it before, the
+/// `post-remove` one in the main checkout after), and its branch deleted
+/// when that loses nothing ([`Git::safety`]). What is kept is a warning
+/// through `report`, with the command that finishes the job when there is
+/// one. The entries stay. The lines say what was done (or would be, on a
+/// dry run). The caller checks that worktrees are enabled.
+///
+/// # Errors
+///
+/// When the task's repository cannot be read; a removal or a deletion
+/// that fails is a warning.
+pub fn release(
+    app: &App,
+    task: &Task,
+    how: Releasing,
+    report: &mut dyn FnMut(HookEvent),
+) -> Result<Vec<String>> {
+    if task.worktrees.is_empty() {
+        return Ok(Vec::new());
+    }
+    let s = RepoSettings::load(app, &project_of(app, task)?)?;
+    if how.closing && s.config.on_done == OnDone::Keep {
+        return Ok(Vec::new());
+    }
+    if s.repo.is_none() {
+        return Err(CliError::user(format!(
+            "{} is not in a git repository",
+            s.project.display()
+        )));
+    }
+    let git = Git { env: app.env_vec() };
+    let user = |e: &dyn std::fmt::Display| CliError::user(e.to_string());
+    let listed = git.worktrees(&s.main).map_err(|e| user(&e))?;
+    let main = canonical(&s.main);
+    let cwd = canonical(&app.opts.cwd);
+    let mut lines = Vec::new();
+    for worktree in &task.worktrees {
+        let path = canonical(&worktree.path);
+        let provisioned = provisioned(&s, &path);
+        let dir = status::dir_seen(&path, path.is_dir(), &main, &cwd, &listed, || {
+            // Doubt keeps it: an unreadable status counts as a change.
+            git.changes(&path, &provisioned)
+                .unwrap_or_else(|e| vec![e.to_string()])
+        });
+        let safety = match &worktree.branch {
+            Some(branch) => git.safety(&s.main, branch).map_err(|e| user(&e))?,
+            None => None,
+        };
+        let seen = safety.as_ref().map_or(BranchSeen::Absent, Safety::seen);
+        let decided = lifecycle::on_close(dir, seen, s.config.delete_branch, how.force);
+        let one = One {
+            app,
+            git: &git,
+            settings: &s,
+            task,
+            worktree,
+            path: &path,
+            how,
+        };
+        let gone = one.directory(decided.worktree, &mut lines, report)?;
+        one.branch(decided.branch, gone, safety.as_ref(), &mut lines, report);
+    }
+    Ok(lines)
+}
+
+/// One declared worktree being released.
+struct One<'a> {
+    app: &'a App,
+    git: &'a Git,
+    settings: &'a RepoSettings,
+    task: &'a Task,
+    worktree: &'a Worktree,
+    path: &'a Path,
+    how: Releasing,
+}
+
+impl One<'_> {
+    /// Carries out `fate` for the directory; whether it is gone after.
+    fn directory(
+        &self,
+        fate: WorktreeFate,
+        lines: &mut Vec<String>,
+        report: &mut dyn FnMut(HookEvent),
+    ) -> Result<bool> {
+        let path = self.path.display();
+        match fate {
+            WorktreeFate::Absent => Ok(true),
+            WorktreeFate::Keep(KeepWorktree::Main) => Ok(false),
+            WorktreeFate::Keep(why) => {
+                let id = &self.task.id;
+                let finish = match why {
+                    KeepWorktree::Dirty => {
+                        format!("; tasq worktree release {id} --force removes it")
+                    }
+                    KeepWorktree::InUse => {
+                        format!("; tasq worktree release {id} from another directory removes it")
+                    }
+                    _ => String::new(),
+                };
+                report(HookEvent::Warning(format!(
+                    "kept worktree {path}: {}{finish}",
+                    why.reason()
+                )));
+                Ok(false)
+            }
+            WorktreeFate::Remove if self.how.dry_run => {
+                let s = self.settings;
+                let vars = self.vars();
+                let kinds = [Kind::PreRemove, Kind::PostRemove];
+                let hooks = worktree_hooks::prepare(
+                    self.app,
+                    s,
+                    &kinds,
+                    &vars,
+                    self.how.approval,
+                    true,
+                    report,
+                )?;
+                lines.push(format!("would remove worktree {path}"));
+                lines.extend(
+                    hooks
+                        .iter()
+                        .flat_map(Hooks::describe)
+                        .map(|l| format!("  {l}")),
+                );
+                Ok(true)
+            }
+            WorktreeFate::Remove => self.remove(lines, report),
+        }
+    }
+
+    /// The remove hooks around `git worktree remove`; whether it is gone.
+    fn remove(&self, lines: &mut Vec<String>, report: &mut dyn FnMut(HookEvent)) -> Result<bool> {
+        let s = self.settings;
+        let path = self.path.display();
+        let vars = self.vars();
+        let kinds = [Kind::PreRemove, Kind::PostRemove];
+        let [pre, post] =
+            worktree_hooks::prepare(self.app, s, &kinds, &vars, self.how.approval, false, report)?
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("one Hooks per kind"));
+        let env = hooks::env(&vars);
+        if let Err(e) = pre.run(self.app, self.path, &env, report) {
+            report(HookEvent::Warning(format!("kept worktree {path}: {e}")));
+            return Ok(false);
+        }
+        if let Err(e) = self.git.remove(&s.main, self.path) {
+            report(HookEvent::Warning(format!("kept worktree {path}: {e}")));
+            return Ok(false);
+        }
+        lines.push(format!("removed worktree {path}"));
+        post.run(self.app, &s.main, &env, report)?;
+        Ok(true)
+    }
+
+    /// Carries out `fate` for the branch, once its directory is `gone`.
+    fn branch(
+        &self,
+        fate: BranchFate,
+        gone: bool,
+        safety: Option<&Safety>,
+        lines: &mut Vec<String>,
+        report: &mut dyn FnMut(HookEvent),
+    ) {
+        let Some(branch) = &self.worktree.branch else {
+            return;
+        };
+        let why = safety
+            .and_then(Safety::reason)
+            .unwrap_or_else(|| "forced".to_owned());
+        match fate {
+            BranchFate::Delete if !gone => {}
+            BranchFate::Delete if self.how.dry_run => {
+                lines.push(format!("would delete branch {branch} ({why})"));
+            }
+            BranchFate::Delete => {
+                let main = &self.settings.main;
+                // A directory removed by hand leaves its registration, and
+                // git refuses to delete a branch checked out there.
+                let _ = self.git.prune(main);
+                match self.git.delete_branch(main, branch) {
+                    Ok(()) => lines.push(format!("deleted branch {branch} ({why})")),
+                    Err(e) => report(HookEvent::Warning(format!("kept branch {branch}: {e}"))),
+                }
+            }
+            BranchFate::Keep(KeepBranch::Unsafe) => report(HookEvent::Warning(format!(
+                "kept branch {branch}: {}; tasq worktree release {} --force deletes it",
+                KeepBranch::Unsafe.reason(),
+                self.task.id
+            ))),
+            BranchFate::Keep(_) | BranchFate::Absent => {}
+        }
+    }
+
+    /// The template variables of this worktree, for its hooks.
+    fn vars(&self) -> Vars {
+        let s = self.settings;
+        Vars::for_task(self.task, &s.main, s.name(), &s.config.variables)
+            .with_branch(
+                self.worktree.branch.as_deref().unwrap_or_default(),
+                s.config.ports,
+            )
+            .with_worktree(self.path)
+    }
+}
+
+/// The paths provisioning writes into the worktree at `path`, relative to
+/// it: they can be made again, so they do not make it dirty.
+fn provisioned(settings: &RepoSettings, path: &Path) -> Vec<PathBuf> {
+    provision::plan(
+        &settings.config,
+        &settings.main,
+        path,
+        &settings.templates_dir,
+    )
+    .unwrap_or_default()
+    .iter()
+    .filter_map(|step| step.target().strip_prefix(path).ok().map(Path::to_path_buf))
+    .collect()
+}
+
+/// `path` with symlinks resolved when it exists, as git records paths.
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }

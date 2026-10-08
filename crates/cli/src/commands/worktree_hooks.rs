@@ -17,6 +17,34 @@ use tasq_worktree::hooks::run_hook;
 use crate::app::App;
 use crate::commands::worktree::RepoSettings;
 use crate::error::{CliError, Result};
+use crate::plugins::HookEvent;
+
+/// How lines that need approval and have none are treated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Approval {
+    /// `--yes`: approved for this run.
+    Given,
+    /// Asked on the terminal, when there is one.
+    Ask,
+    /// Never asked (the TUI owns the terminal): skipped with a warning.
+    Skip,
+}
+
+impl Approval {
+    /// `Given` for `--yes`, else `Ask`.
+    pub fn from_yes(yes: bool) -> Self {
+        if yes { Self::Given } else { Self::Ask }
+    }
+}
+
+/// Prints a hook event the way the CLI does: warnings always, a hook's
+/// output at `-v`.
+pub fn to_terminal(app: &App) -> impl FnMut(HookEvent) + '_ {
+    |event| match event {
+        HookEvent::Warning(text) => app.out.warn(&text),
+        HookEvent::Output(text) => app.out.verbose(&text),
+    }
+}
 
 /// One hook line, rendered.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,23 +83,30 @@ impl Hooks {
 
     /// Runs the hooks in `cwd` with `env` on top of the user's. A failure
     /// of a blocking (`pre-*`) hook stops the rest and is the error; any
-    /// other failure is a warning.
-    pub fn run(&self, app: &App, cwd: &Path, env: &[(String, String)]) -> Result<()> {
+    /// other failure is a warning, reported with the hooks' output.
+    pub fn run(
+        &self,
+        app: &App,
+        cwd: &Path,
+        env: &[(String, String)],
+        report: &mut dyn FnMut(HookEvent),
+    ) -> Result<()> {
         let mut full = app.env_vec();
         full.extend(env.iter().cloned());
         for command in &self.run {
             let key = self.kind.key();
             match run_hook(&command.argv, cwd, &full) {
                 Ok(output) if output.is_empty() => {}
-                Ok(output) => app
-                    .out
-                    .verbose(&format!("{key} hook {:?}: {output}", command.line)),
+                Ok(output) => report(HookEvent::Output(format!(
+                    "{key} hook {:?}: {output}",
+                    command.line
+                ))),
                 Err(message) => {
                     let message = format!("{key} hook {:?} failed: {message}", command.line);
                     if self.kind.blocking() {
                         return Err(CliError::user(message));
                     }
-                    app.out.warn(&message);
+                    report(HookEvent::Warning(message));
                 }
             }
         }
@@ -81,19 +116,26 @@ impl Hooks {
 
 /// The hooks of `kinds` for a worktree of the repository `settings`
 /// describes, rendered with `vars`. Lines from the repository's own file
-/// that are not approved yet are approved by `yes` for this run, asked
-/// about on a terminal (a yes is stored), or skipped with a warning; a
-/// dry run neither asks nor stores.
+/// that are not approved yet are approved for this run
+/// ([`Approval::Given`]), asked about on a terminal ([`Approval::Ask`]; a
+/// yes is stored), or skipped with a warning; a dry run neither asks nor
+/// stores nor warns.
 pub fn prepare(
     app: &App,
     settings: &RepoSettings,
     kinds: &[Kind],
     vars: &Vars,
-    yes: bool,
+    approval: Approval,
     dry_run: bool,
+    report: &mut dyn FnMut(HookEvent),
 ) -> Result<Vec<Hooks>> {
     let pending = pending(app, settings, kinds)?;
-    let approved = pending.is_empty() || yes || approve(app, settings, &pending, dry_run)?;
+    let approved = pending.is_empty()
+        || match approval {
+            Approval::Given => true,
+            Approval::Ask => approve(app, settings, &pending, dry_run)?,
+            Approval::Skip => false,
+        };
     let mut all = Vec::new();
     for &kind in kinds {
         let mut hooks = Hooks {
@@ -116,7 +158,7 @@ pub fn prepare(
     }
     if !approved && !dry_run {
         let file = settings.repo_file.as_deref().unwrap_or(Path::new(""));
-        app.out.warn(&format!(
+        report(HookEvent::Warning(format!(
             "hooks from {} are not approved and were skipped: {}; approve them with \
              tasq worktree trust {}, or pass --yes",
             file.display(),
@@ -126,7 +168,7 @@ pub fn prepare(
                 .collect::<Vec<_>>()
                 .join(", "),
             settings.main.display()
-        ));
+        )));
     }
     Ok(all)
 }
@@ -250,6 +292,12 @@ fn write_store(app: &App, store: &TrustStore) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn approval_from_yes() {
+        assert_eq!(Approval::from_yes(true), Approval::Given);
+        assert_eq!(Approval::from_yes(false), Approval::Ask);
+    }
 
     #[test]
     fn the_question_lists_the_pending_lines() {

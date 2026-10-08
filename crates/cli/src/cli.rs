@@ -165,6 +165,9 @@ pub enum Command {
         /// Final progress note, appended before closing.
         #[arg(value_name = "NOTE")]
         note: Option<String>,
+        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Reopen a done task (`# [ ]`), with a status, logging a note.
@@ -565,6 +568,30 @@ pub enum WorktreeAction {
         #[arg(long)]
         yes: bool,
     },
+    /// Do what closing the task does to its worktrees, without closing it.
+    ///
+    /// Each declared worktree that exists and is clean is removed (with the
+    /// pre-remove and post-remove hooks); its branch is deleted when that
+    /// loses nothing: merged into the default branch (squash and rebase
+    /// merges count) or pushed. A dirty worktree, or a branch neither
+    /// merged nor pushed, is kept with a warning; --force removes and
+    /// deletes those too. The main checkout, a locked worktree and one the
+    /// current directory is in are always kept. The `## Worktrees` entries
+    /// stay: launching the task creates the worktree again.
+    Release {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Remove dirty worktrees and delete branches that are neither merged nor pushed.
+        #[arg(long)]
+        force: bool,
+        /// Say what would be removed and deleted; change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Approve the hooks of a repository's own .tasq.toml ahead of time.
     ///
     /// Hooks a repository's .tasq.toml sets run only once approved; this
@@ -697,10 +724,18 @@ pub fn command(worktrees: bool) -> clap::Command {
         return command
             .mut_subcommand("worktree", |c| c.hide(true))
             .mut_subcommand("create", |c| c.mut_arg("worktree", |a| a.hide(true)))
+            .mut_subcommand("done", |c| c.mut_arg("yes", |a| a.hide(true)))
             .mut_subcommand("next", |c| c.mut_arg("yes", |a| a.hide(true)))
             .mut_subcommand("pick", |c| c.mut_arg("yes", |a| a.hide(true)));
     }
     command
+        .mut_subcommand("done", |c| {
+            add_long_about(
+                c,
+                "With worktrees enabled (and worktree.on_done = \"release\"), the task's \
+                 worktrees are released: see `tasq worktree release --help`.",
+            )
+        })
         .mut_subcommand("next", launch_help_with_worktrees)
         .mut_subcommand("pick", launch_help_with_worktrees)
         .mut_subcommand("project", |c| {
@@ -719,7 +754,7 @@ pub fn command(worktrees: bool) -> clap::Command {
 }
 
 /// The command completions are generated from: [`command`], minus the
-/// `worktree` subcommand, `create --worktree` and `next`/`pick --yes` unless worktrees are
+/// `worktree` subcommand, `create --worktree` and `done`/`next`/`pick --yes` unless worktrees are
 /// enabled. Hiding is not enough there, as the zsh generator still lists
 /// hidden subcommands and arguments.
 pub fn completion_command(worktrees: bool) -> clap::Command {
@@ -735,6 +770,7 @@ pub fn completion_command(worktrees: bool) -> clap::Command {
         let worktree_only = |a: &clap::Arg| a.get_id() != "worktree" && a.get_id() != "yes";
         let sub = match sub.get_name() {
             "create" => rebuilt("create", sub, worktree_only),
+            "done" => rebuilt("done", sub, worktree_only),
             "next" => rebuilt("next", sub, worktree_only),
             "pick" => rebuilt("pick", sub, worktree_only),
             _ => sub.clone(),

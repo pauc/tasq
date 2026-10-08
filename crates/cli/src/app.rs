@@ -63,8 +63,8 @@ pub fn run(cli: Cli) -> Result<()> {
                     commands::edit::set(&app, &id, &value, note.as_deref())
                 }
                 Some(Command::Log { id, note }) => commands::edit::log(&app, &id, &note),
-                Some(Command::Done { id, note }) => {
-                    commands::edit::done(&app, &id, note.as_deref())
+                Some(Command::Done { id, note, yes }) => {
+                    commands::edit::done(&app, &id, note.as_deref(), yes)
                 }
                 Some(Command::Reopen { id, status, note }) => {
                     commands::edit::reopen(&app, &id, status.as_deref(), note.as_deref())
