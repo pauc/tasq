@@ -871,8 +871,9 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   every test that writes to a repository waits (`wait_for_bookkeeping`, or take and drop the
   lock) before reading `git log` and before its temp dir is dropped.
 - Not done: the TUI still has no channel for store warnings (pre-existing, also true for
-  checkpoint failures before this change). `examples/config/plain-markdown.toml` still sets
-  the removed `work.worktree_manager` (from 9333023, not this change).
+  checkpoint failures before this change); nb todo 49. The example configs are fixed and now
+  loaded by `every_example_config_loads` in `crates/core/tests/config_load.rs`, so a removed
+  key fails a test instead of the first user who copies the file.
 
 ### nb facts (probed 2026-10-04 with nb 7.25.4 in an isolated NB_DIR)
 

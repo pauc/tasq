@@ -1540,6 +1540,31 @@ fn source_list_is_replaced_not_appended_by_a_later_layer() {
     assert!(!loaded.config.source[0].auto);
 }
 
+// --- the shipped examples ----------------------------------------------------
+
+/// `examples/config/*.toml` and `examples/sources/config.toml` are documented
+/// as complete files with real keys only; loading them keeps them honest.
+#[test]
+fn every_example_config_loads() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("config"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "toml"))
+        .collect();
+    files.sort();
+    files.push(root.join("sources/config.toml"));
+    assert_eq!(files.len(), 3, "{files:?}");
+    for file in files {
+        let mut opts = LoadOptions::new("/nonexistent");
+        opts.home = Some(PathBuf::from("/home/u"));
+        opts.explicit_file = Some(file.clone());
+        if let Err(e) = Config::load(&opts) {
+            panic!("{}: {e}", file.display());
+        }
+    }
+}
+
 // --- the plan's example ----------------------------------------------------
 
 #[test]

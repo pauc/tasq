@@ -24,10 +24,14 @@ env = "direnv"               # `direnv exec <dir>` so the session gets the proje
 [launch.claude]
 # prompt_file = "~/.config/tasq/prompts/claude.md"   # built-in template when unset
 
+[launch.herdr]
+placement = "workspace"      # Ctrl+Enter / Shift+Enter in `tasq ui` always open a new herdr workspace
+
 [ui]
 pager = "less -RFX"
 no_osc8 = false
 glow_style = "dark"
+detail_position = "bottom"   # the task detail under the list in `tasq ui`
 
 [ui.theme]
 # preset = "light"           # dark (default), light, solarized, gruvbox, mono; see docs/config.md "Colours"
@@ -68,6 +72,7 @@ kind = "llm-bridge"
 command = "claude -p --output-format json"
 prompt_file = "~/.config/tasq/prompts/inbox.md"   # see examples/sources/inbox.md
 tags = ["inbox"]
+auto = false                 # ~90 s and ~$2 a run: only with `tasq sync --source inbox` or the TUI's `S`
 
 [report.summary]
 summarizer = "llm"

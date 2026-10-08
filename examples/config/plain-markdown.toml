@@ -26,8 +26,10 @@ statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
 default_status = "ready"     # status of `tasq create` without --status
 
 [work]
-worktree_manager = "git"     # `tasq worktree <id> --create <branch>` uses `git worktree add`
 # default_project = "~/code/myproject"   # where sessions start for tasks without a project
+
+[worktree]
+enabled = false              # worktrees per task are opt-in; see docs/config.md "Worktrees"
 
 [launch]
 default = "shell"            # `tasq next` / `tasq pick` exec $SHELL in the task's directory
