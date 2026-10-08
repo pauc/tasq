@@ -1,8 +1,10 @@
 //! `git` for one repository: where a branch lives, the branch checked out
-//! in a directory, and `git worktree add` with cleanup on failure.
+//! in a directory, `git worktree add` with cleanup on failure, and whether
+//! deleting a branch would lose anything.
 
 use std::path::{Path, PathBuf};
 
+use tasq_core::worktree::integration::{self, Check, Safety};
 use tasq_core::worktree::lifecycle::{BranchState, Start};
 use thiserror::Error;
 
@@ -113,6 +115,103 @@ impl Git {
             return Ok(BranchState::Remote(remote));
         }
         Ok(BranchState::Absent)
+    }
+
+    /// Where the tip of the local `branch` is safe, for a release: the
+    /// default branch it is integrated into (the checks of
+    /// [`integration::Check`], cheapest first, against each of
+    /// [`integration::targets`]) and the remote ref that contains it. `None`
+    /// when there is no such local branch. Reads the repository only; the
+    /// remote-tracking refs are as last fetched. A check git cannot answer
+    /// counts as failed, so doubt keeps the branch.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError::NoRepo`] for a missing directory.
+    pub fn safety(&self, repo: &Path, branch: &str) -> Result<Option<Safety>, GitError> {
+        if !repo.is_dir() {
+            return Err(GitError::NoRepo(repo.to_path_buf()));
+        }
+        let own = format!("refs/heads/{branch}");
+        if !self.has_ref(repo, &own) {
+            return Ok(None);
+        }
+        let origin_head = self.output(repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]);
+        let targets =
+            integration::targets(origin_head.as_deref(), branch, |r| self.has_ref(repo, r));
+        let integrated = targets.into_iter().find_map(|target| {
+            integration::first_passing(|check| self.passes(repo, check, &own, &target))
+                .map(|check| (target, check))
+        });
+        let upstream = self.output(
+            repo,
+            &[
+                "rev-parse",
+                "--symbolic-full-name",
+                &format!("{own}@{{upstream}}"),
+            ],
+        );
+        let remote = integration::pushed_ref(upstream.as_deref(), branch);
+        let pushed = self.contains(repo, &own, &remote).then_some(remote);
+        Ok(Some(Safety { integrated, pushed }))
+    }
+
+    /// Whether `check` passes for `branch` against `target` (both full refs).
+    fn passes(&self, repo: &Path, check: Check, branch: &str, target: &str) -> bool {
+        match check {
+            Check::SameCommit => self.same(repo, "commit", branch, target),
+            Check::Ancestor => self.contains(repo, branch, target),
+            Check::NoAddedChanges => {
+                self.run(
+                    repo,
+                    &["diff", "--quiet", &format!("{target}...{branch}"), "--"],
+                )
+                .success
+            }
+            Check::SameTree => self.same(repo, "tree", branch, target),
+            Check::MergeAddsNothing => {
+                let merged = self.run(repo, &["merge-tree", "--write-tree", target, branch]);
+                merged.success
+                    && integration::merge_tree(&merged.stdout)
+                        == self.object(repo, target, "tree").as_deref()
+            }
+            Check::PatchesUpstream => {
+                let cherry = self.run(repo, &["cherry", target, branch]);
+                cherry.success && integration::cherry_all_upstream(&cherry.stdout)
+            }
+        }
+    }
+
+    /// Whether `a` and `b` peel to the same object of `kind`.
+    fn same(&self, repo: &Path, kind: &str, a: &str, b: &str) -> bool {
+        let a = self.object(repo, a, kind);
+        a.is_some() && a == self.object(repo, b, kind)
+    }
+
+    /// The id of `reference` peeled to `kind` (`commit`, `tree`).
+    fn object(&self, repo: &Path, reference: &str, kind: &str) -> Option<String> {
+        self.output(
+            repo,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{reference}^{{{kind}}}"),
+            ],
+        )
+    }
+
+    /// Whether `tip` is an ancestor of (or is) `of`; a missing ref is not.
+    fn contains(&self, repo: &Path, tip: &str, of: &str) -> bool {
+        self.run(repo, &["merge-base", "--is-ancestor", tip, of])
+            .success
+    }
+
+    /// The trimmed standard output of a successful command (the ones run
+    /// here always print when they succeed).
+    fn output(&self, repo: &Path, args: &[&str]) -> Option<String> {
+        let out = self.run(repo, args);
+        out.success.then(|| out.stdout.trim().to_owned())
     }
 
     /// `start` as it will run in the repository at `repo`: a new branch
