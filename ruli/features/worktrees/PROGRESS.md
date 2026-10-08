@@ -5,35 +5,32 @@ Plan: [PLAN.md](PLAN.md). Decision: [ADR 0022](../../../docs/adr/0022-worktrees-
 
 ## Status
 
-**Phase 1 done (2026-10-07); Phase 2 at WT-206 (2026-10-08).** Scope agreed with the author on
+**Phase 1 done (2026-10-07); Phase 2 at WT-207 (2026-10-08).** Scope agreed with the author on
 2026-10-07: core feature behind `worktree.enabled`, full gwm replacement, then improvements from the
 prior-art survey (PLAN section 7). Plugin task fields split out to nb todo 46. Lifecycle settled
 the same day (PLAN 4.2): declare at creation, create at launch, release at close, never remove the
 entry.
 
-Where things stand (2026-10-08, after WT-205):
+Where things stand (2026-10-08, after WT-206):
 
-- Branch `feat/worktrees`, 25 commits ahead of `main` (latest: the WT-205 progress commit), not pushed, no PR. It
-  also carries four commits from another session that are not worktree work: 97611f0 (store-nb
-  never runs nb, ADR 0023), 39e550f, fa6fc13, 3e1c003. ADR 0022 is still Proposed.
-- Declaring, creating at launch, provisioning and creation hooks work end to end:
-  `tasq create --worktree`, `tasq worktree <id> [BRANCH|PATH]`, `tasq worktree up <id>
-  [--from] [--dry-run] [--yes]`, `tasq worktree trust [DIR]`, `next`/`pick [--yes]`, the TUI
-  create view. Closing a task does nothing to worktrees yet.
+- Branch `feat/worktrees`, 30 commits ahead of `main` (with the WT-206 progress commit), not pushed, no PR. It also carries
+  four commits from another session that are not worktree work: 97611f0 (store-nb never runs
+  nb, ADR 0023), 39e550f, fa6fc13, 3e1c003. ADR 0022 is still Proposed.
+- The whole lifecycle works end to end: declaring (`tasq create --worktree`, `tasq worktree <id>
+  [BRANCH|PATH]`), creating at launch with provisioning and hooks (`next`/`pick`, `tasq
+  worktree up`), and releasing at close (`tasq done [--yes]`, the TUI's `d`, `tasq worktree
+  release <id> [--force] [--dry-run] [--yes]`).
 - The installed `tasq` is still the build of 9333023 (WT-102), installed because the author's
   config sets `[worktree] enabled = true`. Reinstalling from this branch changes daily use:
   `c` opens the full create view, `on_create = "auto"` declares worktrees for new tasks in a git
-  checkout, and launching creates them. Ask the author before reinstalling.
-- Next: WT-206 (PLAN `#### WT-206`), release at close in `tasq done`, the TUI's `d` and
-  `tasq worktree release`. `Git::safety(repo, branch)` (WT-205) gives the `BranchSeen` for
-  `lifecycle::on_close` (`Safety::seen`, `None` = `BranchSeen::Absent`) and the reason for the
-  message (`Safety::reason`). Still to add in `tasq-worktree`: dirty/locked/main detection for
-  `DirSeen`, `git worktree remove`, `git branch -D` (after `git worktree prune`, see WT-101
-  Learnings), and the `pre-remove`/`post-remove` hooks (`worktree_hooks::prepare` takes the
-  kinds). Decide whether a release fetches `origin` first (see WT-205 Learnings).
+  checkout, launching creates them, and closing a task now removes clean worktrees and deletes
+  merged or pushed branches. Ask the author before reinstalling.
+- Next: WT-207 (PLAN `#### WT-207`): `ls`, `switch`, `path`, `shell-init`, completions.
+  `tasq_worktree::Git::worktrees` and `changes` (WT-206) give the existence and dirty state `ls`
+  needs; `status::listed` parses the worktree list.
 - Known flake, not worktree work: `commands::ui::tests::sync_passes_the_picked_sources_as_source_flags`
-  failed once in a full `cargo test --workspace` and passed alone three times (likely ETXTBSY:
-  a script written and executed while other test threads fork).
+  failed once in a full `cargo test --workspace` (2026-10-08) and passed alone three times. It
+  writes a script and runs it without the ETXTBSY probe `TestEnv::fake_tool` has.
 - WT-208 needs the author's real `gwm.yml` files, which live outside this repository; reading them
   needs the author's go-ahead (repository rule: never read outside the working directory).
 
@@ -48,7 +45,7 @@ Where things stand (2026-10-08, after WT-205):
 | WT-203 | Provisioning: symlinks, copies, templates | done | 46ef57d (core `provision::plan`, three workspace fixture configs), 9b37c1a (`tasq_worktree::provision::{prepare, apply}`, tree checked against fixture files), d3f5806 (CLI): `RepoSettings` loads `[worktree]` from the main checkout (`App::config_at`), templates relative to the file that set them, rendered before `git worktree add`; dry runs list the steps; 0 missed mutants (core 4+2, crate 7+1, CLI diff 13+10) |
 | WT-204 | Hooks and trust | done | f3d5215, 15b9133 (core `hooks`: `Kind`, `argv`, `env`, `trust_file`, `TrustStore`) + runner (`tasq_worktree::hooks::run_hook`) and CLI (`worktree_hooks`: pending lines from the repository's own file, `--yes`, terminal prompt, `tasq worktree trust [DIR]`; pre-create in the main checkout before git, post-create in the worktree); `next`/`pick` dispatch moved out of `app::run`; 947 tests green; 0 missed mutants (93: 83 caught, 10 unviable) |
 | WT-205 | Integration checks | done | core `worktree::integration` (`Check` cheapest first, `first_passing`, `targets`, `pushed_ref`, `cherry_all_upstream`, `merge_tree`, `Safety { integrated, pushed }` with `seen()` and `reason()`), 89151cd; `tasq_worktree::Git::safety`, e04c86c; 12 temp-repo tests (one per check, pushed with and without upstream, neither, local `main` fallback, the default branch itself, no local branch); 967 tests green; 0 missed mutants (76: 67 caught, 9 unviable) |
-| WT-206 | Releasing at close | todo | |
+| WT-206 | Releasing at close | done | 8409258 (core), ccd1b62 (crate), 6eecda4 (CLI, docs). core: `on_close(.., force)`, `DirSeen`/`KeepWorktree` gain `Foreign` and `InUse`, `KeepWorktree::reason`/`KeepBranch::reason`, `status` (`listed`, `changes` without provisioned paths, `dir_seen`), `provision::Step::target`; crate: `Git::{worktrees, changes, remove, prune, delete_branch}`; CLI: `worktree::release` (`Releasing`), `tasq worktree release`, `done --yes`, TUI `after_done`; `worktree_hooks::Approval` (`Skip` for the TUI) and an event sink instead of printing; 982 tests green; 0 missed mutants (diff: 67, 60 caught, 7 unviable) |
 | WT-207 | `ls`, `switch`, `path`, `shell-init`, completions | todo | |
 | WT-208 | Switch the author's workspaces off gwm (manual acceptance) | todo | |
 | WT-301 | `prune` | todo | |
@@ -121,6 +118,20 @@ Where things stand (2026-10-08, after WT-205):
   tree are the same commit: tests that need two distinct commits change the message
   (`cherry-pick -x`). `MergeAddsNothing` needs `git merge-tree --write-tree` (git 2.38); an
   older git fails the check and falls through to `git cherry`.
+- WT-206: decisions taken without asking the author, all in `docs/config.md`: a release never
+  fetches (the pushed check covers a branch merged on GitLab since the last fetch, and closing a
+  task should not wait on the network); paths provisioning wrote do not make a worktree dirty
+  (a copied `.envrc` or a `node_modules` link is untracked in most repositories and would
+  otherwise keep every worktree forever), which is why `git worktree remove` always runs with
+  `--force` once tasq decided (a locked worktree is still refused by git); a worktree the
+  current directory is inside is kept (`/tasq:wrapup` runs `tasq done` from the session's
+  worktree), with a hint to release it from elsewhere; a declared directory git does not list
+  is kept; `--force` overrides only "dirty" and "neither merged nor pushed", never main, locked,
+  in use or `delete_branch = "never"`. Kept branches warn only when unsafe: a branch kept
+  because its worktree is kept is already explained, and `never` is the user's choice. A
+  worktree without a branch runs its hooks with an empty `{{branch}}`. The TUI never prompts
+  for hook approval (it owns the terminal): `Approval::Skip`, and every warning comes back for
+  the status bar. `git branch -D`, not `-d`: git's own check refuses squash-merged branches.
 - WT-204: a hook line is split into words first and each word rendered after, so a title with
   quotes or spaces cannot change the command; no shell, as for `[hooks]`. Only hook kinds whose
   key the repository's own `.tasq.toml` (`config::project_file` from the main checkout) decided
