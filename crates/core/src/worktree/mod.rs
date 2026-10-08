@@ -9,4 +9,5 @@
 pub mod declaration;
 pub mod git;
 pub mod lifecycle;
+pub mod provision;
 pub mod vars;

@@ -1,0 +1,13 @@
+# A workspace of sibling checkouts named after their branch, with shared
+# dependencies linked in and an .envrc rendered from a template.
+[worktree]
+enabled = true
+path = "{{project_parent}}/{{branch_safe}}"
+symlinks = ["node_modules", "CLAUDE.local.md", "config/master.key"]
+templates = [{ source = "templates/.envrc.template", target = ".envrc" }]
+
+[worktree.variables]
+app_env = "development"
+
+[worktree.hooks]
+post-create = ["direnv allow ."]
