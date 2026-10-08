@@ -5,29 +5,35 @@ Plan: [PLAN.md](PLAN.md). Decision: [ADR 0022](../../../docs/adr/0022-worktrees-
 
 ## Status
 
-**Phase 1 done (2026-10-07); Phase 2 at WT-207 (2026-10-08).** Scope agreed with the author on
+**Phase 1 done (2026-10-07); Phase 2 done but WT-208 (2026-10-08).** Scope agreed with the author on
 2026-10-07: core feature behind `worktree.enabled`, full gwm replacement, then improvements from the
 prior-art survey (PLAN section 7). Plugin task fields split out to nb todo 46. Lifecycle settled
 the same day (PLAN 4.2): declare at creation, create at launch, release at close, never remove the
 entry.
 
-Where things stand (2026-10-08, after WT-206):
+Where things stand (2026-10-08, after WT-207):
 
-- Branch `feat/worktrees`, 30 commits ahead of `main` (with the WT-206 progress commit), not pushed, no PR. It also carries
+- Branch `feat/worktrees`, 33 commits ahead of `main` (with the WT-207 progress commit), not pushed, no PR. It also carries
   four commits from another session that are not worktree work: 97611f0 (store-nb never runs
   nb, ADR 0023), 39e550f, fa6fc13, 3e1c003. ADR 0022 is still Proposed.
 - The whole lifecycle works end to end: declaring (`tasq create --worktree`, `tasq worktree <id>
   [BRANCH|PATH]`), creating at launch with provisioning and hooks (`next`/`pick`, `tasq
   worktree up`), and releasing at close (`tasq done [--yes]`, the TUI's `d`, `tasq worktree
-  release <id> [--force] [--dry-run] [--yes]`).
+  release <id> [--force] [--dry-run] [--yes]`), and moving around (`tasq worktree ls`,
+  `switch`, `path`, `shell-init`).
 - The installed `tasq` is still the build of 9333023 (WT-102), installed because the author's
   config sets `[worktree] enabled = true`. Reinstalling from this branch changes daily use:
   `c` opens the full create view, `on_create = "auto"` declares worktrees for new tasks in a git
   checkout, launching creates them, and closing a task now removes clean worktrees and deletes
   merged or pushed branches. Ask the author before reinstalling.
-- Next: WT-207 (PLAN `#### WT-207`): `ls`, `switch`, `path`, `shell-init`, completions.
-  `tasq_worktree::Git::worktrees` and `changes` (WT-206) give the existence and dirty state `ls`
-  needs; `status::listed` parses the worktree list.
+- Next: WT-208 (the author's workspaces off gwm) needs the author: their `gwm.yml` files are
+  outside this repository, and the acceptance runs the installed `tasq`, which the author said
+  on 2026-10-08 not to reinstall for now. Phase 3 (WT-301 `prune` first) can start without them.
+- Cleanup the author must do: a WT-207 test run on 2026-10-08 20:21 created
+  `/home/pau/code/tasks-wt/feature-a` (a worktree of a deleted temp repository: `.git`,
+  `README`, `.tasq.toml`) and its parent `/home/pau/code/tasks-wt`. Deleting them was refused
+  by the permission classifier; `rm -r /home/pau/code/tasks-wt` removes both. Cause and fix in
+  WT-207 Learnings.
 - Known flake, not worktree work: `commands::ui::tests::sync_passes_the_picked_sources_as_source_flags`
   failed once in a full `cargo test --workspace` (2026-10-08) and passed alone three times. It
   writes a script and runs it without the ETXTBSY probe `TestEnv::fake_tool` has.
@@ -46,7 +52,7 @@ Where things stand (2026-10-08, after WT-206):
 | WT-204 | Hooks and trust | done | f3d5215, 15b9133 (core `hooks`: `Kind`, `argv`, `env`, `trust_file`, `TrustStore`) + runner (`tasq_worktree::hooks::run_hook`) and CLI (`worktree_hooks`: pending lines from the repository's own file, `--yes`, terminal prompt, `tasq worktree trust [DIR]`; pre-create in the main checkout before git, post-create in the worktree); `next`/`pick` dispatch moved out of `app::run`; 947 tests green; 0 missed mutants (93: 83 caught, 10 unviable) |
 | WT-205 | Integration checks | done | core `worktree::integration` (`Check` cheapest first, `first_passing`, `targets`, `pushed_ref`, `cherry_all_upstream`, `merge_tree`, `Safety { integrated, pushed }` with `seen()` and `reason()`), 89151cd; `tasq_worktree::Git::safety`, e04c86c; 12 temp-repo tests (one per check, pushed with and without upstream, neither, local `main` fallback, the default branch itself, no local branch); 967 tests green; 0 missed mutants (76: 67 caught, 9 unviable) |
 | WT-206 | Releasing at close | done | 8409258 (core), ccd1b62 (crate), 6eecda4 (CLI, docs). core: `on_close(.., force)`, `DirSeen`/`KeepWorktree` gain `Foreign` and `InUse`, `KeepWorktree::reason`/`KeepBranch::reason`, `status` (`listed`, `changes` without provisioned paths, `dir_seen`), `provision::Step::target`; crate: `Git::{worktrees, changes, remove, prune, delete_branch}`; CLI: `worktree::release` (`Releasing`), `tasq worktree release`, `done --yes`, TUI `after_done`; `worktree_hooks::Approval` (`Skip` for the TUI) and an event sink instead of printing; 982 tests green; 0 missed mutants (diff: 67, 60 caught, 7 unviable) |
-| WT-207 | `ls`, `switch`, `path`, `shell-init`, completions | todo | |
+| WT-207 | `ls`, `switch`, `path`, `shell-init`, completions | done | 32cc9b6 (core `worktree::target`: `parse`, `by_branch`; `hooks::state_file`), 38f29bf (CLI `worktree_nav`: `ls [ID] [--all]`, `switch [TARGET] [--yes]` with fzf or a numbered list, `path`, `shell-init bash|zsh|fish` through `$TASQ_CD_FILE`, `--json` for each; completions test; docs/json.md, docs/config.md); 994 tests green; 0 missed mutants (diff 61 + nav/status 67) |
 | WT-208 | Switch the author's workspaces off gwm (manual acceptance) | todo | |
 | WT-301 | `prune` | todo | |
 | WT-302 | Status-rich `ls` | todo | |
@@ -118,6 +124,21 @@ Where things stand (2026-10-08, after WT-206):
   tree are the same commit: tests that need two distinct commits change the message
   (`cherry-pick -x`). `MergeAddsNothing` needs `git merge-tree --write-tree` (git 2.38); an
   older git fails the check and falls through to `git cherry`.
+- WT-207: a fixture task (`id::FULL`, task 1) declares `/home/pau/code/tasks-wt/feature-a`, a
+  real path on the author's machine. A first `switch` test picked it and `materialize` ran `git
+  worktree add` there. Tests that list or create every task's worktrees now strip that
+  declaration from the temp notebook (`worktree_nav::workspace`) and never use task 1. Any new
+  test with worktrees enabled that touches task 1 must do the same. `git diff HEAD` leaves out
+  untracked files, so `--in-diff` skipped WT-206's new `status.rs`; it was mutation-tested here.
+  Use `git add -N` on new files before building the diff. A switch cannot `cd` its shell: the
+  shell function sets `TASQ_CD_FILE` only for `... worktree switch ...` (so a session started by
+  `tasq next` never inherits it) and `cd`s to what tasq wrote. `-` is the worktree root of the
+  directory the last switch left, in `$XDG_STATE_HOME/tasq/previous-worktree`. The no-target
+  list leaves out a task's missing worktrees when another of its worktrees exists: `materialize`
+  only creates when none exists, so picking one would land in the existing one. `ls` without an
+  id is scoped to the current directory's repository (everything outside one); `--all` is the
+  WT-302 cross-project view. fish is not installed here: its function is checked as text, bash
+  and zsh are run.
 - WT-206: decisions taken without asking the author, all in `docs/config.md`: a release never
   fetches (the pushed check covers a branch merged on GitLab since the last fetch, and closing a
   task should not wait on the network); paths provisioning wrote do not make a worktree dirty
