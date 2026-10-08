@@ -1,11 +1,13 @@
 //! `git` for one repository: where a branch lives, the branch checked out
-//! in a directory, `git worktree add` with cleanup on failure, and whether
-//! deleting a branch would lose anything.
+//! in a directory, `git worktree add` with cleanup on failure, whether
+//! deleting a branch would lose anything, and what a release runs: the
+//! worktree list, the status of one, `git worktree remove`, `git branch -D`.
 
 use std::path::{Path, PathBuf};
 
 use tasq_core::worktree::integration::{self, Check, Safety};
 use tasq_core::worktree::lifecycle::{BranchState, Start};
+use tasq_core::worktree::status::{self, Listed};
 use thiserror::Error;
 
 use crate::process::{Finished, run};
@@ -154,6 +156,65 @@ impl Git {
         let remote = integration::pushed_ref(upstream.as_deref(), branch);
         let pushed = self.contains(repo, &own, &remote).then_some(remote);
         Ok(Some(Safety { integrated, pushed }))
+    }
+
+    /// The repository's worktrees, the main one first.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError::NoRepo`], or [`GitError::Failed`] outside a repository.
+    pub fn worktrees(&self, repo: &Path) -> Result<Vec<Listed>, GitError> {
+        if !repo.is_dir() {
+            return Err(GitError::NoRepo(repo.to_path_buf()));
+        }
+        let out = self.check(repo, &["worktree", "list", "--porcelain", "-z"])?;
+        Ok(status::listed(&out.stdout))
+    }
+
+    /// The modified, staged and untracked paths of the worktree at `dir`,
+    /// leaving out the `provisioned` ones (relative to `dir`).
+    ///
+    /// # Errors
+    ///
+    /// [`GitError::NoRepo`], or [`GitError::Failed`] when git cannot say.
+    pub fn changes(&self, dir: &Path, provisioned: &[PathBuf]) -> Result<Vec<String>, GitError> {
+        if !dir.is_dir() {
+            return Err(GitError::NoRepo(dir.to_path_buf()));
+        }
+        let out = self.check(dir, &["status", "--porcelain", "-z"])?;
+        Ok(status::changes(&out.stdout, provisioned))
+    }
+
+    /// `git worktree remove --force <path>` from the repository at `repo`.
+    /// The caller decided it loses nothing: `--force` only lets the
+    /// provisioned untracked files go; a locked worktree is still refused.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError::Failed`] with git's message.
+    pub fn remove(&self, repo: &Path, path: &Path) -> Result<(), GitError> {
+        let path = path.display().to_string();
+        self.check(repo, &["worktree", "remove", "--force", &path])
+            .map(drop)
+    }
+
+    /// `git worktree prune`: forgets worktrees whose directory is gone, so
+    /// their branches can be deleted.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError::Failed`] with git's message.
+    pub fn prune(&self, repo: &Path) -> Result<(), GitError> {
+        self.check(repo, &["worktree", "prune"]).map(drop)
+    }
+
+    /// `git branch -D <branch>`: the caller decided nothing is lost.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError::Failed`] with git's message (checked out somewhere).
+    pub fn delete_branch(&self, repo: &Path, branch: &str) -> Result<(), GitError> {
+        self.check(repo, &["branch", "-D", branch]).map(drop)
     }
 
     /// Whether `check` passes for `branch` against `target` (both full refs).

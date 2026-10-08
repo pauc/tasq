@@ -552,3 +552,119 @@ fn no_local_branch_means_nothing_to_check() {
     let missing = r.root.join("missing");
     assert_eq!(r.git.safety(&missing, "b"), Err(GitError::NoRepo(missing)));
 }
+
+#[test]
+fn the_worktree_list_names_main_branches_and_locks() {
+    let r = Repos::new();
+    let a = r.wt("app-a");
+    let l = r.wt("app-l");
+    r.git
+        .add(&r.project, &a, "a", &Start::New("HEAD".into()))
+        .unwrap();
+    r.git
+        .add(&r.project, &l, "l", &Start::New("HEAD".into()))
+        .unwrap();
+    r.sh(&r.project, &["worktree", "lock", l.to_str().unwrap()]);
+    let listed = r.git.worktrees(&r.project).unwrap();
+    let seen: Vec<_> = listed
+        .iter()
+        .map(|w| (w.path.clone(), w.branch.as_deref(), w.locked))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (r.project.clone(), Some("main"), false),
+            (a.clone(), Some("a"), false),
+            (l.clone(), Some("l"), true),
+        ]
+    );
+    // Asked from a linked worktree, the list is the same.
+    assert_eq!(r.git.worktrees(&a).unwrap(), listed);
+    assert!(matches!(
+        r.git.worktrees(&r.root),
+        Err(GitError::Failed { .. })
+    ));
+    let missing = r.root.join("missing");
+    assert_eq!(r.git.worktrees(&missing), Err(GitError::NoRepo(missing)));
+}
+
+#[test]
+fn changes_leave_out_provisioned_files() {
+    let r = Repos::new();
+    let a = r.wt("app-a");
+    r.git
+        .add(&r.project, &a, "a", &Start::New("HEAD".into()))
+        .unwrap();
+    let provisioned = [PathBuf::from(".envrc"), PathBuf::from("node_modules")];
+    assert_eq!(r.git.changes(&a, &provisioned), Ok(Vec::new()));
+    std::fs::write(a.join(".envrc"), "export X=1\n").unwrap();
+    std::os::unix::fs::symlink(r.project.join("README"), a.join("node_modules")).unwrap();
+    assert_eq!(r.git.changes(&a, &provisioned), Ok(Vec::new()));
+    std::fs::write(a.join("README"), "changed\n").unwrap();
+    std::fs::write(a.join("new file"), "x\n").unwrap();
+    assert_eq!(
+        r.git.changes(&a, &provisioned),
+        Ok(vec!["README".to_owned(), "new file".to_owned()])
+    );
+    assert_eq!(
+        r.git.changes(&a, &[]).unwrap().len(),
+        4,
+        "without provisioning, everything counts"
+    );
+    let missing = r.root.join("missing");
+    assert_eq!(r.git.changes(&missing, &[]), Err(GitError::NoRepo(missing)));
+}
+
+#[test]
+fn remove_prune_and_delete_the_branch() {
+    let r = Repos::new();
+    let a = r.wt("app-a");
+    r.git
+        .add(&r.project, &a, "a", &Start::New("HEAD".into()))
+        .unwrap();
+    // A provisioned, untracked file does not stop the removal.
+    std::fs::write(a.join(".envrc"), "x\n").unwrap();
+    assert_eq!(
+        r.git
+            .delete_branch(&r.project, "a")
+            .map_err(|e| e.to_string().contains("worktree")),
+        Err(true),
+        "checked out in the worktree"
+    );
+    assert_eq!(r.git.remove(&r.project, &a), Ok(()));
+    assert!(!a.exists());
+    assert_eq!(r.git.delete_branch(&r.project, "a"), Ok(()));
+    assert_eq!(r.git.safety(&r.project, "a"), Ok(None));
+
+    // A directory removed by hand: prune, then the branch can go.
+    let b = r.wt("app-b");
+    r.git
+        .add(&r.project, &b, "b", &Start::New("HEAD".into()))
+        .unwrap();
+    std::fs::remove_dir_all(&b).unwrap();
+    assert!(r.git.delete_branch(&r.project, "b").is_err());
+    assert_eq!(r.git.prune(&r.project), Ok(()));
+    assert_eq!(r.git.delete_branch(&r.project, "b"), Ok(()));
+
+    // A locked worktree is refused even so.
+    let l = r.wt("app-l");
+    r.git
+        .add(&r.project, &l, "l", &Start::New("HEAD".into()))
+        .unwrap();
+    r.sh(&r.project, &["worktree", "lock", l.to_str().unwrap()]);
+    let err = r.git.remove(&r.project, &l).unwrap_err();
+    assert!(
+        matches!(&err, GitError::Failed { command, .. }
+            if *command == format!("worktree remove --force {}", l.display())),
+        "{err:?}"
+    );
+    assert!(l.is_dir());
+    assert!(matches!(
+        r.git.prune(&r.root),
+        Err(GitError::Failed { command, .. }) if command == "worktree prune"
+    ));
+    assert!(matches!(
+        r.git.delete_branch(&r.project, "nope"),
+        Err(GitError::Failed { command, .. }) if command == "branch -D nope"
+    ));
+}
