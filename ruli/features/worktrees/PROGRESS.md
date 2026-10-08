@@ -17,7 +17,7 @@ create at launch, release at close, never remove the entry.
 | WT-103 | Invisible when disabled | done | `App::worktrees`/`task_json` + `json::task(s)` (key dropped), `cli::command` hides `worktree` and swaps help paragraphs, `cli::completion_command` prunes it, `early_globals` loads config before clap, `LaunchContext::worktrees` + `{{#worktrees_enabled}}`, `Model::with_worktrees`, apply keeps stored worktrees on a missing key; `worktrees_disabled` CLI tests; 7 mutants, 7 caught |
 | WT-104 | Templates, variables and naming in core | done | `tasq_core::template` (hand parser replacing the launch regexes, `names()`), `worktree::vars` (`Scope`, `check`, `Vars`, `branch_safe`, `branch_db`, `slug`, `repo_name`, `port` via FNV-1a); config rejects unknown template variables per scope and bad `[worktree.variables]` names; 102 mutants in template + worktree, 96 caught, 6 unviable |
 | WT-201 | Declaring: `tasq create --worktree` and `tasq worktree <id> [BRANCH]` | done | af9b74c, 012c28b, then the TUI create view. `worktree::declaration` (`declare`, `wanted`, `is_path`), `worktree::git` (`work_tree_root`, `gitdir`, `origin_url`), `lifecycle::branch_name`; CLI `Repo::of` probes `.git` without a process; `--create` hidden; TUI `c` opens the edit view empty (`Form::new_task`, Worktree box), `Host::worktree`, `edit::Fields::draft`; 906 tests green; 0 missed mutants (core 82+8, CLI 23, TUI slice 64) |
-| WT-202 | Materializing at launch: the `tasq-worktree` crate | todo | |
+| WT-202 | Materializing at launch: the `tasq-worktree` crate | done | fa33080 + CLI wiring. `tasq_worktree::Git` (`branch_state` local / `ls-remote` + fetch / offline `origin/<b>` / absent, `resolve_start`, `add` with cleanup, `current_branch`); `materialize` in `next`/`pick` before the status change, `tasq worktree up [--from] [--dry-run]`, `--create` = declare + create; recreate prompt, `GitManager`, `WorktreeManager`, `work::{branch_slug, sibling_worktree}` deleted; 915 tests green; 0 missed mutants (crate 27, diff 33) |
 | WT-203 | Provisioning: symlinks, copies, templates | todo | |
 | WT-204 | Hooks and trust | todo | |
 | WT-205 | Integration checks | todo | |
@@ -63,6 +63,16 @@ create at launch, release at close, never remove the entry.
   branches. clap_complete's zsh generator lists hidden arguments too: completions rebuild
   `create` without `--worktree` when disabled. `.cargo/mutants.toml` excludes the CLI and TUI
   crates; their slices were run with `--no-config`. A rendered path keeps `..` as written.
+- WT-202: `on_launch` passes over declarations without a branch (directories tracked by hand):
+  entries are never removed, so an error there would block the task's launches forever; the
+  CLI warns and starts in the project as before. A new branch uses `--no-track`: started from
+  `origin/main` with the default `autoSetupMerge` it would otherwise push to `main`. `git init` +
+  `remote add` leaves no `origin/HEAD` (only clones set it), so the default base falls back to
+  `HEAD` with a warning, decided before the progress line so `--dry-run` shows the real start.
+  `ls-remote --exit-code` exits 2 when the remote answers without the branch; any other failure
+  (no `origin`, offline) falls back to an already fetched `origin/<b>`. The worktree is created
+  before the task is set in-progress, so a git failure leaves the file untouched. `tasq worktree
+  up` needs `args_conflicts_with_subcommands` next to the `<ID> [TARGET]` positionals.
 - Defaults confirmed by the author 2026-10-08 (TUI): `c` opens a full create view like the edit
   view, not the title prompt; the title prompt and its history are gone.
 - Defaults confirmed by the author 2026-10-07: `on_create = "auto"`, `on_done = "release"`,
@@ -84,3 +94,5 @@ None.
   plan was rewritten around the declare / materialize / release lifecycle.
 - 2026-10-08: WT-201's "TUI create form gets a worktree field" grew, at the author's request, into
   replacing the `c` title prompt with a full create view (the edit view, empty).
+- 2026-10-08: WT-202 dropped `LifecycleError::NoBranch`; `on_launch` returns a `LaunchAction`
+  (no `Result`) and skips entries without a branch instead of failing (see Learnings).

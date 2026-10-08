@@ -25,6 +25,7 @@ path = "src/main.rs"
 [dependencies]
 tasq-core = { path = "../core", version = "0.1.0" }
 tasq-launch = { path = "../launch", version = "0.1.0" }
+tasq-worktree = { path = "../worktree", version = "0.1.0" }
 tasq-sources = { path = "../sources", version = "0.1.0" }
 tasq-store-nb = { path = "../store-nb", version = "0.1.0" }
 tasq-tui = { path = "../tui", version = "0.1.0" }

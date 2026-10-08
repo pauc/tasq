@@ -2046,6 +2046,7 @@ dependencies = [
  "tasq-sources",
  "tasq-store-nb",
  "tasq-tui",
+ "tasq-worktree",
  "tempfile",
  "toml",
  "unicode-width",

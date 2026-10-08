@@ -248,23 +248,29 @@ pub enum Command {
         path: Option<PathBuf>,
     },
 
-    /// Declare a git worktree for the task, or track an existing one.
+    /// Declare a git worktree for the task, track an existing one, or
+    /// create the declared one now (`up`).
     ///
     /// `tasq worktree <ID> [BRANCH]` declares a worktree on BRANCH
     /// (default: worktree.branch rendered for the task) at worktree.path:
     /// it writes the `## Worktrees` entry and creates nothing; the worktree
-    /// is created when the task is launched. `tasq worktree <ID> <PATH>`
-    /// tracks an existing directory and its current branch (idempotent). An
-    /// argument that is an existing directory, starts with `/` or `.`, or
-    /// contains `~` is a path; anything else is a branch.
+    /// is created when the task is launched, or by `tasq worktree up`.
+    /// `tasq worktree <ID> <PATH>` tracks an existing directory and its
+    /// current branch (idempotent). An argument that is an existing
+    /// directory, starts with `/` or `.`, or contains `~` is a path;
+    /// anything else is a branch.
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Worktree {
+        /// `up`.
+        #[command(subcommand)]
+        action: Option<WorktreeAction>,
         /// Task id.
-        #[arg(value_name = "ID")]
-        id: String,
+        #[arg(value_name = "ID", required = true)]
+        id: Option<String>,
         /// Branch to declare, or existing worktree directory to track.
         #[arg(value_name = "BRANCH|PATH", conflicts_with = "create")]
         target: Option<String>,
-        /// Create a worktree for BRANCH (new or existing) now and track it.
+        /// Declare a worktree on BRANCH and create it now.
         #[arg(long, value_name = "BRANCH", hide = true)]
         create: Option<String>,
     },
@@ -432,10 +438,11 @@ TASQ_NOTEBOOK and, when selected, TASQ_PROFILE.";
 
 /// [`LAUNCH_HELP`] when worktrees are enabled.
 const LAUNCH_HELP_WORKTREES: &str = "\
-The task is set to in-progress, then a session starts in the first tracked
-worktree that exists, else the task's project, else work.default_project.
-When every tracked worktree is gone, the newest one is named and, on a
-terminal, you are offered to recreate it on its recorded branch.
+When none of the task's declared worktrees exists, the first one with a
+branch is created first (local branch, else tracking origin/<branch>, else
+new from worktree.base); a failure stops the launch. The task is set to
+in-progress, then a session starts in the first declared worktree that
+exists, else the task's project, else work.default_project.
 ";
 
 const SYNC_HELP: &str = "\
@@ -528,6 +535,27 @@ Hooks are command lines under [hooks] in the config: post-create (after
 `tasq next`/`pick` start a session; a failure aborts the launch). Each
 gets {\"schema\": 1, \"hook\": ..., \"task\": {...}} on stdin and TASQ_HOOK,
 TASQ_TASK_ID and TASQ_BIN in its environment. See docs/plugins.md.";
+
+/// `tasq worktree` subcommands.
+#[derive(Debug, Clone, Subcommand)]
+pub enum WorktreeAction {
+    /// Create the task's declared worktree now, as launching it would.
+    ///
+    /// When none of the declared worktrees exists, the first one with a
+    /// branch is created at its declared path: on the local branch, else
+    /// tracking `origin/<branch>`, else a new branch from worktree.base.
+    Up {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Start a new branch from REF instead of worktree.base.
+        #[arg(long, value_name = "REF")]
+        from: Option<String>,
+        /// Say what would be created; fetch and create nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
 
 /// `tasq create` arguments.
 #[derive(Debug, Clone, Args, Default)]

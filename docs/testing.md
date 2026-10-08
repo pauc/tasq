@@ -103,8 +103,8 @@ least one test to fail. Install it with `cargo install cargo-mutants --locked`.
 
 - `just mutants` tests only code changed since `main`. Run it before opening a PR. CI fails if a
   mutant in the diff survives.
-- `just mutants-full` tests every mutant in `tasq-core`, `tasq-store-nb`, `tasq-sources` and
-  `tasq-launch`. CI runs it nightly on `main` and keeps the issue "Surviving mutants (nightly)"
+- `just mutants-full` tests every mutant in `tasq-core`, `tasq-store-nb`, `tasq-sources`,
+  `tasq-launch` and `tasq-worktree`. CI runs it nightly on `main` and keeps the issue "Surviving mutants (nightly)"
   up to date.
 - `just mutants-in crates/core/src/format` checks a single module, which is how the per-task
   acceptance criteria in the plan are verified. It passes `--no-config` because cargo-mutants

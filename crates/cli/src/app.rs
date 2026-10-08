@@ -92,8 +92,8 @@ pub fn run(cli: Cli) -> Result<()> {
                 Some(Command::Project { id, path }) => {
                     commands::project::run(&app, &id, path.as_deref())
                 }
-                Some(Command::Worktree { id, target, create }) => {
-                    commands::worktree::run(&app, &id, target.as_deref(), create.as_deref())
+                Some(command @ Command::Worktree { .. }) => {
+                    commands::worktree::dispatch(&app, &command)
                 }
                 Some(Command::Session {
                     id,

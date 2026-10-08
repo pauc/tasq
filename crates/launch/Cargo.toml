@@ -1,6 +1,6 @@
 [package]
 name = "tasq-launch"
-description = "tasq Launchers (shell, Claude Code, tmux, herdr) and worktree managers (git, command)"
+description = "tasq Launchers (shell, Claude Code, tmux, herdr) and the summary command"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,8 +1,5 @@
 //! `tasq next` and `tasq pick`: open a work session (plan T-401 to T-405).
 
-use std::io::{BufRead, IsTerminal, Write};
-use std::path::Path;
-
 use serde_json::Value;
 use tasq_core::config::ENV_PROFILE;
 use tasq_core::launch::{ENV_NOTEBOOK, ENV_TASK_ID, LaunchContext, LaunchOutcome, resolve_workdir};
@@ -15,7 +12,7 @@ use tasq_launch::{LaunchSettings, launcher_for, resolve_detached};
 use tasq_store_nb::NbStore;
 
 use crate::app::App;
-use crate::commands::worktree::create_and_track;
+use crate::commands::worktree::{Created, materialize};
 use crate::error::{CliError, Result};
 use crate::json;
 use crate::plugins::{self, Hook};
@@ -131,6 +128,13 @@ fn open_session(
             "task {id} is done; reopen it first (tasq reopen {id})"
         )));
     }
+    // Before any write too: a worktree that cannot be created aborts the
+    // launch with the task untouched (plan 4.2, step 2).
+    let created = if app.worktrees() {
+        materialize(app, &task, None, dry_run)?
+    } else {
+        None
+    };
     if task.status.as_ref() != Some(&Status::IN_PROGRESS) {
         if dry_run {
             say(app, &format!("[{id}] -> in-progress (skipped: dry run)\n"))?;
@@ -153,21 +157,21 @@ fn open_session(
         task.worktrees.clear();
     }
     let default_project = app.config().work.default_project.as_deref();
-    let mut resolution = resolve_workdir(&task, default_project, Path::is_dir)
+    // A dry run starts in the worktree it would have created.
+    let planned = created.as_ref().map(|c| c.path.as_path());
+    let resolution = resolve_workdir(&task, default_project, |p| planned == Some(p) || p.is_dir())
         .map_err(|e| CliError::user(e.to_string()))?;
     for warning in &resolution.warnings {
         app.out.warn(warning);
     }
     if let Some(missing) = &resolution.missing_worktree {
         app.out.warn(&format!(
-            "tracked worktree is gone: {}",
+            "tracked worktree is gone: {}; it records no branch to create it on, starting in the project",
             missing.path.display()
         ));
-        if recreate(app, store, id, missing.branch.as_deref(), dry_run)? {
-            task = store.get(id)?;
-            resolution = resolve_workdir(&task, default_project, Path::is_dir)
-                .map_err(|e| CliError::user(e.to_string()))?;
-        }
+    }
+    if let Some(created) = created.as_ref().filter(|_| !dry_run) {
+        say(app, &format!("Created worktree: {}\n", created.line))?;
     }
     if resolution.in_worktree {
         say(
@@ -207,12 +211,18 @@ fn open_session(
         env,
         focus: how.focus,
     };
-    launch_or_describe(app, &ctx, &name, dry_run)
+    launch_or_describe(app, &ctx, &name, created.as_ref(), dry_run)
 }
 
 /// Builds the launcher called `name` and either describes (`--dry-run`,
 /// as text or JSON) or runs it.
-fn launch_or_describe(app: &App, ctx: &LaunchContext, name: &str, dry_run: bool) -> Result<()> {
+fn launch_or_describe(
+    app: &App,
+    ctx: &LaunchContext,
+    name: &str,
+    created: Option<&Created>,
+    dry_run: bool,
+) -> Result<()> {
     let settings = launch_settings(app)?;
     let resolved = resolve_name(name, &settings.env).to_owned();
     let launcher = launcher_for(name, &settings).map_err(|e| CliError::user(e.to_string()))?;
@@ -230,6 +240,9 @@ fn launch_or_describe(app: &App, ctx: &LaunchContext, name: &str, dry_run: bool)
             .map_err(|e| CliError::user(e.to_string()))?;
         for hook in &app.config().hooks.pre_launch {
             steps.insert(0, format!("pre-launch hook (skipped: dry run): {hook}"));
+        }
+        if let Some(created) = created {
+            steps.insert(0, format!("create worktree {}", created.line));
         }
         if app.out.json_mode() {
             let mut fields = vec![
@@ -268,48 +281,5 @@ fn say(app: &App, text: &str) -> Result<()> {
         Ok(())
     } else {
         app.out.print(text)
-    }
-}
-
-/// Offers to recreate the newest tracked worktree on its recorded branch.
-/// Only asks on a terminal; returns whether a worktree was created.
-fn recreate(
-    app: &App,
-    store: &mut NbStore,
-    id: &TaskId,
-    branch: Option<&str>,
-    dry_run: bool,
-) -> Result<bool> {
-    let Some(branch) = branch else {
-        app.out
-            .warn("no branch recorded for it, starting in the project instead");
-        return Ok(false);
-    };
-    if dry_run {
-        app.out.warn(&format!(
-            "dry run: would offer to recreate it on branch {branch}; starting in the project instead"
-        ));
-        return Ok(false);
-    }
-    if !std::io::stdin().is_terminal() {
-        app.out
-            .warn("no terminal to ask on, starting in the project instead");
-        return Ok(false);
-    }
-    eprint!("Recreate it on branch {branch}? [y/N] ");
-    std::io::stderr().flush()?;
-    let mut reply = String::new();
-    std::io::stdin().lock().read_line(&mut reply)?;
-    if !reply.trim_start().starts_with(['y', 'Y']) {
-        return Ok(false);
-    }
-    match create_and_track(app, store, id, branch) {
-        Ok(()) => Ok(true),
-        Err(e) => {
-            // The session can still start in the project directory.
-            app.out
-                .warn(&format!("could not recreate the worktree: {e}"));
-            Ok(false)
-        }
     }
 }

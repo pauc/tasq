@@ -18,7 +18,8 @@ flowchart TB
     subgraph adapters["Adapters (the only crates that do I/O)"]
         store["<b>tasq-store-nb</b><br/>Store over an nb notebook"]
         sources["<b>tasq-sources</b><br/>Source: GitLab, GitHub, LLM bridge"]
-        launch["<b>tasq-launch</b><br/>Launcher, WorktreeManager, Summarizer"]
+        launch["<b>tasq-launch</b><br/>Launcher, Summarizer"]
+        worktree["<b>tasq-worktree</b><br/>git worktree add"]
     end
 
     core["<b>tasq-core</b> (crates/core)<br/>model · format · query · config · clock<br/>Store / Source / Launcher traits"]
@@ -26,6 +27,7 @@ flowchart TB
     cli --> store
     cli --> sources
     cli --> launch
+    cli --> worktree
     cli --> tui
     cli --> core
     tui --> core
@@ -39,10 +41,11 @@ TUI depends on core only; the CLI is the single place where everything meets.
 
 | Crate | Package | Role | Talks to the world through |
 |---|---|---|---|
-| `crates/core` | `tasq-core` | Domain model, lossless markdown format, queries, config, clock, reconciliation, reports, and the `Store`, `Source`, `Launcher`, `WorktreeManager`, `Summarizer` traits. | Nothing. No filesystem, no processes, no terminal, no network. |
+| `crates/core` | `tasq-core` | Domain model, lossless markdown format, queries, config, clock, reconciliation, reports, and the `Store`, `Source`, `Launcher`, `Summarizer` traits; the worktree lifecycle decisions (`worktree`). | Nothing. No filesystem, no processes, no terminal, no network. |
 | `crates/store-nb` | `tasq-store-nb` | The `Store` implementation: `*.todo.md` files in an nb notebook, `.index` ids, atomic writes, conflict detection, bookkeeping (`nb` or `git`), `tasq doctor` checks. | Files; `nb` and `git` child processes (only for bookkeeping, never for reads). |
 | `crates/sources` | `tasq-sources` | `Source` implementations: GitLab and GitHub review requests and work items over a shared forge client, and the LLM bridge that turns a command's JSON into items. | HTTPS (`ureq`); a child process for the LLM bridge and `token_cmd`. |
-| `crates/launch` | `tasq-launch` | `Launcher` implementations (shell, tmux, Claude Code, herdr), `WorktreeManager` implementations (`git`, user command), the command `Summarizer` behind `tasq summary`. | Child processes, with an explicitly injected environment. |
+| `crates/launch` | `tasq-launch` | `Launcher` implementations (shell, tmux, Claude Code, herdr), the command `Summarizer` behind `tasq summary`. | Child processes, with an explicitly injected environment. |
+| `crates/worktree` | `tasq-worktree` | Carries out the worktree lifecycle (ADR 0022): where a branch lives, `git worktree add` at the declared path. | `git` child processes, with an explicitly injected environment. |
 | `crates/tui` | `tasq-tui` | Full-screen terminal UI. Elm architecture over `tasq-core`; everything that needs the outside world goes through a `Host` the CLI provides. | The terminal (ratatui / crossterm). |
 | `crates/cli` | `tasq` (lib `tasq_cli`) | The binary. Argument parsing, config loading, opening the store, building sources and launchers, rendering human and `--json` output, hooks and out-of-process plugins. | Everything above, plus stdout, the pager and `PATH` for plugins. |
 
@@ -79,7 +82,6 @@ flowchart LR
         Store["Store"]
         Source["Source"]
         Launcher["Launcher"]
-        WM["WorktreeManager"]
         Summ["Summarizer"]
         Clock["Clock"]
     end
@@ -104,7 +106,8 @@ flowchart LR
 | `edit` | The script's `set`, `log` and `done` as operations on a `Store`. Both front ends call these, so they cannot drift. |
 | `source` | `Source` trait, `SourceItem`, `reconcile` (items vs tasks, producing `Change`s) and `apply` (writes the changes through a `Store`). |
 | `launch` | `Launcher` trait, `LaunchContext`, `resolve_workdir` (first existing worktree, else `## Project`, else `work.default_project`). |
-| `work` | `WorktreeManager` trait and the pure worktree/project helpers. |
+| `work` | `project_dir`: the task's project, else `work.default_project`. |
+| `worktree` | The worktree feature's pure parts: `lifecycle` (declare, `on_launch`, `on_close`), `declaration` (templates rendered into an entry), `vars`, `git` (reading `.git` files). |
 | `report` | `DaySummary` from progress notes, `Summarizer` trait, `RawSummarizer`. |
 | `config` | `Config` and its sub-structs, `LoadOptions`, the six layers, `Loaded::file_for` provenance. Reference: [`docs/config.md`](config.md). |
 | `clock` | `Clock`, `SystemClock`, `FixedClock`, `When`, timestamp helpers. Local wall-clock time, no zone, as the script wrote it. |
@@ -231,7 +234,6 @@ Process-running adapters. Every process gets an explicitly injected environment,
 | `shell`, `tmux`, `claude`, `herdr` | The four `Launcher`s. `herdr` is behind the default-on `herdr` feature; `launch.herdr.placement` says whether it opens a workspace or a tab. `tmux` and `herdr` honour `LaunchContext::focus` (ADR-0012). |
 | `prompt` | The tiny template engine (`{{name}}`, `{{#name}}…{{/name}}`) behind the Claude prompt. Templates are data, in `templates/`. |
 | `env` | Environment strategy: run through `direnv exec` so the session gets the target directory's `.envrc`, or inherit. |
-| `worktree` | `GitManager`, the `WorktreeManager` behind `tasq worktree --create`: `git worktree add`. |
 | `summarizer` | `CommandSummarizer`: the configured command (default `claude -p`) that distils a day's notes for `tasq summary`. |
 | `process` | Running external programs with an injected environment. |
 
@@ -294,7 +296,8 @@ flowchart TB
     app --> cmd["commands/&lt;name&gt;.rs"]
     cmd -->|"list, view, set, log, done,<br/>create, apply, project, worktree,<br/>session, mr"| core["tasq-core<br/>query / edit / model"]
     cmd -->|"sync"| src["tasq-sources<br/>build_sources"]
-    cmd -->|"next, pick, session,<br/>worktree, summary"| lnch["tasq-launch<br/>launcher_for, manager_for,<br/>summarizer_for"]
+    cmd -->|"next, pick, session,<br/>worktree, summary"| lnch["tasq-launch<br/>launcher_for, summarizer_for"]
+    cmd -->|"next, pick, worktree"| wt["tasq-worktree<br/>Git"]
     cmd -->|"ui"| tui["tasq-tui::run<br/>+ CliHost"]
     cmd -->|"doctor, store"| store_doc["tasq-store-nb<br/>doctor::checks, describe"]
     core -->|"through the Store trait"| open
@@ -363,6 +366,7 @@ The dependency direction is what makes the test strategy work:
 | `tasq-store-nb` | Tests against a temp copy of the fixture notebook (`tests/support/mod.rs` builds an `NbEnv`). Tests that need the real `nb` skip when it is absent, or fail with `TASQ_REQUIRE_NB=1`. Mutation-tested. |
 | `tasq-sources` | Unit tests with a scripted `Transport`; no network in `cargo test`. |
 | `tasq-launch` | Fake executables on an injected `PATH`; `insta` snapshots of the commands that would run. |
+| `tasq-worktree` | Real `git` against temporary repositories: a bare `origin`, a clone to work in, a second clone that pushes branches. Mutation-tested. |
 | `tasq-tui` | `dispatch` against `MemoryStore` and `RecordingHost`; `insta` snapshots of rendered frames. |
 | `tasq` (CLI) | Integration tests run the binary against the fixture notebook and snapshot its output with `insta`. Not mutation-tested; the logic lives in core. |
 

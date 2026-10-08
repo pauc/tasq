@@ -233,10 +233,18 @@ flag (the check reads the filesystem). `tasq worktree <id> [BRANCH]` declares on
 task; an argument that is an existing directory, starts with `/` or `.`, or contains `~` is
 tracked as an existing worktree instead. A relative rendered `path` is taken from the project.
 
-**Status:** creating a declared worktree at launch and releasing it at close are being built
-(`ruli/features/worktrees/PLAN.md`); until they land, the hidden `tasq worktree <id> --create
-<branch>` runs `git worktree add` into `<project>-<branch>` next to the project (with `-b` when
-the branch exists neither locally nor on `origin`) and tracks the result.
+`tasq next`/`pick` (and the terminal UI's Enter) create the declared worktree when none exists,
+before the task is set in-progress: the first declared worktree with a branch, at its stored
+path, in the task's project repository. The branch is the local one when it exists, else
+`origin/<branch>` (fetched, and tracked) when the remote has it, else a new branch from
+`worktree.base` that tracks nothing; without `origin/HEAD` the default base falls back to
+`HEAD` with a warning. A failure stops the launch with git's error and leaves nothing at the
+path; `--dry-run` lists the step and fetches and creates nothing. `tasq worktree up <id>
+[--from REF] [--dry-run]` does the same without launching, and the hidden `tasq worktree <id>
+--create <branch>` declares on `branch` and creates it at once.
+
+**Status:** releasing worktrees at close and provisioning (links, copies, templates, hooks) are
+being built (`ruli/features/worktrees/PLAN.md`).
 
 ```toml
 [worktree]

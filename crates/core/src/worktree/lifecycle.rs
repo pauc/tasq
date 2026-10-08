@@ -18,13 +18,6 @@ pub enum LifecycleError {
     /// A branch name that is empty or contains whitespace.
     #[error("invalid branch name {0:?}")]
     InvalidBranch(String),
-    /// The declared worktree is gone and its entry records no branch, so
-    /// there is nothing to create it from.
-    #[error(
-        "worktree {} is gone and records no branch to recreate it from",
-        .0.display()
-    )]
-    NoBranch(PathBuf),
 }
 
 /// The outcome of [`declare`].
@@ -105,7 +98,8 @@ pub enum Start {
 /// What a launch does about worktrees (step 2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchAction {
-    /// The task declares no worktree: start in the project.
+    /// No declared worktree exists or can be created: start in the
+    /// project.
     None,
     /// Start in this existing worktree.
     Reuse(PathBuf),
@@ -121,39 +115,35 @@ pub enum LaunchAction {
 }
 
 /// Decides what a launch does (step 2). The first declared worktree that
-/// exists is reused; when none exists the first declared one is created,
-/// from the local branch, else the remote one, else `base`.
-///
-/// # Errors
-///
-/// [`LifecycleError::NoBranch`] when the worktree to create records no
-/// branch.
+/// exists is reused; when none exists the first declared one that
+/// records a branch is created, from the local branch, else the remote
+/// one, else `base`. Entries without a branch (directories tracked by
+/// hand) cannot be created again and are passed over.
 pub fn on_launch(
     worktrees: &[Worktree],
     exists: impl Fn(&Path) -> bool,
     branch_state: impl FnOnce(&str) -> BranchState,
     base: &str,
-) -> Result<LaunchAction, LifecycleError> {
+) -> LaunchAction {
     if let Some(found) = worktrees.iter().find(|w| exists(&w.path)) {
-        return Ok(LaunchAction::Reuse(found.path.clone()));
+        return LaunchAction::Reuse(found.path.clone());
     }
-    let Some(first) = worktrees.first() else {
-        return Ok(LaunchAction::None);
+    let Some((first, branch)) = worktrees
+        .iter()
+        .find_map(|w| w.branch.as_ref().map(|b| (w, b.clone())))
+    else {
+        return LaunchAction::None;
     };
-    let branch = first
-        .branch
-        .clone()
-        .ok_or_else(|| LifecycleError::NoBranch(first.path.clone()))?;
     let start = match branch_state(&branch) {
         BranchState::Local => Start::Local,
         BranchState::Remote(remote) => Start::Track(remote),
         BranchState::Absent => Start::New(base.to_owned()),
     };
-    Ok(LaunchAction::Materialize {
+    LaunchAction::Materialize {
         path: first.path.clone(),
         branch,
         start,
-    })
+    }
 }
 
 /// Whether a release may delete branches (`worktree.delete_branch`).
@@ -322,10 +312,10 @@ mod tests {
     #[test]
     fn declare_passes_on_path_errors() {
         assert_eq!(
-            declare(&task(&[]), "b", |_| Err(LifecycleError::NoBranch(
+            declare(&task(&[]), "b", |_| Err(LifecycleError::InvalidBranch(
                 "/p".into()
             ))),
-            Err(LifecycleError::NoBranch("/p".into()))
+            Err(LifecycleError::InvalidBranch("/p".into()))
         );
     }
 
@@ -356,7 +346,7 @@ mod tests {
     fn launch_without_worktrees_starts_in_the_project() {
         assert_eq!(
             on_launch(&[], |_| true, |_| unreachable!(), "origin/HEAD"),
-            Ok(LaunchAction::None)
+            LaunchAction::None
         );
     }
 
@@ -374,7 +364,7 @@ mod tests {
                 |_| unreachable!(),
                 "main"
             ),
-            Ok(LaunchAction::Reuse(PathBuf::from("/here")))
+            LaunchAction::Reuse(PathBuf::from("/here"))
         );
     }
 
@@ -405,25 +395,34 @@ mod tests {
             );
             assert_eq!(
                 action,
-                Ok(LaunchAction::Materialize {
+                LaunchAction::Materialize {
                     path: PathBuf::from("/a"),
                     branch: "x".into(),
                     start,
-                })
+                }
             );
             assert_eq!(asked.into_inner(), "x");
         }
     }
 
     #[test]
-    fn launch_cannot_recreate_a_worktree_without_a_branch() {
+    fn launch_passes_over_declarations_without_a_branch() {
         assert_eq!(
             on_launch(&[Worktree::new("/a")], |_| false, |_| unreachable!(), "m"),
-            Err(LifecycleError::NoBranch(PathBuf::from("/a")))
+            LaunchAction::None
         );
         assert_eq!(
-            LifecycleError::NoBranch(PathBuf::from("/a")).to_string(),
-            "worktree /a is gone and records no branch to recreate it from"
+            on_launch(
+                &[Worktree::new("/a"), Worktree::on_branch("/b", "y")],
+                |_| false,
+                |_| BranchState::Local,
+                "m"
+            ),
+            LaunchAction::Materialize {
+                path: PathBuf::from("/b"),
+                branch: "y".into(),
+                start: Start::Local,
+            }
         );
         assert_eq!(
             LifecycleError::InvalidBranch("a b".into()).to_string(),

@@ -1,9 +1,6 @@
 //! Process-running adapters for `tasq`: the
 //! [`Launcher`](tasq_core::launch::Launcher) implementations (shell, Claude
-//! Code, tmux, herdr; plan Phase 4), the
-//! [`WorktreeManager`](tasq_core::work::WorktreeManager) implementation,
-//! plain `git` (plan T-306), and
-//! the command [`Summarizer`](tasq_core::report::Summarizer) behind
+//! Code, tmux, herdr; plan Phase 4) and the command [`Summarizer`](tasq_core::report::Summarizer) behind
 //! `tasq summary` (plan T-601).
 //!
 //! Every process is run with an explicitly injected environment, so tests
@@ -21,7 +18,6 @@ pub mod registry;
 pub mod shell;
 pub mod summarizer;
 pub mod tmux;
-pub mod worktree;
 
 pub use self::claude::{ClaudeLauncher, command_in};
 pub use self::env::{EnvrcStatus, envrc_status, envrc_warning, parse_direnv_status, wrap_command};
@@ -33,4 +29,3 @@ pub use self::registry::{
 pub use self::shell::ShellLauncher;
 pub use self::summarizer::{CommandSummarizer, summarizer_for};
 pub use self::tmux::TmuxLauncher;
-pub use self::worktree::{GitManager, current_branch};

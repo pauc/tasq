@@ -48,13 +48,14 @@ Rules that are easy to get wrong:
 
 ## Architecture
 
-Workspace of six crates; dependencies flow one way, toward `tasq-core`.
+Workspace of seven crates; dependencies flow one way, toward `tasq-core`.
 
 | Crate | Role |
 |---|---|
 | `crates/core` (`tasq-core`) | Domain model, markdown format, queries, config, clock, and the `Store`/`Source`/`Launcher` traits. **No I/O, no process spawning, no terminal or network deps.** |
-| `crates/store-nb` | `Store` impl over an nb notebook plus the `Bookkeeper` strategy and `doctor` checks. The only crate that runs `nb` or `git`. |
+| `crates/store-nb` | `Store` impl over an nb notebook plus the `Bookkeeper` strategy and `doctor` checks. The only crate that runs `nb` (and `git`, for bookkeeping). |
 | `crates/sources`, `crates/launch` | Stubs. Phase 5 (GitLab/GitHub/LLM-bridge sources) and Phase 4 (shell/tmux/claude/herdr launchers). |
+| `crates/worktree` (`tasq-worktree`) | Runs `git` for declared worktrees (ADR 0022): branch state, `git worktree add`. The decisions live in `tasq_core::worktree`. |
 | `crates/cli` (binary `tasq`) | Stub. Phase 3 (current). Must stay thin: every command is a core function plus rendering, and every command gets `--json`. |
 | `crates/tui` | Stub. Phase 8. Depends on core only. |
 

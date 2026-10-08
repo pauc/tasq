@@ -56,7 +56,7 @@ of the file) and its `tasq` counterpart.
 | `tasks view <id> <nb args>` (nb passthrough) | none; `tasq view <ID> --raw`, or `nb show <notebook>:<ID> <args>` | Decided in T-305. |
 | `tasks project <id> [path]` | `tasq project <ID> [PATH]` | |
 | `tasks worktree <id> <path>` | `tasq worktree <ID> <PATH>` | |
-| `tasks worktree <id> --create <branch>` | `tasq worktree <ID> --create <BRANCH>` | `git worktree add` into `<project>-<branch>`. The script called gwm; tasq provisions worktrees itself under `[worktree]` (`docs/config.md`, "Worktrees"). |
+| `tasks worktree <id> --create <branch>` | `tasq worktree <ID> --create <BRANCH>` (hidden), or `tasq worktree <ID> <BRANCH>` then `tasq worktree up <ID>` | Declares the worktree at `worktree.path` and runs `git worktree add`. The script called gwm; tasq provisions worktrees itself under `[worktree]` (`docs/config.md`, "Worktrees"). |
 | `tasks session <id> <session-id> [desc]` | `tasq session <ID> <SESSION_ID> [DESC] [--launcher L]` | |
 | `tasks mr <id> <mr-url> [title]` | `tasq mr <ID> <URL> [TITLE]` | Title resolved through the configured `[forge.*]`; without one it records the short reference (`group/project!123`). The script used `glab api` from `TASKS_DEFAULT_WORKTREE`. |
 | `tasks update [args]` (Claude `/update-tasks` session) | `tasq sync --interactive` (the same session, running `/tasq:sync` in `work.default_project`); `tasq sync [--source NAME] [--dry-run] [--json]` headless | Sources are `[[source]]` blocks: GitLab/GitHub review requests and work items, plus an LLM bridge for Slack/Gmail-style inboxes ([`docs/sources.md`](sources.md)). The bridge was verified headless on 2026-10-05 (same connectors, ~90 s and ~$2 per run), so Slack/Gmail triage no longer needs an interactive session. |
@@ -161,9 +161,11 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
 - Usage errors exit 2 (clap convention); domain errors exit 1 with
   `tasq: ...`. The script exited 1 for both.
 - `tasq view` has no nb passthrough; `--raw` prints the file verbatim.
-- `tasq worktree --create` runs plain `git worktree add`; worktree
-  provisioning (links, copies, templates, hooks) is configured under
-  `[worktree]` instead of an external tool.
+- A launch creates the task's declared worktree when it is gone, without
+  asking (the script offered to recreate it); `tasq worktree --create` runs
+  plain `git worktree add`, and worktree provisioning (links, copies,
+  templates, hooks) is configured under `[worktree]` instead of an external
+  tool.
 - `tasq next`/`pick` default to the `claude` launcher regardless of
   `HERDR_ENV`; set `launch.default = "auto"` to get the script's "herdr when
   inside herdr" behaviour.

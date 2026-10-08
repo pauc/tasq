@@ -11,4 +11,4 @@
 pub mod git;
 pub mod process;
 
-pub use self::git::{Added, Git, GitError, add_args, describe};
+pub use self::git::{Git, GitError, add_args, describe};

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tasq_core::worktree::lifecycle::{BranchState, Start};
-use tasq_worktree::{Added, Git, GitError};
+use tasq_worktree::{Git, GitError};
 use tempfile::TempDir;
 
 struct Repos {
@@ -130,7 +130,7 @@ fn a_local_branch_is_checked_out() {
     let path = r.wt("app-local");
     assert_eq!(
         r.git.add(&r.project, &path, "feat/local", &Start::Local),
-        Ok(Added::default())
+        Ok(())
     );
     assert_eq!(r.git.current_branch(&path).as_deref(), Some("feat/local"));
 }
@@ -178,15 +178,12 @@ fn a_new_branch_starts_from_the_base_without_tracking_it() {
     r.sh(&r.project, &["add", "local"]);
     r.sh(&r.project, &["commit", "-q", "-m", "local only"]);
     let path = r.wt("app-new");
+    let start = Start::New("origin/HEAD".into());
     assert_eq!(
-        r.git.add(
-            &r.project,
-            &path,
-            "feat/new",
-            &Start::New("origin/HEAD".into())
-        ),
-        Ok(Added::default())
+        r.git.resolve_start(&r.project, "feat/new", &start),
+        (start.clone(), None)
     );
+    assert_eq!(r.git.add(&r.project, &path, "feat/new", &start), Ok(()));
     assert_eq!(r.git.current_branch(&path).as_deref(), Some("feat/new"));
     assert_eq!(r.upstream(&path), None, "never tracks the base");
     assert_eq!(
@@ -200,12 +197,19 @@ fn without_origin_head_a_new_branch_starts_from_head() {
     let r = Repos::new();
     r.sh(&r.project, &["remote", "set-head", "origin", "--delete"]);
     let path = r.wt("app-head");
-    let added = r
+    let (start, note) = r
         .git
-        .add(&r.project, &path, "b", &Start::New("origin/HEAD".into()))
-        .unwrap();
+        .resolve_start(&r.project, "b", &Start::New("origin/HEAD".into()));
+    assert_eq!(start, Start::New("HEAD".into()));
+    for other in [Start::Local, Start::New("main".into())] {
+        assert_eq!(
+            r.git.resolve_start(&r.project, "b", &other),
+            (other.clone(), None)
+        );
+    }
+    r.git.add(&r.project, &path, "b", &start).unwrap();
     assert_eq!(
-        added.note.as_deref(),
+        note.as_deref(),
         Some(
             "origin/HEAD is not set; b starts from HEAD \
              (set worktree.base, or run git remote set-head origin --auto)"

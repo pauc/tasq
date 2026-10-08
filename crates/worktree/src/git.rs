@@ -34,14 +34,6 @@ pub enum GitError {
     },
 }
 
-/// What [`Git::add`] did besides creating the worktree.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Added {
-    /// Something the user should know (`origin/HEAD` not set, so the
-    /// branch starts from `HEAD`).
-    pub note: Option<String>,
-}
-
 /// `git`, with the environment every process gets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Git {
@@ -123,11 +115,33 @@ impl Git {
         Ok(BranchState::Absent)
     }
 
+    /// `start` as it will run in the repository at `repo`: a new branch
+    /// from `origin/HEAD` starts from `HEAD` when the repository has no
+    /// `origin/HEAD` (a clone always has one; `git init` plus `remote add`
+    /// does not), with a note saying so. Reads refs only.
+    pub fn resolve_start(
+        &self,
+        repo: &Path,
+        branch: &str,
+        start: &Start,
+    ) -> (Start, Option<String>) {
+        match start {
+            Start::New(base)
+                if base == ORIGIN_HEAD && !self.has_ref(repo, "refs/remotes/origin/HEAD") =>
+            {
+                let note = format!(
+                    "{ORIGIN_HEAD} is not set; {branch} starts from HEAD \
+                     (set worktree.base, or run git remote set-head origin --auto)"
+                );
+                (Start::New("HEAD".to_owned()), Some(note))
+            }
+            other => (other.clone(), None),
+        }
+    }
+
     /// Creates the worktree at `path` on `branch` as `start` says, from the
-    /// repository at `repo`. A new branch from `origin/HEAD` starts from
-    /// `HEAD` when the repository has no `origin/HEAD`. When git fails,
-    /// whatever appeared at `path` is removed and the worktree list pruned,
-    /// so a retry starts clean.
+    /// repository at `repo`. When git fails, whatever appeared at `path`
+    /// is removed and the worktree list pruned, so a retry starts clean.
     ///
     /// # Errors
     ///
@@ -139,30 +153,17 @@ impl Git {
         path: &Path,
         branch: &str,
         start: &Start,
-    ) -> Result<Added, GitError> {
+    ) -> Result<(), GitError> {
         if !repo.is_dir() {
             return Err(GitError::NoRepo(repo.to_path_buf()));
         }
         if path.exists() {
             return Err(GitError::Exists(path.to_path_buf()));
         }
-        let mut added = Added::default();
-        let start = match start {
-            Start::New(base)
-                if base == ORIGIN_HEAD && !self.has_ref(repo, "refs/remotes/origin/HEAD") =>
-            {
-                added.note = Some(format!(
-                    "{ORIGIN_HEAD} is not set; {branch} starts from HEAD \
-                     (set worktree.base, or run git remote set-head origin --auto)"
-                ));
-                Start::New("HEAD".to_owned())
-            }
-            other => other.clone(),
-        };
-        let args = add_args(path, branch, &start);
+        let args = add_args(path, branch, start);
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         match self.check(repo, &args) {
-            Ok(_) => Ok(added),
+            Ok(_) => Ok(()),
             Err(e) => {
                 if path.exists() {
                     let _ = std::fs::remove_dir_all(path);
@@ -205,15 +206,16 @@ pub fn add_args(path: &Path, branch: &str, start: &Start) -> Vec<String> {
     args
 }
 
-/// One line for `--dry-run` and progress: the path, the branch and where
-/// the branch comes from.
+/// The worktree to create, for `--dry-run` and progress lines: its path,
+/// its branch and where the branch comes from (`/wt/app-b on b (new from
+/// origin/HEAD)`).
 pub fn describe(path: &Path, branch: &str, start: &Start) -> String {
     let from = match start {
         Start::Local => "the local branch".to_owned(),
         Start::Track(remote) => format!("tracking {remote}"),
         Start::New(base) => format!("new from {base}"),
     };
-    format!("create worktree {} on {branch} ({from})", path.display())
+    format!("{} on {branch} ({from})", path.display())
 }
 
 #[cfg(test)]
@@ -258,15 +260,15 @@ mod tests {
         let path = Path::new("/wt/x");
         assert_eq!(
             describe(path, "b", &Start::Local),
-            "create worktree /wt/x on b (the local branch)"
+            "/wt/x on b (the local branch)"
         );
         assert_eq!(
             describe(path, "b", &Start::Track("origin/b".into())),
-            "create worktree /wt/x on b (tracking origin/b)"
+            "/wt/x on b (tracking origin/b)"
         );
         assert_eq!(
             describe(path, "b", &Start::New("main".into())),
-            "create worktree /wt/x on b (new from main)"
+            "/wt/x on b (new from main)"
         );
     }
 

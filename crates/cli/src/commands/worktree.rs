@@ -1,20 +1,43 @@
 //! `tasq worktree <id> [BRANCH|PATH]`: declare a worktree or track an
-//! existing one; `--create <branch>` (hidden) creates it now.
+//! existing one; `tasq worktree up <id>` creates the declared one now, as a
+//! launch does; `--create <branch>` (hidden) is "declare, then up".
 
 use std::path::{Path, PathBuf};
 
 use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::store::Store;
 use tasq_core::work;
-use tasq_core::work::WorktreeManager;
-use tasq_core::worktree::lifecycle::Declared;
+use tasq_core::worktree::lifecycle::{self, BranchState, Declared, LaunchAction};
 use tasq_core::worktree::{declaration, git, vars};
-use tasq_launch::{GitManager, current_branch};
 use tasq_store_nb::NbStore;
+use tasq_worktree::{Git, describe as describe_start};
 
 use crate::app::App;
+use crate::cli::{Command, WorktreeAction};
 use crate::commands::{existing_dir, finish};
 use crate::error::{CliError, Result};
+
+/// `tasq worktree`: a subcommand, else declare or track (`run`).
+pub fn dispatch(app: &App, command: &Command) -> Result<()> {
+    let Command::Worktree {
+        action,
+        id,
+        target,
+        create,
+    } = command
+    else {
+        unreachable!("dispatch is only called for the worktree command");
+    };
+    match action {
+        Some(WorktreeAction::Up { id, from, dry_run }) => up(app, id, from.as_deref(), *dry_run),
+        None => run(
+            app,
+            id.as_deref().unwrap_or_default(),
+            target.as_deref(),
+            create.as_deref(),
+        ),
+    }
+}
 
 /// Declares a worktree on `target` (a branch, or the default without one),
 /// tracks `target` when it is a path, or creates a worktree for `create`.
@@ -30,7 +53,7 @@ pub fn run(app: &App, id: &str, target: Option<&str>, create: Option<&str>) -> R
     }
     match target {
         Some(arg) if declaration::is_path(arg, Path::new(arg).is_dir()) => {
-            track(app, &mut store, &id, Path::new(arg), None)
+            track(app, &mut store, &id, Path::new(arg))
         }
         branch => {
             let mut task = store.get(&id)?;
@@ -153,36 +176,117 @@ impl Repo {
     }
 }
 
-/// Creates the worktree for `branch` with the configured manager, in the
-/// task's project (or the default), and tracks it. Also used by `next`
-/// and `pick` to recreate a worktree that is gone.
+/// `tasq worktree <id> --create <branch>`: declares a worktree on
+/// `branch` and creates it, unless its directory exists already.
 pub fn create_and_track(app: &App, store: &mut NbStore, id: &TaskId, branch: &str) -> Result<()> {
-    let branch = branch.trim();
-    if branch.is_empty() {
-        return Err(CliError::user("the branch name must not be empty"));
+    let mut task = store.get(id)?;
+    let project = project_of(app, &task)?;
+    let (worktree, new) = declare(app, &task, Some(branch), &project)?;
+    if new {
+        task.add_worktree(worktree.clone());
+        store.update(&task)?;
     }
-    let project = project_of(app, &store.get(id)?)?;
-    let manager = GitManager { env: app.env_vec() };
-    let created = manager
-        .create(&project, branch)
-        .map_err(|e| CliError::user(e.to_string()))?;
-    if !app.out.json_mode() {
-        for message in &created.messages {
-            app.out.print(&format!("{message}\n"))?;
-        }
+    let only = Task {
+        worktrees: vec![worktree.clone()],
+        ..task
+    };
+    let line = match materialize(app, &only, None, false)? {
+        Some(created) => format!("[{id}] created worktree {}\n", created.line),
+        None => format!("[{id}] worktree: {}\n", describe(&worktree)),
+    };
+    finish(app, store, id, &line)
+}
+
+/// `tasq worktree up <id> [--from REF] [--dry-run]`: creates the task's
+/// declared worktree now, as launching it would.
+pub fn up(app: &App, id: &str, from: Option<&str>, dry_run: bool) -> Result<()> {
+    if !app.worktrees() {
+        return Err(disabled());
     }
-    track(app, store, id, &created.path, Some(created.branch))
+    let id = App::task_id(id)?;
+    let store = app.open_store()?;
+    let task = store.get(&id)?;
+    let line = match materialize(app, &task, from, dry_run)? {
+        Some(created) if dry_run => format!("[{id}] would create worktree {}\n", created.line),
+        Some(created) => format!("[{id}] created worktree {}\n", created.line),
+        None => match task.worktrees.iter().find(|w| w.path.is_dir()) {
+            Some(existing) => format!("[{id}] worktree exists: {}\n", describe(existing)),
+            None => {
+                return Err(CliError::user(format!(
+                    "task {id} declares no worktree with a branch; declare one with tasq worktree {id} [BRANCH]"
+                )));
+            }
+        },
+    };
+    finish(app, &store, &id, &line)
+}
+
+/// A worktree [`materialize`] created, or would create on a dry run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Created {
+    /// Its directory.
+    pub path: PathBuf,
+    /// `<path> on <branch> (<where the branch comes from>)`.
+    pub line: String,
+}
+
+/// Step 2 of the lifecycle: when none of `task`'s declared worktrees
+/// exists, creates the first one that records a branch, in the task's
+/// project repository; a new branch starts from `from`, else
+/// `worktree.base`. A dry run decides without fetching or creating
+/// anything. `None` when a declared worktree exists or none can be
+/// created. The caller checks that worktrees are enabled.
+pub fn materialize(
+    app: &App,
+    task: &Task,
+    from: Option<&str>,
+    dry_run: bool,
+) -> Result<Option<Created>> {
+    let git = Git { env: app.env_vec() };
+    let base = from.unwrap_or(&app.config().worktree.base);
+    let mut failed = None;
+    let action = lifecycle::on_launch(
+        &task.worktrees,
+        Path::is_dir,
+        |branch| {
+            let state = project_of(app, task).and_then(|repo| {
+                git.branch_state(&repo, branch, !dry_run)
+                    .map_err(|e| CliError::user(e.to_string()))
+            });
+            state.unwrap_or_else(|e| {
+                failed = Some(e);
+                BranchState::Absent
+            })
+        },
+        base,
+    );
+    if let Some(e) = failed {
+        return Err(e);
+    }
+    let LaunchAction::Materialize {
+        path,
+        branch,
+        start,
+    } = action
+    else {
+        return Ok(None);
+    };
+    let repo = project_of(app, task)?;
+    let (start, note) = git.resolve_start(&repo, &branch, &start);
+    if let Some(note) = note {
+        app.out.warn(&note);
+    }
+    if !dry_run {
+        git.add(&repo, &path, &branch, &start)
+            .map_err(|e| CliError::user(e.to_string()))?;
+    }
+    let line = describe_start(&path, &branch, &start);
+    Ok(Some(Created { path, line }))
 }
 
 /// Records `path` (which must exist) with its current branch, unless it is
 /// already tracked.
-fn track(
-    app: &App,
-    store: &mut NbStore,
-    id: &TaskId,
-    path: &Path,
-    branch_hint: Option<String>,
-) -> Result<()> {
+fn track(app: &App, store: &mut NbStore, id: &TaskId, path: &Path) -> Result<()> {
     let dir = existing_dir(path)
         .ok_or_else(|| CliError::user(format!("worktree path not found: {}", path.display())))?;
     let mut task = store.get(id)?;
@@ -194,7 +298,7 @@ fn track(
             &format!("[{id}] worktree already tracked: {}\n", dir.display()),
         );
     }
-    let branch = current_branch(&dir, &app.env_vec()).or(branch_hint);
+    let branch = Git { env: app.env_vec() }.current_branch(&dir);
     task.add_worktree(Worktree {
         path: dir.clone(),
         branch: branch.clone(),
