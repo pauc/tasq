@@ -5,15 +5,15 @@ Plan: [PLAN.md](PLAN.md). Decision: [ADR 0022](../../../docs/adr/0022-worktrees-
 
 ## Status
 
-**Phase 1 done (2026-10-07); Phase 2 at WT-205 (2026-10-08).** Scope agreed with the author on
+**Phase 1 done (2026-10-07); Phase 2 at WT-206 (2026-10-08).** Scope agreed with the author on
 2026-10-07: core feature behind `worktree.enabled`, full gwm replacement, then improvements from the
 prior-art survey (PLAN section 7). Plugin task fields split out to nb todo 46. Lifecycle settled
 the same day (PLAN 4.2): declare at creation, create at launch, release at close, never remove the
 entry.
 
-Where things stand (2026-10-08, after WT-204):
+Where things stand (2026-10-08, after WT-205):
 
-- Branch `feat/worktrees`, 22 commits ahead of `main` (latest 15b9133), not pushed, no PR. It
+- Branch `feat/worktrees`, 25 commits ahead of `main` (latest: the WT-205 progress commit), not pushed, no PR. It
   also carries four commits from another session that are not worktree work: 97611f0 (store-nb
   never runs nb, ADR 0023), 39e550f, fa6fc13, 3e1c003. ADR 0022 is still Proposed.
 - Declaring, creating at launch, provisioning and creation hooks work end to end:
@@ -24,13 +24,16 @@ Where things stand (2026-10-08, after WT-204):
   config sets `[worktree] enabled = true`. Reinstalling from this branch changes daily use:
   `c` opens the full create view, `on_create = "auto"` declares worktrees for new tasks in a git
   checkout, and launching creates them. Ask the author before reinstalling.
-- Next: WT-205 (PLAN `#### WT-205`), the "nothing is lost" checks that fill
-  `BranchSeen::Present { integrated, pushed }` for `lifecycle::on_close` (WT-101). Per PLAN 4.1
-  the decision logic over git outputs goes in core and the git calls in `tasq-worktree`; tests
-  are temp repos (the bare-origin harness in `crates/worktree/tests/git.rs`). Then WT-206 wires
-  release into `tasq done`, the TUI's `d` and `tasq worktree release`, with the
-  `pre-remove`/`post-remove` hooks (`worktree_hooks::prepare` takes the kinds) and the
-  `git worktree prune` note under WT-101 Learnings.
+- Next: WT-206 (PLAN `#### WT-206`), release at close in `tasq done`, the TUI's `d` and
+  `tasq worktree release`. `Git::safety(repo, branch)` (WT-205) gives the `BranchSeen` for
+  `lifecycle::on_close` (`Safety::seen`, `None` = `BranchSeen::Absent`) and the reason for the
+  message (`Safety::reason`). Still to add in `tasq-worktree`: dirty/locked/main detection for
+  `DirSeen`, `git worktree remove`, `git branch -D` (after `git worktree prune`, see WT-101
+  Learnings), and the `pre-remove`/`post-remove` hooks (`worktree_hooks::prepare` takes the
+  kinds). Decide whether a release fetches `origin` first (see WT-205 Learnings).
+- Known flake, not worktree work: `commands::ui::tests::sync_passes_the_picked_sources_as_source_flags`
+  failed once in a full `cargo test --workspace` and passed alone three times (likely ETXTBSY:
+  a script written and executed while other test threads fork).
 - WT-208 needs the author's real `gwm.yml` files, which live outside this repository; reading them
   needs the author's go-ahead (repository rule: never read outside the working directory).
 
@@ -44,7 +47,7 @@ Where things stand (2026-10-08, after WT-204):
 | WT-202 | Materializing at launch: the `tasq-worktree` crate | done | fa33080 (crate), 2ff484b (CLI wiring); `crates/worktree/**` added to `.cargo/mutants.toml` and the release crate list. `tasq_worktree::Git` (`branch_state` local / `ls-remote` + fetch / offline `origin/<b>` / absent, `resolve_start`, `add` with cleanup, `current_branch`); `materialize` in `next`/`pick` before the status change, `tasq worktree up [--from] [--dry-run]`, `--create` = declare + create; recreate prompt, `GitManager`, `WorktreeManager`, `work::{branch_slug, sibling_worktree}` deleted; 915 tests green; 0 missed mutants (crate 27, diff 33) |
 | WT-203 | Provisioning: symlinks, copies, templates | done | 46ef57d (core `provision::plan`, three workspace fixture configs), 9b37c1a (`tasq_worktree::provision::{prepare, apply}`, tree checked against fixture files), d3f5806 (CLI): `RepoSettings` loads `[worktree]` from the main checkout (`App::config_at`), templates relative to the file that set them, rendered before `git worktree add`; dry runs list the steps; 0 missed mutants (core 4+2, crate 7+1, CLI diff 13+10) |
 | WT-204 | Hooks and trust | done | f3d5215, 15b9133 (core `hooks`: `Kind`, `argv`, `env`, `trust_file`, `TrustStore`) + runner (`tasq_worktree::hooks::run_hook`) and CLI (`worktree_hooks`: pending lines from the repository's own file, `--yes`, terminal prompt, `tasq worktree trust [DIR]`; pre-create in the main checkout before git, post-create in the worktree); `next`/`pick` dispatch moved out of `app::run`; 947 tests green; 0 missed mutants (93: 83 caught, 10 unviable) |
-| WT-205 | Integration checks | todo | |
+| WT-205 | Integration checks | done | core `worktree::integration` (`Check` cheapest first, `first_passing`, `targets`, `pushed_ref`, `cherry_all_upstream`, `merge_tree`, `Safety { integrated, pushed }` with `seen()` and `reason()`), 89151cd; `tasq_worktree::Git::safety`, e04c86c; 12 temp-repo tests (one per check, pushed with and without upstream, neither, local `main` fallback, the default branch itself, no local branch); 967 tests green; 0 missed mutants (76: 67 caught, 9 unviable) |
 | WT-206 | Releasing at close | todo | |
 | WT-207 | `ls`, `switch`, `path`, `shell-init`, completions | todo | |
 | WT-208 | Switch the author's workspaces off gwm (manual acceptance) | todo | |
@@ -106,6 +109,18 @@ Where things stand (2026-10-08, after WT-204):
   in a repository's `.tasq.toml` applies when tasq runs elsewhere. Copies come from the main
   checkout, not the task's project subdirectory, since the worktree is a checkout of the whole
   repository.
+- WT-205: the targets are the ref `origin/HEAD` points to, then the local branch of that name
+  (a merge done locally counts); without `origin/HEAD`, the local `main` else `master`. The
+  branch itself is never a target, so a worktree on `main` is never "integrated into itself".
+  "Pushed" is the upstream when it is a remote-tracking ref, else `origin/<branch>`: new
+  branches use `--no-track`, and `git push` without `-u` sets no upstream. A local upstream does
+  not count. Every check reads the remote-tracking refs as last fetched and never fetches; a
+  GitLab merge done since the last fetch is only seen through the pushed check. Whether a
+  release fetches first is WT-206's call. A git failure in a check counts as not passing, so
+  doubt keeps the branch. Commits made in the same second with the same message, parent and
+  tree are the same commit: tests that need two distinct commits change the message
+  (`cherry-pick -x`). `MergeAddsNothing` needs `git merge-tree --write-tree` (git 2.38); an
+  older git fails the check and falls through to `git cherry`.
 - WT-204: a hook line is split into words first and each word rendered after, so a title with
   quotes or spaces cannot change the command; no shell, as for `[hooks]`. Only hook kinds whose
   key the repository's own `.tasq.toml` (`config::project_file` from the main checkout) decided
