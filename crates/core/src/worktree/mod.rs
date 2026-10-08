@@ -6,5 +6,7 @@
 //! the next launch can create it again. This module holds the pure decisions;
 //! running `git` and touching the filesystem is the caller's job.
 
+pub mod declaration;
+pub mod git;
 pub mod lifecycle;
 pub mod vars;

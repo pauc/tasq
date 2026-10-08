@@ -37,32 +37,33 @@ pub enum Declared {
     Already(Worktree),
 }
 
-/// Declares a worktree for `task` (step 1): `branch`, or `default_branch()`
-/// when none is given, at `path_for(branch)`. Runs no process and creates
-/// nothing; the caller stores the entry.
+/// Declares a worktree for `task` (step 1) on `branch`, at
+/// `path_for(branch)`. Runs no process and creates nothing; the caller
+/// stores the entry. [`super::declaration::declare`] renders the branch
+/// and path from the configuration.
 ///
 /// # Errors
 ///
 /// [`LifecycleError::InvalidBranch`] for an empty branch or one with
-/// whitespace (git refuses those, and the file format cannot hold them).
-pub fn declare(
+/// whitespace (git refuses those, and the file format cannot hold them),
+/// before `path_for` runs; otherwise whatever `path_for` returns.
+pub fn declare<E: From<LifecycleError>>(
     task: &Task,
-    branch: Option<&str>,
-    default_branch: impl FnOnce() -> String,
-    path_for: impl FnOnce(&str) -> PathBuf,
-) -> Result<Declared, LifecycleError> {
-    let branch = branch.map_or_else(default_branch, |b| b.trim().to_owned());
+    branch: &str,
+    path_for: impl FnOnce(&str) -> Result<PathBuf, E>,
+) -> Result<Declared, E> {
+    let branch = branch.trim();
     if branch.is_empty() || branch.contains(char::is_whitespace) {
-        return Err(LifecycleError::InvalidBranch(branch));
+        return Err(LifecycleError::InvalidBranch(branch.to_owned()).into());
     }
     if let Some(existing) = task
         .worktrees
         .iter()
-        .find(|w| w.branch.as_deref() == Some(branch.as_str()))
+        .find(|w| w.branch.as_deref() == Some(branch))
     {
         return Ok(Declared::Already(existing.clone()));
     }
-    let path = path_for(&branch);
+    let path = path_for(branch)?;
     if let Some(existing) = task.worktrees.iter().find(|w| w.path == path) {
         return Ok(Declared::Already(existing.clone()));
     }
@@ -282,20 +283,14 @@ mod tests {
     }
 
     #[test]
-    fn declare_uses_the_given_branch_or_the_default() {
-        let t = task(&[]);
+    fn declare_trims_the_branch() {
         assert_eq!(
-            declare(&t, Some(" feat/x "), || unreachable!(), sibling),
+            declare(&task(&[]), " feat/x ", |b| Ok::<_, LifecycleError>(
+                sibling(b)
+            )),
             Ok(Declared::New(Worktree::on_branch(
                 "/code/app-feat/x",
                 "feat/x"
-            )))
-        );
-        assert_eq!(
-            declare(&t, None, || "7-fix-login".into(), sibling),
-            Ok(Declared::New(Worktree::on_branch(
-                "/code/app-7-fix-login",
-                "7-fix-login"
             )))
         );
     }
@@ -305,14 +300,22 @@ mod tests {
         let t = task(&[]);
         for bad in ["", "  ", "a b", "a\tb"] {
             assert_eq!(
-                declare(&t, Some(bad), String::new, sibling),
+                declare(&t, bad, |_| -> Result<PathBuf, LifecycleError> {
+                    unreachable!()
+                }),
                 Err(LifecycleError::InvalidBranch(bad.trim().into())),
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn declare_passes_on_path_errors() {
         assert_eq!(
-            declare(&t, None, String::new, sibling),
-            Err(LifecycleError::InvalidBranch(String::new()))
+            declare(&task(&[]), "b", |_| Err(LifecycleError::NoBranch(
+                "/p".into()
+            ))),
+            Err(LifecycleError::NoBranch("/p".into()))
         );
     }
 
@@ -321,18 +324,20 @@ mod tests {
         let same_branch = Worktree::on_branch("/elsewhere", "b");
         let t = task(std::slice::from_ref(&same_branch));
         assert_eq!(
-            declare(&t, Some("b"), String::new, |_| unreachable!()),
+            declare(&t, "b", |_| -> Result<PathBuf, LifecycleError> {
+                unreachable!()
+            }),
             Ok(Declared::Already(same_branch))
         );
         let same_path = Worktree::new("/code/app-c");
         let t = task(std::slice::from_ref(&same_path));
         assert_eq!(
-            declare(&t, Some("c"), String::new, sibling),
+            declare(&t, "c", |b| Ok::<_, LifecycleError>(sibling(b))),
             Ok(Declared::Already(same_path))
         );
         let other = task(&[Worktree::on_branch("/code/app-d", "d")]);
         assert_eq!(
-            declare(&other, Some("c"), String::new, sibling),
+            declare(&other, "c", |b| Ok::<_, LifecycleError>(sibling(b))),
             Ok(Declared::New(Worktree::on_branch("/code/app-c", "c")))
         );
     }
