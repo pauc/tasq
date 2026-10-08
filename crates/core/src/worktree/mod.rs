@@ -8,6 +8,7 @@
 
 pub mod declaration;
 pub mod git;
+pub mod hooks;
 pub mod lifecycle;
 pub mod provision;
 pub mod vars;

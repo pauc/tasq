@@ -20,6 +20,8 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 # See the "Mutation testing" note in src/lib.rs.
 mutants = "0.0.4"
 serde = { version = "1", features = ["derive"] }
+# Splits worktree hook command lines into words (no shell runs them).
+shell-words = "1"
 thiserror = "2"
 toml = "0.9"
 
