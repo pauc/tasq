@@ -2,22 +2,20 @@
 //! earlier in the session, like a shell's history. In memory only;
 //! nothing is written to disk.
 //!
-//! The model keeps three, in [`Histories`]: filters, notes (`log` and
-//! `done` share one, both are progress notes) and titles. Recalling a
-//! filter while writing a note would be noise.
+//! The model keeps two, in [`Histories`]: filters and notes (`log` and
+//! `done` share one, both are progress notes). Recalling a filter while
+//! writing a note would be noise.
 
 /// How many entries a history keeps; the oldest go first.
 pub const CAP: usize = 100;
 
-/// The three histories of a session.
+/// The histories of a session.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Histories {
     /// Filters applied with `Enter` (`/`).
     pub filters: History,
     /// Notes written with `l`, and the non-empty final notes of `d`.
     pub notes: History,
-    /// Titles of tasks created with `c`.
-    pub titles: History,
 }
 
 /// The entries of one prompt kind, and where `Up`/`Down` are in them

@@ -296,12 +296,26 @@ fn overlays() {
     update(&mut model, Msg::Escape);
     update(&mut model, Msg::BeginDone);
     assert_snapshot!("done_prompt", screen(&mut model, 120, 20));
-    update(&mut model, Msg::Escape);
+}
+
+#[test]
+fn create_view() {
+    let mut model = fixture(true).with_worktrees(true);
     update(&mut model, Msg::BeginCreate);
     for c in "Call the bank".chars() {
         update(&mut model, Msg::Char(c));
     }
-    assert_snapshot!("typing_a_title", screen(&mut model, 120, 20));
+    for _ in 0..5 {
+        update(&mut model, Msg::NextField);
+    }
+    for c in "feat/bank".chars() {
+        update(&mut model, Msg::Char(c));
+    }
+    assert_snapshot!("create_view_with_worktrees", screen(&mut model, 120, 20));
+    assert_snapshot!("create_view_compact", screen(&mut model, 70, 20));
+    let mut plain = fixture(true);
+    update(&mut plain, Msg::BeginCreate);
+    assert_snapshot!("create_view", screen(&mut plain, 120, 20));
 }
 
 #[test]
@@ -606,7 +620,7 @@ fn creating_from_an_empty_list() {
     for c in "First one".chars() {
         update(&mut model, Msg::Char(c));
     }
-    assert_snapshot!("typing_a_title_with_no_tasks", screen(&mut model, 80, 10));
+    assert_snapshot!("create_view_with_no_tasks", screen(&mut model, 100, 16));
 }
 
 #[test]
@@ -642,13 +656,6 @@ fn long_prompts_scroll_under_the_cursor() {
     update(&mut model, Msg::Left);
     let mut terminal = render(&mut model, 80, 10);
     assert_eq!(terminal.get_cursor_position().unwrap(), (2, 9).into());
-    update(&mut model, Msg::Escape);
-    update(&mut model, Msg::BeginCreate);
-    let mut terminal = render(&mut model, 80, 10);
-    assert_eq!(
-        terminal.get_cursor_position().unwrap(),
-        (u16::try_from("new task (ready): ".len()).unwrap(), 9).into()
-    );
 }
 
 #[test]

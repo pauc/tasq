@@ -14,7 +14,7 @@ use chrono::NaiveDate;
 use thiserror::Error;
 
 use crate::clock::Clock;
-use crate::model::{Priority, Status, Tag, Task, TaskId, Workflow};
+use crate::model::{Priority, Status, Tag, Task, TaskDraft, TaskId, Workflow};
 use crate::store::{Store, StoreError};
 
 /// What `set` changes: a workflow status or a priority.
@@ -134,6 +134,20 @@ impl Fields {
         task.due = self.due;
         task.project.clone_from(&self.project);
         task.tags.clone_from(&self.tags);
+    }
+
+    /// A new task with these fields (the create form's save): no progress
+    /// note, nothing else set.
+    pub fn draft(&self) -> TaskDraft {
+        TaskDraft {
+            status: self.status.clone(),
+            priority: self.priority,
+            due: self.due,
+            description: self.description.clone(),
+            project: self.project.clone(),
+            tags: self.tags.clone(),
+            ..TaskDraft::new(self.title.clone())
+        }
     }
 }
 
@@ -491,6 +505,33 @@ mod tests {
         assert_eq!(store.get(&id).unwrap(), before);
         let err = reopen(&mut store, &TaskId::from(9), &Status::READY, None, &clock()).unwrap_err();
         assert_eq!(err.to_string(), "no task with id 9");
+    }
+
+    #[test]
+    fn fields_make_a_draft() {
+        let fields = Fields {
+            title: "T".into(),
+            description: Some("D".into()),
+            status: None,
+            priority: Priority::A,
+            due: NaiveDate::from_ymd_opt(2026, 10, 9),
+            project: Some(PathBuf::from("/p")),
+            tags: vec![Tag::new("x").unwrap()],
+        };
+        let mut expected = TaskDraft::new("T")
+            .with_status(None)
+            .with_priority(Priority::A)
+            .with_due(NaiveDate::from_ymd_opt(2026, 10, 9).unwrap())
+            .with_description("D")
+            .with_project("/p")
+            .with_tag(Tag::new("x").unwrap());
+        assert_eq!(fields.draft(), expected);
+        let ready = Fields {
+            status: Some(Status::WAITING),
+            ..fields
+        };
+        expected.status = Some(Status::WAITING);
+        assert_eq!(ready.draft(), expected);
     }
 
     #[test]

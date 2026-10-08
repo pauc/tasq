@@ -21,12 +21,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tasq_core::config::Config;
-use tasq_core::model::{Task, TaskId};
+use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::theme::Theme;
 use tasq_tui::{Host, HostResult, KeyMap, LaunchTarget, Model, SourceChoice};
 
 use crate::app::App;
 use crate::cli::GlobalArgs;
+use crate::commands::create::{Asked, new_task_worktree};
 use crate::error::{CliError, Result};
 use crate::plugins::{self, Hook, HookEvent};
 
@@ -141,6 +142,17 @@ impl Host for CliHost<'_> {
     /// The same `post-done` hooks as `tasq done`, with the same document.
     fn after_done(&mut self, task: &Task) -> std::result::Result<(), String> {
         self.hooks(Hook::PostDone, task)
+    }
+
+    /// The worktree `tasq create` would declare: on `branch` when one was
+    /// typed, else as `worktree.on_create` decides.
+    fn worktree(
+        &mut self,
+        task: &Task,
+        branch: Option<&str>,
+    ) -> std::result::Result<Option<Worktree>, String> {
+        let asked = branch.map_or(Asked::No, Asked::Branch);
+        new_task_worktree(self.app, task, asked).map_err(|e| format!("no worktree: {e}"))
     }
 
     /// The same `post-create` hooks as `tasq create`, with the same document.
@@ -382,6 +394,51 @@ post-done = [
             HookEvent::Output("post-done hook \"/bin/sh -c 'echo chatter'\": chatter".into())
         );
         assert!(matches!(&events[2], HookEvent::Warning(w) if w.contains("/nonexistent/hook")));
+    }
+
+    #[test]
+    fn worktree_declares_as_tasq_create_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let repo = root.join("app");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let plain = root.join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        let app = app_in(&root, "[worktree]\nenabled = true\n");
+        let mut task = Task::new(TaskId::from(9), "Fresh start");
+        task.project = Some(repo.clone());
+        let at = |name: &str| root.join(name);
+        assert_eq!(
+            host(&app).worktree(&task, None),
+            Ok(Some(Worktree::on_branch(
+                at("app-9_fresh_start"),
+                "9-fresh-start"
+            )))
+        );
+        assert_eq!(
+            host(&app).worktree(&task, Some("feat/x")),
+            Ok(Some(Worktree::on_branch(at("app-feat_x"), "feat/x")))
+        );
+        task.project = Some(plain);
+        assert_eq!(host(&app).worktree(&task, None), Ok(None), "not a checkout");
+        assert_eq!(
+            host(&app).worktree(&task, Some("b")),
+            Ok(Some(Worktree::on_branch(at("plain-b"), "b"))),
+            "a typed branch always declares"
+        );
+        task.project = None;
+        assert_eq!(host(&app).worktree(&task, None), Ok(None));
+        assert_eq!(
+            host(&app).worktree(&task, Some("b")),
+            Err(
+                "no worktree: task 9 tracks no project and work.default_project is unset; \
+                 set one with tasq project 9 <path>"
+                    .into()
+            )
+        );
+        let off = app_in(&root, "");
+        task.project = Some(repo);
+        assert_eq!(host(&off).worktree(&task, Some("b")), Ok(None), "disabled");
     }
 
     #[test]

@@ -265,9 +265,11 @@ flowchart LR
 | `keys` | Key bindings. |
 | `runtime` | `dispatch` (runs one `Cmd` against store, clock and host; touches no terminal) and `run` (owns raw mode and the alternate screen). |
 
-Every edit the UI makes is one of the `tasq_core::edit` functions the CLI uses, and `c` creates
-a task from a title through `Store::create` with the configured default status and the
-directory `tasq ui` runs in as its project (both handed over by the CLI). The three actions
+Every edit the UI makes is one of the `tasq_core::edit` functions the CLI uses, and `c` opens
+the edit view empty and creates the task through `Store::create`, starting from the configured
+default status and the directory `tasq ui` runs in as its project (both handed over by the
+CLI); the worktree it declares comes from the host (`Host::worktree`, the same rules as
+`tasq create`). The three actions
 that need the outside world (open an editor, start a work session, run a sync) are `Host`
 methods; the CLI implements them by running itself (`tasq pick <id>`, `tasq sync`) while the
 UI has released the terminal (ADR-0009). A work session in a new window (`Ctrl+Enter`,

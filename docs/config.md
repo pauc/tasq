@@ -437,9 +437,13 @@ ends of the line, `Ctrl+W`/`Ctrl+U`/`Ctrl+K` delete as in readline, `Enter` is t
 day and a week, `PageUp`/`PageDown` by a month, `t` jumps to today, `Enter` puts the day in the
 box as ISO, `Esc` closes it; typing a date or `today`/`tomorrow` into the box works as before.
 `ui.week_start` sets the grid's first column (`monday` by default).
-In the one-line prompts (the `/` filter, the `l` and `d` notes, the `c` title), `Up`/`Down` go
-through what was submitted earlier in the session, like a shell's history: filters, notes and
-titles each have their own (`l` and `d` share the notes), going down past the newest brings back
+`c` opens the same view empty, as `New task`, with `workflow.default_status` and the project
+`tasq ui` was given; `Ctrl+S` creates the task. With worktrees enabled it has a Worktree box:
+a branch there declares a worktree on it (`tasq create --worktree BRANCH`), empty leaves it to
+`worktree.on_create`.
+In the one-line prompts (the `/` filter, the `l` and `d` notes), `Up`/`Down` go
+through what was submitted earlier in the session, like a shell's history: filters and notes
+each have their own (`l` and `d` share the notes), going down past the newest brings back
 what was being typed, and a recalled filter applies to the list at once. Only submitted, non-empty
 entries count (not one closed with `Esc`); the history lives in memory and ends with `tasq ui`.
 `E` opens the task file in `$VISUAL`, else `$EDITOR`,
@@ -477,7 +481,8 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `toggle-done` | `a` | list | show or hide the DONE group: done tasks matching the filter, newest closed first, unfolded whenever it appears (`+done` in the list title) |
 | `filter` | `/` | list | type a filter |
 | `status`, `priority` | `t` / `p` | list | open the status / priority picker; on a done task (DONE group) the status picker reopens it (`tasq reopen`), starting at `workflow.default_status` |
-| `log`, `done`, `create` | `l` / `d` / `c` | list | type a note / a final note / a title |
+| `log`, `done` | `l` / `d` | list | type a note / a final note |
+| `create` | `c` | list | open the create view (the edit view's fields, empty; a Worktree box with worktrees enabled) |
 | `edit` | `e` | list | open the edit view (title, status, priority, due, project, tags, description) |
 | `editor` | `E` | list | open the file in the editor |
 | `launch` | `enter` | list | `tasq pick <id>` here |

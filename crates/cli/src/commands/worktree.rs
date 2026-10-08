@@ -71,7 +71,7 @@ pub fn describe(worktree: &Worktree) -> String {
 }
 
 /// The task's project, else `work.default_project`.
-fn project_of(app: &App, task: &Task) -> Result<PathBuf> {
+pub fn project_of(app: &App, task: &Task) -> Result<PathBuf> {
     work::project_dir(task, app.config().work.default_project.as_deref()).ok_or_else(|| {
         let id = &task.id;
         CliError::user(format!(

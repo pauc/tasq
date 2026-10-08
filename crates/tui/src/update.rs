@@ -4,7 +4,7 @@
 use tasq_core::model::{Priority, TaskId};
 
 use crate::calendar::Calendar;
-use crate::form::{Field, Form, Text};
+use crate::form::{Field, Form, FormError, Text};
 use crate::history::History;
 use crate::model::{Message, Mode, Model, NoteTarget, PAGE};
 use crate::msg::{Cmd, LaunchTarget, Msg};
@@ -44,7 +44,6 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 Mode::Priority { cursor } => priority_picker(model, cursor, &key),
                 Mode::Sources { cursor } => sources_picker(model, cursor, &key),
                 Mode::Note { input, target } => note(model, input, target, key),
-                Mode::Create { input } => create(model, input, key),
                 Mode::Form(form) => form_mode(model, *form, key),
                 Mode::Calendar { form, calendar } => calendar_mode(model, *form, calendar, &key),
                 Mode::Help => {
@@ -177,10 +176,7 @@ fn begin_filter(model: &mut Model) {
 }
 
 fn begin_create(model: &mut Model) {
-    model.history.titles.reset();
-    model.mode = Mode::Create {
-        input: Text::single(""),
-    };
+    model.mode = Mode::Form(Box::new(model.new_task_form()));
 }
 
 fn begin_note(model: &mut Model, target: NoteTarget) {
@@ -446,33 +442,6 @@ fn note(model: &mut Model, mut input: Text, target: NoteTarget, msg: Msg) -> Vec
     Vec::new()
 }
 
-/// The title of a new task (`c`): typed like a note, written with the
-/// model's draft (and recorded) on Enter. An empty title is refused and
-/// the input stays open, as `tasq create` refuses it.
-fn create(model: &mut Model, mut input: Text, msg: Msg) -> Vec<Cmd> {
-    match msg {
-        Msg::Quit => model.quit = true,
-        Msg::Escape => model.mode = Mode::Normal,
-        Msg::Enter => {
-            let title = input.text();
-            let title = title.trim();
-            if title.is_empty() {
-                model.message = Some(Message::error("the title must not be empty"));
-            } else {
-                model.history.titles.record(title);
-                let draft = model.draft(title);
-                model.mode = Mode::Normal;
-                return vec![Cmd::Create(Box::new(draft))];
-            }
-        }
-        msg => {
-            edit_prompt(&mut input, &mut model.history.titles, &msg);
-            model.mode = Mode::Create { input };
-        }
-    }
-    Vec::new()
-}
-
 /// The edit view (`e`): rows are typed or cycled in place, `Tab` and the
 /// arrows move between them, `Enter` is a newline in the description,
 /// the calendar picker on the Due box and the next row elsewhere;
@@ -516,10 +485,10 @@ fn form_mode(model: &mut Model, mut form: Form, msg: Msg) -> Vec<Cmd> {
             }
             _ => form.focus_next(),
         },
-        Msg::Save => match form.fields(&model.workflow, model.today) {
-            Ok(fields) => {
+        Msg::Save => match save(&form, model) {
+            Ok(cmd) => {
                 model.mode = Mode::Normal;
-                return vec![Cmd::Revise(form.id, Box::new(fields))];
+                return vec![cmd];
             }
             Err(e) => {
                 form.focus = e.field;
@@ -530,6 +499,16 @@ fn form_mode(model: &mut Model, mut form: Form, msg: Msg) -> Vec<Cmd> {
     }
     model.mode = Mode::Form(Box::new(form));
     Vec::new()
+}
+
+/// What saving the view does: revise the task it edits, or create one
+/// (with the typed worktree branch) from the create view.
+fn save(form: &Form, model: &Model) -> Result<Cmd, FormError> {
+    let fields = form.fields(&model.workflow, model.today)?;
+    Ok(match &form.id {
+        Some(id) => Cmd::Revise(id.clone(), Box::new(fields)),
+        None => Cmd::Create(Box::new(fields.draft()), form.branch()?),
+    })
 }
 
 /// The calendar picker over the edit view: the arrows move the cursor by
@@ -810,7 +789,7 @@ mod tests {
     /// The prompt's text and cursor column, in any of the prompt modes.
     fn prompt(m: &Model) -> (String, usize) {
         let input = match &m.mode {
-            Mode::Filter { input } | Mode::Note { input, .. } | Mode::Create { input } => input,
+            Mode::Filter { input } | Mode::Note { input, .. } => input,
             other => panic!("not a prompt: {other:?}"),
         };
         assert_eq!(input.lines().len(), 1, "a prompt is one line");
@@ -819,12 +798,7 @@ mod tests {
 
     #[test]
     fn every_prompt_edits_in_the_middle() {
-        for begin in [
-            Msg::BeginFilter,
-            Msg::BeginNote,
-            Msg::BeginDone,
-            Msg::BeginCreate,
-        ] {
+        for begin in [Msg::BeginFilter, Msg::BeginNote, Msg::BeginDone] {
             let mut m = model();
             update(&mut m, begin.clone());
             feed(&mut m, chars("acd"));
@@ -861,10 +835,7 @@ mod tests {
             let expected = match begin {
                 Msg::BeginFilter => Vec::new(),
                 Msg::BeginNote => vec![Cmd::Log(TaskId::from(1), ">x ybd".into())],
-                Msg::BeginDone => vec![Cmd::Done(TaskId::from(1), Some(">x ybd".into()))],
-                _ => vec![Cmd::Create(Box::new(
-                    TaskDraft::new(">x ybd").with_status(Some(Status::READY)),
-                ))],
+                _ => vec![Cmd::Done(TaskId::from(1), Some(">x ybd".into()))],
             };
             assert_eq!(cmds, expected, "{begin:?}");
         }
@@ -872,12 +843,7 @@ mod tests {
 
     #[test]
     fn every_prompt_takes_the_readline_kills() {
-        for begin in [
-            Msg::BeginFilter,
-            Msg::BeginNote,
-            Msg::BeginDone,
-            Msg::BeginCreate,
-        ] {
+        for begin in [Msg::BeginFilter, Msg::BeginNote, Msg::BeginDone] {
             let mut m = model();
             update(&mut m, begin.clone());
             feed(&mut m, chars("one two  three"));
@@ -902,10 +868,7 @@ mod tests {
             let expected = match begin {
                 Msg::BeginFilter => Vec::new(),
                 Msg::BeginNote => vec![Cmd::Log(TaskId::from(1), "t".into())],
-                Msg::BeginDone => vec![Cmd::Done(TaskId::from(1), Some("t".into()))],
-                _ => vec![Cmd::Create(Box::new(
-                    TaskDraft::new("t").with_status(Some(Status::READY)),
-                ))],
+                _ => vec![Cmd::Done(TaskId::from(1), Some("t".into()))],
             };
             assert_eq!(cmds, expected, "{begin:?}");
         }
@@ -1233,54 +1196,75 @@ mod tests {
     fn create_flow() {
         let mut m = model();
         update(&mut m, Msg::BeginCreate);
-        assert_eq!(
-            m.mode,
-            Mode::Create {
-                input: Text::single("")
-            }
-        );
-        // An empty title is refused and the input stays open.
-        assert_eq!(update(&mut m, Msg::Enter), Vec::new());
+        assert_eq!(form_of(&m), m.new_task_form());
+        // An empty title is refused and the view stays open.
+        assert_eq!(update(&mut m, Msg::Save), Vec::new());
         assert_eq!(
             m.message,
             Some(Message::error("the title must not be empty"))
         );
-        assert!(matches!(m.mode, Mode::Create { .. }));
+        assert_eq!(form_of(&m).focus, Field::Title);
         feed(&mut m, chars("  Call "));
         update(&mut m, Msg::Paste("the\nbank\n".into()));
-        update(&mut m, Msg::Char('!'));
-        update(&mut m, Msg::Backspace);
-        assert_eq!(
-            m.mode,
-            Mode::Create {
-                input: Text::single("  Call the bank")
-            }
+        feed(
+            &mut m,
+            [Msg::NextField, Msg::Right, Msg::NextField, Msg::Left],
         );
-        assert_eq!(update(&mut m, Msg::Down), Vec::new(), "nothing to recall");
         assert_eq!(
-            update(&mut m, Msg::Enter),
-            vec![Cmd::Create(Box::new(
-                TaskDraft::new("Call the bank").with_status(Some(Status::READY))
-            ))]
+            update(&mut m, Msg::Save),
+            vec![Cmd::Create(
+                Box::new(
+                    TaskDraft::new("Call the bank")
+                        .with_status(Some(Status::WAITING))
+                        .with_priority(Priority::A)
+                ),
+                None
+            )]
         );
         assert_eq!(m.mode, Mode::Normal);
         // The configured default status goes into the draft.
         let mut m = model().with_default_status(Status::LATER);
+        feed(&mut m, [Msg::BeginCreate, Msg::Char('x'), Msg::Save]);
+        assert_eq!(m.mode, Mode::Normal);
+        let mut m = model().with_default_status(Status::LATER);
         feed(&mut m, [Msg::BeginCreate, Msg::Char('x')]);
         assert_eq!(
-            update(&mut m, Msg::Enter),
-            vec![Cmd::Create(Box::new(
-                TaskDraft::new("x").with_status(Some(Status::LATER))
-            ))]
+            update(&mut m, Msg::Save),
+            vec![Cmd::Create(
+                Box::new(TaskDraft::new("x").with_status(Some(Status::LATER))),
+                None
+            )]
         );
-        // Escape drops the typed title; Ctrl-C quits.
-        update(&mut m, Msg::BeginCreate);
-        update(&mut m, Msg::Char('x'));
-        update(&mut m, Msg::Escape);
+        // Escape drops the view; Ctrl-C quits.
+        feed(&mut m, [Msg::BeginCreate, Msg::Char('x'), Msg::Escape]);
         assert_eq!(m.mode, Mode::Normal);
-        update(&mut m, Msg::BeginCreate);
-        update(&mut m, Msg::Quit);
+        feed(&mut m, [Msg::BeginCreate, Msg::Quit]);
         assert!(m.quit);
+    }
+
+    #[test]
+    fn create_with_a_worktree_branch() {
+        let mut m = model().with_worktrees(true);
+        update(&mut m, Msg::BeginCreate);
+        feed(&mut m, chars("T"));
+        let mut form = form_of(&m);
+        form.focus = Field::Worktree;
+        m.mode = Mode::Form(Box::new(form));
+        feed(&mut m, chars("a b"));
+        assert_eq!(update(&mut m, Msg::Save), Vec::new());
+        assert_eq!(
+            m.message,
+            Some(Message::error("worktree: invalid branch name \"a b\""))
+        );
+        feed(&mut m, [Msg::KillToStart]);
+        feed(&mut m, chars("feat/t"));
+        assert_eq!(
+            update(&mut m, Msg::Save),
+            vec![Cmd::Create(
+                Box::new(TaskDraft::new("T").with_status(Some(Status::READY))),
+                Some("feat/t".into())
+            )]
+        );
     }
 
     #[test]
@@ -1289,9 +1273,9 @@ mod tests {
         update(&mut m, Msg::Loaded(Vec::new()));
         update(&mut m, Msg::BeginCreate);
         assert_eq!(m.message, None);
-        assert!(matches!(m.mode, Mode::Create { .. }));
+        assert!(matches!(m.mode, Mode::Form(_)));
         feed(&mut m, chars("New"));
-        assert_eq!(update(&mut m, Msg::Enter).len(), 1);
+        assert_eq!(update(&mut m, Msg::Save).len(), 1);
         // What dispatch sends back after the write.
         update(&mut m, Msg::Info("[7] created: New".into()));
         update(
@@ -1344,7 +1328,7 @@ mod tests {
         m.set_filter(String::new());
         assert_eq!(update(&mut m, Msg::Edit), Vec::new());
         let form = form_of(&m);
-        assert_eq!(form.id, TaskId::from(1));
+        assert_eq!(form.id, Some(TaskId::from(1)));
         assert_eq!(form.title.text(), "First");
         assert_eq!(form.focus, Field::Title);
         assert_eq!(m.message, None);
@@ -1757,7 +1741,6 @@ mod tests {
         update(&mut m, Msg::Enter);
         assert_eq!(entries(&m.history.filters), ["se", "thi", "f"]);
         assert_eq!(entries(&m.history.notes), Vec::<&str>::new());
-        assert_eq!(entries(&m.history.titles), Vec::<&str>::new());
 
         // A prompt opens at its draft, wherever the last one stopped.
         feed(&mut m, [Msg::BeginFilter, Msg::Up, Msg::Up, Msg::Escape]);
@@ -1797,37 +1780,6 @@ mod tests {
             }
         );
         assert_eq!(entries(&m.history.filters), Vec::<&str>::new());
-        assert_eq!(entries(&m.history.titles), Vec::<&str>::new());
-    }
-
-    #[test]
-    fn titles_are_recorded_when_accepted_and_kept_apart_from_filters() {
-        let mut m = model();
-        feed(&mut m, [Msg::BeginFilter, Msg::Char('s'), Msg::Enter]);
-        // A refused empty title and Escape record nothing.
-        feed(&mut m, [Msg::BeginCreate, Msg::Enter, Msg::Escape]);
-        assert_eq!(entries(&m.history.titles), Vec::<&str>::new());
-        update(&mut m, Msg::BeginCreate);
-        feed(&mut m, chars(" Call the bank "));
-        update(&mut m, Msg::Enter);
-        feed(&mut m, [Msg::BeginCreate, Msg::Char('W'), Msg::Enter]);
-        assert_eq!(entries(&m.history.titles), ["Call the bank", "W"]);
-        assert_eq!(entries(&m.history.filters), ["s"]);
-
-        feed(&mut m, [Msg::BeginCreate, Msg::Up, Msg::Up, Msg::Escape]);
-        feed(&mut m, [Msg::BeginCreate, Msg::Char('x'), Msg::Up]);
-        assert_eq!(prompt(&m), ("W".into(), 1), "opened at the draft");
-        update(&mut m, Msg::Up);
-        assert_eq!(
-            m.mode,
-            Mode::Create {
-                input: Text::single("Call the bank")
-            }
-        );
-        update(&mut m, Msg::Up);
-        assert_eq!(prompt(&m), ("Call the bank".into(), 13), "no filters");
-        feed(&mut m, [Msg::Down, Msg::Down]);
-        assert_eq!(prompt(&m), ("x".into(), 1));
     }
 
     #[test]

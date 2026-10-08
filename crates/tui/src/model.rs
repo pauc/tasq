@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use chrono::{NaiveDate, Weekday};
 use tasq_core::config::{DetailPosition, DueFormat};
-use tasq_core::model::{Priority, Status, Task, TaskDraft, TaskId, Workflow};
+use tasq_core::model::{Priority, Status, Task, TaskId, Workflow};
 use tasq_core::query::{self, Filter, Group};
 use tasq_core::theme::Theme;
 
@@ -60,12 +60,8 @@ pub enum Mode {
         /// What the note is for.
         target: NoteTarget,
     },
-    /// Typing the title of a new task (`c`).
-    Create {
-        /// Text typed so far, with its cursor.
-        input: Text,
-    },
-    /// Editing the selected task's fields in the form (`e`).
+    /// Editing the selected task's fields (`e`) or a new task's (`c`) in
+    /// the form.
     Form(Box<Form>),
     /// The calendar picker over the edit view (`Enter` on the Due box).
     Calendar {
@@ -348,16 +344,15 @@ impl Model {
             .collect()
     }
 
-    /// The draft for a task created from the UI: `title`, the default
-    /// status, the default project, and the script's other defaults
-    /// (priority `B`, no note). Priority, tags and the rest are set
-    /// afterwards with `t`, `p` or the CLI.
-    pub fn draft(&self, title: &str) -> TaskDraft {
-        let draft = TaskDraft::new(title).with_status(Some(self.default_status.clone()));
-        match &self.default_project {
-            Some(project) => draft.with_project(project.clone()),
-            None => draft,
-        }
+    /// The create view (`c`): the default status and project, and a
+    /// Worktree row when worktrees are enabled.
+    pub fn new_task_form(&self) -> Form {
+        Form::new_task(
+            &self.workflow,
+            &self.default_status,
+            self.default_project.as_deref(),
+            self.worktrees,
+        )
     }
 
     /// The layout for the current width.
@@ -618,9 +613,8 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
+    use crate::form::Field;
     use tasq_core::model::Tag;
 
     fn task(id: u64, title: &str, status: Option<Status>) -> Task {
@@ -947,22 +941,22 @@ mod tests {
     }
 
     #[test]
-    fn drafts_take_the_default_status() {
+    fn the_create_view_takes_the_defaults() {
         let m = model();
         assert_eq!(m.default_status, Status::READY);
-        let d = m.draft("New");
-        assert_eq!(d.title, "New");
-        assert_eq!(d.status, Some(Status::READY));
-        assert_eq!(d.priority, Priority::B);
-        assert_eq!(d.note, None);
-        assert!(!d.done);
+        let wf = Workflow::default();
+        let form = m.new_task_form();
+        assert_eq!(form.id, None);
+        assert_eq!(form.chosen_status(&wf), Some(Status::READY));
+        assert_eq!(form.chosen_priority(), Priority::B);
+        assert_eq!(form.worktree, None);
         let m = m.with_default_status(Status::LATER);
-        assert_eq!(m.draft("x").status, Some(Status::LATER));
-        assert_eq!(m.draft("x").project, None);
+        assert_eq!(m.new_task_form().chosen_status(&wf), Some(Status::LATER));
+        assert_eq!(m.new_task_form().value(Field::Project, &wf), "");
         let m = m.with_default_project(Some(PathBuf::from("/work")));
-        assert_eq!(m.draft("x").project.as_deref(), Some(Path::new("/work")));
-        let m = m.with_default_project(None);
-        assert_eq!(m.draft("x").project, None);
+        assert_eq!(m.new_task_form().value(Field::Project, &wf), "/work");
+        let m = m.with_worktrees(true);
+        assert_eq!(m.new_task_form().worktree, Some(Text::single("")));
     }
 
     #[test]

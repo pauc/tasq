@@ -1,19 +1,22 @@
 //! The edit view (`e`, ADR-0016): every field of a task on one screen,
 //! typed and cycled in place, validated on save into the [`Fields`] that
-//! [`tasq_core::edit::revise`] writes.
+//! [`tasq_core::edit::revise`] writes. The create view (`c`) is the same
+//! view, empty, saved as a new task; with worktrees enabled it has a
+//! Worktree row.
 //!
 //! Pure data, like the rest of the model: [`crate::update()`] drives it
 //! and [`crate::view()`] draws it. [`Text`] is the small editor behind the
 //! text rows and the description, and behind the status-bar prompts
 //! (filter, notes, a new title): lines, a cursor, and the usual keys.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use chrono::NaiveDate;
 use tasq_core::dates::parse_day;
 use tasq_core::edit::Fields;
 use tasq_core::model::{Priority, Status, Tag, Task, TaskId, Workflow};
+use tasq_core::worktree::lifecycle;
 
 /// A row of the view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +31,9 @@ pub enum Field {
     Due,
     /// `## Project` path; empty clears (text).
     Project,
+    /// The branch of the worktree a new task declares; empty leaves it to
+    /// `worktree.on_create` (text, create view only).
+    Worktree,
     /// Topic tags, space-separated, `#` optional (text).
     Tags,
     /// `## Description`, as many lines as needed; empty clears (text).
@@ -36,12 +42,13 @@ pub enum Field {
 
 impl Field {
     /// The rows, top to bottom.
-    pub const ALL: [Field; 7] = [
+    pub const ALL: [Field; 8] = [
         Field::Title,
         Field::Status,
         Field::Priority,
         Field::Due,
         Field::Project,
+        Field::Worktree,
         Field::Tags,
         Field::Description,
     ];
@@ -54,6 +61,7 @@ impl Field {
             Self::Priority => "Priority",
             Self::Due => "Due",
             Self::Project => "Project",
+            Self::Worktree => "Worktree",
             Self::Tags => "Tags",
             Self::Description => "Description",
         }
@@ -62,22 +70,6 @@ impl Field {
     /// Whether the row is typed into (else it is cycled with Left/Right).
     pub fn is_text(self) -> bool {
         !matches!(self, Self::Status | Self::Priority)
-    }
-
-    fn index(self) -> usize {
-        Self::ALL.iter().position(|f| *f == self).unwrap_or(0)
-    }
-
-    /// The row below, or this one at the bottom.
-    #[must_use]
-    pub fn next(self) -> Self {
-        Self::ALL[(self.index() + 1).min(Self::ALL.len() - 1)]
-    }
-
-    /// The row above, or this one at the top.
-    #[must_use]
-    pub fn prev(self) -> Self {
-        Self::ALL[self.index().saturating_sub(1)]
     }
 }
 
@@ -302,12 +294,12 @@ pub struct FormError {
     pub message: String,
 }
 
-/// The view's state: the task it edits, the rows as typed or chosen, and
-/// the focused row.
+/// The view's state: the task it edits (none for a new one), the rows as
+/// typed or chosen, and the focused row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Form {
-    /// The task being edited.
-    pub id: TaskId,
+    /// The task being edited; `None` in the create view.
+    pub id: Option<TaskId>,
     /// The title as typed.
     pub title: Text,
     /// Index into [`Form::status_choices`].
@@ -318,6 +310,9 @@ pub struct Form {
     pub due: Text,
     /// The project path as typed.
     pub project: Text,
+    /// The worktree branch as typed; `None` hides the row (the edit
+    /// view, or worktrees disabled).
+    pub worktree: Option<Text>,
     /// The tags as typed.
     pub tags: Text,
     /// The description as typed.
@@ -340,7 +335,7 @@ impl Form {
             .position(|p| *p == task.priority)
             .unwrap_or(1);
         Self {
-            id: task.id.clone(),
+            id: Some(task.id.clone()),
             title: Text::single(&task.title),
             status,
             priority,
@@ -365,9 +360,36 @@ impl Form {
                     .collect::<Vec<_>>()
                     .join(" "),
             ),
+            worktree: None,
             description: Text::multi(task.description.as_deref().unwrap_or_default()),
             focus: Field::Title,
         }
+    }
+
+    /// The create view: an empty title, `status`, priority `B`, `project`
+    /// filled in, and a Worktree row when `worktrees` are enabled.
+    pub fn new_task(
+        workflow: &Workflow,
+        status: &Status,
+        project: Option<&Path>,
+        worktrees: bool,
+    ) -> Self {
+        let mut blank = Task::new(TaskId::from(0), "");
+        blank.set_status(status.clone());
+        blank.project = project.map(Path::to_path_buf);
+        Self {
+            id: None,
+            worktree: worktrees.then(|| Text::single("")),
+            ..Self::of(&blank, workflow)
+        }
+    }
+
+    /// The rows shown, top to bottom.
+    pub fn rows(&self) -> Vec<Field> {
+        Field::ALL
+            .into_iter()
+            .filter(|f| *f != Field::Worktree || self.worktree.is_some())
+            .collect()
     }
 
     /// The status row's choices: the workflow's statuses, then `None`.
@@ -409,6 +431,7 @@ impl Form {
             Field::Title => Some(&self.title),
             Field::Due => Some(&self.due),
             Field::Project => Some(&self.project),
+            Field::Worktree => self.worktree.as_ref(),
             Field::Tags => Some(&self.tags),
             Field::Description => Some(&self.description),
             Field::Status | Field::Priority => None,
@@ -420,6 +443,7 @@ impl Form {
             Field::Title => Some(&mut self.title),
             Field::Due => Some(&mut self.due),
             Field::Project => Some(&mut self.project),
+            Field::Worktree => self.worktree.as_mut(),
             Field::Tags => Some(&mut self.tags),
             Field::Description => Some(&mut self.description),
             Field::Status | Field::Priority => None,
@@ -505,14 +529,18 @@ impl Form {
         }
     }
 
-    /// Moves the focus down (`Tab`).
+    /// Moves the focus to the row below, staying at the bottom (`Tab`).
     pub fn focus_next(&mut self) {
-        self.focus = self.focus.next();
+        let rows = self.rows();
+        let at = rows.iter().position(|f| *f == self.focus).unwrap_or(0);
+        self.focus = rows[(at + 1).min(rows.len() - 1)];
     }
 
-    /// Moves the focus up (`Shift+Tab`).
+    /// Moves the focus to the row above, staying at the top (`Shift+Tab`).
     pub fn focus_prev(&mut self) {
-        self.focus = self.focus.prev();
+        let rows = self.rows();
+        let at = rows.iter().position(|f| *f == self.focus).unwrap_or(0);
+        self.focus = rows[at.saturating_sub(1)];
     }
 
     /// `Up`: the cursor up a line where there is one, else the focus to
@@ -612,6 +640,27 @@ impl Form {
             tags,
         })
     }
+
+    /// The worktree branch typed in the create view, trimmed; `None` when
+    /// the row is empty or hidden.
+    ///
+    /// # Errors
+    ///
+    /// A [`FormError`] on the Worktree row for a branch git refuses.
+    pub fn branch(&self) -> Result<Option<String>, FormError> {
+        let Some(text) = self.worktree.as_ref().map(Text::text) else {
+            return Ok(None);
+        };
+        if text.trim().is_empty() {
+            return Ok(None);
+        }
+        lifecycle::branch_name(&text)
+            .map(|b| Some(b.to_owned()))
+            .map_err(|e| FormError {
+                field: Field::Worktree,
+                message: format!("worktree: {e}"),
+            })
+    }
 }
 
 /// The description as the file reads it back: blank lines dropped at
@@ -653,19 +702,15 @@ mod tests {
                 "Priority",
                 "Due",
                 "Project",
+                "Worktree",
                 "Tags",
                 "Description"
             ]
         );
         assert_eq!(
             Field::ALL.map(Field::is_text),
-            [true, false, false, true, true, true, true]
+            [true, false, false, true, true, true, true, true]
         );
-        assert_eq!(Field::Title.prev(), Field::Title);
-        assert_eq!(Field::Title.next(), Field::Status);
-        assert_eq!(Field::Description.next(), Field::Description);
-        assert_eq!(Field::Description.prev(), Field::Tags);
-        assert_eq!(Field::Due.index(), 3);
     }
 
     #[test]
@@ -875,7 +920,8 @@ mod tests {
     fn a_form_shows_the_task_and_round_trips_it() {
         let wf = Workflow::default();
         let form = Form::of(&task(), &wf);
-        assert_eq!(form.id, TaskId::from(7));
+        assert_eq!(form.id, Some(TaskId::from(7)));
+        assert_eq!(form.worktree, None);
         assert_eq!(form.focus, Field::Title);
         assert_eq!(form.value(Field::Title, &wf), "Seven");
         assert_eq!(form.value(Field::Status, &wf), "waiting");
@@ -915,6 +961,83 @@ mod tests {
         assert_eq!(fields, Fields::of(&Task::new(TaskId::from(1), "B")));
         assert_eq!(fields.status, None);
         assert_eq!(fields.description, None);
+    }
+
+    #[test]
+    fn the_create_view_is_empty_with_the_defaults() {
+        let wf = Workflow::default();
+        let form = Form::new_task(&wf, &Status::LATER, Some(Path::new("/p")), false);
+        assert_eq!(form.id, None);
+        assert_eq!(form.focus, Field::Title);
+        assert_eq!(form.value(Field::Title, &wf), "");
+        assert_eq!(form.value(Field::Status, &wf), "later");
+        assert_eq!(form.value(Field::Priority, &wf), "B");
+        assert_eq!(form.value(Field::Project, &wf), "/p");
+        assert_eq!(form.worktree, None);
+        assert_eq!(
+            form.rows(),
+            Field::ALL
+                .into_iter()
+                .filter(|f| *f != Field::Worktree)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(form.branch(), Ok(None));
+        let none = Form::new_task(&wf, &Status::READY, None, true);
+        assert_eq!(none.value(Field::Project, &wf), "");
+        assert_eq!(none.value(Field::Worktree, &wf), "");
+        assert_eq!(none.rows(), Field::ALL.to_vec());
+    }
+
+    #[test]
+    fn focus_moves_through_the_rows_shown() {
+        let wf = Workflow::default();
+        let mut edit = Form::of(&task(), &wf);
+        edit.focus_prev();
+        assert_eq!(edit.focus, Field::Title, "stays at the top");
+        edit.focus_next();
+        assert_eq!(edit.focus, Field::Status);
+        edit.focus = Field::Project;
+        edit.focus_next();
+        assert_eq!(edit.focus, Field::Tags, "no Worktree row when editing");
+        edit.focus_prev();
+        assert_eq!(edit.focus, Field::Project);
+        edit.focus = Field::Description;
+        edit.focus_next();
+        assert_eq!(edit.focus, Field::Description, "stays at the bottom");
+        let mut create = Form::new_task(&wf, &Status::READY, None, true);
+        create.focus = Field::Project;
+        create.focus_next();
+        assert_eq!(create.focus, Field::Worktree);
+        create.focus_next();
+        assert_eq!(create.focus, Field::Tags);
+        create.focus_prev();
+        assert_eq!(create.focus, Field::Worktree);
+    }
+
+    #[test]
+    fn the_worktree_row_is_typed_and_checked() {
+        let wf = Workflow::default();
+        let mut form = Form::new_task(&wf, &Status::READY, None, true);
+        form.focus = Field::Worktree;
+        form.paste(" feat/x ");
+        assert_eq!(form.text(Field::Worktree).unwrap().text(), " feat/x ");
+        assert_eq!(form.branch(), Ok(Some("feat/x".to_owned())));
+        form.kill_to_start();
+        form.insert(' ');
+        assert_eq!(form.branch(), Ok(None), "blank is the default");
+        form.paste("a b");
+        assert_eq!(
+            form.branch(),
+            Err(FormError {
+                field: Field::Worktree,
+                message: "worktree: invalid branch name \"a b\"".into()
+            })
+        );
+        let mut edit = Form::of(&task(), &wf);
+        edit.focus = Field::Worktree;
+        edit.insert('x');
+        assert_eq!(edit.text(Field::Worktree), None);
+        assert_eq!(edit.branch(), Ok(None));
     }
 
     #[test]

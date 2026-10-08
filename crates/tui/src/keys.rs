@@ -654,7 +654,7 @@ pub fn translate(keys: &KeyMap, mode: &Mode, key: &KeyEvent) -> Option<Msg> {
     }
     match mode {
         Mode::Normal => keys.lookup(NORMAL, key).map(Action::msg),
-        Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => prompt(key.code, ctrl),
+        Mode::Filter { .. } | Mode::Note { .. } => prompt(key.code, ctrl),
         Mode::Status { .. } | Mode::Priority { .. } | Mode::Sources { .. } => picker(keys, key),
         Mode::Form(_) => form(key.code, ctrl),
         Mode::Calendar { .. } => calendar(key.code, ctrl),
@@ -868,9 +868,6 @@ mod tests {
                 input: Text::single(""),
                 target: NoteTarget::Log,
             },
-            Mode::Create {
-                input: Text::single(""),
-            },
         ] {
             let t = |event: &KeyEvent| translate(&keys, &mode, event);
             assert_eq!(t(&ch('j')), Some(Msg::Char('j')));
@@ -900,9 +897,6 @@ mod tests {
             Mode::Note {
                 input: Text::single("ab"),
                 target: NoteTarget::Done,
-            },
-            Mode::Create {
-                input: Text::single("ab"),
             },
         ] {
             for (event, expected) in [

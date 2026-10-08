@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use tasq_core::edit::Fields;
-use tasq_core::model::{Priority, Status, Task, TaskDraft, TaskId};
+use tasq_core::model::{Priority, Status, Task, TaskDraft, TaskId, Worktree};
 
 /// Something that happened: a key, translated by [`crate::keys`] for the
 /// current mode, a terminal resize, or the result of a [`Cmd`].
@@ -132,9 +132,10 @@ pub enum Cmd {
     Log(TaskId, String),
     /// `tasq done <id> [note]`.
     Done(TaskId, Option<String>),
-    /// `tasq create <title>`: [`tasq_core::store::Store::create`] with the
-    /// model's draft, then the host's `after_create`.
-    Create(Box<TaskDraft>),
+    /// The create view's save: [`tasq_core::store::Store::create`] with
+    /// the draft, the host's `worktree` with the typed branch (`None`:
+    /// `worktree.on_create` decides), then its `after_create`.
+    Create(Box<TaskDraft>, Option<String>),
     /// The edit view's save: [`tasq_core::edit::revise`] with the fields.
     Revise(TaskId, Box<Fields>),
     /// Open the task's file in the editor (terminal released meanwhile).
@@ -205,6 +206,14 @@ pub trait Host {
     fn after_done(&mut self, task: &Task) -> Result<(), String>;
 
     /// Called after `task` was created through the store (the `c` key),
+    /// before [`Host::after_create`]: the worktree to declare for it on
+    /// `branch` (typed in the create view), or as `worktree.on_create`
+    /// decides without one; `None` for no worktree. The CLI renders it
+    /// like `tasq create --worktree`; the runtime stores it. `Err` is a
+    /// warning: the task exists either way.
+    fn worktree(&mut self, task: &Task, branch: Option<&str>) -> Result<Option<Worktree>, String>;
+
+    /// Called after `task` was created through the store (the `c` key),
     /// with the task as written; the CLI runs its `post-create` hooks
     /// here. Like [`Host::after_done`], `Err` is a warning: the task
     /// exists either way.
@@ -232,6 +241,14 @@ impl Host for NoHost {
         Ok(())
     }
 
+    fn worktree(
+        &mut self,
+        _task: &Task,
+        _branch: Option<&str>,
+    ) -> Result<Option<Worktree>, String> {
+        Ok(None)
+    }
+
     fn after_create(&mut self, _task: &Task) -> Result<(), String> {
         Ok(())
     }
@@ -243,10 +260,12 @@ impl Host for NoHost {
 pub struct RecordingHost {
     /// Every call, as `edit <id> <file>`, `launch <id>`, `launch <id>
     /// detached` / `launch <id> detached no-focus`, `sync` / `sync <name>...`,
-    /// `after_done <id>` or `after_create <id>`.
+    /// `worktree <id> [branch]`, `after_done <id>` or `after_create <id>`.
     pub calls: Vec<String>,
     /// The answer to every call (`Ok` by default: `"ok"`).
     pub answer: Option<HostResult>,
+    /// What `worktree` declares (it ignores `answer`).
+    pub worktree: Option<Worktree>,
 }
 
 impl RecordingHost {
@@ -284,6 +303,12 @@ impl Host for RecordingHost {
         self.reply(format!("after_done {}", task.id)).map(|_| ())
     }
 
+    fn worktree(&mut self, task: &Task, branch: Option<&str>) -> Result<Option<Worktree>, String> {
+        let branch = branch.map(|b| format!(" {b}")).unwrap_or_default();
+        self.calls.push(format!("worktree {}{branch}", task.id));
+        Ok(self.worktree.clone())
+    }
+
     fn after_create(&mut self, task: &Task) -> Result<(), String> {
         self.reply(format!("after_create {}", task.id)).map(|_| ())
     }
@@ -311,7 +336,7 @@ mod tests {
         assert!(!Cmd::SetPriority(id.clone(), Priority::A).releases_terminal());
         assert!(!Cmd::Log(id.clone(), "x".into()).releases_terminal());
         assert!(!Cmd::Done(id.clone(), None).releases_terminal());
-        assert!(!Cmd::Create(Box::new(TaskDraft::new("x"))).releases_terminal());
+        assert!(!Cmd::Create(Box::new(TaskDraft::new("x")), None).releases_terminal());
         let fields = Box::new(Fields::of(&Task::new(id.clone(), "x")));
         assert!(!Cmd::Revise(id.clone(), fields.clone()).releases_terminal());
         assert!(!Cmd::Revise(id.clone(), fields).pauses_after());
@@ -319,7 +344,7 @@ mod tests {
         assert!(Cmd::Sync(vec!["inbox".to_owned()]).pauses_after());
         assert!(!Cmd::Editor(id.clone()).pauses_after());
         assert!(!Cmd::Load.pauses_after());
-        assert!(!Cmd::Create(Box::new(TaskDraft::new("x"))).pauses_after());
+        assert!(!Cmd::Create(Box::new(TaskDraft::new("x")), None).pauses_after());
     }
 
     #[test]

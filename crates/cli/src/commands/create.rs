@@ -3,7 +3,7 @@
 use std::path::Path;
 use tasq_core::dates::parse_day;
 
-use tasq_core::model::{Link, Priority, Status, Tag, Task, TaskDraft, Workflow};
+use tasq_core::model::{Link, Priority, Status, Tag, Task, TaskDraft, Workflow, Worktree};
 use tasq_core::store::Store;
 use tasq_core::worktree::{declaration, lifecycle};
 use tasq_store_nb::NbStore;
@@ -95,7 +95,7 @@ pub fn run(app: &App, args: &CreateArgs) -> Result<()> {
 
 /// What `--worktree [BRANCH]` asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Asked<'a> {
+pub enum Asked<'a> {
     /// No flag: `worktree.on_create` decides.
     No,
     /// `--worktree`: on the default branch.
@@ -120,37 +120,51 @@ fn worktree_flag<'a>(app: &App, args: &'a CreateArgs) -> Result<Asked<'a>> {
     }
 }
 
-/// Declares the new task's worktree when `--worktree` was given (`asked`)
-/// or `worktree.on_create = "auto"` finds its project in a git work tree;
-/// the task as stored, and the declared worktree for the message. Reads
-/// the filesystem only, runs no process.
+/// Declares the new task's worktree ([`new_task_worktree`]) and stores
+/// it; the task as stored, and the declared worktree for the message.
 fn declare_worktree(
     app: &App,
     store: &mut NbStore,
     task: Task,
     asked: Asked,
 ) -> Result<(Task, Option<String>)> {
-    let Some(project) = task.project.clone().filter(|_| app.worktrees()) else {
+    let id = task.id.clone();
+    let failed =
+        |e: CliError| CliError::user(format!("[{id}] created, but no worktree was declared: {e}"));
+    let Some(declared) = new_task_worktree(app, &task, asked).map_err(failed)? else {
         return Ok((task, None));
+    };
+    let mut task = task;
+    task.add_worktree(declared.clone());
+    store.update(&task)?;
+    Ok((store.get(&id)?, Some(worktree::describe(&declared))))
+}
+
+/// The worktree a new task declares: when `--worktree` (or the create
+/// view's Worktree row) asked for one, or `worktree.on_create = "auto"`
+/// finds the task's project in a git work tree; `None` otherwise, and
+/// always with worktrees disabled. Reads the filesystem only, runs no
+/// process.
+pub fn new_task_worktree(app: &App, task: &Task, asked: Asked) -> Result<Option<Worktree>> {
+    if !app.worktrees() {
+        return Ok(None);
+    }
+    let project = match worktree::project_of(app, task) {
+        Ok(project) => project,
+        Err(_) if asked == Asked::No => return Ok(None),
+        Err(e) => return Err(e),
     };
     let repo = worktree::Repo::of(&project);
     let on_create = app.config().worktree.on_create;
     if !declaration::wanted(on_create, asked != Asked::No, repo.is_some()) {
-        return Ok((task, None));
+        return Ok(None);
     }
     let branch = match asked {
         Asked::Branch(branch) => Some(branch),
         Asked::No | Asked::Default => None,
     };
-    let id = task.id.clone();
-    let failed =
-        |e: CliError| CliError::user(format!("[{id}] created, but no worktree was declared: {e}"));
-    let (declared, _) =
-        worktree::declare_in(app, &task, branch, &project, repo.as_ref()).map_err(failed)?;
-    let mut task = task;
-    task.add_worktree(declared.clone());
-    store.update(&task)?;
-    Ok((store.get(&id)?, Some(worktree::describe(&declared))))
+    let (declared, _) = worktree::declare_in(app, task, branch, &project, repo.as_ref())?;
+    Ok(Some(declared))
 }
 
 /// The draft for `args`, everything but merge requests (they need the
