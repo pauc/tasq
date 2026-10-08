@@ -1104,7 +1104,211 @@ mod worktree {
             .assert()
             .code(1)
             .stderr("tasq: worktree path not found: /definitely/not/here\n");
-        env.tasq_wt().args(["worktree", "3"]).assert().code(2);
+        env.tasq_wt()
+            .args(["worktree", "3"])
+            .assert()
+            .code(1)
+            .stderr("tasq: task 3 tracks no project and work.default_project is unset; set one with tasq project 3 <path>\n");
+    }
+
+    /// A git repository at `<home>/proj` with an origin, tracked as task
+    /// 3's project.
+    fn project_repo(env: &TestEnv) -> std::path::PathBuf {
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        env.git(
+            &project,
+            &["remote", "add", "origin", "git@host:group/app.git"],
+        );
+        env.tasq_wt()
+            .args(["project", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        project
+    }
+
+    #[test]
+    fn declare_writes_the_entry_and_runs_nothing() {
+        let env = TestEnv::fixture();
+        project_repo(&env);
+        let declare = |args: &[&str]| {
+            let out = env
+                .tasq_wt()
+                .env("PATH", "")
+                .args(["worktree", "3"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+            assert_eq!(stderr(&out), "", "{args:?}");
+            env.normalize(&stdout(&out))
+        };
+        assert_eq!(
+            declare(&["feature/x"]),
+            "[3] worktree declared: [ROOT]/home/proj-feature_x (feature/x)\n"
+        );
+        assert_eq!(
+            declare(&["feature/x"]),
+            "[3] worktree already declared: [ROOT]/home/proj-feature_x (feature/x)\n"
+        );
+        assert_eq!(
+            declare(&[]),
+            "[3] worktree declared: [ROOT]/home/proj-3_answer_the_support_ticket \
+             (3-answer-the-support-ticket)\n"
+        );
+        assert!(
+            env.normalize(&env.read_task("20260902100000.todo.md"))
+                .contains(
+                    "\n## Worktrees\n\n- [ROOT]/home/proj-feature_x (`feature/x`)\n\
+                 - [ROOT]/home/proj-3_answer_the_support_ticket (`3-answer-the-support-ticket`)\n"
+                ),
+            "{}",
+            env.read_task("20260902100000.todo.md")
+        );
+        assert!(!env.home.join("proj-feature_x").exists(), "nothing on disk");
+        env.tasq_wt()
+            .args(["worktree", "3", "a~b"])
+            .assert()
+            .code(1)
+            .stderr("tasq: worktree path not found: a~b\n");
+    }
+
+    #[test]
+    fn templates_see_the_main_checkout_and_the_repo() {
+        let env = TestEnv::fixture();
+        let project = project_repo(&env);
+        let linked = env.home.join("linked");
+        env.git(
+            &project,
+            &["worktree", "add", "-q", "-b", "l", linked.to_str().unwrap()],
+        );
+        env.tasq_wt()
+            .args(["project", "3", linked.join("sub").to_str().unwrap()])
+            .assert()
+            .code(1);
+        std::fs::create_dir(linked.join("sub")).unwrap();
+        env.tasq_wt()
+            .args(["project", "3", linked.join("sub").to_str().unwrap()])
+            .assert()
+            .success();
+        let out = env
+            .tasq_wt()
+            .env("PATH", "")
+            .env(
+                "TASQ_WORKTREE_PATH",
+                "{{project}}/../wt/{{repo}}/{{project_name}}-{{branch}}",
+            )
+            .args(["worktree", "3", "b"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "[3] worktree declared: [ROOT]/home/proj/../wt/app/proj-b (b)\n"
+        );
+        // A git directory kept elsewhere: the checkout is the project.
+        let separate = env.home.join("sep");
+        env.git(
+            &env.home,
+            &[
+                "init",
+                "-q",
+                "--separate-git-dir",
+                env.root.path().join("store").to_str().unwrap(),
+                separate.to_str().unwrap(),
+            ],
+        );
+        env.tasq_wt()
+            .args(["project", "3", separate.to_str().unwrap()])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .env("PATH", "")
+            .args(["worktree", "3", "c"])
+            .assert()
+            .success()
+            .stdout(predicate::str::ends_with("/home/sep-c (c)\n"));
+    }
+
+    #[test]
+    fn create_declares_on_flag_or_in_a_git_checkout() {
+        let env = TestEnv::fixture();
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        let plain = env.home.join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        let create = |args: &[&str]| {
+            let out = env
+                .tasq_wt()
+                .env("PATH", "")
+                .arg("create")
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+            assert_eq!(stderr(&out), "", "{args:?}");
+            env.normalize(&stdout(&out))
+        };
+        let p = project.to_str().unwrap();
+        assert_eq!(
+            create(&["Fix login", "--project", p, "--worktree"]),
+            "[8] created: Fix login (#ready #B)\n\
+             [8] worktree declared: [ROOT]/home/proj-8_fix_login (8-fix-login)\n"
+        );
+        assert_eq!(
+            create(&["Auto", "--project", p]),
+            "[9] created: Auto (#ready #B)\n\
+             [9] worktree declared: [ROOT]/home/proj-9_auto (9-auto)\n"
+        );
+        assert_eq!(
+            create(&["Named", "--project", p, "--worktree", "feat/n"]),
+            "[10] created: Named (#ready #B)\n\
+             [10] worktree declared: [ROOT]/home/proj-feat_n (feat/n)\n"
+        );
+        assert_eq!(
+            create(&["Plain", "--project", plain.to_str().unwrap()]),
+            "[11] created: Plain (#ready #B)\n"
+        );
+        assert_eq!(
+            create(&["Never", "--project", p, "--set", "worktree.on_create=never"]),
+            "[12] created: Never (#ready #B)\n"
+        );
+        let json = env
+            .tasq_wt()
+            .args(["create", "J", "--project", p, "--json"])
+            .output()
+            .unwrap();
+        assert!(
+            env.normalize(&stdout(&json))
+                .contains("\"path\": \"[ROOT]/home/proj-13_j\""),
+            "{}",
+            stdout(&json)
+        );
+    }
+
+    #[test]
+    fn create_checks_the_flag_before_writing() {
+        let env = TestEnv::fixture();
+        let index = env.read_task(".index");
+        env.tasq_wt()
+            .args(["create", "T", "--worktree", "a b"])
+            .assert()
+            .code(1)
+            .stderr("tasq: invalid branch name \"a b\"\n");
+        env.tasq()
+            .args(["create", "T", "--worktree"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
+        assert_eq!(env.read_task(".index"), index, "nothing created");
+        // Disabled, a git checkout gets no worktree.
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        env.tasq()
+            .args(["create", "Off", "--project", project.to_str().unwrap()])
+            .assert()
+            .success()
+            .stdout("[8] created: Off (#ready #B)\n");
     }
 
     #[test]
@@ -2999,6 +3203,17 @@ mod worktrees_disabled {
                 "{args:?}: {}",
                 stdout(&out)
             );
+        }
+        // Disabled completions still complete the rest of the commands.
+        let zsh = env.tasq().args(["completions", "zsh"]).output().unwrap();
+        for expected in [
+            "#compdef tasq",
+            "'--version",
+            "(create)",
+            "'--project=",
+            "(list)",
+        ] {
+            assert!(stdout(&zsh).contains(expected), "{expected}");
         }
         // Enabled, the same commands show them.
         let help = env.tasq_wt().arg("--help").output().unwrap();

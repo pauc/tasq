@@ -248,25 +248,24 @@ pub enum Command {
         path: Option<PathBuf>,
     },
 
-    /// Track a git worktree used for the task, or create one.
+    /// Declare a git worktree for the task, or track an existing one.
     ///
-    /// `tasq worktree <ID> <PATH>` records an existing directory and its
-    /// current branch (idempotent). `tasq worktree <ID> --create <BRANCH>`
-    /// makes the worktree with `git worktree add` into `<project>-<branch>`
-    /// next to the project and tracks it.
+    /// `tasq worktree <ID> [BRANCH]` declares a worktree on BRANCH
+    /// (default: worktree.branch rendered for the task) at worktree.path:
+    /// it writes the `## Worktrees` entry and creates nothing; the worktree
+    /// is created when the task is launched. `tasq worktree <ID> <PATH>`
+    /// tracks an existing directory and its current branch (idempotent). An
+    /// argument that is an existing directory, starts with `/` or `.`, or
+    /// contains `~` is a path; anything else is a branch.
     Worktree {
         /// Task id.
         #[arg(value_name = "ID")]
         id: String,
-        /// Existing worktree directory to track.
-        #[arg(
-            value_name = "PATH",
-            required_unless_present = "create",
-            conflicts_with = "create"
-        )]
-        path: Option<PathBuf>,
-        /// Create a worktree for BRANCH (new or existing) and track it.
-        #[arg(long, value_name = "BRANCH")]
+        /// Branch to declare, or existing worktree directory to track.
+        #[arg(value_name = "BRANCH|PATH", conflicts_with = "create")]
+        target: Option<String>,
+        /// Create a worktree for BRANCH (new or existing) now and track it.
+        #[arg(long, value_name = "BRANCH", hide = true)]
         create: Option<String>,
     },
 
@@ -572,6 +571,12 @@ pub struct CreateArgs {
     /// First progress note [default: "created via tasq create"].
     #[arg(long, value_name = "TEXT")]
     pub note: Option<String>,
+
+    /// Declare a worktree on BRANCH [default: worktree.branch]; with
+    /// worktree.on_create = "auto" one is declared without this flag when
+    /// the project is a git checkout.
+    #[arg(long, value_name = "BRANCH", num_args = 0..=1)]
+    pub worktree: Option<Option<String>>,
 }
 
 /// `tasq list` arguments.
@@ -639,7 +644,9 @@ pub enum PluginsCommand {
 pub fn command(worktrees: bool) -> clap::Command {
     let command = <Cli as clap::CommandFactory>::command();
     if !worktrees {
-        return command.mut_subcommand("worktree", |c| c.hide(true));
+        return command
+            .mut_subcommand("worktree", |c| c.hide(true))
+            .mut_subcommand("create", |c| c.mut_arg("worktree", |a| a.hide(true)));
     }
     command
         .mut_subcommand("next", launch_help_with_worktrees)
@@ -660,27 +667,44 @@ pub fn command(worktrees: bool) -> clap::Command {
 }
 
 /// The command completions are generated from: [`command`], minus the
-/// `worktree` subcommand unless worktrees are enabled. Hiding is not enough
-/// there, as the zsh generator still lists hidden subcommands.
+/// `worktree` subcommand and `create --worktree` unless worktrees are
+/// enabled. Hiding is not enough there, as the zsh generator still lists
+/// hidden subcommands and arguments.
 pub fn completion_command(worktrees: bool) -> clap::Command {
     let full = command(true);
     if worktrees {
         return full;
     }
-    let mut pruned = clap::Command::new("tasq").version(env!("CARGO_PKG_VERSION"));
-    if let Some(about) = full.get_about() {
-        pruned = pruned.about(about.clone());
-    }
-    for arg in full.get_arguments() {
-        pruned = pruned.arg(arg.clone());
-    }
+    let mut pruned = rebuilt("tasq", &full, |_| true).version(env!("CARGO_PKG_VERSION"));
     for sub in full
         .get_subcommands()
         .filter(|s| s.get_name() != "worktree")
     {
-        pruned = pruned.subcommand(sub.clone());
+        let sub = if sub.get_name() == "create" {
+            rebuilt("create", sub, |a| a.get_id() != "worktree")
+        } else {
+            sub.clone()
+        };
+        pruned = pruned.subcommand(sub);
     }
     pruned
+}
+
+/// `command` as `name`, with its description and the arguments `keep`
+/// accepts, without its subcommands.
+fn rebuilt(
+    name: &'static str,
+    command: &clap::Command,
+    keep: impl Fn(&clap::Arg) -> bool,
+) -> clap::Command {
+    let mut copy = clap::Command::new(name);
+    if let Some(about) = command.get_about() {
+        copy = copy.about(about.clone());
+    }
+    for arg in command.get_arguments().filter(|a| keep(a)) {
+        copy = copy.arg(arg.clone());
+    }
+    copy
 }
 
 /// Appends a paragraph to a command's long description.

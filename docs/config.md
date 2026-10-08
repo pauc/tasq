@@ -226,8 +226,15 @@ task file lists worktrees. Task files are never rewritten because of the setting
 `## Worktrees` section stays as it is (`tasq view` still prints the file) and is used again
 once worktrees are enabled.
 
-**Status:** the `[worktree]` keys are read and validated. The lifecycle that uses them is being
-built (`ruli/features/worktrees/PLAN.md`); until it lands, `tasq worktree <id> --create
+Declaring writes the task's `## Worktrees` entry and nothing else: no `git` runs and nothing is
+created on disk. `tasq create ... --worktree [BRANCH]` declares one for the new task, and with
+`on_create = "auto"` every new task whose project is inside a git work tree gets one without the
+flag (the check reads the filesystem). `tasq worktree <id> [BRANCH]` declares one on an existing
+task; an argument that is an existing directory, starts with `/` or `.`, or contains `~` is
+tracked as an existing worktree instead. A relative rendered `path` is taken from the project.
+
+**Status:** creating a declared worktree at launch and releasing it at close are being built
+(`ruli/features/worktrees/PLAN.md`); until they land, the hidden `tasq worktree <id> --create
 <branch>` runs `git worktree add` into `<project>-<branch>` next to the project (with `-b` when
 the branch exists neither locally nor on `origin`) and tracks the result.
 
@@ -290,7 +297,7 @@ sections included). What a template may name depends on when it is rendered:
 |---|---|---|---|---|
 | `id`, `title` | the task's id and title | yes | yes | yes |
 | `slug` | the title in lowercase ASCII, other characters `-`, at most 40 bytes (`fix-the-login-form`) | yes | yes | yes |
-| `project`, `project_name`, `project_parent` | the project directory, its name, its parent | yes | yes | yes |
+| `project`, `project_name`, `project_parent` | the project directory (the repository's main checkout when the project is a linked worktree or a subdirectory of one), its name, its parent | yes | yes | yes |
 | `repo` | the repository name from `remote.origin.url`, else `project_name` | yes | yes | yes |
 | `branch` | the branch | | yes | yes |
 | `branch_safe` | the branch with every character but ASCII letters and digits as `_`, runs collapsed, trimmed (`feature/x` is `feature_x`) | | yes | yes |

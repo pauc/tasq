@@ -3,12 +3,14 @@
 use std::path::Path;
 use tasq_core::dates::parse_day;
 
-use tasq_core::model::{Link, Priority, Status, Tag, TaskDraft, Workflow};
+use tasq_core::model::{Link, Priority, Status, Tag, Task, TaskDraft, Workflow};
 use tasq_core::store::Store;
+use tasq_core::worktree::{declaration, lifecycle};
+use tasq_store_nb::NbStore;
 
 use crate::app::App;
 use crate::cli::CreateArgs;
-use crate::commands::mr;
+use crate::commands::{mr, worktree};
 use crate::error::{CliError, Result};
 use crate::json;
 use crate::plugins::{self, Hook};
@@ -58,9 +60,11 @@ pub fn run(app: &App, args: &CreateArgs) -> Result<()> {
     for url in &args.mr {
         draft = draft.with_merge_request(mr::resolve_link(app, url, None)?);
     }
+    let asked = worktree_flag(app, args)?;
     let closed = draft.done;
     let mut store = app.open_store()?;
     let task = store.create(draft)?;
+    let (task, declared) = declare_worktree(app, &mut store, task, asked)?;
     plugins::run_hooks(app, Hook::PostCreate, &task, &[])?;
     if app.out.json_mode() {
         return app
@@ -80,7 +84,73 @@ pub fn run(app: &App, args: &CreateArgs) -> Result<()> {
         )
     };
     app.out
-        .print(&format!("[{}] created: {} ({tail})\n", task.id, task.title))
+        .print(&format!("[{}] created: {} ({tail})\n", task.id, task.title))?;
+    match declared {
+        Some(line) => app
+            .out
+            .print(&format!("[{}] worktree declared: {line}\n", task.id)),
+        None => Ok(()),
+    }
+}
+
+/// What `--worktree [BRANCH]` asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Asked<'a> {
+    /// No flag: `worktree.on_create` decides.
+    No,
+    /// `--worktree`: on the default branch.
+    Default,
+    /// `--worktree BRANCH`.
+    Branch(&'a str),
+}
+
+/// Reads `--worktree`, checked before anything is written.
+fn worktree_flag<'a>(app: &App, args: &'a CreateArgs) -> Result<Asked<'a>> {
+    let Some(flag) = &args.worktree else {
+        return Ok(Asked::No);
+    };
+    if !app.worktrees() {
+        return Err(worktree::disabled());
+    }
+    match flag.as_deref() {
+        None => Ok(Asked::Default),
+        Some(branch) => lifecycle::branch_name(branch)
+            .map(Asked::Branch)
+            .map_err(|e| CliError::user(e.to_string())),
+    }
+}
+
+/// Declares the new task's worktree when `--worktree` was given (`asked`)
+/// or `worktree.on_create = "auto"` finds its project in a git work tree;
+/// the task as stored, and the declared worktree for the message. Reads
+/// the filesystem only, runs no process.
+fn declare_worktree(
+    app: &App,
+    store: &mut NbStore,
+    task: Task,
+    asked: Asked,
+) -> Result<(Task, Option<String>)> {
+    let Some(project) = task.project.clone().filter(|_| app.worktrees()) else {
+        return Ok((task, None));
+    };
+    let repo = worktree::Repo::of(&project);
+    let on_create = app.config().worktree.on_create;
+    if !declaration::wanted(on_create, asked != Asked::No, repo.is_some()) {
+        return Ok((task, None));
+    }
+    let branch = match asked {
+        Asked::Branch(branch) => Some(branch),
+        Asked::No | Asked::Default => None,
+    };
+    let id = task.id.clone();
+    let failed =
+        |e: CliError| CliError::user(format!("[{id}] created, but no worktree was declared: {e}"));
+    let (declared, _) =
+        worktree::declare_in(app, &task, branch, &project, repo.as_ref()).map_err(failed)?;
+    let mut task = task;
+    task.add_worktree(declared.clone());
+    store.update(&task)?;
+    Ok((store.get(&id)?, Some(worktree::describe(&declared))))
 }
 
 /// The draft for `args`, everything but merge requests (they need the
@@ -188,6 +258,7 @@ mod tests {
             related: vec!["https://r".into()],
             mr: vec!["https://g/p/-/merge_requests/1".into()],
             note: Some("hello".into()),
+            worktree: None,
         };
         let d = draft_from(&a, &wf, &Status::READY, today(), Path::new("/cwd")).unwrap();
         assert_eq!(d.description.as_deref(), Some("D"));

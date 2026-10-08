@@ -34,6 +34,14 @@ pub fn wanted(on_create: OnCreate, asked: bool, in_work_tree: bool) -> bool {
     asked || (on_create == OnCreate::Auto && in_work_tree)
 }
 
+/// Whether the argument of `tasq worktree <id> <ARG>` names a directory
+/// rather than a branch: an existing directory (`is_dir`), or text git
+/// refuses in a branch name and paths use (a leading `/` or `.`, any `~`),
+/// so a mistyped path is reported missing instead of declared as a branch.
+pub fn is_path(arg: &str, is_dir: bool) -> bool {
+    is_dir || arg.starts_with(['/', '.']) || arg.contains('~')
+}
+
 /// Declares a worktree for `task` in `project`: on `branch`, or the
 /// rendered `worktree.branch` without one, at the rendered `worktree.path`.
 /// A leading `~` in the path is `home`; a relative path is taken from
@@ -193,6 +201,22 @@ mod tests {
             ),
             Ok(Declared::Already(Worktree::on_branch("/elsewhere", "b")))
         );
+    }
+
+    #[test]
+    fn paths_and_branches() {
+        for (arg, is_dir, path) in [
+            ("feature/x", false, false),
+            ("feature/x", true, true),
+            ("/code/app-x", false, true),
+            ("./wt", false, true),
+            ("..", false, true),
+            ("~/wt", false, true),
+            ("a~b", false, true),
+            ("7-fix.login", false, false),
+        ] {
+            assert_eq!(is_path(arg, is_dir), path, "{arg} {is_dir}");
+        }
     }
 
     #[test]

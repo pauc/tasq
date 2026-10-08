@@ -44,18 +44,14 @@ pub enum Declared {
 ///
 /// # Errors
 ///
-/// [`LifecycleError::InvalidBranch`] for an empty branch or one with
-/// whitespace (git refuses those, and the file format cannot hold them),
-/// before `path_for` runs; otherwise whatever `path_for` returns.
+/// [`LifecycleError::InvalidBranch`] from [`branch_name`], before
+/// `path_for` runs; otherwise whatever `path_for` returns.
 pub fn declare<E: From<LifecycleError>>(
     task: &Task,
     branch: &str,
     path_for: impl FnOnce(&str) -> Result<PathBuf, E>,
 ) -> Result<Declared, E> {
-    let branch = branch.trim();
-    if branch.is_empty() || branch.contains(char::is_whitespace) {
-        return Err(LifecycleError::InvalidBranch(branch.to_owned()).into());
-    }
+    let branch = branch_name(branch)?;
     if let Some(existing) = task
         .worktrees
         .iter()
@@ -68,6 +64,20 @@ pub fn declare<E: From<LifecycleError>>(
         return Ok(Declared::Already(existing.clone()));
     }
     Ok(Declared::New(Worktree::on_branch(path, branch)))
+}
+
+/// `branch` trimmed, if it can name a declared branch.
+///
+/// # Errors
+///
+/// [`LifecycleError::InvalidBranch`] for an empty branch or one with
+/// whitespace (git refuses those, and the file format cannot hold them).
+pub fn branch_name(branch: &str) -> Result<&str, LifecycleError> {
+    let branch = branch.trim();
+    if branch.is_empty() || branch.contains(char::is_whitespace) {
+        return Err(LifecycleError::InvalidBranch(branch.to_owned()));
+    }
+    Ok(branch)
 }
 
 /// Where a branch lives, as observed before creating a worktree for it.
