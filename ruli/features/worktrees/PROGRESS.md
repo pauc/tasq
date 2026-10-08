@@ -5,10 +5,34 @@ Plan: [PLAN.md](PLAN.md). Decision: [ADR 0022](../../../docs/adr/0022-worktrees-
 
 ## Status
 
-**Phase 1 done (2026-10-07).** Scope agreed with the author on 2026-10-07: core feature behind `worktree.enabled`,
-full gwm replacement, then improvements from the prior-art survey (PLAN section 7). Plugin task
-fields split out to nb todo 46. Lifecycle settled the same day (PLAN 4.2): declare at creation,
-create at launch, release at close, never remove the entry.
+**Phase 1 done (2026-10-07); Phase 2 at WT-205 (2026-10-08).** Scope agreed with the author on
+2026-10-07: core feature behind `worktree.enabled`, full gwm replacement, then improvements from the
+prior-art survey (PLAN section 7). Plugin task fields split out to nb todo 46. Lifecycle settled
+the same day (PLAN 4.2): declare at creation, create at launch, release at close, never remove the
+entry.
+
+Where things stand (2026-10-08, after WT-204):
+
+- Branch `feat/worktrees`, 22 commits ahead of `main` (latest 15b9133), not pushed, no PR. It
+  also carries four commits from another session that are not worktree work: 97611f0 (store-nb
+  never runs nb, ADR 0023), 39e550f, fa6fc13, 3e1c003. ADR 0022 is still Proposed.
+- Declaring, creating at launch, provisioning and creation hooks work end to end:
+  `tasq create --worktree`, `tasq worktree <id> [BRANCH|PATH]`, `tasq worktree up <id>
+  [--from] [--dry-run] [--yes]`, `tasq worktree trust [DIR]`, `next`/`pick [--yes]`, the TUI
+  create view. Closing a task does nothing to worktrees yet.
+- The installed `tasq` is still the build of 9333023 (WT-102), installed because the author's
+  config sets `[worktree] enabled = true`. Reinstalling from this branch changes daily use:
+  `c` opens the full create view, `on_create = "auto"` declares worktrees for new tasks in a git
+  checkout, and launching creates them. Ask the author before reinstalling.
+- Next: WT-205 (PLAN `#### WT-205`), the "nothing is lost" checks that fill
+  `BranchSeen::Present { integrated, pushed }` for `lifecycle::on_close` (WT-101). Per PLAN 4.1
+  the decision logic over git outputs goes in core and the git calls in `tasq-worktree`; tests
+  are temp repos (the bare-origin harness in `crates/worktree/tests/git.rs`). Then WT-206 wires
+  release into `tasq done`, the TUI's `d` and `tasq worktree release`, with the
+  `pre-remove`/`post-remove` hooks (`worktree_hooks::prepare` takes the kinds) and the
+  `git worktree prune` note under WT-101 Learnings.
+- WT-208 needs the author's real `gwm.yml` files, which live outside this repository; reading them
+  needs the author's go-ahead (repository rule: never read outside the working directory).
 
 | Task | Title | Status | Notes |
 |------|-------|--------|-------|
@@ -16,10 +40,10 @@ create at launch, release at close, never remove the entry.
 | WT-102 | `[worktree]` config and the toggle | done | `WorktreeConfig` (+ `OnCreate`, `OnDone`, `TemplateFile`, `PortsConfig`, `WorktreeHooks`), 7 `TASQ_WORKTREE*` vars, `BadPorts`; `work.worktree_*` rejected by a `deserialize_with` guard (file:line:column); `CommandManager`/`manager_for`/`expand_template` deleted; docs, examples, CI `no-gwm` job; 17 mutants, 16 caught, 1 unviable |
 | WT-103 | Invisible when disabled | done | `App::worktrees`/`task_json` + `json::task(s)` (key dropped), `cli::command` hides `worktree` and swaps help paragraphs, `cli::completion_command` prunes it, `early_globals` loads config before clap, `LaunchContext::worktrees` + `{{#worktrees_enabled}}`, `Model::with_worktrees`, apply keeps stored worktrees on a missing key; `worktrees_disabled` CLI tests; 7 mutants, 7 caught |
 | WT-104 | Templates, variables and naming in core | done | `tasq_core::template` (hand parser replacing the launch regexes, `names()`), `worktree::vars` (`Scope`, `check`, `Vars`, `branch_safe`, `branch_db`, `slug`, `repo_name`, `port` via FNV-1a); config rejects unknown template variables per scope and bad `[worktree.variables]` names; 102 mutants in template + worktree, 96 caught, 6 unviable |
-| WT-201 | Declaring: `tasq create --worktree` and `tasq worktree <id> [BRANCH]` | done | af9b74c, 012c28b, then the TUI create view. `worktree::declaration` (`declare`, `wanted`, `is_path`), `worktree::git` (`work_tree_root`, `gitdir`, `origin_url`), `lifecycle::branch_name`; CLI `Repo::of` probes `.git` without a process; `--create` hidden; TUI `c` opens the edit view empty (`Form::new_task`, Worktree box), `Host::worktree`, `edit::Fields::draft`; 906 tests green; 0 missed mutants (core 82+8, CLI 23, TUI slice 64) |
-| WT-202 | Materializing at launch: the `tasq-worktree` crate | done | fa33080 + CLI wiring. `tasq_worktree::Git` (`branch_state` local / `ls-remote` + fetch / offline `origin/<b>` / absent, `resolve_start`, `add` with cleanup, `current_branch`); `materialize` in `next`/`pick` before the status change, `tasq worktree up [--from] [--dry-run]`, `--create` = declare + create; recreate prompt, `GitManager`, `WorktreeManager`, `work::{branch_slug, sibling_worktree}` deleted; 915 tests green; 0 missed mutants (crate 27, diff 33) |
-| WT-203 | Provisioning: symlinks, copies, templates | done | 46ef57d (core `provision::plan`, three workspace fixture configs), 9b37c1a (`tasq_worktree::provision::{prepare, apply}`, tree checked against fixture files), then the CLI: `RepoSettings` loads `[worktree]` from the main checkout (`App::config_at`), templates relative to the file that set them, rendered before `git worktree add`; dry runs list the steps; 0 missed mutants (core 4+2, crate 7+1, CLI diff 13+10) |
-| WT-204 | Hooks and trust | done | f3d5215 (core `hooks`: `Kind`, `argv`, `env`, `trust_file`, `TrustStore`) + runner (`tasq_worktree::hooks::run_hook`) and CLI (`worktree_hooks`: pending lines from the repository's own file, `--yes`, terminal prompt, `tasq worktree trust [DIR]`; pre-create in the main checkout before git, post-create in the worktree); `next`/`pick` dispatch moved out of `app::run`; 947 tests green; 0 missed mutants (93: 83 caught, 10 unviable) |
+| WT-201 | Declaring: `tasq create --worktree` and `tasq worktree <id> [BRANCH]` | done | af9b74c, 012c28b, eb81c6d (TUI create view). `worktree::declaration` (`declare`, `wanted`, `is_path`), `worktree::git` (`work_tree_root`, `gitdir`, `origin_url`), `lifecycle::branch_name`; CLI `Repo::of` probes `.git` without a process; `--create` hidden; TUI `c` opens the edit view empty (`Form::new_task`, Worktree box), `Host::worktree`, `edit::Fields::draft`; 906 tests green; 0 missed mutants (core 82+8, CLI 23, TUI slice 64) |
+| WT-202 | Materializing at launch: the `tasq-worktree` crate | done | fa33080 (crate), 2ff484b (CLI wiring); `crates/worktree/**` added to `.cargo/mutants.toml` and the release crate list. `tasq_worktree::Git` (`branch_state` local / `ls-remote` + fetch / offline `origin/<b>` / absent, `resolve_start`, `add` with cleanup, `current_branch`); `materialize` in `next`/`pick` before the status change, `tasq worktree up [--from] [--dry-run]`, `--create` = declare + create; recreate prompt, `GitManager`, `WorktreeManager`, `work::{branch_slug, sibling_worktree}` deleted; 915 tests green; 0 missed mutants (crate 27, diff 33) |
+| WT-203 | Provisioning: symlinks, copies, templates | done | 46ef57d (core `provision::plan`, three workspace fixture configs), 9b37c1a (`tasq_worktree::provision::{prepare, apply}`, tree checked against fixture files), d3f5806 (CLI): `RepoSettings` loads `[worktree]` from the main checkout (`App::config_at`), templates relative to the file that set them, rendered before `git worktree add`; dry runs list the steps; 0 missed mutants (core 4+2, crate 7+1, CLI diff 13+10) |
+| WT-204 | Hooks and trust | done | f3d5215, 15b9133 (core `hooks`: `Kind`, `argv`, `env`, `trust_file`, `TrustStore`) + runner (`tasq_worktree::hooks::run_hook`) and CLI (`worktree_hooks`: pending lines from the repository's own file, `--yes`, terminal prompt, `tasq worktree trust [DIR]`; pre-create in the main checkout before git, post-create in the worktree); `next`/`pick` dispatch moved out of `app::run`; 947 tests green; 0 missed mutants (93: 83 caught, 10 unviable) |
 | WT-205 | Integration checks | todo | |
 | WT-206 | Releasing at close | todo | |
 | WT-207 | `ls`, `switch`, `path`, `shell-init`, completions | todo | |
