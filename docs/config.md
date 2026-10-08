@@ -286,6 +286,21 @@ pushed, nothing else. `--dry-run` lists what would go. The task is closed even w
 fails, and the `## Worktrees` entries always stay: launching the task again creates the worktree
 again, on the kept local branch, the pushed one, or a new one from `base`.
 
+`tasq worktree ls [ID] [--all]` lists declared worktrees with their task, status, branch and
+state (`clean`, `<n> changed` not counting provisioned files, `not created`): of one task, of
+the tasks working in the current directory's repository, or of every task with `--all` (or
+outside a repository); a closed task's worktree shows only while it exists. `tasq worktree
+switch [TARGET]` goes to `task:<id>` (its worktree, created first when missing), `^` (the main
+checkout), `-` (where the last switch came from, kept in `$XDG_STATE_HOME/tasq/previous-worktree`),
+a directory, or a branch (a worktree git lists for the current repository, else one a task
+declares); without TARGET it offers the worktrees through `fzf`, or a numbered list when fzf is
+not installed. A program cannot change its shell's directory, so `switch` needs the function
+`tasq worktree shell-init bash|zsh|fish` prints (`eval "$(tasq worktree shell-init zsh)"` in
+`~/.zshrc`, `tasq worktree shell-init fish | source` in fish): it runs tasq with
+`TASQ_CD_FILE` set and changes directory to what `switch` wrote there. Without the function
+`switch` prints the path with a hint. `tasq worktree path TARGET` prints the directory for
+scripts and never creates anything.
+
 ```toml
 [worktree]
 enabled = true

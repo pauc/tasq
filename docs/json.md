@@ -7,7 +7,10 @@ refuse anything else; a future shape change bumps the number.
 | Command | Payload next to `"schema": 1` |
 |---|---|
 | `tasq [list ...]` | `"tasks": [Task, ...]` in display order (group order, then priority, due, id); done tasks only with `--all` (after the open ones) or `--done` |
-| `tasq create`, `set`, `log`, `done`, `view`, `project`, `worktree`, `session`, `mr`, `apply` | `"task": Task` as stored after the command |
+| `tasq create`, `set`, `log`, `done`, `view`, `project`, `worktree`, `worktree up`, `worktree release`, `session`, `mr`, `apply` | `"task": Task` as stored after the command |
+| `tasq worktree ls` | `"worktrees": [{task, title, status, done, path, branch, exists, changes}]`: `task` is the id, `status` the task's (`"done"` for a closed task, `null` without one), `branch` `null` for a directory tracked without one, `exists` whether the directory is there, `changes` the changed paths git reports (files provisioning wrote left out; `[]` when clean), `null` when it does not exist or git cannot say |
+| `tasq worktree switch`, `tasq worktree path` | `"path"`: the directory (`switch` with `--json` neither prints a hint nor writes `$TASQ_CD_FILE`) |
+| `tasq worktree shell-init` | `"script"`: the shell function |
 | `tasq project <id>` (show) | `"task": Task`, `"default_project": path or null` |
 | `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool` (only with worktrees enabled), `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
 | `tasq store info` | `"store": {name, location, task_count, id_scheme, ids_may_change_on_reconcile}`, `"bookkeeper": "native" \| "none"` |

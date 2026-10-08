@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::commands::worktree_hooks::{self, Approval, Hooks};
+use crate::commands::worktree_nav;
 use tasq_core::config::{OnDone, WorktreeConfig, project_file};
 use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::store::Store;
@@ -48,6 +49,12 @@ pub fn dispatch(app: &App, command: &Command) -> Result<()> {
             yes,
         }) => up(app, id, from.as_deref(), *yes, *dry_run),
         Some(WorktreeAction::Trust { dir }) => trust(app, dir.as_deref()),
+        Some(WorktreeAction::Ls { id, all }) => worktree_nav::ls(app, id.as_deref(), *all),
+        Some(WorktreeAction::Switch { target, yes }) => {
+            worktree_nav::switch(app, target.as_deref(), *yes)
+        }
+        Some(WorktreeAction::Path { target }) => worktree_nav::path(app, target),
+        Some(WorktreeAction::ShellInit { shell }) => worktree_nav::shell_init(app, *shell),
         Some(WorktreeAction::Release {
             id,
             force,
@@ -734,7 +741,7 @@ impl One<'_> {
 
 /// The paths provisioning writes into the worktree at `path`, relative to
 /// it: they can be made again, so they do not make it dirty.
-fn provisioned(settings: &RepoSettings, path: &Path) -> Vec<PathBuf> {
+pub fn provisioned(settings: &RepoSettings, path: &Path) -> Vec<PathBuf> {
     provision::plan(
         &settings.config,
         &settings.main,

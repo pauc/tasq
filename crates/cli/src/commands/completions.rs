@@ -33,4 +33,22 @@ mod tests {
             assert!(text.contains("doctor"), "{shell} lacks subcommands");
         }
     }
+
+    #[test]
+    fn worktree_subcommands_complete_only_when_enabled() {
+        for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
+            let script = |enabled: bool| {
+                let mut command = cli::completion_command(enabled);
+                let mut script = Vec::new();
+                clap_complete::generate(shell, &mut command, "tasq", &mut script);
+                String::from_utf8(script).unwrap()
+            };
+            let on = script(true);
+            for word in ["shell-init", "switch", "release", "ls"] {
+                assert!(on.contains(word), "{shell} lacks {word}");
+            }
+            assert!(on.contains("fish"), "{shell} lacks the shell-init values");
+            assert!(!script(false).contains("shell-init"), "{shell}");
+        }
+    }
 }

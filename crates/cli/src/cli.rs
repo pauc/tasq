@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 
+pub use crate::commands::worktree_nav::InitShell;
+
 const LONG_ABOUT: &str = "\
 Terminal task manager over nb markdown todos.
 
@@ -591,6 +593,53 @@ pub enum WorktreeAction {
         /// Run the hooks of the repository's own .tasq.toml without asking, this once.
         #[arg(long)]
         yes: bool,
+    },
+    /// List declared worktrees: task, status, branch, state, path.
+    ///
+    /// Without ID, the worktrees of the tasks working in the current
+    /// directory's repository (every task's with --all, or outside a
+    /// repository); a closed task's worktree shows only while it exists.
+    /// The state is `clean`, `<n> changed` (files provisioning wrote do not
+    /// count), `not created` or `unknown`.
+    Ls {
+        /// Only this task's worktrees.
+        #[arg(value_name = "ID")]
+        id: Option<String>,
+        /// Every task's worktrees, whatever the repository.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Change the shell's directory to a worktree, creating a task's first.
+    ///
+    /// TARGET is task:<ID> (its worktree, created when it does not exist),
+    /// ^ (the main checkout), - (where the last switch came from), a
+    /// directory, or a branch (a worktree git lists for this repository,
+    /// else one a task declares). Without TARGET, pick one with fzf, or
+    /// from a numbered list when fzf is not installed. The shell function
+    /// from `tasq worktree shell-init` changes directory; without it the
+    /// path is printed.
+    Switch {
+        /// Where to go.
+        #[arg(value_name = "TARGET")]
+        target: Option<String>,
+        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Print the directory TARGET names (as for switch), creating nothing.
+    Path {
+        /// task:<ID>, ^, -, a directory or a branch.
+        #[arg(value_name = "TARGET")]
+        target: String,
+    },
+    /// Print the shell function that lets switch change directory.
+    ///
+    /// bash/zsh: eval "$(tasq worktree shell-init zsh)" in the rc file;
+    /// fish: tasq worktree shell-init fish | source.
+    ShellInit {
+        /// The shell.
+        #[arg(value_enum, value_name = "SHELL")]
+        shell: InitShell,
     },
     /// Approve the hooks of a repository's own .tasq.toml ahead of time.
     ///

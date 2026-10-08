@@ -4156,3 +4156,369 @@ mod worktree_release {
         );
     }
 }
+
+/// `tasq worktree ls`, `switch`, `path` and `shell-init` (WT-207).
+mod worktree_nav {
+    use super::*;
+
+    /// A repository at `<home>/proj` for tasks 3, 4 and 6 (4 is done):
+    /// task 3 has `b` created and `c` declared, task 6 `d` declared, task
+    /// 4 `e` declared and never created.
+    fn workspace(env: &TestEnv) -> std::path::PathBuf {
+        // Task 1 of the fixture declares a worktree under the author's real
+        // home; a test that lists or creates every task's worktrees must
+        // never see it.
+        let full = "20260901090000.todo.md";
+        let text = env.read_task(full).replace(
+            "## Worktrees\n\n- /home/pau/code/tasks-wt/feature-a (`feature-a`)\n\n",
+            "",
+        );
+        assert!(!text.contains("Worktrees"), "the fixture changed: {text}");
+        env.write_task(full, &text);
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        std::fs::write(
+            project.join(".tasq.toml"),
+            "[worktree]\ncopies = [\".tasq.toml\"]\n",
+        )
+        .unwrap();
+        std::fs::write(project.join(".gitignore"), "\n").unwrap();
+        for (id, branch) in [("3", "b"), ("3", "c"), ("6", "d"), ("4", "e")] {
+            env.tasq_wt()
+                .args(["project", id, project.to_str().unwrap()])
+                .assert()
+                .success();
+            env.tasq_wt()
+                .args(["worktree", id, branch])
+                .assert()
+                .success();
+        }
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .success();
+        project
+    }
+
+    fn run_in(env: &TestEnv, dir: &Path, args: &[&str]) -> (String, String) {
+        let out = env.tasq_wt().current_dir(dir).args(args).output().unwrap();
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+        (env.normalize(&stdout(&out)), env.normalize(&stderr(&out)))
+    }
+
+    fn fails_in(env: &TestEnv, dir: &Path, args: &[&str]) -> String {
+        let out = env.tasq_wt().current_dir(dir).args(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {}", stdout(&out));
+        env.normalize(&stderr(&out))
+    }
+
+    #[test]
+    fn ls_shows_every_declared_worktree_with_its_state() {
+        let env = TestEnv::fixture();
+        let project = workspace(&env);
+        let wt = env.home.join("proj-b");
+        // The copied .tasq.toml is provisioning's, not a change.
+        assert!(wt.join(".tasq.toml").is_file());
+        std::fs::write(wt.join("scratch"), "x\n").unwrap();
+        let (out, _) = run_in(&env, &env.home, &["worktree", "ls"]);
+        assert_eq!(
+            out,
+            "[3]  ready    b  1 changed    [ROOT]/home/proj-b\n\
+             [3]  ready    c  not created  [ROOT]/home/proj-c\n\
+             [6]  waiting  d  not created  [ROOT]/home/proj-d\n"
+        );
+        let (only, _) = run_in(&env, &env.home, &["worktree", "ls", "4"]);
+        assert_eq!(
+            only, "[4]  done  e  not created  [ROOT]/home/proj-e\n",
+            "a closed task's own list shows everything"
+        );
+        // Inside the repository, its tasks; in another, none (unless --all).
+        let (inside, _) = run_in(&env, &wt, &["worktree", "ls"]);
+        assert_eq!(inside, out);
+        let other = env.home.join("other");
+        env.git_repo(&other);
+        let (none, _) = run_in(&env, &other, &["worktree", "ls"]);
+        assert_eq!(none, "no declared worktrees\n");
+        let (all, _) = run_in(&env, &other, &["worktree", "ls", "--all"]);
+        assert_eq!(all, out);
+        let (json, _) = run_in(&env, &project, &["worktree", "ls", "3", "--json"]);
+        assert_eq!(
+            json,
+            "{\n  \"schema\": 1,\n  \"worktrees\": [\n    {\n      \"branch\": \"b\",\n      \
+             \"changes\": [\n        \"scratch\"\n      ],\n      \"done\": false,\n      \
+             \"exists\": true,\n      \"path\": \"[ROOT]/home/proj-b\",\n      \
+             \"status\": \"ready\",\n      \"task\": \"3\",\n      \
+             \"title\": \"Answer the support ticket\"\n    },\n    {\n      \
+             \"branch\": \"c\",\n      \"changes\": null,\n      \"done\": false,\n      \
+             \"exists\": false,\n      \"path\": \"[ROOT]/home/proj-c\",\n      \
+             \"status\": \"ready\",\n      \"task\": \"3\",\n      \
+             \"title\": \"Answer the support ticket\"\n    }\n  ]\n}\n"
+        );
+        env.tasq()
+            .args(["worktree", "ls"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
+    }
+
+    #[test]
+    fn path_resolves_targets_and_creates_nothing() {
+        let env = TestEnv::fixture();
+        let project = workspace(&env);
+        let wt = env.home.join("proj-b");
+        let path = |dir: &Path, target: &str| run_in(&env, dir, &["worktree", "path", target]).0;
+        assert_eq!(path(&env.home, "task:3"), "[ROOT]/home/proj-b\n");
+        assert_eq!(
+            path(&project, "b"),
+            "[ROOT]/home/proj-b\n",
+            "a branch git lists"
+        );
+        assert_eq!(
+            path(&env.home, "b"),
+            "[ROOT]/home/proj-b\n",
+            "a branch a task declares"
+        );
+        assert_eq!(path(&wt, "^"), "[ROOT]/home/proj\n");
+        assert_eq!(
+            path(&env.home, wt.to_str().unwrap()),
+            "[ROOT]/home/proj-b\n"
+        );
+        assert_eq!(path(&project, "main"), "[ROOT]/home/proj\n");
+        assert_eq!(
+            run_in(&env, &env.home, &["worktree", "path", "task:3", "--json"]).0,
+            "{\n  \"path\": \"[ROOT]/home/proj-b\",\n  \"schema\": 1\n}\n"
+        );
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "task:6"]),
+            "tasq: task 6 has no worktree yet; tasq worktree switch task:6 creates it\n"
+        );
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "d"]),
+            "tasq: task 6 has no worktree yet; tasq worktree switch task:6 creates it\n"
+        );
+        assert!(!env.home.join("proj-d").exists());
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "nope"]),
+            "tasq: no worktree on branch nope\n"
+        );
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "^"]),
+            "tasq: not in a git repository: [ROOT]/home\n"
+        );
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "-"]),
+            "tasq: no previous worktree: nothing was switched from yet\n"
+        );
+        // A state file that cannot be read is an error, not "nothing yet".
+        let state = env.home.join(".local/state/tasq/previous-worktree");
+        std::fs::create_dir_all(&state).unwrap();
+        assert!(
+            fails_in(&env, &env.home, &["worktree", "path", "-"]).starts_with(
+                "tasq: [ROOT]/home/.local/state/tasq/previous-worktree: Is a directory"
+            )
+        );
+        std::fs::remove_dir(&state).unwrap();
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "./gone"]),
+            "tasq: directory not found: ./gone\n"
+        );
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "task:"]),
+            "tasq: task: needs an id (task:<id>)\n"
+        );
+    }
+
+    #[test]
+    fn switch_hands_the_directory_to_the_shell_and_remembers_the_previous() {
+        let env = TestEnv::fixture();
+        let project = workspace(&env);
+        let cd_file = env.home.join("cd");
+        // Without the shell function: the path, and how to get the function.
+        let (out, err) = run_in(&env, &project.join("."), &["worktree", "switch", "b"]);
+        assert_eq!(out, "[ROOT]/home/proj-b\n");
+        assert!(err.contains("shell-init"), "{err}");
+        // With it: the file gets the path, stdout stays quiet.
+        let out = env
+            .tasq_wt()
+            .current_dir(env.home.join("proj-b"))
+            .env("TASQ_CD_FILE", &cd_file)
+            .args(["worktree", "switch", "task:6"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "[6] created worktree [ROOT]/home/proj-d on d (new from HEAD)\n",
+            "a task's worktree is created first"
+        );
+        assert_eq!(
+            env.normalize(&std::fs::read_to_string(&cd_file).unwrap()),
+            "[ROOT]/home/proj-d"
+        );
+        // `-` is where the last switch came from.
+        let (back, _) = run_in(&env, &env.home, &["worktree", "path", "-"]);
+        assert_eq!(back, "[ROOT]/home/proj-b\n");
+        let (json, _) = run_in(&env, &env.home, &["worktree", "switch", "-", "--json"]);
+        assert_eq!(
+            json,
+            "{\n  \"path\": \"[ROOT]/home/proj-b\",\n  \"schema\": 1\n}\n"
+        );
+        let (back, _) = run_in(&env, &env.home, &["worktree", "path", "-"]);
+        assert_eq!(
+            back, "[ROOT]/home\n",
+            "home is not in a repository: the directory itself"
+        );
+    }
+
+    #[test]
+    fn switch_without_a_target_offers_a_list() {
+        let env = TestEnv::fixture();
+        let project = workspace(&env);
+        // No fzf: a numbered list on stderr, the number on stdin.
+        let out = env
+            .tasq_wt()
+            .current_dir(&project)
+            .args(["worktree", "switch"])
+            .write_stdin("2\n")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(env.normalize(&stdout(&out)), "[ROOT]/home/proj-b\n");
+        // Task 3's `c` is not offered: `b` exists, so `c` would not be made.
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            " 1  ^  main checkout  [ROOT]/home/proj\n \
+             2  [3]  ready  b  clean  [ROOT]/home/proj-b\n \
+             3  [6]  waiting  d  not created  [ROOT]/home/proj-d\n\
+             switch to [1-3]: tasq: warning: the shell function changes directory: add eval \
+             \"$(tasq worktree shell-init zsh)\" (or bash, fish) to the shell's rc file\n"
+        );
+        // fzf, when installed, picks instead (here: always the third line),
+        // and a task's missing worktree is created.
+        env.fake_tool(
+            "fzf",
+            "n=0\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n\
+             n=$((n+1)); printf '%s\\n' \"$line\" >> \"$HOME/fzf.in\"\n\
+             [ $n = 3 ] && picked=$line\ndone\nprintf '%s\\n' \"$picked\"",
+        );
+        let out = env
+            .tasq_wt()
+            .current_dir(&project)
+            .args(["worktree", "switch"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "[6] created worktree [ROOT]/home/proj-d on d (new from HEAD)\n\
+             [ROOT]/home/proj-d\n"
+        );
+        assert_eq!(
+            env.normalize(&std::fs::read_to_string(env.home.join("fzf.in")).unwrap()),
+            " 1  ^  main checkout  [ROOT]/home/proj\n \
+             2  [3]  ready  b  clean  [ROOT]/home/proj-b\n \
+             3  [6]  waiting  d  not created  [ROOT]/home/proj-d\n"
+        );
+        env.fake_tool("fzf", "exit 130");
+        assert_eq!(
+            fails_in(&env, &project, &["worktree", "switch"]),
+            "tasq: nothing chosen\n"
+        );
+        env.fake_tool("fzf", "echo 99");
+        assert_eq!(
+            fails_in(&env, &project, &["worktree", "switch"]),
+            "tasq: not a choice: \"99\"\n"
+        );
+    }
+
+    /// Runs `script` in `shell` with the function from `shell-init`, a fake
+    /// `tasq` that logs its arguments and, for a switch, writes `<home>/to`.
+    fn in_shell(env: &TestEnv, shell: &str, script: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let (init, _) = run_in(env, &env.home, &["worktree", "shell-init", shell]);
+        std::fs::write(env.home.join("init.sh"), init).unwrap();
+        let fake = env.home.join("fakebin");
+        std::fs::create_dir_all(&fake).unwrap();
+        let to = env.home.join("to");
+        std::fs::create_dir_all(&to).unwrap();
+        let tasq = fake.join("tasq");
+        std::fs::write(
+            &tasq,
+            format!(
+                "#!/bin/sh\necho \"args: $* cd=${{TASQ_CD_FILE:+set}}\"\n\
+                 [ -n \"$TASQ_CD_FILE\" ] && printf %s '{}' > \"$TASQ_CD_FILE\"\n\
+                 [ \"$1\" = fail ] && exit 7\nexit 0\n",
+                to.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&tasq, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = std::process::Command::new(shell)
+            .args([
+                "-c",
+                &format!(". '{}/init.sh'\n{script}", env.home.display()),
+            ])
+            .current_dir(&env.home)
+            .env_clear()
+            .env("PATH", format!("{}:/usr/bin:/bin", fake.display()))
+            .env("HOME", &env.home)
+            .env("TMPDIR", &env.home)
+            .output()
+            .unwrap();
+        env.normalize(&format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    }
+
+    #[test]
+    fn shell_init_changes_directory_on_switch_only() {
+        let env = TestEnv::fixture();
+        for shell in ["bash", "zsh"] {
+            if !Path::new("/usr/bin").join(shell).exists()
+                && !Path::new("/bin").join(shell).exists()
+            {
+                continue;
+            }
+            assert_eq!(
+                in_shell(
+                    &env,
+                    shell,
+                    "tasq ls; pwd; tasq --profile x worktree switch b; echo $?; pwd; \
+                                       tasq fail worktree switch; echo $?; ls \"$TMPDIR\" | grep -c tasq-cd"
+                ),
+                "args: ls cd=\n\
+                 [ROOT]/home\n\
+                 args: --profile x worktree switch b cd=set\n\
+                 0\n\
+                 [ROOT]/home/to\n\
+                 args: fail worktree switch cd=set\n\
+                 7\n\
+                 0\n",
+                "{shell}"
+            );
+        }
+        let (fish, _) = run_in(&env, &env.home, &["worktree", "shell-init", "fish"]);
+        assert!(fish.contains("function tasq --wraps tasq"), "{fish}");
+        assert!(
+            fish.contains("env TASQ_CD_FILE=$tasq_cd_file tasq $argv"),
+            "{fish}"
+        );
+        let (bash, _) = run_in(&env, &env.home, &["worktree", "shell-init", "bash"]);
+        let (zsh, _) = run_in(&env, &env.home, &["worktree", "shell-init", "zsh"]);
+        assert_eq!(bash, zsh);
+        let (json, _) = run_in(
+            &env,
+            &env.home,
+            &["worktree", "shell-init", "bash", "--json"],
+        );
+        let doc: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(doc["script"].as_str(), Some(bash.as_str()));
+        env.tasq()
+            .args(["worktree", "shell-init", "bash"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
+    }
+}
