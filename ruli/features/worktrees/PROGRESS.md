@@ -23,7 +23,7 @@ Where things stand (2026-10-08, after WT-207):
   `switch`, `path`, `shell-init`).
 - The installed `tasq` is bb1e820 from this branch, reinstalled at the author's request on
   2026-10-08: launching creates worktrees, `tasq done` releases them. Ask before reinstalling.
-- Next: finish WT-208 (silverfin cycle, nothing calling gwm, uninstall gwm); Phase 3 (WT-301
+- Next: finish WT-208 (check nothing calls gwm, uninstall gwm, delete the `gwm.yml` files); Phase 3 (WT-301
   `prune` first) can start in parallel. The installed `tasq` is bb1e820 (reinstalled at the
   author's request, 2026-10-08).
 - Cleanup the author must do: a WT-207 test run on 2026-10-08 20:21 created
@@ -50,7 +50,7 @@ Where things stand (2026-10-08, after WT-207):
 | WT-205 | Integration checks | done | core `worktree::integration` (`Check` cheapest first, `first_passing`, `targets`, `pushed_ref`, `cherry_all_upstream`, `merge_tree`, `Safety { integrated, pushed }` with `seen()` and `reason()`), 89151cd; `tasq_worktree::Git::safety`, e04c86c; 12 temp-repo tests (one per check, pushed with and without upstream, neither, local `main` fallback, the default branch itself, no local branch); 967 tests green; 0 missed mutants (76: 67 caught, 9 unviable) |
 | WT-206 | Releasing at close | done | 8409258 (core), ccd1b62 (crate), 6eecda4 (CLI, docs). core: `on_close(.., force)`, `DirSeen`/`KeepWorktree` gain `Foreign` and `InUse`, `KeepWorktree::reason`/`KeepBranch::reason`, `status` (`listed`, `changes` without provisioned paths, `dir_seen`), `provision::Step::target`; crate: `Git::{worktrees, changes, remove, prune, delete_branch}`; CLI: `worktree::release` (`Releasing`), `tasq worktree release`, `done --yes`, TUI `after_done`; `worktree_hooks::Approval` (`Skip` for the TUI) and an event sink instead of printing; 982 tests green; 0 missed mutants (diff: 67, 60 caught, 7 unviable) |
 | WT-207 | `ls`, `switch`, `path`, `shell-init`, completions | done | 32cc9b6 (core `worktree::target`: `parse`, `by_branch`; `hooks::state_file`), 38f29bf (CLI `worktree_nav`: `ls [ID] [--all]`, `switch [TARGET] [--yes]` with fzf or a numbered list, `path`, `shell-init bash|zsh|fish` through `$TASQ_CD_FILE`, `--json` for each; completions test; docs/json.md, docs/config.md); 994 tests green; 0 missed mutants (diff 61 + nav/status 67) |
-| WT-208 | Switch the author's workspaces off gwm (manual acceptance) | in progress | zantop_atelier dropped by the author (2026-10-08). tasq_lab: `.tasq.toml` written, full cycle passed (see Learnings). silverfin: `.tasq.toml` written (gwm's `{{original}}` as a variable), hooks trusted, cycle not run yet. Left: silverfin run, check nothing calls gwm, uninstall gwm |
+| WT-208 | Switch the author's workspaces off gwm (manual acceptance) | in progress | zantop_atelier dropped by the author (2026-10-08). tasq_lab and silverfin: `.tasq.toml` written, hooks trusted, full cycle passed twice each (see Learnings). Left: check nothing calls gwm, uninstall gwm (its `~/.zshrc` line, `~/.local/bin/gwm`), delete the `gwm.yml` files |
 | WT-301 | `prune` | todo | |
 | WT-302 | Status-rich `ls` | todo | |
 | WT-303 | Fast copies of ignored files | todo | |
@@ -132,6 +132,17 @@ Where things stand (2026-10-08, after WT-207):
   `origin/HEAD` (the author left that as is). The author's `~/.zshrc` loads
   `tasq worktree shell-init zsh` next to gwm's line; with zsh's `EXTENDED_GLOB` a bare `^`
   globs, so `switch '^'` must be quoted (the author declined an alias).
+- WT-208 silverfin acceptance (2026-10-08, same build and notebook): throwaway task 52
+  declared `wt208-check` at `silverfin_worspace/wt208_check`; `tasq worktree up 52` (2.6 s)
+  created it from `origin/HEAD` (`origin/main`) without an upstream, linked `node_modules`,
+  `ignoreme`, `.nvim.lua` and `CLAUDE.local.md`, skipped `projects` with a warning (the main
+  checkout has none), rendered `.envrc` byte for byte as the template with `{{original}}` =
+  `silverfin` and `{{branch}}` = `wt208-check`, and ran the trusted `direnv allow`. `direnv exec`
+  gave `PGDATABASE_*` = `silverfin_2db75ed4_*` (md5 of the branch), `BUNDLE_GEMFILE` in the
+  worktree and only the worktree's `bin` on `PATH`. `ls` showed it clean (links and the rendered
+  file do not count). `tasq done 52` from the workspace directory removed it and deleted the
+  branch ("same commit as origin/main"); reopen + `up` + `done` repeated it identically. The
+  per-branch databases are neither created nor dropped by tasq (gwm did not drop them either).
 - WT-207: a fixture task (`id::FULL`, task 1) declares `/home/pau/code/tasks-wt/feature-a`, a
   real path on the author's machine. A first `switch` test picked it and `materialize` ran `git
   worktree add` there. Tests that list or create every task's worktrees now strip that
