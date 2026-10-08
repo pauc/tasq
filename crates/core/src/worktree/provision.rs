@@ -40,6 +40,15 @@ pub enum Step {
 }
 
 impl Step {
+    /// What the step writes, in the worktree.
+    pub fn target(&self) -> &Path {
+        match self {
+            Self::Copy { target, .. }
+            | Self::Symlink { target, .. }
+            | Self::Render { target, .. } => target,
+        }
+    }
+
     /// One line for `--dry-run`: the verb and the target relative to
     /// `worktree`, with where it comes from.
     pub fn describe(&self, worktree: &Path) -> String {

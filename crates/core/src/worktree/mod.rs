@@ -12,4 +12,5 @@ pub mod hooks;
 pub mod integration;
 pub mod lifecycle;
 pub mod provision;
+pub mod status;
 pub mod vars;

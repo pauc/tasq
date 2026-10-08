@@ -158,14 +158,20 @@ pub enum DeleteBranch {
 }
 
 /// What the caller observed about a declared worktree's directory before a
-/// release. When several apply, the first in this order wins (main, then
-/// locked, then dirty), so the caller can stop looking early.
+/// release. When several apply, the first in this order wins (main, not a
+/// worktree, in use, locked, dirty), so the caller can stop looking early;
+/// [`super::status::dir_seen`] decides it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirSeen {
     /// The directory does not exist.
     Absent,
     /// It is the repository's main worktree (the project checkout).
     Main,
+    /// git does not list it among the repository's worktrees.
+    Foreign,
+    /// The current directory is inside it: removing it would pull the
+    /// ground from under the command (a session running `tasq done`).
+    InUse,
     /// `git worktree lock` holds it.
     Locked,
     /// It has modified, staged or untracked files.
@@ -193,10 +199,27 @@ pub enum BranchSeen {
 pub enum KeepWorktree {
     /// It is the main checkout, which is never removed.
     Main,
+    /// It is not a worktree of the repository.
+    Foreign,
+    /// The current directory is inside it.
+    InUse,
     /// It is locked.
     Locked,
     /// It has uncommitted or untracked work.
     Dirty,
+}
+
+impl KeepWorktree {
+    /// Why, for the warning that names the kept directory.
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Main => "it is the main checkout",
+            Self::Foreign => "git does not list it as a worktree of the repository",
+            Self::InUse => "the current directory is inside it",
+            Self::Locked => "it is locked (git worktree unlock)",
+            Self::Dirty => "it has uncommitted or untracked changes",
+        }
+    }
 }
 
 /// What a release does with the directory.
@@ -221,6 +244,17 @@ pub enum KeepBranch {
     Unsafe,
 }
 
+impl KeepBranch {
+    /// Why, for the warning that names the kept branch.
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::CheckedOut => "its worktree is kept",
+            Self::Policy => "worktree.delete_branch = \"never\"",
+            Self::Unsafe => "it is neither merged into the default branch nor pushed",
+        }
+    }
+}
+
 /// What a release does with the branch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BranchFate {
@@ -242,14 +276,18 @@ pub struct Release {
 }
 
 /// Decides what closing a task does with one declared worktree (step 3).
-/// The entry itself always stays.
-pub fn on_close(dir: DirSeen, branch: BranchSeen, policy: DeleteBranch) -> Release {
+/// The entry itself always stays. `force` (`tasq worktree release
+/// --force`) removes a dirty worktree and deletes a branch that is neither
+/// merged nor pushed; nothing else.
+pub fn on_close(dir: DirSeen, branch: BranchSeen, policy: DeleteBranch, force: bool) -> Release {
     let worktree = match dir {
         DirSeen::Absent => WorktreeFate::Absent,
         DirSeen::Main => WorktreeFate::Keep(KeepWorktree::Main),
+        DirSeen::Foreign => WorktreeFate::Keep(KeepWorktree::Foreign),
+        DirSeen::InUse => WorktreeFate::Keep(KeepWorktree::InUse),
         DirSeen::Locked => WorktreeFate::Keep(KeepWorktree::Locked),
-        DirSeen::Dirty => WorktreeFate::Keep(KeepWorktree::Dirty),
-        DirSeen::Clean => WorktreeFate::Remove,
+        DirSeen::Dirty if !force => WorktreeFate::Keep(KeepWorktree::Dirty),
+        DirSeen::Dirty | DirSeen::Clean => WorktreeFate::Remove,
     };
     let branch = match branch {
         BranchSeen::Absent => BranchFate::Absent,
@@ -259,7 +297,9 @@ pub fn on_close(dir: DirSeen, branch: BranchSeen, policy: DeleteBranch) -> Relea
         BranchSeen::Present { .. } if policy == DeleteBranch::Never => {
             BranchFate::Keep(KeepBranch::Policy)
         }
-        BranchSeen::Present { integrated, pushed } if integrated || pushed => BranchFate::Delete,
+        BranchSeen::Present { integrated, pushed } if integrated || pushed || force => {
+            BranchFate::Delete
+        }
         BranchSeen::Present { .. } => BranchFate::Keep(KeepBranch::Unsafe),
     };
     Release { worktree, branch }
@@ -467,7 +507,7 @@ mod tests {
         ];
         for (branch, policy, fate) in cases {
             assert_eq!(
-                on_close(DirSeen::Clean, branch, policy),
+                on_close(DirSeen::Clean, branch, policy, false),
                 release(WorktreeFate::Remove, fate),
                 "{branch:?} {policy:?}"
             );
@@ -478,12 +518,14 @@ mod tests {
     fn close_keeps_main_locked_and_dirty_worktrees_and_their_branches() {
         let cases = [
             (DirSeen::Main, KeepWorktree::Main),
+            (DirSeen::Foreign, KeepWorktree::Foreign),
+            (DirSeen::InUse, KeepWorktree::InUse),
             (DirSeen::Locked, KeepWorktree::Locked),
             (DirSeen::Dirty, KeepWorktree::Dirty),
         ];
         for (dir, why) in cases {
             assert_eq!(
-                on_close(dir, BOTH, DeleteBranch::Safe),
+                on_close(dir, BOTH, DeleteBranch::Safe, false),
                 release(
                     WorktreeFate::Keep(why),
                     BranchFate::Keep(KeepBranch::CheckedOut)
@@ -491,7 +533,7 @@ mod tests {
                 "{dir:?}"
             );
             assert_eq!(
-                on_close(dir, BranchSeen::Absent, DeleteBranch::Safe),
+                on_close(dir, BranchSeen::Absent, DeleteBranch::Safe, false),
                 release(WorktreeFate::Keep(why), BranchFate::Absent),
                 "{dir:?}"
             );
@@ -509,10 +551,100 @@ mod tests {
         ];
         for (branch, policy, fate) in cases {
             assert_eq!(
-                on_close(DirSeen::Absent, branch, policy),
+                on_close(DirSeen::Absent, branch, policy, false),
                 release(WorktreeFate::Absent, fate),
                 "{branch:?} {policy:?}"
             );
         }
+    }
+
+    #[test]
+    fn force_removes_only_dirty_worktrees_and_unsafe_branches() {
+        let cases = [
+            (
+                DirSeen::Dirty,
+                UNSAFE,
+                DeleteBranch::Safe,
+                WorktreeFate::Remove,
+                BranchFate::Delete,
+            ),
+            (
+                DirSeen::Clean,
+                UNSAFE,
+                DeleteBranch::Safe,
+                WorktreeFate::Remove,
+                BranchFate::Delete,
+            ),
+            (
+                DirSeen::Clean,
+                UNSAFE,
+                DeleteBranch::Never,
+                WorktreeFate::Remove,
+                BranchFate::Keep(KeepBranch::Policy),
+            ),
+            (
+                DirSeen::Absent,
+                UNSAFE,
+                DeleteBranch::Safe,
+                WorktreeFate::Absent,
+                BranchFate::Delete,
+            ),
+        ];
+        for (dir, branch, policy, worktree, fate) in cases {
+            assert_eq!(
+                on_close(dir, branch, policy, true),
+                release(worktree, fate),
+                "{dir:?} {branch:?} {policy:?}"
+            );
+        }
+        for (dir, why) in [
+            (DirSeen::Main, KeepWorktree::Main),
+            (DirSeen::Foreign, KeepWorktree::Foreign),
+            (DirSeen::InUse, KeepWorktree::InUse),
+            (DirSeen::Locked, KeepWorktree::Locked),
+        ] {
+            assert_eq!(
+                on_close(dir, UNSAFE, DeleteBranch::Safe, true),
+                release(
+                    WorktreeFate::Keep(why),
+                    BranchFate::Keep(KeepBranch::CheckedOut)
+                ),
+                "{dir:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keep_reasons() {
+        let worktrees = [
+            KeepWorktree::Main,
+            KeepWorktree::Foreign,
+            KeepWorktree::InUse,
+            KeepWorktree::Locked,
+            KeepWorktree::Dirty,
+        ];
+        assert_eq!(
+            worktrees.map(KeepWorktree::reason),
+            [
+                "it is the main checkout",
+                "git does not list it as a worktree of the repository",
+                "the current directory is inside it",
+                "it is locked (git worktree unlock)",
+                "it has uncommitted or untracked changes",
+            ]
+        );
+        let branches = [
+            KeepBranch::CheckedOut,
+            KeepBranch::Policy,
+            KeepBranch::Unsafe,
+        ];
+        assert_eq!(
+            branches.map(KeepBranch::reason),
+            [
+                "its worktree is kept",
+                "worktree.delete_branch = \"never\"",
+                "it is neither merged into the default branch nor pushed",
+            ]
+        );
     }
 }
