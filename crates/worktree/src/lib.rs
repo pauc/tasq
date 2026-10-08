@@ -10,6 +10,7 @@
 #![warn(missing_docs)]
 
 pub mod git;
+pub mod hooks;
 pub mod process;
 pub mod provision;
 

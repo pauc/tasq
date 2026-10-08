@@ -19,7 +19,7 @@ create at launch, release at close, never remove the entry.
 | WT-201 | Declaring: `tasq create --worktree` and `tasq worktree <id> [BRANCH]` | done | af9b74c, 012c28b, then the TUI create view. `worktree::declaration` (`declare`, `wanted`, `is_path`), `worktree::git` (`work_tree_root`, `gitdir`, `origin_url`), `lifecycle::branch_name`; CLI `Repo::of` probes `.git` without a process; `--create` hidden; TUI `c` opens the edit view empty (`Form::new_task`, Worktree box), `Host::worktree`, `edit::Fields::draft`; 906 tests green; 0 missed mutants (core 82+8, CLI 23, TUI slice 64) |
 | WT-202 | Materializing at launch: the `tasq-worktree` crate | done | fa33080 + CLI wiring. `tasq_worktree::Git` (`branch_state` local / `ls-remote` + fetch / offline `origin/<b>` / absent, `resolve_start`, `add` with cleanup, `current_branch`); `materialize` in `next`/`pick` before the status change, `tasq worktree up [--from] [--dry-run]`, `--create` = declare + create; recreate prompt, `GitManager`, `WorktreeManager`, `work::{branch_slug, sibling_worktree}` deleted; 915 tests green; 0 missed mutants (crate 27, diff 33) |
 | WT-203 | Provisioning: symlinks, copies, templates | done | 46ef57d (core `provision::plan`, three workspace fixture configs), 9b37c1a (`tasq_worktree::provision::{prepare, apply}`, tree checked against fixture files), then the CLI: `RepoSettings` loads `[worktree]` from the main checkout (`App::config_at`), templates relative to the file that set them, rendered before `git worktree add`; dry runs list the steps; 0 missed mutants (core 4+2, crate 7+1, CLI diff 13+10) |
-| WT-204 | Hooks and trust | todo | |
+| WT-204 | Hooks and trust | done | f3d5215 (core `hooks`: `Kind`, `argv`, `env`, `trust_file`, `TrustStore`) + runner (`tasq_worktree::hooks::run_hook`) and CLI (`worktree_hooks`: pending lines from the repository's own file, `--yes`, terminal prompt, `tasq worktree trust [DIR]`; pre-create in the main checkout before git, post-create in the worktree); `next`/`pick` dispatch moved out of `app::run`; 947 tests green; 0 missed mutants (93: 83 caught, 10 unviable) |
 | WT-205 | Integration checks | todo | |
 | WT-206 | Releasing at close | todo | |
 | WT-207 | `ls`, `switch`, `path`, `shell-init`, completions | todo | |
@@ -82,6 +82,14 @@ create at launch, release at close, never remove the entry.
   in a repository's `.tasq.toml` applies when tasq runs elsewhere. Copies come from the main
   checkout, not the task's project subdirectory, since the worktree is a checkout of the whole
   repository.
+- WT-204: a hook line is split into words first and each word rendered after, so a title with
+  quotes or spaces cannot change the command; no shell, as for `[hooks]`. Only hook kinds whose
+  key the repository's own `.tasq.toml` (`config::project_file` from the main checkout) decided
+  need approval; `Loaded::file_for("worktree.hooks.<kind>")` tells. Approvals store each line
+  verbatim rather than a hash (see Deviations). The prompt (`approve`) is the only
+  `#[mutants::skip]`: it asks the terminal and calls `trust`, which is tested; the question text is
+  a tested pure function. `--yes` is hidden on `next`/`pick` while worktrees are off, and pruned
+  from their completions like `create --worktree`. `pre-remove`/`post-remove` run in WT-206.
 - Defaults confirmed by the author 2026-10-08 (TUI): `c` opens a full create view like the edit
   view, not the title prompt; the title prompt and its history are gone.
 - Defaults confirmed by the author 2026-10-07: `on_create = "auto"`, `on_done = "release"`,
@@ -103,5 +111,8 @@ None.
   plan was rewritten around the declare / materialize / release lifecycle.
 - 2026-10-08: WT-201's "TUI create form gets a worktree field" grew, at the author's request, into
   replacing the `c` title prompt with a full create view (the edit view, empty).
+- 2026-10-08: WT-204 keys approvals by the file and the exact command line instead of "a hash of
+  each command line" (PLAN 4.5): a non-cryptographic hash could be matched by a repository that
+  wants an edited command to pass as approved, and comparing the text needs no hash at all.
 - 2026-10-08: WT-202 dropped `LifecycleError::NoBranch`; `on_launch` returns a `LaunchAction`
   (no `Result`) and skips entries without a branch instead of failing (see Learnings).

@@ -30,6 +30,7 @@ pub mod sync;
 pub mod ui;
 pub mod view;
 pub mod worktree;
+pub mod worktree_hooks;
 
 /// Ends an editing command: reports the store's warnings (a commit that
 /// could not start) on stderr, then prints `line`, or with `--json` the

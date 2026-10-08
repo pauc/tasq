@@ -198,6 +198,9 @@ pub enum Command {
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Open a work session on a specific task.
@@ -218,6 +221,9 @@ pub enum Command {
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Show a task: rendered with glow on a terminal, plain markdown otherwise.
@@ -555,6 +561,18 @@ pub enum WorktreeAction {
         /// Say what would be created; fetch and create nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Approve the hooks of a repository's own .tasq.toml ahead of time.
+    ///
+    /// Hooks a repository's .tasq.toml sets run only once approved; this
+    /// approves every hook line it sets now. Editing a line asks again.
+    Trust {
+        /// A directory in the repository [default: the current directory].
+        #[arg(value_name = "DIR")]
+        dir: Option<PathBuf>,
     },
 }
 
@@ -678,7 +696,9 @@ pub fn command(worktrees: bool) -> clap::Command {
     if !worktrees {
         return command
             .mut_subcommand("worktree", |c| c.hide(true))
-            .mut_subcommand("create", |c| c.mut_arg("worktree", |a| a.hide(true)));
+            .mut_subcommand("create", |c| c.mut_arg("worktree", |a| a.hide(true)))
+            .mut_subcommand("next", |c| c.mut_arg("yes", |a| a.hide(true)))
+            .mut_subcommand("pick", |c| c.mut_arg("yes", |a| a.hide(true)));
     }
     command
         .mut_subcommand("next", launch_help_with_worktrees)
@@ -699,7 +719,7 @@ pub fn command(worktrees: bool) -> clap::Command {
 }
 
 /// The command completions are generated from: [`command`], minus the
-/// `worktree` subcommand and `create --worktree` unless worktrees are
+/// `worktree` subcommand, `create --worktree` and `next`/`pick --yes` unless worktrees are
 /// enabled. Hiding is not enough there, as the zsh generator still lists
 /// hidden subcommands and arguments.
 pub fn completion_command(worktrees: bool) -> clap::Command {
@@ -712,10 +732,12 @@ pub fn completion_command(worktrees: bool) -> clap::Command {
         .get_subcommands()
         .filter(|s| s.get_name() != "worktree")
     {
-        let sub = if sub.get_name() == "create" {
-            rebuilt("create", sub, |a| a.get_id() != "worktree")
-        } else {
-            sub.clone()
+        let worktree_only = |a: &clap::Arg| a.get_id() != "worktree" && a.get_id() != "yes";
+        let sub = match sub.get_name() {
+            "create" => rebuilt("create", sub, worktree_only),
+            "next" => rebuilt("next", sub, worktree_only),
+            "pick" => rebuilt("pick", sub, worktree_only),
+            _ => sub.clone(),
         };
         pruned = pruned.subcommand(sub);
     }

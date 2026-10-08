@@ -69,24 +69,8 @@ pub fn run(cli: Cli) -> Result<()> {
                 Some(Command::Reopen { id, status, note }) => {
                     commands::edit::reopen(&app, &id, status.as_deref(), note.as_deref())
                 }
-                Some(Command::Next {
-                    launcher,
-                    detached,
-                    no_focus,
-                    dry_run,
-                }) => {
-                    let how = commands::launch::How::new(launcher.as_deref(), detached, no_focus);
-                    commands::launch::next(&app, &how, dry_run)
-                }
-                Some(Command::Pick {
-                    id,
-                    launcher,
-                    detached,
-                    no_focus,
-                    dry_run,
-                }) => {
-                    let how = commands::launch::How::new(launcher.as_deref(), detached, no_focus);
-                    commands::launch::pick(&app, &id, &how, dry_run)
+                Some(command @ (Command::Next { .. } | Command::Pick { .. })) => {
+                    commands::launch::dispatch(&app, &command)
                 }
                 Some(Command::View { id, raw }) => commands::view::run(&app, &id, raw),
                 Some(Command::Project { id, path }) => {

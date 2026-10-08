@@ -4,10 +4,12 @@
 
 use std::path::{Path, PathBuf};
 
-use tasq_core::config::WorktreeConfig;
+use crate::commands::worktree_hooks;
+use tasq_core::config::{WorktreeConfig, project_file};
 use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::store::Store;
 use tasq_core::work;
+use tasq_core::worktree::hooks::{self, Kind};
 use tasq_core::worktree::lifecycle::{self, BranchState, Declared, LaunchAction};
 use tasq_core::worktree::vars::Vars;
 use tasq_core::worktree::{declaration, git, provision, vars};
@@ -32,7 +34,13 @@ pub fn dispatch(app: &App, command: &Command) -> Result<()> {
         unreachable!("dispatch is only called for the worktree command");
     };
     match action {
-        Some(WorktreeAction::Up { id, from, dry_run }) => up(app, id, from.as_deref(), *dry_run),
+        Some(WorktreeAction::Up {
+            id,
+            from,
+            dry_run,
+            yes,
+        }) => up(app, id, from.as_deref(), *yes, *dry_run),
+        Some(WorktreeAction::Trust { dir }) => trust(app, dir.as_deref()),
         None => run(
             app,
             id.as_deref().unwrap_or_default(),
@@ -156,6 +164,10 @@ pub struct RepoSettings {
     /// Where relative template sources start: the directory of the file
     /// that set `worktree.templates`, else the main checkout.
     pub templates_dir: PathBuf,
+    /// The repository's own `.tasq.toml`, when there is one.
+    pub repo_file: Option<PathBuf>,
+    /// The hook kinds that file sets: they run only once approved.
+    pub untrusted: Vec<Kind>,
 }
 
 impl RepoSettings {
@@ -168,12 +180,23 @@ impl RepoSettings {
             .file_for("worktree.templates")
             .and_then(Path::parent)
             .map_or_else(|| main.clone(), Path::to_path_buf);
+        let repo_file = project_file(&main, app.opts.home.as_deref());
+        let untrusted = Kind::ALL
+            .into_iter()
+            .filter(|kind| {
+                repo_file.is_some()
+                    && loaded.file_for(&format!("worktree.hooks.{}", kind.key()))
+                        == repo_file.as_deref()
+            })
+            .collect();
         Ok(Self {
             project: project.to_path_buf(),
             repo,
             main,
             config: loaded.config.worktree,
             templates_dir,
+            repo_file,
+            untrusted,
         })
     }
 
@@ -233,7 +256,7 @@ pub fn create_and_track(app: &App, store: &mut NbStore, id: &TaskId, branch: &st
         worktrees: vec![worktree.clone()],
         ..task
     };
-    let line = match materialize(app, &only, None, false)? {
+    let line = match materialize(app, &only, None, false, false)? {
         Some(created) => format!("[{id}] created worktree {}\n", created.line),
         None => format!("[{id}] worktree: {}\n", describe(&worktree)),
     };
@@ -242,14 +265,14 @@ pub fn create_and_track(app: &App, store: &mut NbStore, id: &TaskId, branch: &st
 
 /// `tasq worktree up <id> [--from REF] [--dry-run]`: creates the task's
 /// declared worktree now, as launching it would.
-pub fn up(app: &App, id: &str, from: Option<&str>, dry_run: bool) -> Result<()> {
+pub fn up(app: &App, id: &str, from: Option<&str>, yes: bool, dry_run: bool) -> Result<()> {
     if !app.worktrees() {
         return Err(disabled());
     }
     let id = App::task_id(id)?;
     let store = app.open_store()?;
     let task = store.get(&id)?;
-    let line = match materialize(app, &task, from, dry_run)? {
+    let line = match materialize(app, &task, from, yes, dry_run)? {
         Some(created) if dry_run => {
             let mut lines = vec![format!("[{id}] would create worktree {}", created.line)];
             lines.extend(created.steps.iter().map(|step| format!("  {step}")));
@@ -266,6 +289,32 @@ pub fn up(app: &App, id: &str, from: Option<&str>, dry_run: bool) -> Result<()> 
         },
     };
     finish(app, &store, &id, &line)
+}
+
+/// `tasq worktree trust [DIR]`: approves the hooks of the repository's own
+/// `.tasq.toml` ahead of time.
+pub fn trust(app: &App, dir: Option<&Path>) -> Result<()> {
+    if !app.worktrees() {
+        return Err(disabled());
+    }
+    let dir = dir.unwrap_or(&app.opts.cwd);
+    let dir = existing_dir(dir)
+        .ok_or_else(|| CliError::user(format!("directory not found: {}", dir.display())))?;
+    let settings = RepoSettings::load(app, &dir)?;
+    let approved = worktree_hooks::trust(app, &settings)?;
+    let file = settings.repo_file.as_deref().unwrap_or(&settings.main);
+    let text = if approved.is_empty() {
+        format!("no hooks to approve in {}\n", file.display())
+    } else {
+        let mut lines = vec![format!("approved the hooks of {}:", file.display())];
+        lines.extend(
+            approved
+                .iter()
+                .map(|(kind, line)| format!("  {}: {line}", kind.key())),
+        );
+        lines.join("\n") + "\n"
+    };
+    app.out.print(&text)
 }
 
 /// A worktree [`materialize`] created, or would create on a dry run.
@@ -285,12 +334,15 @@ pub struct Created {
 /// branch starts from `from`, else `worktree.base`. Templates are rendered
 /// before git runs, so a broken one stops everything. A dry run decides
 /// and renders without fetching or creating anything. `None` when a
-/// declared worktree exists or none can be created. The caller checks
-/// that worktrees are enabled.
+/// declared worktree exists or none can be created. The `pre-create`
+/// hooks run in the main checkout before git, the `post-create` ones in
+/// the worktree after provisioning; `yes` approves the repository's own
+/// hooks for this run. The caller checks that worktrees are enabled.
 pub fn materialize(
     app: &App,
     task: &Task,
     from: Option<&str>,
+    yes: bool,
     dry_run: bool,
 ) -> Result<Option<Created>> {
     let git = Git { env: app.env_vec() };
@@ -345,7 +397,13 @@ pub fn materialize(
         .with_branch(&branch, s.config.ports)
         .with_worktree(&path);
     let ready = prepare(&steps, &vars).map_err(|e| user(&e))?;
+    let kinds = [Kind::PreCreate, Kind::PostCreate];
+    let [pre, post] = worktree_hooks::prepare(app, &s, &kinds, &vars, yes, dry_run)?
+        .try_into()
+        .unwrap_or_else(|_| unreachable!("one Hooks per kind"));
     if !dry_run {
+        let env = hooks::env(&vars);
+        pre.run(app, &s.main, &env)?;
         git.add(&s.project, &path, &branch, &start)
             .map_err(|e| user(&e))?;
         let warnings = apply(&ready).map_err(|e| {
@@ -357,10 +415,14 @@ pub fn materialize(
         for warning in warnings {
             app.out.warn(&warning);
         }
+        post.run(app, &path, &env)?;
     }
+    let mut lines = pre.describe();
+    lines.extend(steps.iter().map(|step| step.describe(&path)));
+    lines.extend(post.describe());
     Ok(Some(Created {
         line: describe_start(&path, &branch, &start),
-        steps: steps.iter().map(|step| step.describe(&path)).collect(),
+        steps: lines,
         path,
     }))
 }

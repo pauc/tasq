@@ -252,8 +252,24 @@ git runs, so a missing template or an unknown `{{variable}}` in one stops the la
 created; a rendered file replaces what the checkout has. Copy, link and template targets must be
 relative paths that stay inside the worktree. `--dry-run` lists every step.
 
-**Status:** releasing worktrees at close and the `pre-create`/`post-create` hooks are being built
-(`ruli/features/worktrees/PLAN.md`).
+Hooks: `pre-create` runs in the main checkout before `git worktree add` (a failure stops
+everything, nothing is created), `post-create` in the new worktree after provisioning (a failure
+is a warning). A hook line is split into words like a shell would (quotes group, nothing is
+expanded), then each word is rendered with the template variables, so a value with spaces stays
+one argument; no shell runs it, write `sh -c '...'` for one. A hook gets the user's environment
+plus `TASQ_WORKTREE`, `TASQ_BRANCH`, `TASQ_TASK_ID` and every variable as `TASQ_VAR_<NAME>`
+(`TASQ_VAR_BRANCH_DB`, `TASQ_VAR_DB_PREFIX`, ...); its output shows with `-v`.
+
+Hooks from the global file, `--config`, `--set` or the environment run without asking. Hooks a
+repository's own `.tasq.toml` sets (it may have come with a clone) run only once approved: on a
+terminal tasq lists them and asks, and a yes is kept in `$XDG_STATE_HOME/tasq/trust.toml` (else
+`~/.local/state/tasq/trust.toml`) with each line as written, so editing a line asks again.
+`--yes` on `next`, `pick` and `tasq worktree up` approves them for one run without storing it;
+`tasq worktree trust [DIR]` approves them ahead of time. Without a terminal or approval they are
+skipped with a warning that says how to approve them.
+
+**Status:** releasing worktrees at close (and so the `pre-remove`/`post-remove` hooks) is being
+built (`ruli/features/worktrees/PLAN.md`).
 
 ```toml
 [worktree]
@@ -299,7 +315,7 @@ post-remove = []
 | `worktree.templates` | array of `{source, target}` | `[]` | Files rendered into a new worktree; `source` relative to the config file, `target` to the worktree. |
 | `worktree.variables` | table of strings | empty | Extra template variables. |
 | `worktree.ports` | `{base, span, block}` | unset | Enables `{{port}}`: `base` plus a stable per-branch offset below `span`, a multiple of `block`. |
-| `worktree.hooks.pre-create`, `post-create`, `pre-remove`, `post-remove` | arrays of command lines | `[]` | Run inside the worktree. A failing `pre-*` hook aborts the step; a failing `post-*` hook is a warning. |
+| `worktree.hooks.pre-create`, `post-create`, `pre-remove`, `post-remove` | arrays of command lines | `[]` | Templates, split into words and run without a shell (see above). `pre-create` runs in the main checkout, the others in the worktree. A failing `pre-*` hook aborts the step; a failing `post-*` hook is a warning. |
 
 Per-repository settings (links, copies, templates, hooks) belong in a `.tasq.toml` next to the
 repository or in the directory above it; the worktree commands load the configuration from the

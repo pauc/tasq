@@ -2035,6 +2035,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "insta",
+ "mutants",
  "predicates",
  "regex",
  "rustix",

@@ -12,6 +12,7 @@ use tasq_launch::{LaunchSettings, launcher_for, resolve_detached};
 use tasq_store_nb::NbStore;
 
 use crate::app::App;
+use crate::cli::Command;
 use crate::commands::worktree::{Created, materialize};
 use crate::error::{CliError, Result};
 use crate::json;
@@ -28,21 +29,24 @@ pub struct How {
     pub detached: bool,
     /// `--no-focus`: leave the new window in the background.
     pub focus: bool,
+    /// `--yes`: run a repository's own worktree hooks without asking.
+    pub yes: bool,
 }
 
 impl How {
     /// From the flags as clap parsed them.
-    pub fn new(launcher: Option<&str>, detached: bool, no_focus: bool) -> Self {
+    pub fn new(launcher: Option<&str>, detached: bool, no_focus: bool, yes: bool) -> Self {
         Self {
             launcher: launcher.map(str::to_owned),
             detached,
             focus: !no_focus,
+            yes,
         }
     }
 
     /// `tasq pick <id>` in this terminal with the configured launcher.
     pub fn here() -> Self {
-        Self::new(None, false, false)
+        Self::new(None, false, false, false)
     }
 
     /// The launcher name to build, before `auto` is resolved: the flag,
@@ -61,6 +65,37 @@ impl How {
         } else {
             Ok(launch.default.clone())
         }
+    }
+}
+
+/// `tasq next` and `tasq pick`, from the parsed command.
+pub fn dispatch(app: &App, command: &Command) -> Result<()> {
+    match command {
+        Command::Next {
+            launcher,
+            detached,
+            no_focus,
+            dry_run,
+            yes,
+        } => next(
+            app,
+            &How::new(launcher.as_deref(), *detached, *no_focus, *yes),
+            *dry_run,
+        ),
+        Command::Pick {
+            id,
+            launcher,
+            detached,
+            no_focus,
+            dry_run,
+            yes,
+        } => pick(
+            app,
+            id,
+            &How::new(launcher.as_deref(), *detached, *no_focus, *yes),
+            *dry_run,
+        ),
+        _ => unreachable!("dispatch is only called for next and pick"),
     }
 }
 
@@ -131,7 +166,7 @@ fn open_session(
     // Before any write too: a worktree that cannot be created aborts the
     // launch with the task untouched (plan 4.2, step 2).
     let created = if app.worktrees() {
-        materialize(app, &task, None, dry_run)?
+        materialize(app, &task, None, how.yes, dry_run)?
     } else {
         None
     };
