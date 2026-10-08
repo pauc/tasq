@@ -39,7 +39,7 @@
 //! [store]
 //! kind = "nb"
 //! notebook = "home"
-//! bookkeeper = "auto"
+//! sync_interval = 3600
 //!
 //! [workflow]
 //! statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
@@ -164,19 +164,25 @@ pub struct Config {
 pub struct StoreConfig {
     /// Store implementation. Default: `nb`.
     pub kind: StoreKind,
-    /// nb notebook name (resolved to `~/.nb/<notebook>` or asked of nb).
+    /// nb notebook: a name under `$NB_DIR` (default `~/.nb/<notebook>`), or
+    /// a directory path when it contains a `/` (`~/` expanded).
     /// Default: `home`, as in the original script.
     pub notebook: String,
-    /// Who maintains `.index` and git commits. Default: `auto`.
-    pub bookkeeper: Bookkeeper,
+    /// Minimum seconds between two automatic pulls and pushes after a
+    /// write; `0` never syncs automatically (ADR-0023). Default: `3600`.
+    pub sync_interval: u64,
 }
+
+/// Default `store.sync_interval`: an hour, the `NB_AUTO_SYNC_SECONDS` the
+/// author's nb was configured with.
+pub const DEFAULT_SYNC_INTERVAL: u64 = 3600;
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             kind: StoreKind::Nb,
             notebook: "home".to_owned(),
-            bookkeeper: Bookkeeper::Auto,
+            sync_interval: DEFAULT_SYNC_INTERVAL,
         }
     }
 }
@@ -188,19 +194,6 @@ pub enum StoreKind {
     /// An nb notebook: markdown todos plus a `.index` file.
     #[default]
     Nb,
-}
-
-/// Who maintains the notebook's `.index` and git history after a write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Bookkeeper {
-    /// Use nb when it is on `PATH`, otherwise the native fallback.
-    #[default]
-    Auto,
-    /// Always shell out to nb (`nb index add`, `nb git checkpoint`).
-    Nb,
-    /// Never spawn nb: append to `.index` and commit with git directly.
-    Native,
 }
 
 /// `[workflow]`: the ordered status list.

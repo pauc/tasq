@@ -29,7 +29,7 @@ Serialising the default configuration gives this document. Keys whose default is
 [store]
 kind = "nb"                  # the only store today
 notebook = "home"
-bookkeeper = "auto"          # auto | nb | native
+sync_interval = 3600         # seconds between automatic pulls and pushes; 0 never
 
 [workflow]
 statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
@@ -109,8 +109,8 @@ pre-launch = []
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `store.kind` | `nb` | `nb` | Store implementation. Only nb-compatible notebooks exist. |
-| `store.notebook` | string | `home` | nb notebook name: `$NB_DIR/<name>` (default `~/.nb/<name>`) when that directory exists, else `nb notebooks show <name> --path`. |
-| `store.bookkeeper` | `auto` \| `nb` \| `native` | `auto` | Who maintains `.index` and git commits after a write. `auto` is `nb` when it is on `PATH`, else `native`. |
+| `store.notebook` | string | `home` | nb notebook: a name is `$NB_DIR/<name>` (default `~/.nb/<name>`); a value containing `/` is the directory itself (`~/` expanded, otherwise absolute). nb is never asked (ADR-0023). |
+| `store.sync_interval` | integer (seconds) | `3600` | After a write, the background job that commits also runs `git pull --rebase` and `git push` when the notebook has a remote and the last sync is at least this old. `0` never syncs automatically; `tasq store sync` always works. |
 | `workflow.statuses` | array of strings | `["in-progress", "ready", "waiting", "blocked", "later"]` | Statuses in display and `next` search order. Lowercase kebab-case. |
 | `workflow.default_status` | string | `ready` | Status of new tasks. Must be one of `statuses`. |
 | `work.default_project` | path | unset | Directory a session starts in when the task tracks neither a worktree nor a project. `~` expanded. |
@@ -168,7 +168,7 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_PROFILE` | selects `[profile.<name>]` |
 | `TASQ_SET` | newline-separated `key=value` overrides, applied like `--set` (any key); part of the env layer, wins over the `TASQ_*` variables below for the same key, loses to `--set` flags. `tasq` sets it for the plugins and hooks it runs, so they see the same `--set` overrides |
 | `TASQ_NOTEBOOK` | `store.notebook` |
-| `TASQ_BOOKKEEPER` | `store.bookkeeper` |
+| `TASQ_SYNC_INTERVAL` | `store.sync_interval` |
 | `TASQ_DEFAULT_PROJECT` | `work.default_project` |
 | `TASQ_LAUNCHER` | `launch.default` |
 | `TASQ_LAUNCH_DETACHED` | `launch.detached` |
@@ -520,5 +520,5 @@ status-bar hints show the configured keys.
 ## Examples
 
 Complete, commented files in `examples/config/`: `plain-markdown.toml` for a setup without nb
-(native bookkeeper, shell launcher, raw summaries, no sources) and `author.toml` for a GitLab
+(no automatic sync, shell launcher, raw summaries, no sources) and `author.toml` for a GitLab
 plus worktree plus Claude Code plus hooks setup. Sources alone: `examples/sources/config.toml`.

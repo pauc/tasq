@@ -224,13 +224,13 @@ impl App {
         env_vec(&self.opts.env)
     }
 
-    /// Store options from the config and the process environment: `nb` is
-    /// looked up on this environment's `PATH`, `NB_DIR` in it, and the
-    /// file that set `store.notebook` is recorded for error messages.
+    /// Store options from the config and the process environment: `NB_DIR`
+    /// is looked up in this environment, `git` runs with it, and the file
+    /// that set `store.notebook` is recorded for error messages.
     pub fn store_options(&self) -> NbStoreOptions {
         let mut options = NbStoreOptions::new(self.workflow())
             .with_env(self.env_vec())
-            .with_bookkeeper(self.config().store.bookkeeper);
+            .with_sync_interval(self.config().store.sync_interval);
         if let Some(home) = &self.opts.home {
             options = options.with_home(home);
         }
@@ -260,7 +260,8 @@ impl App {
     }
 
     /// Opens the configured store. Warnings raised while opening (a
-    /// rebuilt index) go to stderr.
+    /// rebuilt index, the previous command's failed background commit) go
+    /// to stderr.
     pub fn open_store(&self) -> Result<NbStore> {
         let mut store =
             NbStore::open(&self.config().store, &self.store_options())?.with_clock(self.clock()?);

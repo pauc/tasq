@@ -27,7 +27,7 @@ pub const ENV_SET: &str = "TASQ_SET";
 /// | Variable | Key |
 /// |----------|-----|
 /// | `TASQ_NOTEBOOK` | `store.notebook` |
-/// | `TASQ_BOOKKEEPER` | `store.bookkeeper` |
+/// | `TASQ_SYNC_INTERVAL` | `store.sync_interval` |
 /// | `TASQ_DEFAULT_PROJECT` | `work.default_project` |
 /// | `TASQ_LAUNCHER` | `launch.default` |
 /// | `TASQ_LAUNCH_DETACHED` | `launch.detached` |
@@ -59,7 +59,7 @@ pub const ENV_SET: &str = "TASQ_SET";
 /// over them for the same key.
 pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_NOTEBOOK", "store.notebook"),
-    ("TASQ_BOOKKEEPER", "store.bookkeeper"),
+    ("TASQ_SYNC_INTERVAL", "store.sync_interval"),
     ("TASQ_DEFAULT_PROJECT", "work.default_project"),
     ("TASQ_LAUNCHER", "launch.default"),
     ("TASQ_LAUNCH_DETACHED", "launch.detached"),

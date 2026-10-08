@@ -1,10 +1,11 @@
-//! Test harness for the nb store: an isolated copy of the fixture notebook
-//! and a way to run the real `nb` against it.
+//! Test harness for the nb store: an isolated copy of the fixture notebook,
+//! `git` helpers, and a way to run the real `nb` against it for the parity
+//! tests (the store itself never runs nb, ADR-0023).
 //!
-//! Every `nb` invocation gets *only* the environment built here: `NB_DIR`,
-//! `NBRC_PATH` and `HOME` inside a temporary directory, `NB_AUTO_SYNC=0`,
-//! and the real `PATH` (to find `nb`, `bash` and `git`). Nothing can touch
-//! the real `~/.nb`.
+//! Every `nb` and `git` invocation gets *only* the environment built here:
+//! `NB_DIR`, `NBRC_PATH` and `HOME` inside a temporary directory,
+//! `NB_AUTO_SYNC=0`, and the real `PATH` (to find `nb`, `bash` and `git`).
+//! Nothing can touch the real `~/.nb`.
 //!
 //! Tests that need `nb` call [`nb_or_skip`]: without `nb` on `PATH` they
 //! print a notice and pass, unless `TASQ_REQUIRE_NB=1` is set (CI), in which
@@ -12,13 +13,15 @@
 
 #![allow(dead_code)]
 
+pub mod sanitize;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
-use tasq_core::config::{Bookkeeper, StoreConfig};
+use sanitize::strip_ansi;
+use tasq_core::config::StoreConfig;
 use tasq_core::model::Workflow;
-use tasq_store_nb::sanitize::strip_ansi;
 use tasq_store_nb::{NbStore, NbStoreOptions};
 use tempfile::TempDir;
 
@@ -203,6 +206,24 @@ impl NbEnv {
         stdout
     }
 
+    /// Runs `nb <args>` like [`nb`](Self::nb) but returns whether it
+    /// succeeded and its sanitised standard output and error, for commands
+    /// whose failure is the answer (`nb index verify`).
+    pub fn nb_status(&self, args: &[&str]) -> (bool, String) {
+        let out = Command::new("nb")
+            .args(args)
+            .env_clear()
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
+            .output()
+            .expect("nb runs");
+        let text = format!(
+            "{}{}",
+            strip_ansi(&String::from_utf8_lossy(&out.stdout)),
+            strip_ansi(&String::from_utf8_lossy(&out.stderr))
+        );
+        (out.status.success(), text)
+    }
+
     /// Store options pointing at this environment.
     pub fn options(&self) -> NbStoreOptions {
         NbStoreOptions::new(Workflow::default())
@@ -210,19 +231,34 @@ impl NbEnv {
             .with_home(&self.home)
     }
 
-    /// Opens the fixture notebook through `NbStore::open` with the default
-    /// `store.notebook = "home"` and `store.bookkeeper = "auto"`.
+    /// Opens the fixture notebook through `NbStore::open` with
+    /// `store.notebook = "home"` and no automatic sync.
     pub fn open(&self) -> NbStore {
-        self.open_with(Bookkeeper::Auto)
+        self.open_syncing(0)
     }
 
-    /// Opens the fixture notebook with the given bookkeeping strategy.
-    pub fn open_with(&self, bookkeeper: Bookkeeper) -> NbStore {
+    /// Opens the fixture notebook syncing at most every `sync_interval`
+    /// seconds after a write.
+    pub fn open_syncing(&self, sync_interval: u64) -> NbStore {
         let config = StoreConfig {
-            bookkeeper,
+            sync_interval,
             ..StoreConfig::default()
         };
         NbStore::open(&config, &self.options()).expect("fixture notebook opens")
+    }
+
+    /// This environment with `dir` first on `PATH`, for fake tools.
+    pub fn env_with_path_first(&self, dir: &Path) -> Vec<(String, String)> {
+        self.env
+            .iter()
+            .map(|(k, v)| {
+                if k == "PATH" {
+                    (k.clone(), format!("{}:{v}", dir.display()))
+                } else {
+                    (k.clone(), v.clone())
+                }
+            })
+            .collect()
     }
 
     /// Runs `git <args>` in the notebook with this environment and returns
@@ -311,9 +347,8 @@ fn copy_dir(from: &Path, to: &Path) {
 
 /// Whether `nb` is on the current `PATH`.
 pub fn nb_available() -> bool {
-    std::env::var("PATH").is_ok_and(|path| {
-        tasq_store_nb::nb::find_in_path(&path, tasq_store_nb::nb::PROGRAM).is_some()
-    })
+    std::env::var("PATH")
+        .is_ok_and(|path| tasq_store_nb::which::find_in_path(&path, "nb").is_some())
 }
 
 /// `true` when the test may run. Without `nb`, prints a notice and returns
@@ -343,39 +378,53 @@ pub fn nb_ids(output: &str) -> Vec<u64> {
         .collect()
 }
 
-/// A directory holding a fake `nb` script with `body` as its contents
-/// (after the shebang). The script's argv and the invocation count go to
-/// `<dir>/argv.log`, one line per call.
+/// A directory holding a fake executable `name` with `body` as its contents
+/// (after the shebang). The script's argv goes to `<dir>/argv.log`, one line
+/// per call.
 ///
 /// Tests run in parallel threads, and a thread that forks while this one
 /// still has the script open for writing makes the first exec of it fail
-/// with `ETXTBSY`. The script is therefore probed (with `FAKE_NB_PROBE`
-/// set, which exits before logging) until it runs, before being handed out.
-pub fn fake_nb(body: &str) -> TempDir {
+/// with `ETXTBSY`. The script is therefore probed (with `FAKE_PROBE` set,
+/// which exits before logging) until it runs, before being handed out.
+pub fn fake_tool(name: &str, body: &str) -> TempDir {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
-    let script = dir.path().join("nb");
+    let script = dir.path().join(name);
     let log = dir.path().join("argv.log");
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\n[ -n \"${{FAKE_NB_PROBE:-}}\" ] && exit 0\nprintf '%s\\n' \"$*\" >> '{}'\n{body}\n",
+            "#!/bin/sh\n[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\nprintf '%s\\n' \"$*\" >> '{}'\n{body}\n",
             log.display()
         ),
     )
     .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     for attempt in 0..200 {
-        match Command::new(&script).env("FAKE_NB_PROBE", "1").status() {
+        match Command::new(&script).env("FAKE_PROBE", "1").status() {
             Ok(status) if status.success() => return dir,
-            Ok(status) => panic!("fake nb probe exited with {status}"),
+            Ok(status) => panic!("fake {name} probe exited with {status}"),
             Err(e) if e.raw_os_error() == Some(libc_etxtbsy()) && attempt < 199 => {
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
-            Err(e) => panic!("fake nb probe failed: {e}"),
+            Err(e) => panic!("fake {name} probe failed: {e}"),
         }
     }
     unreachable!("the loop returns or panics")
+}
+
+/// A fake `git` whose `commit` sleeps `seconds` first; every command then
+/// runs the real git.
+pub fn slow_git(seconds: u32) -> TempDir {
+    let path = std::env::var("PATH").unwrap_or_default();
+    let real = tasq_store_nb::which::find_in_path(&path, "git").expect("git is on PATH");
+    fake_tool(
+        "git",
+        &format!(
+            "[ \"$1\" = commit ] && sleep {seconds}\nexec '{}' \"$@\"",
+            real.display()
+        ),
+    )
 }
 
 /// `ETXTBSY` on Linux and the BSDs, without a libc dependency.
@@ -383,8 +432,8 @@ const fn libc_etxtbsy() -> i32 {
     26
 }
 
-/// The argv lines recorded by a [`fake_nb`].
-pub fn fake_nb_calls(dir: &TempDir) -> Vec<String> {
+/// The argv lines recorded by a [`fake_tool`].
+pub fn fake_calls(dir: &TempDir) -> Vec<String> {
     std::fs::read_to_string(dir.path().join("argv.log"))
         .map(|s| s.lines().map(str::to_owned).collect())
         .unwrap_or_default()

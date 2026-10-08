@@ -16,7 +16,8 @@ not understand (see "Lossless editing").
   (`YYYYMMDDHHMMSS`). When that name is taken the stamp is bumped one second at
   a time, as nb does; after 60 attempts `create` fails with nothing written.
 - Id: the 1-based line number of the filename in the notebook's `.index` file.
-  Ids are positional and can change after deletions or `nb index reconcile`.
+  Ids are positional and can change after `nb index reconcile`; `tasq store
+  reconcile` keeps them (a deleted file's line becomes empty).
 - Index lines that are not `*.todo.md`, or whose file no longer exists, are
   skipped when listing.
 - Encoding UTF-8. New files use LF. In an existing file every line keeps its

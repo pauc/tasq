@@ -845,7 +845,42 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   nb 145 -> 84 ms, native 11.3 -> 9.8 ms. Both bookkeepers: 47 mutants, 38 caught, 9 unviable,
   0 missed.
 
+### No nb at runtime (ADR 0023, nb todos 22 and 48, 2026-10-08)
+
+- **Why:** `tasq done` took 5-6 s on the author's notebook. `NbCliBookkeeper::checkpoint` ran
+  `nb git checkpoint --wait`, and with nb's `auto_sync` on (nb's default) `_git_checkpoint`
+  runs a full `_git sync` (`git ls-remote` 1.5 s, `git fetch` 2.3 s, push) inside the subshell
+  `--wait` waits for. `NB_AUTO_SYNC_SECONDS` (3600 in `~/.nbrc`) only throttles the sync nb's
+  read commands start; a checkpoint syncs every time. Todo 22 assumed hourly; it is per write.
+- Even without the sync, a commit costs ~440 ms when the global git config signs commits
+  (`commit.gpgsign = true`, the author's setup), so the commit itself had to leave the critical
+  path, not just the network.
+- **Shape:** `Bookkeeper::lock` (waits for `.git/tasq/lock`, breaks it after 2 min), write,
+  `register`, `checkpoint(lock, msg)` starts `sh -c '( job ) &'` with `process_group(0)`: the
+  outer `sh` exits at once, so there is no zombie in the long-lived TUI and nothing to reap. The
+  job (`job::SCRIPT`) owns the lock and removes it on exit. Failures go to `.git/tasq/failed`
+  (one line, `<step>: <git output>`), reported by the next `NbStore::open` only: the TUI writes
+  through `dyn Store` and has nowhere to show a warning, so `lock()` must not consume it.
+- Sync throttle: `job::sync_due(last, now, interval)` is the pure decision; `last-sync` is
+  written by the job before pulling, so a failing remote is retried once per interval, not on
+  every write. SSH runs with `-o BatchMode=yes` (appended to `core.sshCommand` when set) so a
+  background job can never prompt on the TUI's terminal. A failed `pull --rebase` is aborted.
+- `tasq store sync` waits for the lock first; `tasq store reconcile` blanks lines of missing
+  files and appends unlisted `*.md` files, committed as `[tasq] Reconcile: .index`.
+- Tests: `slow_git(1)` (a `git` whose `commit` sleeps) proves `set_done` returns in < 500 ms;
+  every test that writes to a repository waits (`wait_for_bookkeeping`, or take and drop the
+  lock) before reading `git log` and before its temp dir is dropped.
+- Not done: the TUI still has no channel for store warnings (pre-existing, also true for
+  checkpoint failures before this change). `examples/config/plain-markdown.toml` still sets
+  the removed `work.worktree_manager` (from 9333023, not this change).
+
 ### nb facts (probed 2026-10-04 with nb 7.25.4 in an isolated NB_DIR)
+
+- **(2026-10-08)** `nb index verify` accepts empty lines in `.index` (what
+  `tasq store reconcile` leaves for a deleted file), and nb lists the remaining ids unchanged.
+- **(2026-10-08)** With `NB_AUTO_SYNC` on, `nb git checkpoint` always runs `_git sync`
+  (ls-remote, fetch, merge, push) in the same background subshell as the commit, and `--wait`
+  waits for it. `NB_AUTO_SYNC_SECONDS` does not apply to checkpoints.
 
 - **`nb git checkpoint` commits asynchronously unless `--wait`**; and any nb read command
   (`nb todos` included) commits a dirty notebook in the background as `[nb] Commit`. Checkpoint
@@ -1026,6 +1061,12 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   and a cold build; the full workspace then passed. Do this after any move of the checkout.
 
 ## Deviations from the plan
+
+- **(2026-10-08) PLAN 4.5 hybrid nb bookkeeping dropped (ADR 0023).** tasq never runs nb;
+  `store.bookkeeper` and `TASQ_BOOKKEEPER` are removed, `store.sync_interval` /
+  `TASQ_SYNC_INTERVAL` added, `tasq store reconcile` added. ADR 0007's "never rebuild the
+  index" is relaxed to "never renumber": a missing `.index` is rebuilt from the files, a stale
+  one is repaired in place.
 
 - T-901: `TASQ_BIN` and `TASQ_SET` added to the plugin environment (the plan listed
   `TASQ_PROFILE` and `TASQ_CONFIG`); hooks are configured under `[hooks]` rather than

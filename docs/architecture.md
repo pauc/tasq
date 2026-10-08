@@ -131,9 +131,11 @@ ops, re-parses, and compares with the requested task; anything it could not expr
 
 ## tasq-store-nb
 
-The only crate that runs `nb` or `git`. Reads never spawn a process: `NbStore::open` resolves
-the notebook (`$NB_DIR/<name>`, else `nb notebooks show <name> --path`), reads `.index` (line
-number = task id) and parses the files directly.
+The crate that runs `git` for the notebook; nothing runs `nb` (ADR-0023). Reads never spawn a
+process: `NbStore::open` resolves the notebook (`$NB_DIR/<name>`, or a path), reads `.index`
+(line number = task id) and parses the files directly. A write takes `.git/tasq/lock` (waiting
+for the previous background job), writes the file, and hands the lock to a detached job that
+commits and, every `store.sync_interval` seconds, pulls and pushes.
 
 ```mermaid
 sequenceDiagram
@@ -148,6 +150,7 @@ sequenceDiagram
     S-->>C: Task (+ Revision: mtime, length, hash)
     Note over C: change fields on the Task
     C->>S: update(task)
+    S->>B: lock() (waits for the previous job)
     S->>F: re-read, compare Revision
     alt file changed since read
         S-->>C: StoreError::Conflict
@@ -159,31 +162,31 @@ sequenceDiagram
             S-->>C: StoreError::Unsupported
         else matches
             S->>F: NamedTempFile::persist (atomic)
-            S->>B: checkpoint("…")
-            B-->>S: ok / warning (never data loss)
-            S-->>C: Ok
+            S->>B: checkpoint(lock, "…")
+            B-->>S: job started (commit, maybe pull + push) / warning
+            S-->>C: Ok, before the commit exists
         end
     end
 ```
 
 | Module | What it holds |
 |---|---|
-| `store` | `NbStore`, `NbStoreOptions` (notebook name, environment for `nb`, bookkeeper choice), `StoreWarning`. |
-| `resolve` | Notebook name → directory, as the script's `NB_HOME` block did. |
-| `index` | nb's `.index`: one filename per line, id = 1-based line number. Only ever appended to. |
+| `store` | `NbStore`, `NbStoreOptions` (environment for `git`, home, sync interval), `StoreWarning`, `reconcile`. |
+| `resolve` | Notebook name or path → directory, as the script's `NB_HOME` block did. |
+| `index` | nb's `.index`: one filename per line, id = 1-based line number. Appended to; `reconcile` only blanks lines of missing files, never renumbers. |
 | `revision` | `Revision`: mtime plus content hash, the basis of `Conflict` detection. |
 | `diff` | Whole-task write → `format::ops` calls on the stored document. |
 | `create` | New `YYYYMMDDHHMMSS.todo.md` file, registered through the bookkeeper, id read back from `.index`. |
-| `bookkeeper` | The `Bookkeeper` trait (`register`, `checkpoint`, `verify`, `sync`), `select_bookkeeper`, `NoopBookkeeper` for tests. |
-| `nb_cli` | `NbCliBookkeeper`: delegates to `nb index add`, `nb git checkpoint`, `nb index verify`, `nb sync`. Used when `nb` is on `PATH`. |
-| `native` | `NativeBookkeeper`: appends to `.index` and runs `git` itself, for people without nb. |
-| `nb` | Running `nb` with an injected environment only (`NB_DIR`, `NBRC_PATH`, `HOME`, `PATH`). Tests never touch a real `~/.nb`. |
-| `git` | Running `git` inside the notebook with an injected environment, for the native bookkeeper and the diagnostics. |
-| `sanitize` | Cleans `nb` output of ANSI escapes and carriage returns, as the script's `sed` did. |
-| `doctor` | The store's checks for `tasq doctor`: notebook, index, nb, git identity, bookkeeper. |
+| `bookkeeper` | The `Bookkeeper` trait (`lock`, `register`, `checkpoint`, `take_failure`, `verify`, `sync`), `WriteLock`, `NoopBookkeeper` for tests. |
+| `native` | `NativeBookkeeper`: appends to `.index` byte-identically to `nb index add`, starts the background job, verifies the index, syncs on demand. |
+| `job` | The detached `sh` job (`git add -A`, `git commit`, throttled `git pull --rebase` + `git push`) and its files in `.git/tasq/`: `lock`, `failed`, `last-sync`. |
+| `git` | Running `git` inside the notebook with an injected environment, for the bookkeeper and the diagnostics. |
+| `which` | Finding executables on an injected `PATH`, for `doctor`'s tool checks. |
+| `doctor` | The store's checks for `tasq doctor`: notebook, index, ids, bookkeeper, git identity. |
 
-Bookkeeping failure after a successful write is a warning carrying the manual fix
-(`nb index reconcile`); the file is already on disk. ADR-0007 explains the hybrid.
+Bookkeeping failure after a successful write is a warning carrying the manual fix; the file is
+already on disk. A failed background job leaves its message in `.git/tasq/failed` for the next
+`NbStore::open` to report. ADR-0023 explains why nb is not run and the job design.
 
 ## tasq-sources
 
@@ -348,7 +351,7 @@ sequenceDiagram
     E->>S: get(id)
     E->>E: log the note, flip to done
     E->>S: update(task) / set_done(id, true)
-    S-->>E: Ok (file written, bookkeeper ran)
+    S-->>E: Ok (file written, commit started in the background)
     E-->>FE: Task as stored
     FE->>H: run post-done hooks with the Task as JSON
     FE-->>U: rendered task, or --json
@@ -363,7 +366,7 @@ The dependency direction is what makes the test strategy work:
 | Crate | How it is tested |
 |---|---|
 | `tasq-core` | Unit and integration tests, property tests (`proptest`) for format round trips, byte-identical fixtures in `tests/fixtures/*.md`. Mutation-tested with zero missed mutants as the acceptance bar. |
-| `tasq-store-nb` | Tests against a temp copy of the fixture notebook (`tests/support/mod.rs` builds an `NbEnv`). Tests that need the real `nb` skip when it is absent, or fail with `TASQ_REQUIRE_NB=1`. Mutation-tested. |
+| `tasq-store-nb` | Tests against a temp copy of the fixture notebook (`tests/support/mod.rs` builds an `NbEnv`), real `git` on temporary repositories and bare remotes, a slow fake `git` to prove writes do not wait. The nb parity tests run the real `nb` next to the store; they skip when it is absent, or fail with `TASQ_REQUIRE_NB=1`. Mutation-tested. |
 | `tasq-sources` | Unit tests with a scripted `Transport`; no network in `cargo test`. |
 | `tasq-launch` | Fake executables on an injected `PATH`; `insta` snapshots of the commands that would run. |
 | `tasq-worktree` | Real `git` against temporary repositories: a bare `origin`, a clone to work in, a second clone that pushes branches. Mutation-tested. |

@@ -18,8 +18,9 @@ const LONG_ABOUT: &str = "\
 Terminal task manager over nb markdown todos.
 
 Tasks are the `*.todo.md` files of an nb notebook; `tasq` reads and writes
-them directly, in the same format the original `tasks` script used, and
-leaves index registration and git commits to nb when it is installed.
+them directly, in the same format the original `tasks` script used, without
+running nb. Writes are committed with git in the background, and pulled and
+pushed at most every store.sync_interval seconds.
 
 Every command accepts --json for machine-readable output. Exit codes: 0 on
 success, 1 for an error you can fix (`tasq: <message>` on stderr), 2 for a
@@ -42,7 +43,7 @@ Examples:
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
   tasq store info            where the tasks live
-  tasq doctor                check config, notebook, nb and optional tools
+  tasq doctor                check config, notebook, git and optional tools
   tasq plugins list          tasq-<name> executables on PATH and the hooks
   tasq <name> [args]         run the plugin tasq-<name> (see docs/plugins.md)";
 
@@ -364,7 +365,7 @@ pub enum Command {
     #[command(subcommand)]
     Store(StoreCommand),
 
-    /// Check the configuration, the notebook, nb and optional tools.
+    /// Check the configuration, the notebook, git and optional tools.
     ///
     /// Prints one line per check (OK, WARN or FAIL) with a hint for anything
     /// that is not OK, and exits 1 when any check failed.
@@ -644,9 +645,12 @@ pub struct ListArgs {
 pub enum StoreCommand {
     /// Print the notebook path, task count and how ids behave.
     Info,
-    /// Exchange commits with the notebook's remote (`nb sync`, or
-    /// `git pull --rebase && git push` without nb).
+    /// Exchange commits with the notebook's remote now
+    /// (`git pull --rebase && git push`), after any background commit.
     Sync,
+    /// Repair `.index` without renumbering: lines naming a missing file
+    /// become empty, unlisted markdown files are appended.
+    Reconcile,
 }
 
 /// `tasq config ...`.

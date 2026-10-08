@@ -169,6 +169,11 @@ sections are preserved verbatim.
 
 ### 4.5 Relationship with nb: hybrid
 
+> **Superseded 2026-10-08 by ADR 0023:** `tasq` no longer runs nb at all. Bookkeeping is
+> native; the commit (and an hourly pull and push, `store.sync_interval`) runs in a detached
+> git job so no write waits for it; `tasq store reconcile` repairs the index without
+> renumbering. The format and read path below still stand. Kept as history.
+
 nb (AGPLv3, bash) already solves bookkeeping we do not want to re-implement: the `.index`
 id mapping, filename generation rules, git auto-commit (`nb git checkpoint`) and remote sync
 (`nb sync`, `auto_sync`). nb is also slow to invoke (a bash startup per command), which is
@@ -200,8 +205,8 @@ Store config: `bookkeeper = "auto" | "nb" | "native"` (auto picks nb when found 
 ```toml
 [store]
 kind = "nb"
-notebook = "home"            # resolves ~/.nb/<notebook> or asks nb
-bookkeeper = "auto"          # auto | nb | native — who maintains .index and git commits
+notebook = "home"            # resolves ~/.nb/<notebook>, or a path
+sync_interval = 3600         # seconds between automatic pulls and pushes; 0 never (ADR 0023)
 
 [workflow]
 statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
@@ -770,4 +775,10 @@ Rename is a find-and-replace on crate names before T-903; nothing in the plan de
   0009). `Store::file_of` tells a UI which file a task lives in; colour semantics live in
   `tasq_core::theme`.
 - (2026-10-04, during Phase 3) No gwm adapter in tasq: worktree provisioning is a separate, per-repo concern. `work.worktree_manager` is `git` by default or `command` with a user template; gwm users set `worktree_command = "gwm create {new} {branch} --no-tmux -s"`.
+- (2026-10-08, nb todos 22 and 48) nb is no longer run at all (ADR 0023, supersedes 0007).
+  `nb git checkpoint --wait` synced with GitHub on every write when nb's `auto_sync` was on
+  (5-6 s per `tasq done`). Commits now run in a detached `sh` + `git` job behind
+  `.git/tasq/lock`, pulls and pushes every `store.sync_interval` seconds (default 3600) in the
+  same job, `store.bookkeeper` is gone, `store.notebook` may be a path, a missing `.index` is
+  rebuilt natively and `tasq store reconcile` repairs one without renumbering.
 - (2026-10-06, after Phase 9, from the UX review) Colours are roles, not literals: `tasq_core::theme::Role` names everything the CLI and TUI colour, `ui.theme.preset` picks one of five built-in tables (`dark` is the script), `[ui.theme.colors]` overrides roles and `[ui.colors]` stays on top by status name (ADR 0018). The front ends never name a colour.

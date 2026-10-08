@@ -12,7 +12,8 @@ use tasq_core::model::{
 };
 use tasq_core::query::Filter;
 use tasq_store_nb::{
-    Bookkeeper, NbStore, NbStoreOptions, Store, StoreError, StoreWarning, SyncOutcome, Verification,
+    Bookkeeper, NbStore, NbStoreOptions, Store, StoreError, StoreWarning, SyncOutcome,
+    Verification, WriteLock,
 };
 
 use support::{NbEnv, file_name, id};
@@ -388,23 +389,30 @@ impl Bookkeeper for Recording {
     fn name(&self) -> &'static str {
         "recording"
     }
+    fn lock(&self) -> Result<WriteLock, StoreError> {
+        self.calls.borrow_mut().push("lock".to_owned());
+        Ok(WriteLock::none())
+    }
     fn register(&self, file: &Path) -> Result<(), StoreError> {
         self.calls
             .borrow_mut()
             .push(format!("register {}", file.display()));
         Ok(())
     }
-    fn checkpoint(&self, message: &str) -> Result<bool, StoreError> {
+    fn checkpoint(&self, _lock: WriteLock, message: &str) -> Result<bool, StoreError> {
         self.calls
             .borrow_mut()
             .push(format!("checkpoint {message}"));
         if self.fail {
             Err(StoreError::Bookkeeping {
-                message: "nb git checkpoint failed; run 'nb git checkpoint' by hand".into(),
+                message: "starting the commit: no sh; commit by hand".into(),
             })
         } else {
             Ok(true)
         }
+    }
+    fn take_failure(&self) -> Option<String> {
+        None
     }
     fn verify(&self) -> Result<Verification, StoreError> {
         Ok(Verification::consistent("recorded"))
@@ -428,13 +436,19 @@ fn writes_checkpoint_through_the_bookkeeper() {
     store.set_done(&TaskId::from(id::FULL), false).unwrap();
     let debug = format!("{store:?}");
     assert!(debug.contains("bookkeeper: \"recording\""), "{debug}");
-    // Only real writes checkpoint: the no-op update and no-op reopen do not.
+    // Every write takes the lock first; only real writes checkpoint: the
+    // no-op update and no-op reopen do not.
     assert_eq!(
         *calls.borrow(),
         vec![
+            "lock".to_owned(),
+            "lock".to_owned(),
             format!("checkpoint [tasq] Update: {}", file_name(id::SUPPORT)),
+            "lock".to_owned(),
             format!("checkpoint [tasq] Done: {}", file_name(id::WAITING)),
+            "lock".to_owned(),
             format!("checkpoint [tasq] Undone: {}", file_name(id::DONE)),
+            "lock".to_owned(),
         ]
     );
     assert_eq!(store.warnings(), []);
@@ -455,12 +469,14 @@ fn bookkeeping_failure_after_a_write_is_a_warning() {
     assert_eq!(
         store.warnings(),
         &[StoreWarning::Bookkeeping {
-            message: "bookkeeping failed after the write: nb git checkpoint failed; run 'nb git checkpoint' by hand".into()
+            message:
+                "bookkeeping failed after the write: starting the commit: no sh; commit by hand"
+                    .into()
         }]
     );
     store.set_done(&task.id, true).unwrap();
     assert_eq!(store.warnings().len(), 2);
-    assert_eq!(calls.borrow().len(), 2);
+    assert_eq!(calls.borrow().len(), 4, "two locks, two checkpoints");
     assert_eq!(store.take_warnings().len(), 2);
     assert_eq!(store.warnings(), []);
 }
@@ -496,7 +512,7 @@ fn update_with_a_clock_that_has_seconds_still_round_trips() {
     // The file keeps minutes; model constructors truncate, so an entry
     // stamped at 10:15:42 reads back as 10:15 and the write succeeds.
     let nb = NbEnv::fixture();
-    let mut store = nb.open_with(tasq_core::config::Bookkeeper::Native);
+    let mut store = nb.open();
     let id = TaskId::from(id::SUPPORT);
     let clock = FixedClock(at("2026-10-07 09:30") + chrono::Duration::seconds(42));
     let mut task = store.get(&id).unwrap();

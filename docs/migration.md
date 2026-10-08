@@ -15,21 +15,23 @@ the procedure is at the end of this document.
   (`YYYYMMDDHHMMSS.todo.md`). `tasq` never copies, converts or indexes the
   notebook anywhere else.
 - **Same ids.** Both read `.index` and use the line number as the task id.
-  `tasq` only ever appends to `.index` (through `nb index add`, or natively
-  with the same bytes) and never rebuilds or reorders it. `nb index reconcile`
-  renumbers ids for both tools alike, which is why `tasq doctor` points at it
-  instead of running it.
+  `tasq` appends to `.index` with the same bytes `nb index add` writes and
+  never reorders it. `nb index reconcile` renumbers ids for both tools alike;
+  `tasq store reconcile` repairs an out-of-date index without renumbering
+  (lines of deleted files become empty, as nb leaves them), and is what
+  `tasq doctor` suggests.
 - **Lossless format.** `tasq` parses a file into a document that keeps unknown
   sections, unknown lines, ordering, blank lines and line endings byte for
   byte, and rewrites only the section an edit touched. For every file the
   script produced, `write(parse(x)) == x` (see
   [`docs/file-format.md`](file-format.md), "Lossless editing").
-- **Same bookkeeping.** With `nb` on `PATH` (`store.bookkeeper = "auto"`,
-  the default), every `tasq` write is followed by `nb index add` for new
-  files and `nb git checkpoint --wait "[tasq] Update: <file>"`, so `nb
-  history`, `nb sync` and nb's `auto_sync` behave as before
-  ([ADR-0007](adr/0007-nb-under-the-hood.md)). Without nb, `tasq` appends
-  to `.index` and commits with `git` itself.
+- **Same history.** `tasq` never runs nb
+  ([ADR-0023](adr/0023-no-nb-at-runtime.md)). Every write is committed as
+  `[tasq] Update: <file>` (`Add`, `Done`, `Undone`) by a background `git`
+  job, so `nb history` reads as before, and the same job pulls and pushes at
+  most every `store.sync_interval` seconds (default 3600, like an hourly
+  `NB_AUTO_SYNC_SECONDS`). The command itself returns before the commit
+  lands.
 - **Conflicts are detected, not merged.** `tasq` captures mtime, length and
   hash of a file when it reads it and refuses to write (`Conflict`) if the
   file changed in between. Alternating the two tools is fine; editing the
@@ -83,7 +85,7 @@ names below are from `crates/core/src/config/mod.rs`.
 | Script | Default in the script | `tasq` key | `tasq` env |
 |---|---|---|---|
 | `TASKS_NB_NOTEBOOK` | `home` | `store.notebook` | `TASQ_NOTEBOOK` |
-| `NB_DIR` | `~/.nb` | honoured as is (notebook dir is `$NB_DIR/<name>`, else `nb notebooks show <name> --path`) | `NB_DIR` |
+| `NB_DIR` | `~/.nb` | honoured as is (notebook dir is `$NB_DIR/<name>`; `store.notebook` may also be a path) | `NB_DIR` |
 | `TASKS_DEFAULT_WORKTREE` | `~/code/SF/silverfin_worspace/silverfin` | `work.default_project` (no default: unset means "no fallback directory") | `TASQ_DEFAULT_PROJECT` |
 | `TASKS_PAGER` | `less -RFX` | `ui.pager` | `TASQ_PAGER` |
 | `TASKS_GLOW_STYLE` | `dark` | `ui.glow_style` | `TASQ_GLOW_STYLE` |
@@ -97,7 +99,7 @@ names below are from `crates/core/src/config/mod.rs`.
 | `glab api` for MR titles, `gitlab.silverfin.com` | hard-coded | `[forge.gitlab] host`, `token_cmd = "glab auth token"` (or `GITLAB_TOKEN`) | |
 | `/update-tasks` skill (GitLab, Slack, Gmail) | Claude session | `[[source]]` blocks (`gitlab-review-requests`, `gitlab-work-items`, `github-*`, `llm-bridge`) | |
 | `FRESHDESK_API_KEY`, `bin/freshdesk` | | none (Non-Goal) | |
-| `nb` bookkeeping | always through nb | `store.bookkeeper` (`auto`, `nb`, `native`) | `TASQ_BOOKKEEPER` |
+| `nb` bookkeeping, `NB_AUTO_SYNC_SECONDS` | always through nb, sync on every checkpoint | native; `store.sync_interval` (seconds, `0` never) | `TASQ_SYNC_INTERVAL` |
 
 A global config that reproduces the script's defaults:
 
@@ -227,7 +229,7 @@ notebook for one week. Each day:
 ```sh
 nb index verify                              # "Index corrupted" on stderr is the signal, not the exit code
 tasq doctor                                  # every line OK or WARN with a hint; exit 0
-git -C ~/.nb/home log --oneline -5           # one commit per write, [tasq] and [nb] interleaved
+git -C ~/.nb/home log --oneline -5           # one commit per write (a moment after it), [tasq] and [nb] interleaved
 ```
 
 After every `tasq` write (`set`, `log`, `done`, `project`, `worktree`,

@@ -1,5 +1,5 @@
 //! The store's part of `tasq doctor` (plan T-205): a list of [`Check`]s
-//! about the notebook, its index, nb and the bookkeeper. The CLI (Phase 3)
+//! about the notebook, its index, the bookkeeper and the git identity. The CLI (Phase 3)
 //! prints them as OK/WARN/FAIL lines or as JSON and adds its own checks for
 //! optional tools through [`tool_check`].
 
@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use tasq_core::store::{IdScheme, Store};
 
 use crate::git::Git;
-use crate::nb::find_in_path;
 use crate::store::NbStore;
+use crate::which::find_in_path;
 
 /// How a check went.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -101,13 +101,11 @@ pub fn tool_check(name: &str, env: &[(String, String)], fix: &str) -> Check {
 ///
 /// 1. `notebook`: the resolved directory, and whether it is a git repository.
 /// 2. `index`: `.index` present and consistent (through the bookkeeper's
-///    `verify`), with `nb index reconcile` as the fix.
+///    `verify`), with `tasq store reconcile` as the fix.
 /// 3. `ids`: a warning for positional ids (T-204).
-/// 4. `nb`: available, with its version, or not.
-/// 5. `bookkeeper`: which strategy is in use.
-/// 6. `git-identity`: present when commits will be made. nb silently does
-///    nothing without one, so with the nb bookkeeper this is a failure; with
-///    the native one on a repository it is a warning.
+/// 4. `bookkeeper`: which strategy is in use and how often it syncs.
+/// 5. `git-identity`: present when commits will be made (a repository); a
+///    warning otherwise, since every background commit would fail.
 pub fn checks(store: &NbStore) -> Vec<Check> {
     let dir = store.dir();
     let git = Git::new(dir, store.env().to_vec());
@@ -118,7 +116,7 @@ pub fn checks(store: &NbStore) -> Vec<Check> {
         out.push(Check::warn(
             "ids",
             format!(
-                "ids are positions in .index ({} tasks) and can change after 'nb index reconcile' or deletions",
+                "ids are positions in .index ({} tasks) and can change when another tool rewrites it (nb index reconcile)",
                 info.task_count
             ),
             "refer to tasks by title in notes you keep outside tasq",
@@ -126,10 +124,11 @@ pub fn checks(store: &NbStore) -> Vec<Check> {
     } else {
         out.push(Check::ok("ids", "ids are stable"));
     }
-    out.push(nb_check(store));
-    let bookkeeper = store.bookkeeper().name();
-    out.push(Check::ok("bookkeeper", format!("bookkeeper: {bookkeeper}")));
-    if let Some(check) = identity_check(&git, bookkeeper) {
+    out.push(Check::ok(
+        "bookkeeper",
+        bookkeeper_detail(store.bookkeeper().name(), store.sync_interval()),
+    ));
+    if let Some(check) = identity_check(&git, store.bookkeeper().name()) {
         out.push(check);
     }
     out
@@ -150,7 +149,7 @@ fn index_check(store: &NbStore) -> Check {
         return Check::fail(
             "index",
             format!("{} is missing", path.display()),
-            "run 'nb index reconcile' in the notebook",
+            crate::bookkeeper::RECONCILE_FIX,
         );
     }
     match store.bookkeeper().verify() {
@@ -168,33 +167,19 @@ fn index_check(store: &NbStore) -> Check {
     }
 }
 
-fn nb_check(store: &NbStore) -> Check {
-    let Some(nb) = store.nb() else {
-        return Check::warn(
-            "nb",
-            "nb is not on PATH; the native bookkeeper keeps .index and commits",
-            "install nb (https://github.com/xwmx/nb) to share the notebook with nb",
-        );
-    };
-    match nb.version() {
-        Ok(version) => Check::ok("nb", format!("nb {version} at {}", nb.program().display())),
-        Err(e) => Check::fail(
-            "nb",
-            format!("nb at {} does not run: {e}", nb.program().display()),
-            "reinstall nb or set store.bookkeeper = \"native\"",
-        ),
+/// `bookkeeper: native, syncing at most every 3600 s after a write`.
+fn bookkeeper_detail(name: &str, sync_interval: u64) -> String {
+    if sync_interval == 0 {
+        format!("bookkeeper: {name}, no automatic sync (tasq store sync)")
+    } else {
+        format!("bookkeeper: {name}, syncing at most every {sync_interval} s after a write")
     }
 }
 
 /// `None` when no commits will ever be made (no repository, or no
 /// bookkeeper that commits).
 fn identity_check(git: &Git, bookkeeper: &str) -> Option<Check> {
-    let commits = match bookkeeper {
-        "nb" => true,
-        "native" => git.is_repository(),
-        _ => false,
-    };
-    if !commits {
+    if bookkeeper != "native" || !git.is_repository() {
         return None;
     }
     let fix = "set a git identity: git config --global user.name <name>; git config --global user.email <email>";
@@ -208,16 +193,11 @@ fn identity_check(git: &Git, bookkeeper: &str) -> Option<Check> {
                 (None, Some(_)) => "user.name",
                 (Some(_), _) => "user.email",
             };
-            let detail = format!("git {missing} not set");
-            if bookkeeper == "nb" {
-                Check::fail(
-                    "git-identity",
-                    format!("{detail}; nb silently skips commits without an identity"),
-                    fix,
-                )
-            } else {
-                Check::warn("git-identity", format!("{detail}; commits will fail"), fix)
-            }
+            Check::warn(
+                "git-identity",
+                format!("git {missing} not set; commits will fail"),
+                fix,
+            )
         }
         Err(e) => Check::warn(
             "git-identity",
@@ -315,7 +295,19 @@ mod tests {
     }
 
     #[test]
-    fn identity_check_depends_on_who_commits() {
+    fn bookkeeper_detail_names_the_interval() {
+        assert_eq!(
+            bookkeeper_detail("native", 3600),
+            "bookkeeper: native, syncing at most every 3600 s after a write"
+        );
+        assert_eq!(
+            bookkeeper_detail("native", 0),
+            "bookkeeper: native, no automatic sync (tasq store sync)"
+        );
+    }
+
+    #[test]
+    fn identity_check_only_where_commits_are_made() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
@@ -325,54 +317,42 @@ mod tests {
         ];
         let repo = tmp.path().join("repo");
         std::fs::create_dir_all(&repo).unwrap();
-        let git_env = env;
-        let git = Git::new(&repo, git_env.clone());
+        let git = Git::new(&repo, env.clone());
         assert_eq!(identity_check(&git, "none"), None);
         assert_eq!(identity_check(&git, "native"), None, "not a repository");
-        // nb commits whether or not we can tell it is a repository; `git
-        // config` reads the global identity outside a repository too.
-        let c = identity_check(&git, "nb").unwrap();
-        assert_eq!(c.status, CheckStatus::Fail);
-        // A directory git cannot enter is a warning, not a verdict.
-        let gone = Git::new(tmp.path().join("gone"), git_env.clone());
-        let c = identity_check(&gone, "nb").unwrap();
-        assert_eq!(c.status, CheckStatus::Warn);
-        assert!(
-            c.detail.starts_with("could not read the git identity: "),
-            "{c:?}"
-        );
 
         git.run(&["init", "-q"]).unwrap();
+        assert_eq!(identity_check(&git, "none"), None, "no bookkeeper commits");
         let c = identity_check(&git, "native").unwrap();
         assert_eq!(c.status, CheckStatus::Warn);
         assert_eq!(
             c.detail,
             "git user.name and user.email not set; commits will fail"
         );
-        let c = identity_check(&git, "nb").unwrap();
-        assert_eq!(c.status, CheckStatus::Fail);
-        assert_eq!(
-            c.detail,
-            "git user.name and user.email not set; nb silently skips commits without an identity"
-        );
         assert!(c.fix.as_deref().unwrap().starts_with("set a git identity"));
 
         git.run(&["config", "user.email", "t@example.invalid"])
             .unwrap();
-        let c = identity_check(&git, "nb").unwrap();
-        assert_eq!(
-            c.detail,
-            "git user.name not set; nb silently skips commits without an identity"
-        );
+        let c = identity_check(&git, "native").unwrap();
+        assert_eq!(c.detail, "git user.name not set; commits will fail");
         git.run(&["config", "--unset", "user.email"]).unwrap();
         git.run(&["config", "user.name", "T"]).unwrap();
         let c = identity_check(&git, "native").unwrap();
         assert_eq!(c.detail, "git user.email not set; commits will fail");
         git.run(&["config", "user.email", "t@example.invalid"])
             .unwrap();
-        let c = identity_check(&git, "nb").unwrap();
+        let c = identity_check(&git, "native").unwrap();
         assert_eq!(c.status, CheckStatus::Ok);
         assert_eq!(c.detail, "git identity: T <t@example.invalid>");
         assert_eq!(c.fix, None);
+
+        // A repository git cannot read: a warning, not a verdict.
+        std::fs::write(repo.join(".git/config"), "[broken").unwrap();
+        let c = identity_check(&git, "native").unwrap();
+        assert_eq!(c.status, CheckStatus::Warn);
+        assert!(
+            c.detail.starts_with("could not read the git identity: "),
+            "{c:?}"
+        );
     }
 }

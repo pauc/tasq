@@ -400,6 +400,50 @@ mod store {
     }
 
     #[test]
+    fn reconcile_repairs_the_index_and_doctor_then_passes() {
+        // The fixture index names a file that does not exist.
+        let env = TestEnv::fixture();
+        std::fs::write(
+            env.notebook().join("20261001000000.todo.md"),
+            "# [ ] Unlisted\n",
+        )
+        .unwrap();
+        let out = env.tasq().args(["store", "reconcile"]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            "blanked  20260905130000.todo.md (file is gone; its id stays unused)\n\
+             appended 20261001000000.todo.md\n"
+        );
+        let index = std::fs::read_to_string(env.notebook().join(".index")).unwrap();
+        assert_eq!(
+            index,
+            "20260901090000.todo.md\nnotes.md\n20260902100000.todo.md\n20260903110000.todo.md\n\n\
+             20260904120000.todo.md\n20260906140000.todo.md\n20261001000000.todo.md\n"
+        );
+        let out = env.tasq().args(["view", "8"]).output().unwrap();
+        assert!(
+            stdout(&out).starts_with("# [ ] Unlisted"),
+            "{}",
+            stdout(&out)
+        );
+        let out = env.tasq().arg("doctor").output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
+        let out = env
+            .tasq()
+            .args(["--json", "store", "reconcile"])
+            .output()
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["schema"], 1);
+        assert_eq!(value["changed"], false);
+        assert_eq!(value["blanked"], serde_json::json!([]));
+        assert_eq!(value["appended"], serde_json::json!([]));
+        let out = env.tasq().args(["store", "reconcile"]).output().unwrap();
+        assert_eq!(stdout(&out), "index already matches the files\n");
+    }
+
+    #[test]
     fn verbose_prints_the_notebook_path() {
         let env = TestEnv::fixture();
         let out = env.tasq().args(["-v", "store", "info"]).output().unwrap();

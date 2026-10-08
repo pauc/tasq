@@ -12,9 +12,9 @@ expression: env.normalize(&stdout(&out))
 #   5. --set
 
 [store]
-bookkeeper = "auto"                          # defaults
 kind = "nb"                                  # defaults
 notebook = "home"                            # defaults
+sync_interval = 3600                         # defaults
 
 [workflow]
 default_status = "ready"                     # defaults

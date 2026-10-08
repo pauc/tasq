@@ -59,6 +59,42 @@ impl Index {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    /// The index as nb writes it: every line followed by a newline.
+    pub fn render(&self) -> String {
+        self.entries.iter().fold(String::new(), |mut out, name| {
+            out.push_str(name);
+            out.push('\n');
+            out
+        })
+    }
+
+    /// The repair `tasq store reconcile` makes, without renumbering: lines
+    /// naming one of `missing` become empty (how nb leaves a deleted file's
+    /// line), then `unlisted` are appended in the given order.
+    #[must_use]
+    pub fn reconciled(&self, missing: &[String], unlisted: &[String]) -> Self {
+        let mut entries: Vec<String> = self
+            .entries
+            .iter()
+            .map(|name| {
+                if missing.contains(name) {
+                    String::new()
+                } else {
+                    name.clone()
+                }
+            })
+            .collect();
+        entries.extend(unlisted.iter().cloned());
+        Self { entries }
+    }
+
+    /// An index listing `names` in order, as a rebuild of a missing `.index`.
+    pub fn listing(names: &[String]) -> Self {
+        Self {
+            entries: names.to_vec(),
+        }
+    }
 }
 
 /// Whether `name` is a todo file (`*.todo.md`), as `all_open` checked.
@@ -119,6 +155,40 @@ mod tests {
         assert_eq!(index.len(), 0);
         assert_eq!(index.entries().count(), 0);
         assert_eq!(index, Index::default());
+    }
+
+    #[test]
+    fn render_writes_one_line_per_entry() {
+        assert_eq!(
+            Index::parse("a.todo.md\r\n\nb.todo.md").render(),
+            "a.todo.md\n\nb.todo.md\n"
+        );
+        assert_eq!(Index::default().render(), "");
+    }
+
+    #[test]
+    fn reconciled_blanks_missing_lines_and_appends_unlisted() {
+        let index = Index::parse("a.todo.md\ngone.todo.md\n\nb.todo.md\n");
+        let fixed = index.reconciled(
+            &["gone.todo.md".to_owned()],
+            &["c.todo.md".to_owned(), "d.md".to_owned()],
+        );
+        assert_eq!(
+            fixed.render(),
+            "a.todo.md\n\n\nb.todo.md\nc.todo.md\nd.md\n"
+        );
+        assert_eq!(
+            fixed.file_for(&TaskId::from(4)),
+            Some("b.todo.md"),
+            "ids kept"
+        );
+        assert_eq!(index.reconciled(&[], &[]), index);
+    }
+
+    #[test]
+    fn listing_keeps_the_order() {
+        let names = vec!["b.md".to_owned(), "a.md".to_owned()];
+        assert_eq!(Index::listing(&names).render(), "b.md\na.md\n");
     }
 
     #[test]

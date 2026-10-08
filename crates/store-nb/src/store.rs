@@ -13,21 +13,22 @@ use tasq_core::model::{Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::Filter;
 use tasq_core::store::{IdScheme, Store, StoreError, StoreInfo};
 
-use crate::bookkeeper::{Bookkeeper, select_bookkeeper};
+use crate::bookkeeper::{Bookkeeper, NativeBookkeeper, RECONCILE_FIX, WriteLock};
 use crate::create::{DEFAULT_NOTE, check_draft, free_file_name};
 use crate::diff;
 use crate::index::{Index, is_todo};
-use crate::nb::Nb;
+use crate::native::{JOB_FIX, markdown_files, verify_index};
 use crate::resolve::{index_path, resolve_notebook};
 use crate::revision::Revision;
 
 /// Everything [`NbStore::open`] needs besides the config: the environment
-/// to resolve `NB_DIR` in and run `nb` with, the home directory, the config
-/// file that set the notebook (for error messages) and the status workflow.
+/// to resolve `NB_DIR` in and run `git` with, the home directory, the config
+/// file that set the notebook (for error messages), the status workflow and
+/// how often writes sync.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NbStoreOptions {
-    /// The environment `nb` runs with and `NB_DIR` is looked up in. Nothing
-    /// outside this list reaches `nb`.
+    /// The environment `git` runs with and `NB_DIR` is looked up in. Nothing
+    /// outside this list reaches `git`.
     pub env: Vec<(String, String)>,
     /// The user's home directory, for the default `~/.nb`.
     pub home: Option<PathBuf>,
@@ -36,8 +37,9 @@ pub struct NbStoreOptions {
     pub config_file: Option<PathBuf>,
     /// Which `#tags` are statuses.
     pub workflow: Workflow,
-    /// Who keeps `.index` and the git history (`store.bookkeeper`).
-    pub bookkeeper: tasq_core::config::Bookkeeper,
+    /// Seconds between automatic pulls and pushes after a write, `0` for
+    /// never (`store.sync_interval`).
+    pub sync_interval: u64,
 }
 
 impl NbStoreOptions {
@@ -48,7 +50,7 @@ impl NbStoreOptions {
             home: None,
             config_file: None,
             workflow,
-            bookkeeper: tasq_core::config::Bookkeeper::Auto,
+            sync_interval: 0,
         }
     }
 
@@ -64,7 +66,7 @@ impl NbStoreOptions {
             home,
             config_file: None,
             workflow,
-            bookkeeper: tasq_core::config::Bookkeeper::Auto,
+            sync_interval: 0,
         }
     }
 
@@ -89,10 +91,10 @@ impl NbStoreOptions {
         self
     }
 
-    /// Chooses the bookkeeping strategy (default: `Auto`).
+    /// Sets how often writes sync (default: `0`, never).
     #[must_use]
-    pub fn with_bookkeeper(mut self, bookkeeper: tasq_core::config::Bookkeeper) -> Self {
-        self.bookkeeper = bookkeeper;
+    pub fn with_sync_interval(mut self, seconds: u64) -> Self {
+        self.sync_interval = seconds;
         self
     }
 }
@@ -100,13 +102,14 @@ impl NbStoreOptions {
 /// Something the user should hear about that did not stop the store.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoreWarning {
-    /// `.index` was missing and `nb index reconcile` rebuilt it; ids may
-    /// differ from the ones the user remembers.
+    /// `.index` was missing and was rebuilt from the notebook's files; ids
+    /// may differ from the ones the user remembers.
     RebuiltIndex {
         /// The index file.
         path: PathBuf,
     },
-    /// Bookkeeping after a successful write failed.
+    /// Bookkeeping after a successful write failed, possibly in the
+    /// background job of an earlier command.
     Bookkeeping {
         /// What failed and the manual fix.
         message: String,
@@ -118,7 +121,7 @@ impl fmt::Display for StoreWarning {
         match self {
             Self::RebuiltIndex { path } => write!(
                 f,
-                "rebuilt missing nb index at {} (todo ids may have changed)",
+                "rebuilt missing index at {} from the notebook's files (todo ids may have changed)",
                 path.display()
             ),
             Self::Bookkeeping { message } => write!(f, "bookkeeping failed: {message}"),
@@ -137,7 +140,7 @@ pub struct NbStore {
     dir: PathBuf,
     workflow: Workflow,
     env: Vec<(String, String)>,
-    nb: Option<Nb>,
+    sync_interval: u64,
     bookkeeper: Box<dyn Bookkeeper>,
     clock: Box<dyn Clock>,
     index: RefCell<Index>,
@@ -149,7 +152,6 @@ impl fmt::Debug for NbStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NbStore")
             .field("dir", &self.dir)
-            .field("nb", &self.nb.as_ref().map(Nb::program))
             .field("bookkeeper", &self.bookkeeper.name())
             .field("warnings", &self.warnings)
             .finish_non_exhaustive()
@@ -157,57 +159,60 @@ impl fmt::Debug for NbStore {
 }
 
 impl NbStore {
-    /// Resolves `config.notebook` (see [`crate::resolve`]) and opens it with
-    /// the bookkeeper `config.bookkeeper` asks for.
+    /// Resolves `config.notebook` (see [`crate::resolve`]) and opens it,
+    /// syncing every `config.sync_interval` seconds after a write.
     pub fn open(config: &StoreConfig, options: &NbStoreOptions) -> Result<Self, StoreError> {
-        let nb = Nb::locate(&options.env);
-        let dir = resolve_notebook(&config.notebook, options, nb.as_ref())?;
-        let options = options.clone().with_bookkeeper(config.bookkeeper);
+        let dir = resolve_notebook(&config.notebook, options)?;
+        let options = options.clone().with_sync_interval(config.sync_interval);
         Self::open_dir(dir, &options)
     }
 
-    /// Opens the notebook at `dir` directly. A missing `.index` is rebuilt
-    /// with `nb index reconcile` when `nb` is available, which is recorded
-    /// as [`StoreWarning::RebuiltIndex`]; without `nb` it is an error. The
-    /// bookkeeper is chosen from `options.bookkeeper` (see
-    /// [`select_bookkeeper`]).
+    /// Opens the notebook at `dir` directly with a [`NativeBookkeeper`]. A
+    /// missing `.index` is rebuilt from the notebook's `*.md` files in name
+    /// order, which is recorded as [`StoreWarning::RebuiltIndex`]. A failure
+    /// of the previous command's background job becomes a
+    /// [`StoreWarning::Bookkeeping`].
     pub fn open_dir(dir: impl Into<PathBuf>, options: &NbStoreOptions) -> Result<Self, StoreError> {
         let dir = dir.into();
-        let nb = Nb::locate(&options.env);
         let mut warnings = Vec::new();
         let index_file = index_path(&dir);
         if !index_file.exists() {
-            let rebuilt = nb.as_ref().is_some_and(|nb| {
-                nb.run(&["index", "reconcile", &dir.display().to_string()])
-                    .is_ok()
-            }) && index_file.is_file();
-            if !rebuilt {
-                let fix = if nb.is_some() {
-                    "'nb index reconcile' could not rebuild it"
-                } else {
-                    "nb is not on PATH to rebuild it (run 'nb index reconcile' in the notebook)"
-                };
-                return Err(StoreError::Index {
-                    path: index_file,
-                    message: format!("nb index not found, and {fix}"),
-                });
-            }
+            Self::rebuild_index(&dir, &index_file)?;
             warnings.push(StoreWarning::RebuiltIndex { path: index_file });
         }
-        let bookkeeper = select_bookkeeper(options.bookkeeper, nb.as_ref(), &dir, &options.env)?;
-        let store = Self {
+        let bookkeeper = NativeBookkeeper::new(&dir, options.env.clone())
+            .with_sync_interval(options.sync_interval);
+        let mut store = Self {
             dir,
             workflow: options.workflow.clone(),
             env: options.env.clone(),
-            nb,
-            bookkeeper,
+            sync_interval: options.sync_interval,
+            bookkeeper: Box::new(bookkeeper),
             clock: Box::new(SystemClock),
             index: RefCell::new(Index::default()),
             revisions: RefCell::new(HashMap::new()),
             warnings,
         };
+        store.collect_job_failure();
         store.load_index()?;
         Ok(store)
+    }
+
+    /// Writes `index_file` listing the notebook's markdown files; never
+    /// replaces an existing index.
+    fn rebuild_index(dir: &Path, index_file: &Path) -> Result<(), StoreError> {
+        let index_error = |e: std::io::Error| StoreError::Index {
+            path: index_file.to_owned(),
+            message: format!("index not found and could not be rebuilt: {e}"),
+        };
+        let names = markdown_files(dir).map_err(index_error)?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(index_file)
+            .map_err(index_error)?;
+        file.write_all(Index::listing(&names).render().as_bytes())
+            .map_err(index_error)
     }
 
     /// Replaces the bookkeeper chosen at `open` (tests use a recording or
@@ -226,8 +231,7 @@ impl NbStore {
         self
     }
 
-    /// The environment the store was opened with (`nb` and `git` run with
-    /// it).
+    /// The environment the store was opened with (`git` runs with it).
     pub fn env(&self) -> &[(String, String)] {
         &self.env
     }
@@ -247,9 +251,9 @@ impl NbStore {
         &self.workflow
     }
 
-    /// The `nb` executable the store would use, when one was found.
-    pub fn nb(&self) -> Option<&Nb> {
-        self.nb.as_ref()
+    /// Seconds between automatic syncs after a write, `0` for never.
+    pub fn sync_interval(&self) -> u64 {
+        self.sync_interval
     }
 
     /// The bookkeeper in use.
@@ -272,6 +276,54 @@ impl NbStore {
         self.warnings
             .iter()
             .any(|w| matches!(w, StoreWarning::RebuiltIndex { .. }))
+    }
+
+    /// Waits until the background bookkeeping of earlier writes is done
+    /// (tests, and `tasq store sync`, which must not race a job). A failed
+    /// job becomes a warning.
+    pub fn wait_for_bookkeeping(&mut self) -> Result<(), StoreError> {
+        drop(self.bookkeeper.lock()?);
+        self.collect_job_failure();
+        Ok(())
+    }
+
+    /// Repairs `.index` without renumbering (ADR-0023): lines naming a file
+    /// that no longer exists become empty, unlisted markdown files are
+    /// appended in name order, and the change is committed as
+    /// `[tasq] Reconcile: .index`. Returns what was found; nothing is
+    /// written when the index was already consistent.
+    pub fn reconcile(&mut self) -> Result<crate::bookkeeper::Verification, StoreError> {
+        let lock = self.lock()?;
+        let index = self.load_index()?;
+        let path = self.index_path();
+        let found = verify_index(&self.dir, &index).map_err(|source| StoreError::Io {
+            path: self.dir.clone(),
+            source,
+        })?;
+        if found.consistent {
+            return Ok(found);
+        }
+        let fixed = index.reconciled(&found.missing_files, &found.unindexed_files);
+        Self::write_atomic(&path, &fixed.render())?;
+        self.load_index()?;
+        self.checkpoint(lock, "[tasq] Reconcile: .index");
+        Ok(found)
+    }
+
+    /// Takes the notebook's write lock; see [`Bookkeeper::lock`]. A failure
+    /// of the previous job is left for the next [`NbStore::open`] to report:
+    /// the TUI writes through `dyn Store` and has nowhere to show it.
+    fn lock(&self) -> Result<WriteLock, StoreError> {
+        self.bookkeeper.lock()
+    }
+
+    /// Turns the last background job's failure, if any, into a warning.
+    fn collect_job_failure(&mut self) {
+        if let Some(failure) = self.bookkeeper.take_failure() {
+            self.warnings.push(StoreWarning::Bookkeeping {
+                message: format!("the background commit failed: {failure}; {JOB_FIX}"),
+            });
+        }
     }
 
     /// Re-reads `.index` and returns it.
@@ -376,10 +428,10 @@ impl NbStore {
         Ok(())
     }
 
-    /// Runs the bookkeeper's checkpoint, turning a failure into a warning:
-    /// the file is already written, so this is never data loss.
-    fn checkpoint(&mut self, message: &str) {
-        if let Err(e) = self.bookkeeper.checkpoint(message) {
+    /// Hands `lock` to the bookkeeper's checkpoint, turning a failure into a
+    /// warning: the file is already written, so this is never data loss.
+    fn checkpoint(&mut self, lock: WriteLock, message: &str) {
+        if let Err(e) = self.bookkeeper.checkpoint(lock, message) {
             self.warnings.push(StoreWarning::Bookkeeping {
                 message: e.to_string(),
             });
@@ -453,6 +505,7 @@ impl Store for NbStore {
     /// [`StoreError::Bookkeeping`] and names the file.
     fn create(&mut self, draft: TaskDraft) -> Result<Task, StoreError> {
         check_draft(&draft)?;
+        let lock = self.lock()?;
         let now = self.clock.now();
         let name = free_file_name(now, |candidate| self.dir.join(candidate).exists()).ok_or_else(
             || StoreError::Io {
@@ -478,11 +531,9 @@ impl Store for NbStore {
             .load_index()?
             .last_id_of(&name)
             .ok_or_else(|| StoreError::Bookkeeping {
-                message: format!(
-                    "{name} was written but .index does not list it; run 'nb index reconcile' in the notebook"
-                ),
+                message: format!("{name} was written but .index does not list it; {RECONCILE_FIX}"),
             })?;
-        self.checkpoint(&format!("[tasq] Add: {name}"));
+        self.checkpoint(lock, &format!("[tasq] Add: {name}"));
         self.get(&id)
     }
 
@@ -492,6 +543,7 @@ impl Store for NbStore {
     /// ([`StoreError::Conflict`]) or when a change has no operation
     /// ([`StoreError::Unsupported`]).
     fn update(&mut self, task: &Task) -> Result<(), StoreError> {
+        let lock = self.lock()?;
         let path = self.path_of(&task.id)?;
         let baseline = self.revisions.borrow().get(&task.id).copied();
         let (mut parsed, current) = self.read(&task.id, &path)?;
@@ -525,7 +577,7 @@ impl Store for NbStore {
         self.revisions
             .borrow_mut()
             .insert(task.id.clone(), revision);
-        self.checkpoint(&format!("[tasq] Update: {}", Self::file_name(&path)));
+        self.checkpoint(lock, &format!("[tasq] Update: {}", Self::file_name(&path)));
         Ok(())
     }
 
@@ -533,6 +585,7 @@ impl Store for NbStore {
     /// removed, as `tasks done` did. `!done`: `nb todo undo` (`# [ ]`); no
     /// status is restored. The file is left alone when already in that state.
     fn set_done(&mut self, id: &TaskId, done: bool) -> Result<(), StoreError> {
+        let lock = self.lock()?;
         let path = self.path_of(id)?;
         let (mut parsed, _) = self.read(id, &path)?;
         let before = format::render(&parsed.document);
@@ -551,7 +604,7 @@ impl Store for NbStore {
         // drop the baseline so the next `get` starts fresh.
         self.revisions.borrow_mut().remove(id);
         let verb = if done { "Done" } else { "Undone" };
-        self.checkpoint(&format!("[tasq] {verb}: {}", Self::file_name(&path)));
+        self.checkpoint(lock, &format!("[tasq] {verb}: {}", Self::file_name(&path)));
         Ok(())
     }
 
@@ -589,14 +642,14 @@ mod tests {
                 path: "/nb/home/.index".into()
             }
             .to_string(),
-            "rebuilt missing nb index at /nb/home/.index (todo ids may have changed)"
+            "rebuilt missing index at /nb/home/.index from the notebook's files (todo ids may have changed)"
         );
         assert_eq!(
             StoreWarning::Bookkeeping {
-                message: "nb git checkpoint failed".into()
+                message: "the background commit failed".into()
             }
             .to_string(),
-            "bookkeeping failed: nb git checkpoint failed"
+            "bookkeeping failed: the background commit failed"
         );
     }
 
@@ -606,16 +659,16 @@ mod tests {
             .with_env(vec![("NB_DIR".into(), "/d".into())])
             .with_home("/h")
             .with_config_file("/c.toml")
-            .with_bookkeeper(tasq_core::config::Bookkeeper::Native);
+            .with_sync_interval(60);
         assert_eq!(o.env, vec![("NB_DIR".to_owned(), "/d".to_owned())]);
         assert_eq!(o.home, Some(PathBuf::from("/h")));
         assert_eq!(o.config_file, Some(PathBuf::from("/c.toml")));
         assert_eq!(o.workflow, Workflow::default());
-        assert_eq!(o.bookkeeper, tasq_core::config::Bookkeeper::Native);
+        assert_eq!(o.sync_interval, 60);
         let plain = NbStoreOptions::new(Workflow::default());
         assert_eq!(plain.env, Vec::new());
         assert_eq!((plain.home, plain.config_file), (None, None));
-        assert_eq!(plain.bookkeeper, tasq_core::config::Bookkeeper::Auto);
+        assert_eq!(plain.sync_interval, 0);
     }
 
     #[test]

@@ -53,7 +53,7 @@ Workspace of seven crates; dependencies flow one way, toward `tasq-core`.
 | Crate | Role |
 |---|---|
 | `crates/core` (`tasq-core`) | Domain model, markdown format, queries, config, clock, and the `Store`/`Source`/`Launcher` traits. **No I/O, no process spawning, no terminal or network deps.** |
-| `crates/store-nb` | `Store` impl over an nb notebook plus the `Bookkeeper` strategy and `doctor` checks. The only crate that runs `nb` (and `git`, for bookkeeping). |
+| `crates/store-nb` | `Store` impl over an nb notebook plus the `Bookkeeper`, the background commit job and `doctor` checks. Runs `git` for bookkeeping; nothing runs `nb` (ADR-0023). |
 | `crates/sources`, `crates/launch` | Stubs. Phase 5 (GitLab/GitHub/LLM-bridge sources) and Phase 4 (shell/tmux/claude/herdr launchers). |
 | `crates/worktree` (`tasq-worktree`) | Runs `git` for declared worktrees (ADR 0022): branch state, `git worktree add`. The decisions live in `tasq_core::worktree`. |
 | `crates/cli` (binary `tasq`) | Stub. Phase 3 (current). Must stay thin: every command is a core function plus rendering, and every command gets `--json`. |
@@ -71,7 +71,7 @@ The nb file encodes status and priority as `#tags` (`#gitlab #A #ready`). In the
 
 `Store::update` takes the whole task; the nb store diffs it against disk (`store-nb/src/diff.rs`), applies ops, and writes atomically with `NamedTempFile::persist`. A `Revision` (mtime + length + hash) captured on read makes a later `update` fail with `Conflict` if the file changed. Task ids are `.index` line numbers (positional; `describe()` reports this so the CLI can warn).
 
-Reads never spawn a process. After a write, a `Bookkeeper` handles `.index` registration, `nb git checkpoint --wait`, verify and sync: `NbCliBookkeeper` when `nb` is on PATH, `NativeBookkeeper` (append to `.index`, run `git`) otherwise, `NoopBookkeeper` in tests. Bookkeeping failure after a successful write is a warning with the manual fix (`nb index reconcile`), never reported as data loss. nb's `.index` is only ever appended to; never rebuild or reorder it.
+Reads never spawn a process. A write takes `.git/tasq/lock` (`Bookkeeper::lock`, which waits for the previous job), writes the file, registers new files in `.index`, then `checkpoint` hands the lock to a detached `sh` job (`store-nb/src/job.rs`) that commits and, every `store.sync_interval` seconds, pulls and pushes. The command never waits for git, signing or the network. `NativeBookkeeper` is the only real strategy, `NoopBookkeeper` is for tests. A failed job writes `.git/tasq/failed`, reported as a warning by the next `NbStore::open`, never as data loss. `.index` is appended to; `tasq store reconcile` only blanks lines of missing files and appends unlisted ones, never renumbers. Tests that write to a repository call `wait_for_bookkeeping()` before reading `git log`.
 
 ### Injected everything
 
@@ -83,7 +83,7 @@ Layered TOML (`tasq_core::config`): defaults, global `~/.config/tasq/config.toml
 
 ## Testing nb without touching the real notebook
 
-`crates/store-nb/tests/support/mod.rs` builds an `NbEnv`: a temp copy of `tests/fixtures/nb/home` with `NB_DIR`, `NBRC_PATH`, `HOME` (with a `.gitconfig`, nb refuses to work without a git identity) and `NB_AUTO_SYNC=0`. Every `nb` invocation in tests gets only that environment. Fixture ids are named constants (`id::FULL`, `id::DONE`, `id::MISSING`, ...). Tests that need the real `nb` call `nb_or_skip`. Probed nb behaviours (async checkpoints, exit codes of `nb git dirty`, index renumbering on reconcile) are recorded under "nb facts" in PROGRESS.md; check there before assuming how nb behaves.
+`crates/store-nb/tests/support/mod.rs` builds an `NbEnv`: a temp copy of `tests/fixtures/nb/home` with `NB_DIR`, `NBRC_PATH`, `HOME` (with a `.gitconfig`, nb refuses to work without a git identity) and `NB_AUTO_SYNC=0`. Every `nb` and `git` invocation in tests gets only that environment; the store never runs `nb`, the parity tests run it next to the store. Fixture ids are named constants (`id::FULL`, `id::DONE`, `id::MISSING`, ...). Tests that need the real `nb` call `nb_or_skip`. Probed nb behaviours (index renumbering on reconcile, blank index lines) are recorded under "nb facts" in PROGRESS.md; check there before assuming how nb behaves.
 
 Markdown format fixtures live in `crates/core/tests/fixtures/*.md`; round trips must be byte-identical.
 

@@ -1,7 +1,7 @@
 [store]
 kind = "nb"
-notebook = "home"            # resolves ~/.nb/<notebook> or asks nb
-bookkeeper = "auto"          # auto | nb | native — who maintains .index and git commits
+notebook = "home"            # resolves ~/.nb/<notebook>, or a path
+sync_interval = 3600         # seconds between automatic pulls and pushes; 0 never
 
 [workflow]
 statuses = ["in-progress", "ready", "waiting", "blocked", "later"]

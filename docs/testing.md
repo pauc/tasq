@@ -34,18 +34,26 @@ environment, so the real `~/.nb` is never read or written. Fixture ids are the c
 `support::id` (`FULL`, `NOTE`, `SUPPORT`, `DONE`, `MISSING`, `WAITING`, `NO_TAGS`); use them,
 not literals.
 
-Tests that need the real `nb` start with `nb_or_skip("<test name>")`: when `nb` is not on
+The store never runs `nb` (ADR-0023). Its background commit job is tested on real temporary
+repositories (`NbEnv::git_init`, `add_bare_remote`); `slow_git(seconds)` puts a `git` whose
+`commit` sleeps on the store's `PATH`, to prove a write returns before the commit lands. A test
+that writes to a repository calls `wait_for_bookkeeping()` (or takes and drops the bookkeeper's
+lock) before looking at `git log`, and before the temp directory goes away.
+
+The nb parity tests (`tests/nb_parity.rs` and a few in `tests/create.rs`) run the real `nb`
+next to the store to prove nb still reads what tasq writes. They start with
+`nb_or_skip("<test name>")`: when `nb` is not on
 `PATH` they print a notice and pass vacuously, unless `TASQ_REQUIRE_NB=1` is set, in which case
 the skip is a failure. CI sets it (after installing nb), so run `TASQ_REQUIRE_NB=1 scripts/guard
 cargo test -p tasq-store-nb` before pushing anything that touches the store. The nb behaviours
-the tests rely on (asynchronous checkpoints, exit codes of `nb git dirty`, renumbering on
-`nb index reconcile`, the git-identity requirement) are recorded under "nb facts" in
+the tests rely on (renumbering on `nb index reconcile`, blank index lines accepted by
+`nb index verify`, the git-identity requirement) are recorded under "nb facts" in
 `ruli/features/rust-rewrite/PROGRESS.md`; check there before assuming how nb behaves.
 
 The CLI harness (`crates/cli/tests/support/mod.rs`, `TestEnv`) copies the same fixture
 notebook, sets `HOME` to an isolated directory and `PATH` to a directory holding only a `git`
 symlink, so the binary never sees the real config or a real `nb` and its output is identical
-whether or not nb is installed (doctor's `nb` check is always `WARN` there). `fake_tool(name,
+whether or not nb is installed. `fake_tool(name,
 body)` installs a script on that `PATH` to stand in for `claude`, `glow`, `tmux` or `herdr`;
 fakes must use absolute paths for anything that is not a shell builtin. Snapshots
 normalise the temp root to `[ROOT]`.

@@ -8,8 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use tasq_core::config::{
-    Bookkeeper, Config, ConfigError, DetailPosition, DueFormat, EnvStrategy, ForgeKind, KeySpec,
-    LoadOptions, Origin, SourceKind, Summarizer, WeekStart, expand_tilde,
+    Config, ConfigError, DetailPosition, DueFormat, EnvStrategy, ForgeKind, KeySpec, LoadOptions,
+    Origin, SourceKind, Summarizer, WeekStart, expand_tilde,
 };
 use tasq_core::model::Status;
 use tasq_core::theme::Preset;
@@ -113,7 +113,7 @@ fn empty_environment_yields_defaults() {
 fn defaults_match_the_script() {
     let c = Config::default();
     assert_eq!(c.store.notebook, "home");
-    assert_eq!(c.store.bookkeeper, Bookkeeper::Auto);
+    assert_eq!(c.store.sync_interval, 3600);
     assert_eq!(c.workflow.statuses, Status::DEFAULTS.to_vec());
     assert_eq!(c.workflow.default_status, Status::READY);
     assert_eq!(c.workflow.workflow(), tasq_core::model::Workflow::default());
@@ -165,7 +165,7 @@ fn default_config_round_trips_through_toml_and_matches_the_module_docs() {
 [store]
 kind = \"nb\"
 notebook = \"home\"
-bookkeeper = \"auto\"
+sync_interval = 3600
 
 [workflow]
 statuses = [\"in-progress\", \"ready\", \"waiting\", \"blocked\", \"later\"]
@@ -572,7 +572,10 @@ fn global_file_alone() {
         Some(&Origin::File(path.clone()))
     );
     assert_eq!(loaded.file_for("store.notebook"), Some(path.as_path()));
-    assert_eq!(loaded.explain("store.bookkeeper"), Some(&Origin::Defaults));
+    assert_eq!(
+        loaded.explain("store.sync_interval"),
+        Some(&Origin::Defaults)
+    );
     assert_eq!(loaded.layers[1].keys, vec!["store.notebook", "ui.no_osc8"]);
 }
 
@@ -623,14 +626,13 @@ fn without_home_there_is_no_global_file_but_xdg_still_works() {
 fn project_file_overrides_global_field_wise() {
     let sb = Sandbox::new();
     let global = sb.write_global(
-        "[store]\nnotebook = \"global\"\nbookkeeper = \"nb\"\n[ui]\nglow_style = \"light\"\nweek_start = \"sunday\"\n",
+        "[store]\nnotebook = \"global\"\nsync_interval = 60\n[ui]\nglow_style = \"light\"\nweek_start = \"sunday\"\n",
     );
     let project = sb.write_project("[store]\nnotebook = \"project\"\n");
     let loaded = Config::load(&sb.opts()).unwrap();
     assert_eq!(loaded.config.store.notebook, "project");
     assert_eq!(
-        loaded.config.store.bookkeeper,
-        Bookkeeper::Nb,
+        loaded.config.store.sync_interval, 60,
         "sibling key survives"
     );
     assert_eq!(loaded.config.ui.glow_style, "light");
@@ -641,7 +643,7 @@ fn project_file_overrides_global_field_wise() {
         Some(&Origin::File(project.clone()))
     );
     assert_eq!(
-        loaded.explain("store.bookkeeper"),
+        loaded.explain("store.sync_interval"),
         Some(&Origin::File(global.clone()))
     );
     assert_eq!(loaded.explain("store"), Some(&Origin::File(project)));
@@ -910,10 +912,10 @@ fn invalid_status_spelling_is_an_error_with_position() {
 #[test]
 fn invalid_enum_value_lists_the_expected_ones() {
     let sb = Sandbox::new();
-    sb.write_global("[store]\nbookkeeper = \"manual\"\n");
+    sb.write_global("[launch]\nenv = \"manual\"\n");
     let err = Config::load(&sb.opts()).unwrap_err().to_string();
     assert!(err.contains("unknown variant `manual`"), "{err}");
-    assert!(err.contains("`auto`, `nb`, `native`"), "{err}");
+    assert!(err.contains("expected `inherit` or `direnv`"), "{err}");
 
     sb.write_global("[[source]]\nname = \"a\"\nkind = \"slack\"\n");
     let err = Config::load(&sb.opts()).unwrap_err().to_string();
@@ -991,7 +993,7 @@ fn env_overrides_files() {
     let mut opts = sb.opts();
     opts.env = env(&[
         ("TASQ_NOTEBOOK", "env"),
-        ("TASQ_BOOKKEEPER", "native"),
+        ("TASQ_SYNC_INTERVAL", "0"),
         ("TASQ_DEFAULT_PROJECT", "~/code/x"),
         ("TASQ_WORKTREES", "true"),
         (
@@ -1023,7 +1025,7 @@ fn env_overrides_files() {
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
     assert_eq!(c.store.notebook, "env");
-    assert_eq!(c.store.bookkeeper, Bookkeeper::Native);
+    assert_eq!(c.store.sync_interval, 0);
     assert_eq!(c.work.default_project, Some(sb.home.join("code/x")));
     assert!(c.worktree.enabled);
     assert_eq!(c.worktree.path, "{{project}}/.worktrees/{{branch_safe}}");
@@ -1073,7 +1075,8 @@ fn every_documented_env_key_is_a_real_key() {
         let mut opts = LoadOptions::new("/nonexistent");
         // Any value a string key accepts; enums get their first variant.
         let value = match *key {
-            "store.bookkeeper" | "launch.herdr.placement" => "auto",
+            "launch.herdr.placement" => "auto",
+            "store.sync_interval" => "60",
             "worktree.on_create" | "worktree.delete_branch" => "never",
             "worktree.on_done" => "keep",
             "launch.env" => "direnv",
@@ -1145,7 +1148,7 @@ fn boolean_env_values_are_parsed_leniently() {
 #[test]
 fn invalid_env_enum_value_is_reported_without_a_file() {
     let mut opts = LoadOptions::new("/nonexistent");
-    opts.env = env(&[("TASQ_BOOKKEEPER", "manual")]);
+    opts.env = env(&[("TASQ_LAUNCH_ENV", "manual")]);
     let err = Config::load(&opts).unwrap_err();
     match &err {
         ConfigError::Merge { message } => {
@@ -1546,7 +1549,7 @@ fn plan_section_4_6_example_loads_as_is() {
     let loaded = Config::load(&sb.opts()).unwrap();
     let c = &loaded.config;
     assert_eq!(c.store.notebook, "home");
-    assert_eq!(c.store.bookkeeper, Bookkeeper::Auto);
+    assert_eq!(c.store.sync_interval, 3600);
     assert_eq!(c.workflow.statuses.len(), 5);
     assert_eq!(
         c.work.default_project,
@@ -1689,7 +1692,7 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     let sb = Sandbox::new();
     // Every layer sets `store.notebook`; each also owns one private key.
     let global = sb.write_global(
-        "[store]\nnotebook = \"global\"\nbookkeeper = \"nb\"\n\
+        "[store]\nnotebook = \"global\"\nsync_interval = 60\n\
          [profile.p.store]\nnotebook = \"profile\"\n[profile.p.ui]\nglow_style = \"light\"\n",
     );
     let project = sb.write_project("[store]\nnotebook = \"project\"\n[ui]\npager = \"more\"\n");
@@ -1703,7 +1706,7 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
     assert_eq!(c.store.notebook, "override");
-    assert_eq!(c.store.bookkeeper, Bookkeeper::Nb);
+    assert_eq!(c.store.sync_interval, 60);
     assert_eq!(c.ui.pager, "more");
     assert_eq!(c.ui.glow_style, "light");
     assert_eq!(c.launch.default, "shell");
@@ -1716,7 +1719,7 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     };
     assert_eq!(loaded.explain("store.notebook"), Some(&Origin::Overrides));
     assert_eq!(
-        loaded.explain("store.bookkeeper"),
+        loaded.explain("store.sync_interval"),
         Some(&Origin::File(global.clone()))
     );
     assert_eq!(
