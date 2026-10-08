@@ -231,11 +231,6 @@ const SCENARIOS: &[(&str, Op, Option<bool>)] = &[
         Some(false),
     ),
     (
-        "session_duplicate_elsewhere",
-        |d, _| Some(ops::append_session(d, &session("feature-a", Some("again")))),
-        Some(false),
-    ),
-    (
         "mr_creates_related_and_sub",
         |d, _| Some(ops::append_merge_request(d, &mr(MR1, "First"))),
         Some(true),
@@ -1171,17 +1166,57 @@ fn worktree_tracking_matches_the_path_prefix_only() {
     );
 }
 
+/// Deliberate deviation from the script, which looked for `` `id` `` and
+/// `- <path>` anywhere in the file: the duplicate checks only look where the
+/// reader takes sessions and worktrees from, so nothing written is lost on
+/// the way back (found by `format_props`: a worktree on branch `s0` hid
+/// session `s0`).
 #[test]
-fn session_tracking_needs_the_backticks() {
-    let mut doc = Document::parse("# [ ] T\n\n## Description\n\nabout s-1 and `s-2`\n").unwrap();
-    assert!(ops::append_session(&mut doc, &session("s-1", None)));
-    assert!(!ops::append_session(&mut doc, &session("s-2", None)));
+fn duplicates_are_checked_in_their_own_section_only() {
+    let mut doc = Document::parse(
+        "# [ ] T\n\n## Description\n\nabout `s-2`\n\n- /tmp/w is scratch\n\n\
+         ## Worktrees\n\n- /a (`s-3`)\n\n## Sessions\n\n- 2026-10-04 09:00: `s-1`\n",
+    )
+    .unwrap();
+    assert!(
+        ops::append_session(&mut doc, &session("s-2", None)),
+        "a mention in the description"
+    );
+    assert!(
+        ops::append_session(&mut doc, &session("s-3", None)),
+        "a branch name"
+    );
     assert!(!ops::append_session(
         &mut doc,
         &session("s-1", Some("again"))
     ));
+    assert!(
+        !ops::append_session(&mut doc, &session("s-2", None)),
+        "now tracked"
+    );
+    assert!(
+        ops::append_worktree(&mut doc, &Worktree::new("/tmp/w")),
+        "a description bullet"
+    );
+    assert!(!ops::append_worktree(
+        &mut doc,
+        &Worktree::on_branch("/a", "other")
+    ));
+    assert!(!ops::append_worktree(&mut doc, &Worktree::new("/tmp/w")));
     assert_eq!(
         format::render(&doc),
-        "# [ ] T\n\n## Description\n\nabout s-1 and `s-2`\n\n## Sessions\n\n- 2026-10-04 10:15: `s-1`\n"
+        "# [ ] T\n\n## Description\n\nabout `s-2`\n\n- /tmp/w is scratch\n\n\
+         ## Worktrees\n\n- /a (`s-3`)\n- /tmp/w\n\n## Sessions\n\n- 2026-10-04 09:00: `s-1`\n\
+         - 2026-10-04 10:15: `s-2`\n- 2026-10-04 10:15: `s-3`\n"
     );
+    let task = format::parse(
+        &format::render(&doc),
+        tasq_core::model::TaskId::from(1),
+        &Workflow::default(),
+    )
+    .unwrap()
+    .task;
+    let ids: Vec<&str> = task.sessions.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(ids, ["s-1", "s-2", "s-3"]);
+    assert_eq!(task.worktrees.len(), 2);
 }

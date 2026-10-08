@@ -1013,7 +1013,8 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   `set_project` (after `## Description` or first), `append_mr_entry` (`### Merge requests` at end
   of `## Related`), `cmd_set` (new `## Tags` appended at end of file). Test each separately.
 - Idempotence checks differ per list: worktrees match the path prefix, sessions match the backticked
-  id anywhere in the file, MRs match `(url)` inside the subsection.
+  id anywhere in the file, MRs match `(url)` inside the subsection. **(2026-10-08)** The worktree and
+  session checks are now scoped to their own section (see Deviations).
 - The Sessions separator is a real EM DASH (U+2014) with spaces, not a hyphen.
 - `### Merge requests` ends at any line starting with `##`, so another `###` also closes it.
 - `--due` is stored verbatim by the script; existing non-ISO values must still parse (keep raw string
@@ -1061,6 +1062,17 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   and a cold build; the full workspace then passed. Do this after any move of the checkout.
 
 ## Deviations from the plan
+
+- **(2026-10-08) Worktree and session duplicate checks scoped to their section.** The script
+  skipped a session whenever `` `id` `` occurred anywhere in the file and a worktree whenever
+  any line started with `- <path>`, but the reader only takes entries from `## Sessions` /
+  `## Worktrees`. A worktree on branch `s0` therefore swallowed session `s0`:
+  `Document::from_task` dropped it silently and `NbStore::update` reported
+  `StoreError::Unsupported` ("changing sessions"). Found by `format_props`
+  (`tasks_written_from_scratch_read_back_equal`). `ops::append_session` / `append_worktree` now
+  check parsed entries of their own section; the script-generated scenario
+  `session_duplicate_elsewhere` was removed and `duplicates_are_checked_in_their_own_section_only`
+  pins the new rule. 124 mutants in `format/ops.rs`, 0 missed; 20 000 proptest cases clean.
 
 - **(2026-10-08) PLAN 4.5 hybrid nb bookkeeping dropped (ADR 0023).** tasq never runs nb;
   `store.bookkeeper` and `TASQ_BOOKKEEPER` are removed, `store.sync_interval` /
