@@ -21,14 +21,11 @@ Where things stand (2026-10-08, after WT-207):
   worktree up`), and releasing at close (`tasq done [--yes]`, the TUI's `d`, `tasq worktree
   release <id> [--force] [--dry-run] [--yes]`), and moving around (`tasq worktree ls`,
   `switch`, `path`, `shell-init`).
-- The installed `tasq` is still the build of 9333023 (WT-102), installed because the author's
-  config sets `[worktree] enabled = true`. Reinstalling from this branch changes daily use:
-  `c` opens the full create view, `on_create = "auto"` declares worktrees for new tasks in a git
-  checkout, launching creates them, and closing a task now removes clean worktrees and deletes
-  merged or pushed branches. Ask the author before reinstalling.
-- Next: WT-208 (the author's workspaces off gwm) needs the author: their `gwm.yml` files are
-  outside this repository, and the acceptance runs the installed `tasq`, which the author said
-  on 2026-10-08 not to reinstall for now. Phase 3 (WT-301 `prune` first) can start without them.
+- The installed `tasq` is bb1e820 from this branch, reinstalled at the author's request on
+  2026-10-08: launching creates worktrees, `tasq done` releases them. Ask before reinstalling.
+- Next: finish WT-208 (silverfin cycle, nothing calling gwm, uninstall gwm); Phase 3 (WT-301
+  `prune` first) can start in parallel. The installed `tasq` is bb1e820 (reinstalled at the
+  author's request, 2026-10-08).
 - Cleanup the author must do: a WT-207 test run on 2026-10-08 20:21 created
   `/home/pau/code/tasks-wt/feature-a` (a worktree of a deleted temp repository: `.git`,
   `README`, `.tasq.toml`) and its parent `/home/pau/code/tasks-wt`. Deleting them was refused
@@ -53,7 +50,7 @@ Where things stand (2026-10-08, after WT-207):
 | WT-205 | Integration checks | done | core `worktree::integration` (`Check` cheapest first, `first_passing`, `targets`, `pushed_ref`, `cherry_all_upstream`, `merge_tree`, `Safety { integrated, pushed }` with `seen()` and `reason()`), 89151cd; `tasq_worktree::Git::safety`, e04c86c; 12 temp-repo tests (one per check, pushed with and without upstream, neither, local `main` fallback, the default branch itself, no local branch); 967 tests green; 0 missed mutants (76: 67 caught, 9 unviable) |
 | WT-206 | Releasing at close | done | 8409258 (core), ccd1b62 (crate), 6eecda4 (CLI, docs). core: `on_close(.., force)`, `DirSeen`/`KeepWorktree` gain `Foreign` and `InUse`, `KeepWorktree::reason`/`KeepBranch::reason`, `status` (`listed`, `changes` without provisioned paths, `dir_seen`), `provision::Step::target`; crate: `Git::{worktrees, changes, remove, prune, delete_branch}`; CLI: `worktree::release` (`Releasing`), `tasq worktree release`, `done --yes`, TUI `after_done`; `worktree_hooks::Approval` (`Skip` for the TUI) and an event sink instead of printing; 982 tests green; 0 missed mutants (diff: 67, 60 caught, 7 unviable) |
 | WT-207 | `ls`, `switch`, `path`, `shell-init`, completions | done | 32cc9b6 (core `worktree::target`: `parse`, `by_branch`; `hooks::state_file`), 38f29bf (CLI `worktree_nav`: `ls [ID] [--all]`, `switch [TARGET] [--yes]` with fzf or a numbered list, `path`, `shell-init bash|zsh|fish` through `$TASQ_CD_FILE`, `--json` for each; completions test; docs/json.md, docs/config.md); 994 tests green; 0 missed mutants (diff 61 + nav/status 67) |
-| WT-208 | Switch the author's workspaces off gwm (manual acceptance) | todo | |
+| WT-208 | Switch the author's workspaces off gwm (manual acceptance) | in progress | zantop_atelier dropped by the author (2026-10-08). tasq_lab: `.tasq.toml` written, full cycle passed (see Learnings). silverfin: `.tasq.toml` written (gwm's `{{original}}` as a variable), hooks trusted, cycle not run yet. Left: silverfin run, check nothing calls gwm, uninstall gwm |
 | WT-301 | `prune` | todo | |
 | WT-302 | Status-rich `ls` | todo | |
 | WT-303 | Fast copies of ignored files | todo | |
@@ -124,6 +121,17 @@ Where things stand (2026-10-08, after WT-207):
   tree are the same commit: tests that need two distinct commits change the message
   (`cherry-pick -x`). `MergeAddsNothing` needs `git merge-tree --write-tree` (git 2.38); an
   older git fails the check and falls through to `git cherry`.
+- WT-208 tasq_lab acceptance (2026-10-08, installed tasq bb1e820, the author's real notebook
+  and config): throwaway task 51 declared `wt208-check` at `tasq_lab/wt208_check` (the
+  `.tasq.toml` path, no git run); `tasq worktree up 51 --from main` created it from `main`
+  without an upstream, copied `.envrc` byte for byte and ran the trusted `direnv allow .` (direnv
+  reports it allowed); `ls` showed it clean; `pick --dry-run` starts there. `tasq done 51` from
+  the main checkout removed the directory and deleted the branch ("same commit as main"), git
+  lists no worktree, the `## Worktrees` entry stayed. Reopen + `up` recreated it the same way
+  and a second `done` released it again. `--from main` because the repository has no
+  `origin/HEAD` (the author left that as is). The author's `~/.zshrc` loads
+  `tasq worktree shell-init zsh` next to gwm's line; with zsh's `EXTENDED_GLOB` a bare `^`
+  globs, so `switch '^'` must be quoted (the author declined an alias).
 - WT-207: a fixture task (`id::FULL`, task 1) declares `/home/pau/code/tasks-wt/feature-a`, a
   real path on the author's machine. A first `switch` test picked it and `materialize` ran `git
   worktree add` there. Tests that list or create every task's worktrees now strip that

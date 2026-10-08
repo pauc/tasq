@@ -33,9 +33,9 @@ Claude prompt, not in the files.
    when that loses nothing; the entry stays, so launching it again recreates it the same way.
 6. gwm parity: symlinks, copies, rendered templates, custom variables, `post_create` and
    `post_remove` hooks, `switch` with a shell `cd` wrapper and fzf, `list` with dirty state,
-   `remove` refusing a dirty tree, completions. The author's three `gwm.yml` workspaces
-   (`~/code/SF/silverfin_worspace`, `~/code/zantop_atelier`, `~/code/tasq_lab`) are the
-   acceptance tests.
+   `remove` refusing a dirty tree, completions. The author's `gwm.yml` workspaces
+   (`~/code/SF/silverfin_worspace`, `~/code/tasq_lab`; `~/code/zantop_atelier` was dropped on
+   2026-10-08) are the acceptance tests.
 7. Improvements over gwm: merged-branch detection that understands squash and rebase merges,
    `prune`, cleanup when a task is closed, a status-rich `ls` joined with task data,
    trust for hooks that come from a repo, reflink copies of gitignored files, a stable port block
@@ -334,8 +334,8 @@ Or contained in its upstream on the remote (pushed).
 
 #### WT-208: Switch the author's workspaces off gwm (manual acceptance)
 **Description:** Not shipped code. Write a `.tasq.toml` `[worktree]` table for each of
-`~/code/SF/silverfin_worspace`, `~/code/zantop_atelier` and `~/code/tasq_lab` equivalent to its
-`gwm.yml`, set `worktree.enabled = true` in the author's config, and stop calling gwm.
+`~/code/SF/silverfin_worspace` and `~/code/tasq_lab` equivalent to its `gwm.yml`
+(`~/code/zantop_atelier` dropped by the author on 2026-10-08), set `worktree.enabled = true` in the author's config, and stop calling gwm.
 **Acceptance criteria:**
 - [ ] In each workspace, a task declared, launched, closed and launched again goes through the
       whole lifecycle with the same files, links, `.envrc` and hook effects as gwm gave; recorded
