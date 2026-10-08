@@ -5,7 +5,7 @@ Plan: [PLAN.md](PLAN.md). Decision: [ADR 0022](../../../docs/adr/0022-worktrees-
 
 ## Status
 
-**Phase 1 done (2026-10-07); Phase 2 done but WT-208 (2026-10-08).** Scope agreed with the author on
+**Phase 1 done (2026-10-07); Phase 2 done (2026-10-08).** Scope agreed with the author on
 2026-10-07: core feature behind `worktree.enabled`, full gwm replacement, then improvements from the
 prior-art survey (PLAN section 7). Plugin task fields split out to nb todo 46. Lifecycle settled
 the same day (PLAN 4.2): declare at creation, create at launch, release at close, never remove the
@@ -23,8 +23,7 @@ Where things stand (2026-10-08, after WT-207):
   `switch`, `path`, `shell-init`).
 - The installed `tasq` is bb1e820 from this branch, reinstalled at the author's request on
   2026-10-08: launching creates worktrees, `tasq done` releases them. Ask before reinstalling.
-- Next: finish WT-208 (check nothing calls gwm, uninstall gwm, delete the `gwm.yml` files); Phase 3 (WT-301
-  `prune` first) can start in parallel. The installed `tasq` is bb1e820 (reinstalled at the
+- Next: Phase 3, WT-301 `prune` first. The installed `tasq` is bb1e820 (reinstalled at the
   author's request, 2026-10-08).
 - Cleanup the author must do: a WT-207 test run on 2026-10-08 20:21 created
   `/home/pau/code/tasks-wt/feature-a` (a worktree of a deleted temp repository: `.git`,
@@ -50,7 +49,7 @@ Where things stand (2026-10-08, after WT-207):
 | WT-205 | Integration checks | done | core `worktree::integration` (`Check` cheapest first, `first_passing`, `targets`, `pushed_ref`, `cherry_all_upstream`, `merge_tree`, `Safety { integrated, pushed }` with `seen()` and `reason()`), 89151cd; `tasq_worktree::Git::safety`, e04c86c; 12 temp-repo tests (one per check, pushed with and without upstream, neither, local `main` fallback, the default branch itself, no local branch); 967 tests green; 0 missed mutants (76: 67 caught, 9 unviable) |
 | WT-206 | Releasing at close | done | 8409258 (core), ccd1b62 (crate), 6eecda4 (CLI, docs). core: `on_close(.., force)`, `DirSeen`/`KeepWorktree` gain `Foreign` and `InUse`, `KeepWorktree::reason`/`KeepBranch::reason`, `status` (`listed`, `changes` without provisioned paths, `dir_seen`), `provision::Step::target`; crate: `Git::{worktrees, changes, remove, prune, delete_branch}`; CLI: `worktree::release` (`Releasing`), `tasq worktree release`, `done --yes`, TUI `after_done`; `worktree_hooks::Approval` (`Skip` for the TUI) and an event sink instead of printing; 982 tests green; 0 missed mutants (diff: 67, 60 caught, 7 unviable) |
 | WT-207 | `ls`, `switch`, `path`, `shell-init`, completions | done | 32cc9b6 (core `worktree::target`: `parse`, `by_branch`; `hooks::state_file`), 38f29bf (CLI `worktree_nav`: `ls [ID] [--all]`, `switch [TARGET] [--yes]` with fzf or a numbered list, `path`, `shell-init bash|zsh|fish` through `$TASQ_CD_FILE`, `--json` for each; completions test; docs/json.md, docs/config.md); 994 tests green; 0 missed mutants (diff 61 + nav/status 67) |
-| WT-208 | Switch the author's workspaces off gwm (manual acceptance) | in progress | zantop_atelier dropped by the author (2026-10-08). tasq_lab and silverfin: `.tasq.toml` written, hooks trusted, full cycle passed twice each (see Learnings). Left: check nothing calls gwm, uninstall gwm (its `~/.zshrc` line, `~/.local/bin/gwm`), delete the `gwm.yml` files |
+| WT-208 | Switch the author's workspaces off gwm (manual acceptance) | done | 6e7140a, d85937a. tasq_lab and silverfin: `.tasq.toml` written, hooks trusted, full cycle passed twice each on the real notebook (tasks 51, 52; see Learnings). zantop_atelier dropped and gwm kept installed by the author (see Deviations) |
 | WT-301 | `prune` | todo | |
 | WT-302 | Status-rich `ls` | todo | |
 | WT-303 | Fast copies of ignored files | todo | |
@@ -206,3 +205,6 @@ None.
   wants an edited command to pass as approved, and comparing the text needs no hash at all.
 - 2026-10-08: WT-202 dropped `LifecycleError::NoBranch`; `on_launch` returns a `LaunchAction`
   (no `Result`) and skips entries without a branch instead of failing (see Learnings).
+- 2026-10-08: WT-208 drops `~/code/zantop_atelier` and leaves gwm installed (its `~/.zshrc` line,
+  `~/.local/bin/gwm`, the `gwm.yml` files), both by the author's decision. tasq neither reads
+  nor calls gwm; the two coexist (`gwm` and `tasq` shell functions do not clash).
