@@ -124,11 +124,21 @@ pub fn env(vars: &Vars) -> Vec<(String, String)> {
 /// Where approvals are kept: `$XDG_STATE_HOME/tasq/trust.toml`, else
 /// `~/.local/state/tasq/trust.toml`; `None` when neither is known.
 pub fn trust_file(xdg_state_home: Option<&str>, home: Option<&Path>) -> Option<PathBuf> {
+    state_file(xdg_state_home, home, "trust.toml")
+}
+
+/// `name` in tasq's state directory: `$XDG_STATE_HOME/tasq`, else
+/// `~/.local/state/tasq`; `None` when neither is known.
+pub fn state_file(
+    xdg_state_home: Option<&str>,
+    home: Option<&Path>,
+    name: &str,
+) -> Option<PathBuf> {
     let state = match xdg_state_home.filter(|v| !v.is_empty()) {
         Some(dir) => PathBuf::from(dir),
         None => home?.join(".local").join("state"),
     };
-    Some(state.join("tasq").join("trust.toml"))
+    Some(state.join("tasq").join(name))
 }
 
 /// The hook command lines the user approved, per configuration file. A
@@ -293,6 +303,10 @@ mod tests {
             Some(PathBuf::from("/home/me/.local/state/tasq/trust.toml"))
         );
         assert_eq!(trust_file(None, None), None);
+        assert_eq!(
+            state_file(None, Some(home), "previous-worktree"),
+            Some(home.join(".local/state/tasq/previous-worktree"))
+        );
     }
 
     #[test]
