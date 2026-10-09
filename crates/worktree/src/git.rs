@@ -198,14 +198,29 @@ impl Git {
             .map(drop)
     }
 
-    /// `git worktree prune`: forgets worktrees whose directory is gone, so
-    /// their branches can be deleted.
+    /// `git worktree prune --verbose`: forgets worktrees whose directory is
+    /// gone, so their branches can be deleted; with `dry_run`, only says
+    /// which. The lines git reports, one per forgotten worktree
+    /// (`Removing worktrees/<name>: <why>`).
     ///
     /// # Errors
     ///
     /// [`GitError::Failed`] with git's message.
-    pub fn prune(&self, repo: &Path) -> Result<(), GitError> {
-        self.check(repo, &["worktree", "prune"]).map(drop)
+    pub fn prune(&self, repo: &Path, dry_run: bool) -> Result<Vec<String>, GitError> {
+        let mut args = vec!["worktree", "prune", "--verbose"];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        let out = self.check(repo, &args)?;
+        // git reports on stderr; stdout is read too in case that changes.
+        Ok(out
+            .stderr
+            .lines()
+            .chain(out.stdout.lines())
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect())
     }
 
     /// `git branch -D <branch>`: the caller decided nothing is lost.

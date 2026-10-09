@@ -643,7 +643,15 @@ fn remove_prune_and_delete_the_branch() {
         .unwrap();
     std::fs::remove_dir_all(&b).unwrap();
     assert!(r.git.delete_branch(&r.project, "b").is_err());
-    assert_eq!(r.git.prune(&r.project), Ok(()));
+    let stale =
+        vec!["Removing worktrees/app-b: gitdir file points to non-existent location".to_owned()];
+    assert_eq!(r.git.prune(&r.project, true), Ok(stale.clone()));
+    assert!(
+        r.git.delete_branch(&r.project, "b").is_err(),
+        "a dry run forgets nothing"
+    );
+    assert_eq!(r.git.prune(&r.project, false), Ok(stale));
+    assert_eq!(r.git.prune(&r.project, false), Ok(Vec::new()));
     assert_eq!(r.git.delete_branch(&r.project, "b"), Ok(()));
 
     // A locked worktree is refused even so.
@@ -660,8 +668,8 @@ fn remove_prune_and_delete_the_branch() {
     );
     assert!(l.is_dir());
     assert!(matches!(
-        r.git.prune(&r.root),
-        Err(GitError::Failed { command, .. }) if command == "worktree prune"
+        r.git.prune(&r.root, false),
+        Err(GitError::Failed { command, .. }) if command == "worktree prune --verbose"
     ));
     assert!(matches!(
         r.git.delete_branch(&r.project, "nope"),
