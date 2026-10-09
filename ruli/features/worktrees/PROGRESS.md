@@ -5,7 +5,7 @@ Plan: [PLAN.md](PLAN.md). Decision: [ADR 0022](../../../docs/adr/0022-worktrees-
 
 ## Status
 
-**Phase 1 done (2026-10-07); Phase 2 done (2026-10-08).** Scope agreed with the author on
+**Phase 1 done (2026-10-07); Phase 2 done (2026-10-08); Phase 3 started (WT-301 done 2026-10-09).** Scope agreed with the author on
 2026-10-07: core feature behind `worktree.enabled`, full gwm replacement, then improvements from the
 prior-art survey (PLAN section 7). Plugin task fields split out to nb todo 46. Lifecycle settled
 the same day (PLAN 4.2): declare at creation, create at launch, release at close, never remove the
@@ -23,8 +23,9 @@ Where things stand (2026-10-08, after WT-207):
   `switch`, `path`, `shell-init`).
 - The installed `tasq` is bb1e820 from this branch, reinstalled at the author's request on
   2026-10-08: launching creates worktrees, `tasq done` releases them. Ask before reinstalling.
-- Next: Phase 3, WT-301 `prune` first. The installed `tasq` is bb1e820 (reinstalled at the
-  author's request, 2026-10-08).
+- 2026-10-09: WT-301 done (`tasq worktree prune`), 40 commits ahead of `main`. Next: WT-302,
+  WT-303 or WT-304 (independent). The installed `tasq` is still bb1e820 and has no `prune`;
+  ask before reinstalling.
 - Cleanup the author must do: a WT-207 test run on 2026-10-08 20:21 created
   `/home/pau/code/tasks-wt/feature-a` (a worktree of a deleted temp repository: `.git`,
   `README`, `.tasq.toml`) and its parent `/home/pau/code/tasks-wt`. Deleting them was refused
@@ -50,7 +51,7 @@ Where things stand (2026-10-08, after WT-207):
 | WT-206 | Releasing at close | done | 8409258 (core), ccd1b62 (crate), 6eecda4 (CLI, docs). core: `on_close(.., force)`, `DirSeen`/`KeepWorktree` gain `Foreign` and `InUse`, `KeepWorktree::reason`/`KeepBranch::reason`, `status` (`listed`, `changes` without provisioned paths, `dir_seen`), `provision::Step::target`; crate: `Git::{worktrees, changes, remove, prune, delete_branch}`; CLI: `worktree::release` (`Releasing`), `tasq worktree release`, `done --yes`, TUI `after_done`; `worktree_hooks::Approval` (`Skip` for the TUI) and an event sink instead of printing; 982 tests green; 0 missed mutants (diff: 67, 60 caught, 7 unviable) |
 | WT-207 | `ls`, `switch`, `path`, `shell-init`, completions | done | 32cc9b6 (core `worktree::target`: `parse`, `by_branch`; `hooks::state_file`), 38f29bf (CLI `worktree_nav`: `ls [ID] [--all]`, `switch [TARGET] [--yes]` with fzf or a numbered list, `path`, `shell-init bash|zsh|fish` through `$TASQ_CD_FILE`, `--json` for each; completions test; docs/json.md, docs/config.md); 994 tests green; 0 missed mutants (diff 61 + nav/status 67) |
 | WT-208 | Switch the author's workspaces off gwm (manual acceptance) | done | 6e7140a, d85937a. tasq_lab and silverfin: `.tasq.toml` written, hooks trusted, full cycle passed twice each on the real notebook (tasks 51, 52; see Learnings). zantop_atelier dropped and gwm kept installed by the author (see Deviations) |
-| WT-301 | `prune` | todo | |
+| WT-301 | `prune` | done | 35000d3 (core), 7fc735d (crate), cfb86a9 (CLI, docs). core `worktree::prune::plan` (scope: done tasks to release, repositories to prune, `here` first); `tasq_worktree::Git::prune(repo, dry_run)` now `--verbose` and returns git's lines; CLI `worktree_nav::prune` (`tasq worktree prune [--all] [--dry-run] [--yes]`, `--json`), docs/config.md, docs/json.md; 998 tests green; 0 missed mutants (diff: 19, 18 caught, 1 unviable) |
 | WT-302 | Status-rich `ls` | todo | |
 | WT-303 | Fast copies of ignored files | todo | |
 | WT-304 | Port blocks and database names | todo | |
@@ -120,6 +121,15 @@ Where things stand (2026-10-08, after WT-207):
   tree are the same commit: tests that need two distinct commits change the message
   (`cherry-pick -x`). `MergeAddsNothing` needs `git merge-tree --write-tree` (git 2.38); an
   older git fails the check and falls through to `git cherry`.
+- WT-301: prune runs `git worktree prune` before releasing (the criteria name it second): a release
+  already prunes silently before it deletes a branch, so running git's prune last would report
+  nothing. Its scope is `ls`'s (the current directory's repository, everything with `--all` or
+  outside a repository), which adds `--all` and `--yes` to PLAN 4.6's `prune [--dry-run]`.
+  `on_done = "keep"` does not apply: running the command is the request. No `--force`: the
+  criteria say nothing dirty is ever removed, `tasq worktree release <id> --force` exists for
+  that. A dirty worktree of a done task is warned about on every prune. git writes
+  `prune --verbose` lines to stderr. Tests stripped task 1's real-path declaration as WT-207 does;
+  with `--all` its project would otherwise be a repository to prune on the author's machine.
 - WT-208 tasq_lab acceptance (2026-10-08, installed tasq bb1e820, the author's real notebook
   and config): throwaway task 51 declared `wt208-check` at `tasq_lab/wt208_check` (the
   `.tasq.toml` path, no git run); `tasq worktree up 51 --from main` created it from `main`
