@@ -61,6 +61,9 @@ pub fn dispatch(app: &App, command: &Command) -> Result<()> {
             dry_run,
             yes,
         }) => release_command(app, id, *force, *yes, *dry_run),
+        Some(WorktreeAction::Prune { all, dry_run, yes }) => {
+            worktree_nav::prune(app, *all, *yes, *dry_run)
+        }
         None => run(
             app,
             id.as_deref().unwrap_or_default(),
@@ -712,7 +715,7 @@ impl One<'_> {
                 let main = &self.settings.main;
                 // A directory removed by hand leaves its registration, and
                 // git refuses to delete a branch checked out there.
-                let _ = self.git.prune(main);
+                let _ = self.git.prune(main, false);
                 match self.git.delete_branch(main, branch) {
                     Ok(()) => lines.push(format!("deleted branch {branch} ({why})")),
                     Err(e) => report(HookEvent::Warning(format!("kept branch {branch}: {e}"))),

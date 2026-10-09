@@ -4122,6 +4122,114 @@ mod worktree_release {
         assert_eq!(branches(&env, &project), "b\nmain\n");
     }
 
+    /// `tasq worktree prune` (WT-301).
+    #[test]
+    fn prune_releases_what_closes_left_behind() {
+        let env = TestEnv::fixture();
+        // Task 1 of the fixture declares a worktree in a real project of
+        // the author's; prune must never reach it (see worktree_nav).
+        let full = "20260901090000.todo.md";
+        let text = env.read_task(full).replace(
+            "## Worktrees\n\n- /home/pau/code/tasks-wt/feature-a (`feature-a`)\n\n",
+            "",
+        );
+        assert!(!text.contains("Worktrees"), "the fixture changed: {text}");
+        env.write_task(full, &text);
+        // Task 3 closed with on_done = "keep": its clean worktree stays.
+        let (project, wt) = released_project(&env, "[worktree]\non_done = \"keep\"\n");
+        run(&env, &["done", "3"]);
+        assert!(wt.is_dir());
+        // Task 4 (done) with a dirty worktree, task 6 (open) with a clean one.
+        for (id, branch) in [("4", "e"), ("6", "d")] {
+            for args in [
+                vec!["project", id, project.to_str().unwrap()],
+                vec!["worktree", id, branch],
+                vec!["worktree", "up", id],
+            ] {
+                env.tasq_wt().args(args).assert().success();
+            }
+        }
+        let dirty = env.home.join("proj-e");
+        let open = env.home.join("proj-d");
+        std::fs::write(dirty.join("scratch"), "x\n").unwrap();
+        // A worktree deleted by hand: git still lists it.
+        let stray = env.home.join("proj-x");
+        env.git(
+            &project,
+            &["worktree", "add", "-q", "-b", "x", stray.to_str().unwrap()],
+        );
+        std::fs::remove_dir_all(&stray).unwrap();
+        let prune = |dir: &Path, args: &[&str]| {
+            let out = env
+                .tasq_wt()
+                .current_dir(dir)
+                .args(["worktree", "prune"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+            (env.normalize(&stdout(&out)), env.normalize(&stderr(&out)))
+        };
+        let kept = "tasq: warning: kept worktree [ROOT]/home/proj-e: it has uncommitted or \
+                    untracked changes; tasq worktree release 4 --force removes it\n";
+        let forgotten = "missing worktrees in [ROOT]/home/proj:\n  \
+                         Removing worktrees/proj-x: gitdir file points to non-existent location\n";
+        // Another repository is out of scope without --all.
+        let other = env.home.join("other");
+        env.git_repo(&other);
+        assert_eq!(
+            prune(&other, &["--dry-run"]),
+            ("nothing to prune\n".to_owned(), String::new())
+        );
+        let (out, err) = prune(&other, &["--dry-run", "--all"]);
+        assert_eq!(
+            out,
+            format!(
+                "would forget {forgotten}\
+                 [3] would remove worktree [ROOT]/home/proj-b\n\
+                 [3] would delete branch b (same commit as main)\n"
+            )
+        );
+        assert_eq!(err, kept);
+        assert!(wt.is_dir(), "a dry run changes nothing");
+        let (json, _) = prune(&project, &["--dry-run", "--json"]);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            serde_json::json!({
+                "schema": 1, "dry_run": true,
+                "released": [{"task": "3", "lines": [
+                    "would remove worktree [ROOT]/home/proj-b",
+                    "would delete branch b (same commit as main)",
+                ]}],
+                "forgotten": [{"repo": "[ROOT]/home/proj", "lines": [
+                    "Removing worktrees/proj-x: gitdir file points to non-existent location",
+                ]}],
+            })
+        );
+        let (out, err) = prune(&project, &[]);
+        assert_eq!(
+            out,
+            format!(
+                "forgot {forgotten}\
+                 [3] removed worktree [ROOT]/home/proj-b\n\
+                 [3] deleted branch b (same commit as main)\n"
+            )
+        );
+        assert_eq!(err, kept);
+        assert!(!wt.exists());
+        assert!(dirty.is_dir() && open.is_dir());
+        assert_eq!(branches(&env, &project), "d\ne\nmain\nx\n");
+        assert_eq!(
+            prune(&project, &[]),
+            ("nothing to prune\n".to_owned(), kept.to_owned())
+        );
+        env.tasq()
+            .args(["worktree", "prune"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
+    }
+
     #[test]
     fn on_done_keep_and_errors() {
         let env = TestEnv::fixture();

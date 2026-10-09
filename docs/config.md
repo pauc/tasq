@@ -286,6 +286,16 @@ pushed, nothing else. `--dry-run` lists what would go. The task is closed even w
 fails, and the `## Worktrees` entries always stay: launching the task again creates the worktree
 again, on the kept local branch, the pushed one, or a new one from `base`.
 
+`tasq worktree prune [--all] [--dry-run] [--yes]` cleans up what closes left behind: a worktree
+kept because it was dirty at the time, one of a task closed with `on_done = "keep"` or outside
+tasq, a directory deleted by hand. It first runs `git worktree prune` in the current directory's
+repository, so git forgets worktrees whose directory is gone (and their branches can be
+deleted), then releases the worktrees of every done task working there with the rules above,
+never with `--force`: a dirty worktree is named in a warning and kept, every time. `on_done`
+does not apply; the command is the request. `--all`, or running outside a repository, covers
+every repository a task declares worktrees in. `--dry-run` lists what would be forgotten,
+removed and deleted.
+
 `tasq worktree ls [ID] [--all]` lists declared worktrees with their task, status, branch and
 state (`clean`, `<n> changed` not counting provisioned files, `not created`): of one task, of
 the tasks working in the current directory's repository, or of every task with `--all` (or

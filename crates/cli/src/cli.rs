@@ -594,6 +594,26 @@ pub enum WorktreeAction {
         #[arg(long)]
         yes: bool,
     },
+    /// Forget missing worktrees, then release what closing tasks left behind.
+    ///
+    /// Runs `git worktree prune` in the current directory's repository, so
+    /// git forgets worktrees whose directory was deleted by hand. Then, for
+    /// every done task working in it, does what `tasq worktree release`
+    /// does: clean worktrees are removed and their branches deleted when
+    /// that loses nothing; dirty ones are always kept. --all (or running
+    /// outside a repository) covers every repository a task declares
+    /// worktrees in.
+    Prune {
+        /// Every done task, whatever the repository.
+        #[arg(long)]
+        all: bool,
+        /// Say what would be removed, deleted and forgotten; change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
+    },
     /// List declared worktrees: task, status, branch, state, path.
     ///
     /// Without ID, the worktrees of the tasks working in the current

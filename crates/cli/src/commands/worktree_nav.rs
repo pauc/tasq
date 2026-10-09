@@ -1,5 +1,7 @@
 //! Finding and moving between worktrees (plan 4.6, WT-207):
-//! `tasq worktree ls`, `switch`, `path` and `shell-init`.
+//! `tasq worktree ls`, `switch`, `path` and `shell-init`; and cleaning up
+//! after closed tasks across the same scope as `ls`: `tasq worktree prune`
+//! (WT-301).
 //!
 //! A process cannot change its shell's directory, so `switch` writes the
 //! destination to the file `$TASQ_CD_FILE` names, and the shell function
@@ -17,15 +19,17 @@ use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::query::Filter;
 use tasq_core::store::Store;
 use tasq_core::worktree::target::{self, Found, Target};
-use tasq_core::worktree::{git, hooks};
+use tasq_core::worktree::{git, hooks, prune as scope};
 use tasq_store_nb::NbStore;
 use tasq_worktree::Git;
 
 use crate::app::App;
 use crate::commands::existing_dir;
 use crate::commands::worktree::{
-    Repo, RepoSettings, disabled, materialize, project_of, provisioned,
+    Releasing, Repo, RepoSettings, disabled, materialize, prefixed, project_of, provisioned,
+    release,
 };
+use crate::commands::worktree_hooks::{self, Approval};
 use crate::error::{CliError, Result};
 use crate::json;
 
@@ -198,6 +202,104 @@ fn status_of(task: &Task) -> Option<String> {
     } else {
         task.status.as_ref().map(|s| s.as_str().to_owned())
     }
+}
+
+/// `tasq worktree prune [--all] [--dry-run] [--yes]`: runs `git worktree
+/// prune` in each repository of the scope (as `ls` without an id), then
+/// releases the worktrees of its done tasks, never forcing. A task
+/// that cannot be released is a warning; the others go on.
+pub fn prune(app: &App, all: bool, yes: bool, dry_run: bool) -> Result<()> {
+    if !app.worktrees() {
+        return Err(disabled());
+    }
+    let store = app.open_store()?;
+    let tasks = store.list(&Filter::new().any_done())?;
+    let here = if all {
+        None
+    } else {
+        Repo::of(&app.opts.cwd).map(|r| r.main)
+    };
+    let plan = scope::plan(&tasks, here.as_deref(), |task| {
+        let project = project_of(app, task).ok()?;
+        Repo::of(&project).map(|r| r.main)
+    });
+    // First, so the lines name every missing worktree: a release prunes
+    // too, silently, before it deletes a branch.
+    let git = Git { env: app.env_vec() };
+    let mut forgotten = Vec::new();
+    for repo in &plan.repos {
+        match git.prune(repo, dry_run) {
+            Ok(lines) if lines.is_empty() => {}
+            Ok(lines) => forgotten.push((repo.clone(), lines)),
+            Err(e) => app.out.warn(&format!("{}: {e}", repo.display())),
+        }
+    }
+    let how = Releasing {
+        force: false,
+        approval: Approval::from_yes(yes),
+        dry_run,
+        closing: false,
+    };
+    let mut report = worktree_hooks::to_terminal(app);
+    let mut released = Vec::new();
+    for task in &plan.tasks {
+        match release(app, task, how, &mut report) {
+            Ok(lines) if lines.is_empty() => {}
+            Ok(lines) => released.push((task.id.clone(), lines)),
+            Err(e) => app
+                .out
+                .warn(&format!("worktrees of task {} not released: {e}", task.id)),
+        }
+    }
+    for warning in store.warnings() {
+        app.out.warn(&warning.to_string());
+    }
+    if app.out.json_mode() {
+        return app.out.json(&pruned_json(&forgotten, &released, dry_run));
+    }
+    app.out.print(&pruned_text(&forgotten, &released, dry_run))
+}
+
+/// What a prune made git forget (per repository) and released (per task).
+type Forgotten = [(PathBuf, Vec<String>)];
+type Released = [(TaskId, Vec<String>)];
+
+/// The text `prune` prints, in the order it works: git's lines under the
+/// repository they come from, then release lines prefixed with the task id.
+pub fn pruned_text(forgotten: &Forgotten, released: &Released, dry_run: bool) -> String {
+    let mut text = String::new();
+    let verb = if dry_run { "would forget" } else { "forgot" };
+    for (repo, lines) in forgotten {
+        let heading = format!("{verb} missing worktrees in {}:", repo.display());
+        for line in std::iter::once(heading).chain(lines.iter().map(|l| format!("  {l}"))) {
+            text.push_str(&line);
+            text.push('\n');
+        }
+    }
+    for (id, lines) in released {
+        text.push_str(&prefixed(id, lines));
+    }
+    if text.is_empty() {
+        text.push_str("nothing to prune\n");
+    }
+    text
+}
+
+/// The JSON document of `prune`.
+pub fn pruned_json(forgotten: &Forgotten, released: &Released, dry_run: bool) -> Value {
+    let released = released
+        .iter()
+        .map(|(id, lines)| json!({"task": id.as_str(), "lines": lines}))
+        .collect();
+    let forgotten = forgotten
+        .iter()
+        .map(|(repo, lines)| json!({"repo": repo, "lines": lines}))
+        .collect();
+    json::document([
+        ("dry_run", json!(dry_run)),
+        ("released", Value::Array(released)),
+        ("forgotten", Value::Array(forgotten)),
+    ])
 }
 
 /// `tasq worktree path <TARGET>`: prints the directory, creating nothing.
@@ -578,6 +680,42 @@ mod tests {
             json!({
                 "task": "3", "title": "T", "status": "ready", "done": false,
                 "path": "/w/3", "branch": "b", "exists": true, "changes": ["0"],
+            })
+        );
+    }
+
+    #[test]
+    fn pruned_lines() {
+        let released = [
+            (
+                TaskId::from(4),
+                vec!["removed worktree /w/4".to_owned(), "  hook".to_owned()],
+            ),
+            (
+                TaskId::from(7),
+                vec!["deleted branch b (forced)".to_owned()],
+            ),
+        ];
+        let forgotten = [(
+            PathBuf::from("/app"),
+            vec!["Removing worktrees/x: gone".to_owned()],
+        )];
+        assert_eq!(
+            pruned_text(&forgotten, &released, false),
+            "forgot missing worktrees in /app:\n  Removing worktrees/x: gone\n\
+             [4] removed worktree /w/4\n  hook\n[7] deleted branch b (forced)\n"
+        );
+        assert_eq!(
+            pruned_text(&forgotten, &[], true),
+            "would forget missing worktrees in /app:\n  Removing worktrees/x: gone\n"
+        );
+        assert_eq!(pruned_text(&[], &[], true), "nothing to prune\n");
+        assert_eq!(
+            pruned_json(&forgotten, &released[1..], true),
+            json!({
+                "schema": 1, "dry_run": true,
+                "released": [{"task": "7", "lines": ["deleted branch b (forced)"]}],
+                "forgotten": [{"repo": "/app", "lines": ["Removing worktrees/x: gone"]}],
             })
         );
     }
