@@ -85,3 +85,17 @@ Layered TOML (`tasq_core::config`): defaults, global `~/.config/tasq/config.toml
 `crates/store-nb/tests/support/mod.rs` builds an `NbEnv`: a temp copy of `tests/fixtures/nb/home` with `NB_DIR`, `NBRC_PATH`, `HOME` (with a `.gitconfig`, nb refuses to work without a git identity) and `NB_AUTO_SYNC=0`. Every `nb` invocation in tests gets only that environment. Fixture ids are named constants (`id::FULL`, `id::DONE`, `id::MISSING`, ...). Tests that need the real `nb` call `nb_or_skip`. Probed nb behaviours (async checkpoints, exit codes of `nb git dirty`, index renumbering on reconcile) are recorded under "nb facts" in PROGRESS.md; check there before assuming how nb behaves.
 
 Markdown format fixtures live in `crates/core/tests/fixtures/*.md`; round trips must be byte-identical.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tasq tasks in the `Tasq` nb notebook, managed with the `tasq` CLI; larger ones get a plan under `ruli/features/<slug>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five roles, applied as tasq topic tags (`#needs-triage`, ...). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` at the root (not written yet) plus `docs/adr/`. See `docs/agents/domain.md`.
