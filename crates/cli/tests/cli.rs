@@ -1217,6 +1217,21 @@ mod fields {
     }
 
     #[test]
+    fn desc_dash_normalises_like_the_file_reads_back() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["desc", "3", "-"])
+            .write_stdin("\r\n \r\nPasted  \r\n\r\n  indented\r\n\r\n\t\r\n")
+            .assert()
+            .success()
+            .stdout("[3] description updated\n");
+        env.tasq()
+            .args(["desc", "3"])
+            .assert()
+            .stdout("Pasted  \n\n  indented\n");
+    }
+
+    #[test]
     fn desc_without_text_prints_the_description() {
         let env = TestEnv::fixture();
         env.tasq()

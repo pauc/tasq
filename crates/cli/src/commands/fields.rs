@@ -187,11 +187,12 @@ fn as_lines(description: Option<&str>) -> String {
     description.map_or_else(String::new, |text| format!("{text}\n"))
 }
 
-/// Stdin until EOF, one trailing newline dropped (`-` as in `cat -`).
+/// Stdin until EOF (`-` as in `cat -`), as is: the trailing newline and
+/// any blank lines at either end go in [`edit::description_text`].
 fn read_stdin() -> Result<String> {
     let mut text = String::new();
     std::io::stdin().read_to_string(&mut text)?;
-    Ok(text.strip_suffix('\n').unwrap_or(&text).to_owned())
+    Ok(text)
 }
 
 /// Interprets `tasq due`'s DATE: `none` (any case) clears, anything else
