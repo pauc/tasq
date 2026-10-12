@@ -67,8 +67,9 @@ pub fn done(app: &App, id: &str, note: Option<&str>, yes: bool) -> Result<()> {
     }
     let mut text = format!("[{id}] done: {}\n", task.title);
     if app.worktrees() {
-        let how = Releasing::closing(Approval::from_yes(yes));
-        match worktree::release(app, &task, how, &mut worktree_hooks::to_terminal(app)) {
+        let approval = Approval::from_yes(yes);
+        let report = &mut worktree_hooks::to_terminal(app);
+        match worktree::release(app, &task, Releasing::closing(), approval, report) {
             Ok(lines) => text.push_str(&worktree::prefixed(&id, &lines)),
             Err(e) => app.out.warn(&format!("worktrees not released: {e}")),
         }

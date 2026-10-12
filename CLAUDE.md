@@ -55,7 +55,7 @@ Workspace of seven crates; dependencies flow one way, toward `tasq-core`.
 | `crates/core` (`tasq-core`) | Domain model, markdown format, queries, config, clock, and the `Store`/`Source`/`Launcher` traits. **No I/O, no process spawning, no terminal or network deps.** |
 | `crates/store-nb` | `Store` impl over an nb notebook plus the `Bookkeeper`, the background commit job and `doctor` checks. Runs `git` for bookkeeping; nothing runs `nb` (ADR-0023). |
 | `crates/sources`, `crates/launch` | Stubs. Phase 5 (GitLab/GitHub/LLM-bridge sources) and Phase 4 (shell/tmux/claude/herdr launchers). |
-| `crates/worktree` (`tasq-worktree`) | Runs `git` for declared worktrees (ADR 0022): branch state, `git worktree add`, creating a task's worktree (`create::materialize`: provisioning, hooks, the trust store). The decisions live in `tasq_core::worktree`; the CLI passes in the terminal question (`hooks::Approver`). |
+| `crates/worktree` (`tasq-worktree`) | Runs `git` for declared worktrees (ADR 0022): branch state, `git worktree add`, creating a task's worktree (`create::materialize`: provisioning, hooks, the trust store), releasing it at close (`release::release`: removal, branch deletion, remove hooks). The decisions live in `tasq_core::worktree`; the CLI passes in the terminal question (`hooks::Approver`). |
 | `crates/cli` (binary `tasq`) | Stub. Phase 3 (current). Must stay thin: every command is a core function plus rendering, and every command gets `--json`. |
 | `crates/tui` | Stub. Phase 8. Depends on core only. |
 

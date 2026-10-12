@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::model::{Task, Worktree};
+use crate::model::{Task, TaskId, Worktree};
 
 /// Why a lifecycle step cannot proceed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -238,6 +238,27 @@ impl KeepWorktree {
             Self::Dirty => "it has uncommitted or untracked changes",
         }
     }
+
+    /// The warning for the directory at `path` of task `id`, kept for this
+    /// reason, with the command that finishes the job when there is one;
+    /// `None` for the main checkout, which is kept without a word.
+    pub fn warning(self, path: &Path, id: &TaskId) -> Option<String> {
+        let path = path.display();
+        let finish = match self {
+            Self::Main => return None,
+            Self::Dirty => format!("; tasq worktree release {id} --force removes it"),
+            Self::InUse => {
+                format!("; tasq worktree release {id} from another directory removes it")
+            }
+            Self::Locked => {
+                format!("; git worktree unlock {path} then tasq worktree release {id} removes it")
+            }
+            Self::Foreign => {
+                "; tasq does not remove it, delete it by hand if it is not needed".to_owned()
+            }
+        };
+        Some(format!("kept worktree {path}: {}{finish}", self.reason()))
+    }
 }
 
 /// What a release does with the directory.
@@ -270,6 +291,17 @@ impl KeepBranch {
             Self::Policy => "worktree.delete_branch = \"never\"",
             Self::Unsafe => "it is neither merged into the default branch nor pushed",
         }
+    }
+
+    /// The warning for `branch` of task `id`, kept for this reason: only
+    /// an unsafe branch gets one, with the command that deletes it anyway.
+    pub fn warning(self, branch: &str, id: &TaskId) -> Option<String> {
+        (self == Self::Unsafe).then(|| {
+            format!(
+                "kept branch {branch}: {}; tasq worktree release {id} --force deletes it",
+                self.reason()
+            )
+        })
     }
 }
 
@@ -326,7 +358,6 @@ pub fn on_close(dir: DirSeen, branch: BranchSeen, policy: DeleteBranch, force: b
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::TaskId;
 
     fn task(worktrees: &[Worktree]) -> Task {
         let mut t = Task::new(TaskId::from(7), "Fix login");
@@ -677,5 +708,55 @@ mod tests {
                 "it is neither merged into the default branch nor pushed",
             ]
         );
+    }
+
+    #[test]
+    fn kept_worktree_warnings_say_how_to_finish() {
+        let path = Path::new("/ws/app-x");
+        let id = TaskId::from(7);
+        let warning = |why: KeepWorktree| why.warning(path, &id);
+        assert_eq!(warning(KeepWorktree::Main), None);
+        assert_eq!(
+            warning(KeepWorktree::Dirty).as_deref(),
+            Some(
+                "kept worktree /ws/app-x: it has uncommitted or untracked changes; \
+                 tasq worktree release 7 --force removes it"
+            )
+        );
+        assert_eq!(
+            warning(KeepWorktree::InUse).as_deref(),
+            Some(
+                "kept worktree /ws/app-x: the current directory is inside it; \
+                 tasq worktree release 7 from another directory removes it"
+            )
+        );
+        assert_eq!(
+            warning(KeepWorktree::Locked).as_deref(),
+            Some(
+                "kept worktree /ws/app-x: it is locked; \
+                 git worktree unlock /ws/app-x then tasq worktree release 7 removes it"
+            )
+        );
+        assert_eq!(
+            warning(KeepWorktree::Foreign).as_deref(),
+            Some(
+                "kept worktree /ws/app-x: git does not list it as a worktree of the repository; \
+                 tasq does not remove it, delete it by hand if it is not needed"
+            )
+        );
+    }
+
+    #[test]
+    fn only_an_unsafe_branch_is_kept_with_a_warning() {
+        let id = TaskId::from(7);
+        assert_eq!(
+            KeepBranch::Unsafe.warning("feat/x", &id).as_deref(),
+            Some(
+                "kept branch feat/x: it is neither merged into the default branch nor pushed; \
+                 tasq worktree release 7 --force deletes it"
+            )
+        );
+        assert_eq!(KeepBranch::CheckedOut.warning("feat/x", &id), None);
+        assert_eq!(KeepBranch::Policy.warning("feat/x", &id), None);
     }
 }

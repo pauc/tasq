@@ -10,6 +10,7 @@ use tasq_core::report::ReportError;
 use tasq_core::store::StoreError;
 use tasq_worktree::create::CreateError;
 use tasq_worktree::hooks::HookFailure;
+use tasq_worktree::release::ReleaseError;
 
 /// What a command can fail with.
 #[derive(Debug)]
@@ -113,6 +114,15 @@ impl From<CreateError> for CliError {
     fn from(e: CreateError) -> Self {
         match e {
             CreateError::Hooks(e) => e.into(),
+            e => Self::User(e.to_string()),
+        }
+    }
+}
+
+impl From<ReleaseError> for CliError {
+    fn from(e: ReleaseError) -> Self {
+        match e {
+            ReleaseError::Hooks(e) => e.into(),
             e => Self::User(e.to_string()),
         }
     }

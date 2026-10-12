@@ -1,7 +1,8 @@
 //! Runs `git` for the worktrees tasks declare (ADR 0022,
 //! `ruli/features/worktrees/PLAN.md`): where a branch comes from,
 //! `git worktree add` at the declared path, the provisioning that
-//! follows (copies, links, rendered templates) and the hooks around it.
+//! follows (copies, links, rendered templates), the release at close and
+//! the hooks around both.
 //! The decisions are [`tasq_core::worktree`]'s; this crate carries them
 //! out.
 //!
@@ -15,6 +16,7 @@ pub mod git;
 pub mod hooks;
 pub mod process;
 pub mod provision;
+pub mod release;
 pub mod repo;
 pub mod settings;
 

@@ -158,13 +158,13 @@ impl Host for CliHost<'_> {
             return hooks;
         }
         let mut warnings: Vec<String> = hooks.err().into_iter().collect();
-        let how = Releasing::closing(Approval::Skip);
         let mut collect = |event| {
             if let HookEvent::Warning(text) = event {
                 warnings.push(text);
             }
         };
-        if let Err(e) = worktree::release(self.app, task, how, &mut collect) {
+        let how = Releasing::closing();
+        if let Err(e) = worktree::release(self.app, task, how, Approval::Skip, &mut collect) {
             warnings.push(format!("worktrees not released: {e}"));
         }
         if warnings.is_empty() {

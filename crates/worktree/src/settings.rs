@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use tasq_core::config::WorktreeConfig;
 use tasq_core::model::Task;
 use tasq_core::worktree::hooks::Kind;
+use tasq_core::worktree::provision;
 use tasq_core::worktree::vars::Vars;
 
 use crate::Repo;
@@ -43,6 +44,17 @@ impl RepoSettings {
         Vars::for_task(task, &self.main, self.name(), &self.config.variables)
             .with_branch(branch, self.config.ports)
             .with_worktree(path)
+    }
+
+    /// The paths provisioning writes into the worktree at `path`, relative
+    /// to it: they can be made again, so they do not make it dirty. None
+    /// when provisioning cannot be planned.
+    pub fn provisioned(&self, path: &Path) -> Vec<PathBuf> {
+        provision::plan(&self.config, &self.main, path, &self.templates_dir)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|step| step.target().strip_prefix(path).ok().map(Path::to_path_buf))
+            .collect()
     }
 }
 
@@ -101,5 +113,19 @@ mod tests {
             Some("/ws/app-feat_x")
         );
         assert!(map.contains_key("port"));
+    }
+
+    #[test]
+    fn provisioned_paths_are_relative_to_the_worktree() {
+        let mut settings = settings(Some("shop"));
+        settings.config.copies = vec![".env".into()];
+        settings.config.symlinks = vec!["node_modules".into()];
+        let path = Path::new("/ws/app-feat_x");
+        assert_eq!(
+            settings.provisioned(path),
+            vec![PathBuf::from(".env"), PathBuf::from("node_modules")]
+        );
+        settings.config.copies = vec!["../outside".into()];
+        assert_eq!(settings.provisioned(path), Vec::<PathBuf>::new());
     }
 }

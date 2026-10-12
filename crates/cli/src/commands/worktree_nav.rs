@@ -26,8 +26,7 @@ use tasq_worktree::Repo;
 use crate::app::App;
 use crate::commands::existing_dir;
 use crate::commands::worktree::{
-    Releasing, RepoSettings, disabled, materialize, prefixed, project_of, provisioned, release,
-    repo_settings,
+    Releasing, RepoSettings, disabled, materialize, prefixed, project_of, release, repo_settings,
 };
 use crate::commands::worktree_hooks::{self, Approval};
 use crate::error::{CliError, Result};
@@ -176,7 +175,7 @@ pub fn rows(app: &App, store: &NbStore, id: Option<&TaskId>, all: bool) -> Resul
                         .unwrap_or_else(|_| worktree.path.clone());
                     let skip = repo_settings
                         .as_ref()
-                        .map(|repo_settings| provisioned(repo_settings, &path))
+                        .map(|repo_settings| repo_settings.provisioned(&path))
                         .unwrap_or_default();
                     git.changes(&path, &skip).ok()
                 }
@@ -234,11 +233,12 @@ pub fn prune(app: &App, all: bool, yes: bool, dry_run: bool) -> Result<()> {
             Err(e) => app.out.warn(&format!("{}: {e}", repo.display())),
         }
     }
-    let how = Releasing::on_demand(false, Approval::from_yes(yes), dry_run);
+    let how = Releasing::on_demand(false, dry_run);
+    let approval = Approval::from_yes(yes);
     let mut report = worktree_hooks::to_terminal(app);
     let mut released = Vec::new();
     for task in &plan.tasks {
-        match release(app, task, how, &mut report) {
+        match release(app, task, how, approval, &mut report) {
             Ok(lines) if lines.is_empty() => {}
             Ok(lines) => released.push((task.id.clone(), lines)),
             Err(e) => app

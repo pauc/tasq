@@ -2,28 +2,26 @@
 //! existing one; `tasq worktree up <id>` creates the declared one now, as a
 //! launch does; `--create <branch>` (hidden) is "declare, then up";
 //! `tasq worktree release <id>` does what closing the task does to its
-//! worktrees ([`release`], also run by `tasq done` and the TUI's `d`).
+//! worktrees ([`release()`], also run by `tasq done` and the TUI's `d`).
 
 use std::path::{Path, PathBuf};
 
-use crate::commands::worktree_hooks::{self, Approval, Hooks};
+use crate::commands::worktree_hooks::{self, Approval};
 use crate::commands::worktree_nav;
-use tasq_core::config::{OnDone, project_file};
+use tasq_core::config::project_file;
 use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::store::Store;
 use tasq_core::work;
+use tasq_core::worktree::declaration;
 use tasq_core::worktree::hooks::Kind;
-use tasq_core::worktree::integration::Safety;
-use tasq_core::worktree::lifecycle::{
-    self, BranchFate, BranchSeen, Declared, KeepBranch, KeepWorktree, WorktreeFate,
-};
-use tasq_core::worktree::vars::Vars;
-use tasq_core::worktree::{declaration, provision, status};
+use tasq_core::worktree::lifecycle::Declared;
 use tasq_store_nb::NbStore;
+use tasq_worktree::Repo;
 pub use tasq_worktree::RepoSettings;
 pub use tasq_worktree::create::Created;
 use tasq_worktree::create::{self, CreateError};
-use tasq_worktree::{Git, Repo};
+use tasq_worktree::release;
+pub use tasq_worktree::release::Releasing;
 
 use crate::app::App;
 use crate::cli::{Command, WorktreeAction};
@@ -106,11 +104,6 @@ pub fn run(app: &App, id: &str, target: Option<&str>, create: Option<&str>) -> R
             )
         }
     }
-}
-
-/// A failure of `git` or of the worktree logic, shown as a user error.
-fn user(e: impl std::fmt::Display) -> CliError {
-    CliError::user(e.to_string())
 }
 
 /// The error for a worktree command or flag while the feature is off.
@@ -373,8 +366,15 @@ pub fn release_command(app: &App, id: &str, force: bool, yes: bool, dry_run: boo
     let id = App::task_id(id)?;
     let store = app.open_store()?;
     let task = store.get(&id)?;
-    let how = Releasing::on_demand(force, Approval::from_yes(yes), dry_run);
-    let lines = release(app, &task, how, &mut worktree_hooks::to_terminal(app))?;
+    let how = Releasing::on_demand(force, dry_run);
+    let approval = Approval::from_yes(yes);
+    let lines = release(
+        app,
+        &task,
+        how,
+        approval,
+        &mut worktree_hooks::to_terminal(app),
+    )?;
     let text = if lines.is_empty() {
         format!("[{id}] nothing released\n")
     } else {
@@ -399,50 +399,10 @@ pub fn prefixed(id: &TaskId, lines: &[String]) -> String {
         .concat()
 }
 
-/// How [`release`] runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Releasing {
-    /// Remove dirty worktrees and delete unmerged, unpushed branches too.
-    pub force: bool,
-    /// For the repository's own `pre-remove`/`post-remove` hooks.
-    pub approval: Approval,
-    /// Say what would happen; change nothing.
-    pub dry_run: bool,
-    /// Called for a close: `worktree.on_done = "keep"` skips it all.
-    pub closing: bool,
-}
-
-impl Releasing {
-    /// For a task being closed (`tasq done`, the UI): never forced, never
-    /// a dry run, and subject to `worktree.on_done`.
-    pub fn closing(approval: Approval) -> Self {
-        Self {
-            force: false,
-            approval,
-            dry_run: false,
-            closing: true,
-        }
-    }
-
-    /// Asked for by name (`tasq worktree release`, `tasq worktree prune`),
-    /// whatever the task's status and `worktree.on_done`.
-    pub fn on_demand(force: bool, approval: Approval, dry_run: bool) -> Self {
-        Self {
-            force,
-            approval,
-            dry_run,
-            closing: false,
-        }
-    }
-}
-
-/// Step 3 of the lifecycle for every declared worktree of `task`: a clean
-/// one is removed (with the `pre-remove` hook in it before, the
-/// `post-remove` one in the main checkout after), and its branch deleted
-/// when that loses nothing ([`Git::safety`]). What is kept is a warning
-/// through `report`, with the command that finishes the job when there is
-/// one. The entries stay. The lines say what was done (or would be, on a
-/// dry run). The caller checks that worktrees are enabled.
+/// Step 3 of the lifecycle ([`tasq_worktree::release::release`]) in the
+/// task's project, run from the current directory, with `approval` for the
+/// repository's own remove hooks. The caller checks that worktrees are
+/// enabled.
 ///
 /// # Errors
 ///
@@ -452,258 +412,20 @@ pub fn release(
     app: &App,
     task: &Task,
     how: Releasing,
+    approval: Approval,
     report: &mut dyn FnMut(HookEvent),
 ) -> Result<Vec<String>> {
     if task.worktrees.is_empty() {
         return Ok(Vec::new());
     }
     let settings = repo_settings(app, &project_of(app, task)?)?;
-    if how.closing && settings.config.on_done == OnDone::Keep {
-        return Ok(Vec::new());
-    }
-    if settings.repo.is_none() {
-        return Err(CliError::user(format!(
-            "{} is not in a git repository",
-            settings.project.display()
-        )));
-    }
-    let git = app.git();
-    let listed = git.worktrees(&settings.main).map_err(user)?;
-    let main = canonical(&settings.main);
-    let cwd = canonical(&app.opts.cwd);
-    let mut lines = Vec::new();
-    for worktree in &task.worktrees {
-        let path = canonical(&worktree.path);
-        let provisioned = provisioned(&settings, &path);
-        let dir = status::dir_seen(&path, path.is_dir(), &main, &cwd, &listed, || {
-            // Doubt keeps it: an unreadable status counts as a change.
-            git.changes(&path, &provisioned)
-                .unwrap_or_else(|e| vec![e.to_string()])
-        });
-        let safety = match &worktree.branch {
-            Some(branch) => git.safety(&settings.main, branch).map_err(user)?,
-            None => None,
-        };
-        let seen = safety.as_ref().map_or(BranchSeen::Absent, Safety::seen);
-        let decided = lifecycle::on_close(dir, seen, settings.config.delete_branch, how.force);
-        let job = WorktreeRelease {
-            app,
-            git: &git,
-            settings: &settings,
-            task,
-            worktree,
-            path: &path,
-            how,
-        };
-        let gone = job.directory(decided.worktree, &mut lines, report)?;
-        job.branch(decided.branch, gone, safety.as_ref(), &mut lines, report);
-    }
-    Ok(lines)
-}
-
-/// One declared worktree being released, with what releasing it needs.
-struct WorktreeRelease<'a> {
-    app: &'a App,
-    git: &'a Git,
-    settings: &'a RepoSettings,
-    task: &'a Task,
-    worktree: &'a Worktree,
-    path: &'a Path,
-    how: Releasing,
-}
-
-impl WorktreeRelease<'_> {
-    /// Carries out `fate` for the directory; whether it is gone after.
-    fn directory(
-        &self,
-        fate: WorktreeFate,
-        lines: &mut Vec<String>,
-        report: &mut dyn FnMut(HookEvent),
-    ) -> Result<bool> {
-        let path = self.path.display();
-        match fate {
-            WorktreeFate::Absent => Ok(true),
-            WorktreeFate::Keep(KeepWorktree::Main) => Ok(false),
-            WorktreeFate::Keep(why) => {
-                let id = &self.task.id;
-                let finish = match why {
-                    KeepWorktree::Dirty => {
-                        format!("; tasq worktree release {id} --force removes it")
-                    }
-                    KeepWorktree::InUse => {
-                        format!("; tasq worktree release {id} from another directory removes it")
-                    }
-                    KeepWorktree::Locked => format!(
-                        "; git worktree unlock {path} then tasq worktree release {id} removes it"
-                    ),
-                    KeepWorktree::Foreign => {
-                        "; tasq does not remove it, delete it by hand if it is not needed".into()
-                    }
-                    KeepWorktree::Main => String::new(),
-                };
-                report(HookEvent::Warning(format!(
-                    "kept worktree {path}: {}{finish}",
-                    why.reason()
-                )));
-                Ok(false)
-            }
-            WorktreeFate::Remove if self.how.dry_run => {
-                let settings = self.settings;
-                let vars = self.vars();
-                let hooks = worktree_hooks::prepare(
-                    self.app,
-                    settings,
-                    [Kind::PreRemove, Kind::PostRemove],
-                    &vars,
-                    self.how.approval,
-                    true,
-                    report,
-                )?;
-                lines.push(format!("would remove worktree {path}"));
-                lines.extend(
-                    hooks
-                        .iter()
-                        .flat_map(Hooks::describe)
-                        .map(|l| format!("  {l}")),
-                );
-                Ok(true)
-            }
-            WorktreeFate::Remove => self.remove(lines, report),
-        }
-    }
-
-    /// The remove hooks around `git worktree remove`; whether it is gone.
-    fn remove(&self, lines: &mut Vec<String>, report: &mut dyn FnMut(HookEvent)) -> Result<bool> {
-        let settings = self.settings;
-        let path = self.path.display();
-        let vars = self.vars();
-        let [pre, post] = worktree_hooks::prepare(
-            self.app,
-            settings,
-            [Kind::PreRemove, Kind::PostRemove],
-            &vars,
-            self.how.approval,
-            false,
-            report,
-        )?;
-        if let Err(e) = worktree_hooks::run(self.app, &pre, self.path, &vars, report) {
-            report(HookEvent::Warning(format!("kept worktree {path}: {e}")));
-            return Ok(false);
-        }
-        if let Err(e) = self.git.remove(&settings.main, self.path) {
-            report(HookEvent::Warning(format!("kept worktree {path}: {e}")));
-            return Ok(false);
-        }
-        lines.push(format!("removed worktree {path}"));
-        worktree_hooks::run(self.app, &post, &settings.main, &vars, report)?;
-        Ok(true)
-    }
-
-    /// Carries out `fate` for the branch, once its directory is `gone`.
-    fn branch(
-        &self,
-        fate: BranchFate,
-        gone: bool,
-        safety: Option<&Safety>,
-        lines: &mut Vec<String>,
-        report: &mut dyn FnMut(HookEvent),
-    ) {
-        let Some(branch) = &self.worktree.branch else {
-            return;
-        };
-        let why = safety
-            .and_then(Safety::reason)
-            .unwrap_or_else(|| "forced".to_owned());
-        match fate {
-            BranchFate::Delete if !gone => {}
-            BranchFate::Delete if self.how.dry_run => {
-                lines.push(format!("would delete branch {branch} ({why})"));
-            }
-            BranchFate::Delete => {
-                let main = &self.settings.main;
-                // A directory removed by hand leaves its registration, and
-                // git refuses to delete a branch checked out there.
-                let _ = self.git.prune(main, false);
-                match self.git.delete_branch(main, branch) {
-                    Ok(()) => lines.push(format!("deleted branch {branch} ({why})")),
-                    Err(e) => report(HookEvent::Warning(format!("kept branch {branch}: {e}"))),
-                }
-            }
-            BranchFate::Keep(KeepBranch::Unsafe) => report(HookEvent::Warning(format!(
-                "kept branch {branch}: {}; tasq worktree release {} --force deletes it",
-                KeepBranch::Unsafe.reason(),
-                self.task.id
-            ))),
-            BranchFate::Keep(_) | BranchFate::Absent => {}
-        }
-    }
-
-    /// The template variables of this worktree, for its hooks.
-    fn vars(&self) -> Vars {
-        self.settings.vars(
-            self.task,
-            self.worktree.branch.as_deref().unwrap_or_default(),
-            self.path,
-        )
-    }
-}
-
-/// The paths provisioning writes into the worktree at `path`, relative to
-/// it: they can be made again, so they do not make it dirty.
-pub fn provisioned(settings: &RepoSettings, path: &Path) -> Vec<PathBuf> {
-    provision::plan(
-        &settings.config,
-        &settings.main,
-        path,
-        &settings.templates_dir,
-    )
-    .unwrap_or_default()
-    .iter()
-    .filter_map(|step| step.target().strip_prefix(path).ok().map(Path::to_path_buf))
-    .collect()
-}
-
-/// `path` with symlinks resolved when it exists, as git records paths.
-fn canonical(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn closing_is_never_forced_nor_a_dry_run() {
-        assert_eq!(
-            Releasing::closing(Approval::Skip),
-            Releasing {
-                force: false,
-                approval: Approval::Skip,
-                dry_run: false,
-                closing: true,
-            }
-        );
-    }
-
-    #[test]
-    fn on_demand_keeps_its_flags_and_ignores_on_done() {
-        assert_eq!(
-            Releasing::on_demand(true, Approval::Given, true),
-            Releasing {
-                force: true,
-                approval: Approval::Given,
-                dry_run: true,
-                closing: false,
-            }
-        );
-        assert_eq!(
-            Releasing::on_demand(false, Approval::Ask, false),
-            Releasing {
-                force: false,
-                approval: Approval::Ask,
-                dry_run: false,
-                closing: false,
-            }
-        );
-    }
+    Ok(release::release(
+        &app.git(),
+        task,
+        &settings,
+        &app.opts.cwd,
+        how,
+        &worktree_hooks::approver(app, approval),
+        report,
+    )?)
 }
