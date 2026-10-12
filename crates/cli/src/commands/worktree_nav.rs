@@ -8,7 +8,6 @@
 //! `shell-init` prints sets that variable and changes directory after
 //! tasq exits. Without the function, `switch` prints the path.
 
-use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -18,15 +17,16 @@ use serde_json::{Value, json};
 use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::query::Filter;
 use tasq_core::store::Store;
+use tasq_core::worktree::listing::{Row, destinations};
 use tasq_core::worktree::target::{self, Found, Target};
 use tasq_core::worktree::{git, hooks, prune as scope};
 use tasq_store_nb::NbStore;
-use tasq_worktree::Repo;
+use tasq_worktree::{Repo, listing};
 
 use crate::app::App;
 use crate::commands::existing_dir;
 use crate::commands::worktree::{
-    Releasing, RepoSettings, disabled, materialize, prefixed, project_of, release, repo_settings,
+    Releasing, disabled, materialize, prefixed, project_of, release, repo_settings,
 };
 use crate::commands::worktree_hooks::{self, Approval};
 use crate::error::{CliError, Result};
@@ -38,49 +38,18 @@ pub const CD_FILE: &str = "TASQ_CD_FILE";
 /// The state file holding the worktree the last `switch` left (`-`).
 const PREVIOUS: &str = "previous-worktree";
 
-/// One declared worktree, as `ls` shows it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Row {
-    /// The task declaring it.
-    pub id: TaskId,
-    /// The task's title.
-    pub title: String,
-    /// The task's status, `done` for a closed task.
-    pub status: Option<String>,
-    /// Whether the task is closed.
-    pub done: bool,
-    /// The declaration.
-    pub worktree: Worktree,
-    /// Whether its directory exists.
-    pub exists: bool,
-    /// Its changed paths (provisioned files left out); `None` when it does
-    /// not exist or git cannot say.
-    pub changes: Option<Vec<String>>,
-}
-
-impl Row {
-    /// `clean`, `<n> changed`, `not created` or `unknown`.
-    pub fn state(&self) -> String {
-        match (&self.changes, self.exists) {
-            (_, false) => "not created".to_owned(),
-            (None, true) => "unknown".to_owned(),
-            (Some(c), true) if c.is_empty() => "clean".to_owned(),
-            (Some(c), true) => format!("{} changed", c.len()),
-        }
-    }
-
-    fn json(&self) -> Value {
-        json!({
-            "task": self.id.as_str(),
-            "title": self.title,
-            "status": self.status,
-            "done": self.done,
-            "path": self.worktree.path,
-            "branch": self.worktree.branch,
-            "exists": self.exists,
-            "changes": self.changes,
-        })
-    }
+/// The JSON of one row of `ls`.
+fn row_json(row: &Row) -> Value {
+    json!({
+        "task": row.id.as_str(),
+        "title": row.title,
+        "status": row.status,
+        "done": row.done,
+        "path": row.worktree.path,
+        "branch": row.worktree.branch,
+        "exists": row.exists,
+        "changes": row.changes,
+    })
 }
 
 /// `tasq worktree ls [ID] [--all]`.
@@ -92,7 +61,7 @@ pub fn ls(app: &App, id: Option<&str>, all: bool) -> Result<()> {
     let store = app.open_store()?;
     let rows = rows(app, &store, id.as_ref(), all)?;
     if app.out.json_mode() {
-        let list = rows.iter().map(Row::json).collect();
+        let list = rows.iter().map(row_json).collect();
         return app
             .out
             .json(&json::document([("worktrees", Value::Array(list))]));
@@ -142,65 +111,14 @@ pub fn rows(app: &App, store: &NbStore, id: Option<&TaskId>, all: bool) -> Resul
         Some(id) => vec![store.get(id)?],
         None => store.list(&Filter::new().any_done())?,
     };
-    let here = if id.is_none() && !all {
-        Repo::of(&app.opts.cwd).map(|r| r.main)
-    } else {
-        None
-    };
-    let git = app.git();
-    let mut settings: BTreeMap<PathBuf, Option<RepoSettings>> = BTreeMap::new();
-    let mut rows = Vec::new();
-    for task in &tasks {
-        if task.worktrees.is_empty() {
-            continue;
-        }
-        let project = project_of(app, task).ok();
-        let main = project.as_deref().and_then(Repo::of).map(|r| r.main);
-        if here.is_some() && main != here {
-            continue;
-        }
-        for worktree in &task.worktrees {
-            let exists = worktree.path.is_dir();
-            if id.is_none() && task.done && !exists {
-                continue;
-            }
-            let changes = match (&project, exists) {
-                (Some(project), true) => {
-                    let repo_settings = settings
-                        .entry(project.clone())
-                        .or_insert_with(|| repo_settings(app, project).ok());
-                    let path = worktree
-                        .path
-                        .canonicalize()
-                        .unwrap_or_else(|_| worktree.path.clone());
-                    let skip = repo_settings
-                        .as_ref()
-                        .map(|repo_settings| repo_settings.provisioned(&path))
-                        .unwrap_or_default();
-                    git.changes(&path, &skip).ok()
-                }
-                _ => None,
-            };
-            rows.push(Row {
-                id: task.id.clone(),
-                title: task.title.clone(),
-                status: status_of(task),
-                done: task.done,
-                worktree: worktree.clone(),
-                exists,
-                changes,
-            });
-        }
-    }
-    Ok(rows)
-}
-
-fn status_of(task: &Task) -> Option<String> {
-    if task.done {
-        Some("done".to_owned())
-    } else {
-        task.status.as_ref().map(|s| s.as_str().to_owned())
-    }
+    let scope = listing::scope(id.is_some(), all, &app.opts.cwd);
+    Ok(listing::rows(
+        &app.git(),
+        &tasks,
+        &scope,
+        |task| project_of(app, task).ok(),
+        |project| repo_settings(app, project).ok(),
+    ))
 }
 
 /// `tasq worktree prune [--all] [--dry-run] [--yes]`: runs `git worktree
@@ -427,18 +345,7 @@ fn choose(app: &App, store: &NbStore, yes: bool) -> Result<PathBuf> {
             Choice::Dir(repo.main),
         ));
     }
-    let rows = rows(app, store, None, false)?;
-    // A task with a worktree that exists creates no other: its declared
-    // but missing ones are not destinations.
-    let has_one: Vec<TaskId> = rows
-        .iter()
-        .filter(|r| r.exists)
-        .map(|r| r.id.clone())
-        .collect();
-    for row in rows {
-        if !row.exists && has_one.contains(&row.id) {
-            continue;
-        }
+    for row in destinations(rows(app, store, None, false)?) {
         let label = render(std::slice::from_ref(&row)).trim_end().to_owned();
         let choice = if row.exists {
             Choice::Dir(row.worktree.path)
@@ -668,10 +575,10 @@ mod tests {
     }
 
     #[test]
-    fn row_json() {
+    fn a_row_as_json() {
         let r = row(3, Some("ready"), Some("b"), true, Some(1));
         assert_eq!(
-            r.json(),
+            row_json(&r),
             json!({
                 "task": "3", "title": "T", "status": "ready", "done": false,
                 "path": "/w/3", "branch": "b", "exists": true, "changes": ["0"],

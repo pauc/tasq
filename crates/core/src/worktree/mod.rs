@@ -11,6 +11,7 @@ pub mod git;
 pub mod hooks;
 pub mod integration;
 pub mod lifecycle;
+pub mod listing;
 pub mod provision;
 pub mod prune;
 pub mod status;
