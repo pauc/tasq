@@ -269,7 +269,9 @@ pub enum Command {
     /// --edit opens $VISUAL, else $EDITOR, on a temporary file holding the
     /// description; when the editor exits 0 the file becomes the
     /// description (empty clears it). A non-zero exit or an unchanged file
-    /// writes nothing, and a task changed meanwhile is a conflict.
+    /// writes nothing (a --note is still logged when unchanged), and a task
+    /// changed meanwhile is a conflict. When the edit cannot be saved, the
+    /// edited text is kept and the error names the file.
     #[command(after_help = DESC_HELP)]
     #[command(group(clap::ArgGroup::new("content").args(["text", "edit"])))]
     Desc {

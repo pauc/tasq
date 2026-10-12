@@ -1305,29 +1305,76 @@ mod fields {
         )
         .success()
         .stdout("[3] description unchanged\n");
-        edit_with(&env, "printf 'Lost.' > \"$1\"\nexit 3")
-            .code(1)
-            .stderr(
-                "tasq: fake-editor exited with exit status: 3; the description was not changed\n",
-            );
+        edit_with(&env, "exit 3").code(1).stderr(
+            "tasq: fake-editor exited with exit status: 3; the description was not changed\n",
+        );
         assert_eq!(support(&env), before);
+    }
+
+    /// The path a failed `desc --edit` names as holding the edited text.
+    fn kept_text(assert: &assert_cmd::assert::Assert) -> String {
+        let err = stderr(assert.get_output());
+        let path = err
+            .trim_end()
+            .rsplit_once("; the edited text is kept in ")
+            .unwrap_or_else(|| panic!("no kept path in {err:?}"))
+            .1
+            .to_owned();
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        text
+    }
+
+    #[test]
+    fn desc_edit_keeps_the_text_when_the_save_fails() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        let assert = edit_with(&env, "printf 'Lost.' > \"$1\"\nexit 3").code(1);
+        assert!(stderr(assert.get_output()).starts_with(
+            "tasq: fake-editor exited with exit status: 3; the description was not changed; the edited text is kept in "
+        ));
+        assert_eq!(kept_text(&assert), "Lost.");
+        let assert = edit_with(&env, "printf 'Intro\\n## Steps\\n' > \"$1\"").code(1);
+        assert!(stderr(assert.get_output()).starts_with(
+            "tasq: a description line cannot start with '## ' (it would start a new section): ## Steps; the edited text is kept in "
+        ));
+        assert_eq!(kept_text(&assert), "Intro\n## Steps\n");
+        assert_eq!(support(&env), before);
+    }
+
+    #[test]
+    fn desc_edit_logs_a_note_even_when_unchanged() {
+        let env = TestEnv::fixture();
+        env.fake_tool("fake-editor", ":");
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .env("VISUAL", "fake-editor")
+            .args(["desc", "3", "--edit", "--note", "still accurate"])
+            .assert()
+            .success()
+            .stdout("[3] description unchanged\n");
+        assert!(support(&env).contains("Customer asks about the export format."));
+        assert!(support(&env).ends_with("- 2026-10-07 09:30: still accurate\n"));
     }
 
     #[test]
     fn desc_edit_conflicts_when_the_task_changed_meanwhile() {
         let env = TestEnv::fixture();
         let file = env.notebook().join(SUPPORT);
-        edit_with(
+        let assert = edit_with(
             &env,
             &format!(
                 "printf -- '- 2026-10-07 09:00: elsewhere\\n' >> {}\nprintf 'Mine.' > \"$1\"",
                 file.display()
             ),
         )
-        .code(1)
-        .stderr(predicate::str::starts_with(
-            "tasq: task 3 changed since it was read (",
-        ));
+        .code(1);
+        assert!(
+            stderr(assert.get_output()).starts_with("tasq: task 3 changed since it was read ("),
+            "{}",
+            stderr(assert.get_output())
+        );
+        assert_eq!(kept_text(&assert), "Mine.");
         assert!(support(&env).ends_with("- 2026-10-07 09:00: elsewhere\n"));
         assert!(support(&env).contains("Customer asks about the export format."));
     }

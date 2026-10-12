@@ -366,8 +366,10 @@ pub fn describe(
 }
 
 /// [`describe`] for a task the caller read earlier, such as before opening
-/// an editor on its description: the store's conflict check then covers
-/// the whole time since that read.
+/// an editor on its description. A store that checks for conflicts
+/// compares against its own last read of the id (the nb store keeps one
+/// revision per id), so the check covers the time since that read only
+/// when the caller does not read the same id again in between.
 pub fn describe_read(
     store: &mut dyn Store,
     task: Task,

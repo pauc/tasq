@@ -15,6 +15,7 @@ use tasq_core::dates::parse_day;
 use tasq_core::edit::{self, TagChange};
 use tasq_core::model::{Task, TaskId};
 use tasq_core::store::Store;
+use tasq_store_nb::NbStore;
 
 use crate::app::App;
 use crate::commands::finish;
@@ -104,18 +105,57 @@ pub fn desc_edit(app: &App, id: &str, note: Option<&str>) -> Result<()> {
     let program = &editor[0];
     let status = run_editor(&editor, file.path())
         .map_err(|e| CliError::user(format!("could not run {program}: {e}")))?;
-    if !status.success() {
-        return Err(CliError::user(format!(
-            "{program} exited with {status}; the description was not changed"
-        )));
-    }
     let after = std::fs::read_to_string(file.path())?;
-    if edit::description_text(&after) == task.description {
-        return finish(app, &store, &id, &format!("[{id}] description unchanged\n"));
+    let saved = if status.success() {
+        save_edit(app, &mut store, task, &after, note)
+    } else {
+        Err(CliError::user(format!(
+            "{program} exited with {status}; the description was not changed"
+        )))
+    };
+    match saved {
+        Err(e) if after != before => {
+            let (_, path) = file.keep().map_err(|e| CliError::Internal(e.into()))?;
+            Err(kept_in(e, &path))
+        }
+        other => other,
+    }
+}
+
+/// The part of `desc --edit` after a zero exit: writes `after` with
+/// `task`, the read from before the editor started. An unchanged
+/// description writes nothing unless there is a note to log.
+fn save_edit(
+    app: &App,
+    store: &mut NbStore,
+    task: Task,
+    after: &str,
+    note: Option<&str>,
+) -> Result<()> {
+    let id = task.id.clone();
+    let unchanged = edit::description_text(after) == task.description;
+    if unchanged && note.is_none() {
+        return finish(app, store, &id, &format!("[{id}] description unchanged\n"));
     }
     let clock = app.clock()?;
-    let task = edit::describe_read(&mut store, task, &after, note, clock.as_ref())?;
-    finish(app, &store, &id, &described(&id, &task))
+    let task = edit::describe_read(store, task, after, note, clock.as_ref())?;
+    let line = if unchanged {
+        format!("[{id}] description unchanged\n")
+    } else {
+        described(&id, &task)
+    };
+    finish(app, store, &id, &line)
+}
+
+/// `error` with where the edited text was kept, so a failed save never
+/// loses what was typed in the editor.
+fn kept_in(error: CliError, path: &Path) -> CliError {
+    let where_ = format!("the edited text is kept in {}", path.display());
+    match error {
+        CliError::User(message) => CliError::User(format!("{message}; {where_}")),
+        CliError::Internal(e) => CliError::Internal(e.context(where_)),
+        silent @ CliError::Silent(_) => silent,
+    }
 }
 
 // Spawns the user's editor on a terminal and waits; nothing to assert.
