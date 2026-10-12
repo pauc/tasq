@@ -33,6 +33,11 @@ use crate::commands::worktree_hooks::Approval;
 use crate::error::{CliError, Result};
 use crate::plugins::{self, Hook, HookEvent};
 
+/// The UI draws on stdout and reads keys from stdin: both must be terminals.
+fn interactive(stdout: bool, stdin: bool) -> bool {
+    stdout && stdin
+}
+
 /// Runs `ui`.
 pub fn run(app: &App) -> Result<()> {
     if app.out.json_mode() {
@@ -44,7 +49,10 @@ pub fn run(app: &App) -> Result<()> {
             None => CliError::user(e.to_string()),
         }
     })?;
-    if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
+    if !interactive(
+        std::io::stdout().is_terminal(),
+        std::io::stdin().is_terminal(),
+    ) {
         return Err(CliError::user("tasq ui needs a terminal"));
     }
     let theme = Theme::from_config(&app.config().ui);
@@ -277,6 +285,14 @@ mod tests {
     use tasq_core::config::{Config, LoadOptions};
 
     use super::*;
+
+    #[test]
+    fn the_ui_needs_both_stdout_and_stdin_on_a_terminal() {
+        assert!(interactive(true, true));
+        assert!(!interactive(true, false));
+        assert!(!interactive(false, true));
+        assert!(!interactive(false, false));
+    }
     use crate::output::Output;
 
     /// An app whose only configuration is `.tasq.toml` in `dir` with `text`.
