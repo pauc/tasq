@@ -396,13 +396,22 @@ fn fzf_pick(fzf: &Path, lines: &[String], env: &[(String, String)]) -> Result<St
         .spawn()
         .map_err(|e| CliError::user(format!("could not run fzf: {e}")))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(lines.join("\n").as_bytes())?;
+        unread_is_fine(stdin.write_all(lines.join("\n").as_bytes()))?;
     }
     let out = child.wait_with_output()?;
     if !out.status.success() {
         return Err(CliError::user("nothing chosen"));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// The result of writing fzf's input, where fzf quitting before it read
+/// everything (Esc, Ctrl-C) is not an error: its exit status says so.
+fn unread_is_fine(written: std::io::Result<()>) -> std::io::Result<()> {
+    match written {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        other => other,
+    }
 }
 
 /// Prints `lines` on stderr and reads the number typed on stdin.
@@ -523,6 +532,22 @@ pub fn init_script(shell: InitShell) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fzf_quitting_before_reading_is_not_an_error() {
+        use std::io::{Error, ErrorKind};
+        assert_eq!(unread_is_fine(Ok(())).unwrap(), ());
+        assert_eq!(
+            unread_is_fine(Err(Error::from(ErrorKind::BrokenPipe))).unwrap(),
+            ()
+        );
+        assert_eq!(
+            unread_is_fine(Err(Error::from(ErrorKind::PermissionDenied)))
+                .unwrap_err()
+                .kind(),
+            ErrorKind::PermissionDenied
+        );
+    }
 
     #[test]
     fn choices_are_numbers_in_range() {
