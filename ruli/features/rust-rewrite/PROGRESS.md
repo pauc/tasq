@@ -220,6 +220,24 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ### Plugin and release decisions (T-901 to T-904)
 
+- **CLI field commands (follow-up 2026-10-12, todo 31).** `tasq rename`, `due`, `tag`,
+  `desc` (TEXT, `-` for stdin, no TEXT prints, `""` clears, `--edit`), each with `--note` and
+  `--json`; `--note` added to `set`/`done`/`reopen` as an alias of the positional note (both is
+  exit 2). Core: `edit::{rename, due, retag, describe, describe_read}` share a private
+  `change`/`write` helper (check note, read, edit, log, update, read back); `TagChange::parse`
+  refuses status and priority words; `description_text` normalises like the file reads back;
+  a `## ` line is refused up front (the store's `Unsupported` message for it is stale: it
+  still says the store "can only set status, priority, project and done"). Learnings: a
+  multi-value positional with `allow_hyphen_values` makes clap take every later word as a
+  value, `--note`/`--json` included, so `cli::parse_from` moves a trailing `--option`
+  segment in front of the tags and parses again. The nb store keeps one revision per id,
+  updated on every `get`, so `desc --edit` reads once before the editor and writes with
+  `describe_read`; a second read would silently move the conflict baseline. A failed
+  `--edit` save keeps the temp file and names it. `reopen_args` dropped a note given without
+  a status (only reachable once `--note` existed). Editor selection moved to `crate::editor`.
+  `tasq due` takes the `create --due` words only (no weekday names). Mutants: 0 missed in
+  `core/src/edit.rs`, `cli/src/commands/{fields,edit}.rs`, `cli/src/{cli,app,editor}.rs`.
+  Commits 38cc64a .. ee84f3b.
 - **TUI DONE group, reopen, Today view, detail position (follow-up 2026-10-07, todo 33).**
   `Task::closed_at` (ADR 0020): a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`, read
   like `## Due`, `None` on open tasks whatever the file says). `Task::close(clock)` stamps it
