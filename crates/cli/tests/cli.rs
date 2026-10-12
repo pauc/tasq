@@ -4060,7 +4060,8 @@ mod worktree_release {
         let (_, err) = run(&env, &["worktree", "release", "3"]);
         assert_eq!(
             err,
-            "tasq: warning: kept worktree [ROOT]/home/proj-b: it is locked (git worktree unlock)\n"
+            "tasq: warning: kept worktree [ROOT]/home/proj-b: it is locked; git worktree unlock \
+             [ROOT]/home/proj-b then tasq worktree release 3 removes it\n"
         );
         env.git(&project, &["worktree", "unlock", wt.to_str().unwrap()]);
         let out = env
@@ -4095,7 +4096,7 @@ mod worktree_release {
         assert_eq!(
             err,
             "tasq: warning: kept worktree [ROOT]/home/stray: git does not list it as a worktree \
-             of the repository\n"
+             of the repository; tasq does not remove it, delete it by hand if it is not needed\n"
         );
         assert!(project.is_dir() && stray.is_dir());
     }

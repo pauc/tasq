@@ -216,7 +216,7 @@ impl KeepWorktree {
             Self::Main => "it is the main checkout",
             Self::Foreign => "git does not list it as a worktree of the repository",
             Self::InUse => "the current directory is inside it",
-            Self::Locked => "it is locked (git worktree unlock)",
+            Self::Locked => "it is locked",
             Self::Dirty => "it has uncommitted or untracked changes",
         }
     }
@@ -629,7 +629,7 @@ mod tests {
                 "it is the main checkout",
                 "git does not list it as a worktree of the repository",
                 "the current directory is inside it",
-                "it is locked (git worktree unlock)",
+                "it is locked",
                 "it has uncommitted or untracked changes",
             ]
         );

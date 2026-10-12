@@ -647,7 +647,13 @@ impl One<'_> {
                     KeepWorktree::InUse => {
                         format!("; tasq worktree release {id} from another directory removes it")
                     }
-                    _ => String::new(),
+                    KeepWorktree::Locked => format!(
+                        "; git worktree unlock {path} then tasq worktree release {id} removes it"
+                    ),
+                    KeepWorktree::Foreign => {
+                        "; tasq does not remove it, delete it by hand if it is not needed".into()
+                    }
+                    KeepWorktree::Main => String::new(),
                 };
                 report(HookEvent::Warning(format!(
                     "kept worktree {path}: {}{finish}",
