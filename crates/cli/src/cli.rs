@@ -152,6 +152,9 @@ pub enum Command {
         /// Progress note to append at the same time.
         #[arg(value_name = "NOTE")]
         note: Option<String>,
+        /// The same note as a flag (--note TEXT); not both.
+        #[arg(long = "note", value_name = "TEXT", conflicts_with = "note")]
+        note_flag: Option<String>,
     },
 
     /// Append a dated progress note to a task.
@@ -172,6 +175,9 @@ pub enum Command {
         /// Final progress note, appended before closing.
         #[arg(value_name = "NOTE")]
         note: Option<String>,
+        /// The same note as a flag (--note TEXT); not both.
+        #[arg(long = "note", value_name = "TEXT", conflicts_with = "note")]
+        note_flag: Option<String>,
         /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
         #[arg(long)]
         yes: bool,
@@ -191,6 +197,9 @@ pub enum Command {
         /// Progress note to append.
         #[arg(value_name = "NOTE")]
         note: Option<String>,
+        /// The same note as a flag (--note TEXT); not both.
+        #[arg(long = "note", value_name = "TEXT", conflicts_with = "note")]
+        note_flag: Option<String>,
     },
 
     /// Replace the title of a task, optionally logging a note.

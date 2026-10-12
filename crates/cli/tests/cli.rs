@@ -809,6 +809,65 @@ mod edit {
     }
 
     #[test]
+    fn note_flag_is_an_alias_of_the_positional_note() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["set", "3", "A", "--note", "bumped"])
+            .assert()
+            .success()
+            .stdout("[3] -> priority #A (bumped)\n");
+        assert!(support_file(&env).ends_with("- 2026-10-07 09:30: bumped\n"));
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["done", "3", "--note", "answered"])
+            .assert()
+            .success()
+            .stdout("[3] done: Answer the support ticket\n");
+        assert!(support_file(&env).ends_with("- 2026-10-07 09:30: answered\n"));
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["reopen", "3", "--note", "not answered"])
+            .assert()
+            .success()
+            .stdout("[3] reopened -> ready: Answer the support ticket\n");
+        assert!(support_file(&env).ends_with("- 2026-10-07 09:30: not answered\n"));
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["reopen", "4", "blocked", "--note", "typo"])
+            .assert()
+            .success()
+            .stdout("[4] reopened -> blocked: Ship the release notes\n");
+        assert!(release_file(&env).ends_with("- 2026-10-07 09:30: typo\n"));
+    }
+
+    #[test]
+    fn note_flag_and_positional_note_together_are_a_usage_error() {
+        let env = TestEnv::fixture();
+        let before = support_file(&env);
+        for args in [
+            &["set", "3", "A", "x", "--note", "y"][..],
+            &["done", "3", "x", "--note", "y"],
+            &["reopen", "4", "ready", "x", "--note", "y"],
+        ] {
+            env.tasq()
+                .args(args)
+                .assert()
+                .code(2)
+                .stderr(predicate::str::contains("cannot be used with"));
+        }
+        // With --note, a lone word after the id must be a status.
+        env.tasq()
+            .args(["reopen", "4", "not shipped", "--note", "y"])
+            .assert()
+            .code(1)
+            .stderr(
+                "tasq: unknown status 'not shipped' (statuses: in-progress ready waiting blocked later)\n",
+            );
+        assert_eq!(support_file(&env), before);
+    }
+
+    #[test]
     fn invalid_tasq_now_is_a_user_error() {
         let env = TestEnv::fixture();
         env.tasq()

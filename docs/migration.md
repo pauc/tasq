@@ -48,12 +48,12 @@ of the file) and its `tasq` counterpart.
 | `tasks` | `tasq` (= `tasq list`) | Same grouped view. |
 | `tasks <status\|tag>` (`tasks review-request`, `tasks A`) | `tasq <status\|tag\|prio>` or `tasq list <WORD>` | Also `--status`, `--tag` (repeatable), `--prio`, `--text`. |
 | `tasks create <title> [--desc] [--status] [--prio] [--due] [--project] [--tag]... [--related]... [--mr]... [--note]` | `tasq create <TITLE>` with the same flags | `--status done` creates it closed, as before. Default note is `created via tasq create`. |
-| `tasks set <id> <status\|priority> [note]` | `tasq set <ID> <VALUE> [NOTE]` | Priority with or without `#`. |
+| `tasks set <id> <status\|priority> [note]` | `tasq set <ID> <VALUE> [NOTE]` | Priority with or without `#`. The note can also be `--note TEXT` (not both). |
 | `tasks log <id> <note>` | `tasq log <ID> <NOTE>` | |
 | `tasks next` | `tasq next [--launcher L] [--dry-run]` | Launcher from `launch.default`. |
 | `tasks pick <id>` | `tasq pick <ID> [--launcher L] [--dry-run]` | |
-| `tasks done <id> [note]` | `tasq done <ID> [NOTE]` | `tasq` edits the title line itself instead of calling `nb todo do`; same result (`# [x]`, status tag removed). |
-| none (`nb todo undo`, then `tasks set`) | `tasq reopen <ID> [STATUS] [NOTE]` | Clears `# [x]`, sets STATUS (default `workflow.default_status`) and logs NOTE (default `reopened`) in one write. A lone word that is not a status is the note. |
+| `tasks done <id> [note]` | `tasq done <ID> [NOTE]` | NOTE can also be `--note TEXT` (not both). `tasq` edits the title line itself instead of calling `nb todo do`; same result (`# [x]`, status tag removed). |
+| none (`nb todo undo`, then `tasks set`) | `tasq reopen <ID> [STATUS] [NOTE]` | Clears `# [x]`, sets STATUS (default `workflow.default_status`) and logs NOTE (default `reopened`) in one write. A lone word that is not a status is the note; with `--note TEXT` (not both) a word there must be a status. |
 | none (`nb edit`, or the `tasq view --json \| jq \| tasq apply` round trip) | `tasq rename <ID> <TITLE> [--note TEXT]` | Trimmed, one non-empty line. |
 | none (`nb edit`, or the `tasq apply` round trip) | `tasq due <ID> <DATE\|none> [--note TEXT]` | DATE as for `create --due` (YYYY-MM-DD, today, tomorrow, yesterday); `none` removes `## Due`. |
 | none (edit `## Tags` by hand, or the `tasq apply` round trip) | `tasq tag <ID> <TAG>... [--note TEXT]` | `+name` or `name` adds, `-name` removes, the other tags stay. Status and priority words are refused (use `tasq set`). Long options go before or after the tags; short ones (`-v`) before, since `-name` is a tag. |

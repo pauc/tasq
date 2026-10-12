@@ -80,7 +80,7 @@ pub fn done(app: &App, id: &str, note: Option<&str>, yes: bool) -> Result<()> {
 /// Splits `tasq reopen`'s optional words into a status and a note: a first
 /// word that is a status of `workflow` is the status, otherwise `default`
 /// is and the word is the note. Two words where the first is not a status
-/// is a user error.
+/// is a user error. `second` alone is `--note` without a status.
 pub fn reopen_args<'a>(
     first: Option<&'a str>,
     second: Option<&'a str>,
@@ -88,7 +88,7 @@ pub fn reopen_args<'a>(
     default: &Status,
 ) -> Result<(Status, Option<&'a str>)> {
     match (first.map(|w| (w, workflow.parse_status(w))), second) {
-        (None, _) => Ok((default.clone(), None)),
+        (None, note) => Ok((default.clone(), note)),
         (Some((_, Some(status))), note) => Ok((status, note)),
         (Some((word, None)), None) => Ok((default.clone(), Some(word))),
         (Some((word, None)), Some(_)) => Err(CliError::user(format!(
@@ -162,6 +162,10 @@ mod tests {
         assert_eq!(
             reopen_args(None, None, &wf, &ready).unwrap(),
             (ready.clone(), None)
+        );
+        assert_eq!(
+            reopen_args(None, Some("flag note"), &wf, &ready).unwrap(),
+            (ready.clone(), Some("flag note"))
         );
         assert_eq!(
             reopen_args(Some("#blocked"), None, &wf, &ready).unwrap(),
