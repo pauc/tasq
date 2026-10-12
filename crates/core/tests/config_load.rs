@@ -221,7 +221,6 @@ on_done = \"release\"
 delete_branch = \"safe\"
 symlinks = []
 copies = []
-copy_ignored = false
 templates = []
 
 [worktree.variables]
@@ -1808,11 +1807,30 @@ fn removed_worktree_manager_keys_name_the_replacement() {
 }
 
 #[test]
+fn copy_ignored_is_rejected_until_it_is_implemented() {
+    for value in ["true", "false"] {
+        let sb = Sandbox::new();
+        let file = sb.write_project(&format!(
+            "[worktree]\nenabled = true\ncopy_ignored = {value}\n"
+        ));
+        let err = Config::load(&sb.opts()).unwrap_err().to_string();
+        let prefix = format!("{}:3:", file.display());
+        assert!(err.starts_with(&prefix), "{err}");
+        assert!(
+            err.ends_with(
+                ": worktree.copy_ignored is not implemented yet; list the files under worktree.copies (docs/config.md, \"Worktrees\")"
+            ),
+            "{err}"
+        );
+    }
+}
+
+#[test]
 fn worktree_table_from_a_file() {
     let sb = Sandbox::new();
     sb.write_project(
         "[worktree]\nenabled = true\nsymlinks = [\"node_modules\"]\ncopies = [\".envrc\"]\n\
-         copy_ignored = true\ntemplates = [{ source = \"t/.envrc\", target = \".envrc\" }]\n\
+         templates = [{ source = \"t/.envrc\", target = \".envrc\" }]\n\
          [worktree.variables]\ndb = \"app\"\n[worktree.ports]\nbase = 4000\nspan = 1000\nblock = 10\n\
          [worktree.hooks]\npost-create = [\"direnv allow .\"]\npre-remove = [\"x\"]\n",
     );
@@ -1820,7 +1838,6 @@ fn worktree_table_from_a_file() {
     assert!(w.enabled);
     assert_eq!(w.symlinks, vec!["node_modules"]);
     assert_eq!(w.copies, vec![".envrc"]);
-    assert!(w.copy_ignored);
     assert_eq!(
         w.templates,
         vec![tasq_core::config::TemplateFile {

@@ -65,7 +65,6 @@ pre-launch = []                              # defaults
 base = "origin/HEAD"                         # defaults
 branch = "{{id}}-{{slug}}"                   # defaults
 copies = []                                  # defaults
-copy_ignored = false                         # defaults
 delete_branch = "safe"                       # defaults
 enabled = false                              # defaults
 on_create = "auto"                           # defaults

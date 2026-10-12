@@ -182,11 +182,9 @@ fn an_ignored_envrc_is_copied_as_it_is() {
 #[test]
 fn missing_sources_and_existing_targets_are_warnings() {
     let ws = Workspace::new();
-    let config = WorktreeConfig {
-        copies: vec!["nope.txt".into(), "README".into()],
-        symlinks: vec!["gone".into(), "config/app.yml".into()],
-        ..WorktreeConfig::default()
-    };
+    let mut config = WorktreeConfig::default();
+    config.copies = vec!["nope.txt".into(), "README".into()];
+    config.symlinks = vec!["gone".into(), "config/app.yml".into()];
     let (wt, steps, vars) = ws.worktree(&config, &fixtures("none"));
     let warnings = apply(&prepare(&steps, &vars).unwrap()).unwrap();
     assert_eq!(
@@ -226,10 +224,8 @@ fn a_copied_directory_keeps_its_files_and_links() {
     std::fs::create_dir_all(shared.join("deep")).unwrap();
     std::fs::write(shared.join("deep/file"), "x\n").unwrap();
     std::os::unix::fs::symlink("deep/file", shared.join("alias")).unwrap();
-    let config = WorktreeConfig {
-        copies: vec!["shared".into()],
-        ..WorktreeConfig::default()
-    };
+    let mut config = WorktreeConfig::default();
+    config.copies = vec!["shared".into()];
     let (wt, steps, vars) = ws.worktree(&config, &fixtures("none"));
     assert_eq!(apply(&prepare(&steps, &vars).unwrap()), Ok(Vec::new()));
     assert_eq!(read(&wt.join("shared/deep/file")), "x\n");

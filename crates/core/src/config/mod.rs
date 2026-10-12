@@ -95,7 +95,6 @@
 //! delete_branch = "safe"
 //! symlinks = []
 //! copies = []
-//! copy_ignored = false
 //! templates = []
 //!
 //! [worktree.variables]
@@ -239,15 +238,23 @@ pub struct WorkConfig {
     worktree_command: Removed,
 }
 
-/// A key that no longer exists. It deserialises only from its absence, so a
-/// file that still sets it fails with the file, line and column.
+/// A key that is not accepted (removed, or not implemented yet). It
+/// deserialises only from its absence, so a file that sets it fails with the
+/// file, line and column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct Removed;
+pub(crate) struct Removed;
 
 fn removed_for_worktree<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Removed, D::Error> {
     Err(serde::de::Error::custom(
         "work.worktree_manager and work.worktree_command were removed; \
          worktrees are configured under [worktree] (docs/config.md, \"Worktrees\")",
+    ))
+}
+
+fn not_yet_copy_ignored<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Removed, D::Error> {
+    Err(serde::de::Error::custom(
+        "worktree.copy_ignored is not implemented yet; \
+         list the files under worktree.copies (docs/config.md, \"Worktrees\")",
     ))
 }
 
@@ -280,9 +287,9 @@ pub struct WorktreeConfig {
     pub symlinks: Vec<String>,
     /// Paths in the project copied into a new worktree. Default: none.
     pub copies: Vec<String>,
-    /// Copy the project's gitignored files into a new worktree, narrowed by
-    /// `.worktreeinclude`. Default: `false`.
-    pub copy_ignored: bool,
+    /// Not implemented yet (WT-303); setting it is an error.
+    #[serde(skip_serializing, deserialize_with = "not_yet_copy_ignored")]
+    pub(crate) copy_ignored: Removed,
     /// Files rendered into a new worktree. Default: none.
     pub templates: Vec<TemplateFile>,
     /// Extra template variables. Default: none.
@@ -306,7 +313,7 @@ impl Default for WorktreeConfig {
             delete_branch: DeleteBranch::Safe,
             symlinks: Vec::new(),
             copies: Vec::new(),
-            copy_ignored: false,
+            copy_ignored: Removed,
             templates: Vec::new(),
             variables: BTreeMap::new(),
             ports: None,

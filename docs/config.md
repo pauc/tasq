@@ -208,6 +208,8 @@ sessions; `TASQ_BIN`, `TASQ_HOOK` and `TASQ_TASK_ID` are set for plugins and hoo
   `base + span` at most 65536.
 - `work.worktree_manager` and `work.worktree_command` no longer exist; setting them is an error
   pointing here.
+- `worktree.copy_ignored` (copy gitignored files) is not implemented yet; setting it is an error.
+  List the files under `worktree.copies` meanwhile.
 - A `[forge.<name>]` named `gitlab` or `github` infers `kind` and `host`; any other name needs `kind`.
 - Forge-backed sources need `forge` pointing at a forge of the matching kind; `llm-bridge` needs `command`.
 - `~` is expanded in paths.
@@ -322,7 +324,6 @@ on_done = "release"            # release | keep
 delete_branch = "safe"         # safe | never
 symlinks = ["node_modules"]    # linked from the project into a new worktree
 copies = [".envrc"]            # copied from the project
-copy_ignored = false           # copy gitignored files, narrowed by .worktreeinclude
 templates = [{ source = "templates/.envrc.template", target = ".envrc" }]
 
 [worktree.variables]           # extra {{name}} variables
@@ -351,7 +352,6 @@ post-remove = []
 | `worktree.delete_branch` | `safe` \| `never` | `safe` | On release, delete the branch when it is merged into the default branch or pushed (`safe`), or never. |
 | `worktree.symlinks` | array of paths | `[]` | Paths in the main checkout linked into a new worktree, at the same relative path. |
 | `worktree.copies` | array of paths | `[]` | Paths in the main checkout (files or directories) copied into a new worktree. |
-| `worktree.copy_ignored` | bool | `false` | Copy the project's gitignored files into a new worktree, narrowed by `.worktreeinclude`. |
 | `worktree.templates` | array of `{source, target}` | `[]` | Files rendered into a new worktree; `source` relative to the config file, `target` to the worktree. |
 | `worktree.variables` | table of strings | empty | Extra template variables. |
 | `worktree.ports` | `{base, span, block}` | unset | Enables `{{port}}`: `base` plus a stable per-branch offset below `span`, a multiple of `block`. |
