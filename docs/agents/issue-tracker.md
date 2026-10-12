@@ -14,7 +14,7 @@ Ids are positional (`.index` line numbers). Refer to a task by id **and** title,
 - **Comment**: `tasq log <id> "<note>"` appends a dated line under `## Progress`. There is no other comment channel.
 - **Status / priority**: `tasq set <id> <status|A|B|C> ["<note>"]`. Statuses: `in-progress`, `ready`, `waiting`, `blocked`, `later`.
 - **Close**: `tasq done <id> "<final note>"`; reopen with `tasq reopen <id> <status> "<note>"`.
-- **Tags and description cannot be changed after create** (`tasq apply` refuses them; task 31 adds field-level commands). Get them right at create time.
+- **Title, description, due and tags**: no single command yet (task 31). Change them with `tasq view <id> --json`, edit the field, pipe the document to `tasq apply`. `apply` refuses what it cannot express (a removed progress entry, link or session) and writes nothing.
 
 ## Plans for larger issues
 
