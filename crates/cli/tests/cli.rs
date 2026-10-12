@@ -820,6 +820,88 @@ mod edit {
     }
 }
 
+/// `tasq rename`, `due`, `tag` and `desc`: one field each, an optional
+/// `--note`, and the task as stored with `--json`.
+mod fields {
+    use super::*;
+
+    const SUPPORT: &str = "20260902100000.todo.md";
+
+    fn support(env: &TestEnv) -> String {
+        env.read_task(SUPPORT)
+    }
+
+    fn json(out: &std::process::Output) -> serde_json::Value {
+        assert!(out.status.success(), "{}", stderr(out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["schema"], 1);
+        value
+    }
+
+    #[test]
+    fn rename() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["rename", "3", "Answer the export question"])
+            .assert()
+            .success()
+            .stdout("[3] renamed\n");
+        assert_eq!(
+            support(&env),
+            "# [ ] Answer the export question\n\n## Description\n\n\
+             Customer asks about the export format.\n\n## Tags\n\n#support #B #ready\n\n\
+             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+        );
+    }
+
+    #[test]
+    fn rename_with_a_note_and_json() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["rename", "3", "Reply", "--note", "shorter", "--json"])
+            .output()
+            .unwrap();
+        let value = json(&out);
+        assert_eq!(value["task"]["id"], "3");
+        assert_eq!(value["task"]["title"], "Reply");
+        assert!(
+            support(&env).ends_with("- 2026-10-07 09:30: shorter\n"),
+            "{}",
+            support(&env)
+        );
+    }
+
+    #[test]
+    fn rename_errors_write_nothing() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        env.tasq()
+            .args(["rename", "3", "  "])
+            .assert()
+            .code(1)
+            .stderr("tasq: the title must not be empty\n");
+        env.tasq()
+            .args(["rename", "3", "a\nb"])
+            .assert()
+            .code(1)
+            .stderr("tasq: the title must be a single line\n");
+        env.tasq()
+            .args(["rename", "3", "x", "--note", ""])
+            .assert()
+            .code(1)
+            .stderr("tasq: the note must not be empty\n");
+        env.tasq().args(["rename", "3"]).assert().code(2);
+        assert_eq!(support(&env), before);
+        env.tasq()
+            .args(["rename", "99", "x"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+}
+
 mod create {
     use super::*;
 

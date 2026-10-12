@@ -41,6 +41,7 @@ Examples:
   tasq log 12 \"found the cause\"
   tasq done 12 \"merged\"
   tasq reopen 12 ready \"not merged after all\"
+  tasq rename 12 \"Fix the CI build\"
   tasq ui                    full-screen UI over the same tasks
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
@@ -185,6 +186,23 @@ pub enum Command {
         status: Option<String>,
         /// Progress note to append.
         #[arg(value_name = "NOTE")]
+        note: Option<String>,
+    },
+
+    /// Replace the title of a task, optionally logging a note.
+    ///
+    /// Surrounding whitespace is trimmed; the title must be one non-empty
+    /// line. Prints `[id] renamed`.
+    #[command(after_help = "Example:\n  tasq rename 31 \"CLI field-level commands\"")]
+    Rename {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// The new title.
+        #[arg(value_name = "TITLE")]
+        title: String,
+        /// Progress note to append at the same time.
+        #[arg(long, value_name = "TEXT")]
         note: Option<String>,
     },
 

@@ -18,6 +18,7 @@ pub mod create;
 pub mod dates;
 pub mod doctor;
 pub mod edit;
+pub mod fields;
 pub mod launch;
 pub mod list;
 pub mod mr;

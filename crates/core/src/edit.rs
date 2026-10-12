@@ -1,6 +1,7 @@
 //! The small edits of the original script, `set`, `log` and `done`, as
-//! operations on a [`Store`], plus [`reopen`], the inverse of `done`, and
-//! [`revise`], the TUI form's save.
+//! operations on a [`Store`], plus [`reopen`], the inverse of `done`,
+//! [`revise`], the TUI form's save, and the one-field edits of the CLI
+//! ([`rename`]).
 //!
 //! The CLI (`tasq set/log/done`) and the TUI (`t`, `p`, `l`, `d`) both call
 //! these, so the two front ends cannot drift (FR-10): a status change is
@@ -187,6 +188,10 @@ pub enum EditError {
     /// The form's title holds no text.
     #[error("the title must not be empty")]
     EmptyTitle,
+    /// A new title holds a line break; the title is the first line of the
+    /// file.
+    #[error("the title must be a single line")]
+    MultiLineTitle,
     /// `reopen` was asked for a task that is still open.
     #[error("task {0} is not done")]
     NotDone(TaskId),
@@ -204,14 +209,29 @@ pub fn set(
     note: Option<&str>,
     clock: &dyn Clock,
 ) -> Result<Task, EditError> {
-    let note = checked_note(note)?;
-    let mut task = store.get(id)?;
-    value.apply(&mut task);
-    if let Some(note) = note {
-        task.log(note, clock);
+    change(store, id, note, clock, |task| value.apply(task))
+}
+
+/// `tasq rename <id> <title>`: replaces the title (trimmed), logs `note`
+/// when given and returns the task as stored. An empty or multi-line title
+/// is refused before anything is read.
+pub fn rename(
+    store: &mut dyn Store,
+    id: &TaskId,
+    title: &str,
+    note: Option<&str>,
+    clock: &dyn Clock,
+) -> Result<Task, EditError> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(EditError::EmptyTitle);
     }
-    store.update(&task)?;
-    Ok(store.get(id)?)
+    if title.contains(['\n', '\r']) {
+        return Err(EditError::MultiLineTitle);
+    }
+    change(store, id, note, clock, |task| {
+        title.clone_into(&mut task.title);
+    })
 }
 
 /// `tasq log <id> <note>`: appends a dated progress note and returns the
@@ -275,6 +295,38 @@ pub fn reopen(
     task.log(note, clock);
     store.update(&task)?;
     Ok(store.get(id)?)
+}
+
+/// The shape of every field edit: checks `note`, reads the task, lets
+/// `edit` change it, logs the note, writes the whole task and returns it as
+/// stored.
+fn change(
+    store: &mut dyn Store,
+    id: &TaskId,
+    note: Option<&str>,
+    clock: &dyn Clock,
+    edit: impl FnOnce(&mut Task),
+) -> Result<Task, EditError> {
+    let note = checked_note(note)?;
+    let task = store.get(id)?;
+    write(store, task, note, clock, edit)
+}
+
+/// The second half of [`change`], for a task the caller already read:
+/// `edit`, log the checked `note`, write, read back.
+fn write(
+    store: &mut dyn Store,
+    mut task: Task,
+    note: Option<&str>,
+    clock: &dyn Clock,
+    edit: impl FnOnce(&mut Task),
+) -> Result<Task, EditError> {
+    edit(&mut task);
+    if let Some(note) = note {
+        task.log(note, clock);
+    }
+    store.update(&task)?;
+    Ok(store.get(&task.id)?)
 }
 
 /// A given note must hold text; `None` passes through.
@@ -646,6 +698,38 @@ mod tests {
         assert!(matches!(err, EditError::EmptyTitle));
         assert_eq!(store.get(&id).unwrap(), before);
         let err = revise(&mut store, &TaskId::from(9), &Fields::of(&before)).unwrap_err();
+        assert_eq!(err.to_string(), "no task with id 9");
+    }
+
+    #[test]
+    fn rename_trims_the_title_and_logs_the_note() {
+        let mut store = store();
+        let id = TaskId::from(1);
+        let task = rename(&mut store, &id, "  Renamed  ", None, &clock()).unwrap();
+        assert_eq!(task.title, "Renamed");
+        assert_eq!(task.progress, Vec::new());
+        assert_eq!(task.status, Some(Status::READY));
+        assert_eq!(store.get(&id).unwrap(), task);
+        let task = rename(&mut store, &id, "Again", Some("clearer"), &clock()).unwrap();
+        assert_eq!(task.title, "Again");
+        assert_eq!(task.progress, vec![entry("clearer")]);
+    }
+
+    #[test]
+    fn rename_refuses_empty_and_multi_line_titles_before_reading() {
+        let mut store = store();
+        let id = TaskId::from(1);
+        let before = store.get(&id).unwrap();
+        let err = rename(&mut store, &id, " \t", None, &clock()).unwrap_err();
+        assert!(matches!(err, EditError::EmptyTitle));
+        let err = rename(&mut store, &id, "one\ntwo", None, &clock()).unwrap_err();
+        assert_eq!(err.to_string(), "the title must be a single line");
+        let err = rename(&mut store, &id, "one\rtwo", None, &clock()).unwrap_err();
+        assert!(matches!(err, EditError::MultiLineTitle));
+        let err = rename(&mut store, &id, "x", Some(" "), &clock()).unwrap_err();
+        assert!(matches!(err, EditError::EmptyNote));
+        assert_eq!(store.get(&id).unwrap(), before);
+        let err = rename(&mut store, &TaskId::from(9), "x", None, &clock()).unwrap_err();
         assert_eq!(err.to_string(), "no task with id 9");
     }
 

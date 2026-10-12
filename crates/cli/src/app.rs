@@ -60,16 +60,13 @@ pub fn run(cli: Cli) -> Result<()> {
                 ),
                 Some(Command::List(args)) => commands::list::run(&app, &args),
                 Some(Command::Create(args)) => commands::create::run(&app, &args),
-                Some(Command::Set { id, value, note }) => {
-                    commands::edit::set(&app, &id, &value, note.as_deref())
-                }
-                Some(Command::Log { id, note }) => commands::edit::log(&app, &id, &note),
-                Some(Command::Done { id, note, yes }) => {
-                    commands::edit::done(&app, &id, note.as_deref(), yes)
-                }
-                Some(Command::Reopen { id, status, note }) => {
-                    commands::edit::reopen(&app, &id, status.as_deref(), note.as_deref())
-                }
+                Some(
+                    command @ (Command::Set { .. }
+                    | Command::Log { .. }
+                    | Command::Done { .. }
+                    | Command::Reopen { .. }
+                    | Command::Rename { .. }),
+                ) => edit(&app, command),
                 Some(command @ (Command::Next { .. } | Command::Pick { .. })) => {
                     commands::launch::dispatch(&app, &command)
                 }
@@ -118,6 +115,23 @@ pub fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// The commands that change one task in place: `set`, `log`, `done`,
+/// `reopen` and the one-field edits.
+fn edit(app: &App, command: Command) -> Result<()> {
+    match command {
+        Command::Set { id, value, note } => commands::edit::set(app, &id, &value, note.as_deref()),
+        Command::Log { id, note } => commands::edit::log(app, &id, &note),
+        Command::Done { id, note, yes } => commands::edit::done(app, &id, note.as_deref(), yes),
+        Command::Reopen { id, status, note } => {
+            commands::edit::reopen(app, &id, status.as_deref(), note.as_deref())
+        }
+        Command::Rename { id, title, note } => {
+            commands::fields::rename(app, &id, &title, note.as_deref())
+        }
+        other => unreachable!("not an edit command: {}", command_name(&other)),
+    }
+}
+
 fn command_name(command: &Command) -> &'static str {
     match command {
         Command::List(_) => "list",
@@ -126,6 +140,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::Log { .. } => "log",
         Command::Done { .. } => "done",
         Command::Reopen { .. } => "reopen",
+        Command::Rename { .. } => "rename",
         Command::Next { .. } => "next",
         Command::Pick { .. } => "pick",
         Command::View { .. } => "view",
