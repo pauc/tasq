@@ -14,4 +14,4 @@ When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the 
 
 Edit the right-hand column to match whatever vocabulary you actually use.
 
-In tasq, labels are topic tags: `tasq create --tag <label>` at creation, and `tasq view <id> --json` → edit `tags` → `tasq apply` to move a task to another role (task 31 adds `tasq tag ID +a -b`).
+In tasq, labels are topic tags: `tasq create --tag <label>` at creation, and `tasq tag <id> +<new-label> -<old-label>` to move a task to another role (e.g. `tasq tag 31 +needs-info -needs-triage`); the other tags stay.
