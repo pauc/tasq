@@ -1753,6 +1753,43 @@ mod worktree {
     }
 
     #[test]
+    fn trust_json_lists_the_approved_lines() {
+        let env = TestEnv::fixture();
+        let project = hooked_project(&env, REPO_HOOKS);
+        let out = env
+            .tasq_wt()
+            .args(["worktree", "trust", project.to_str().unwrap(), "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "{\n  \"approved\": [\n    {\n      \"kind\": \"pre-create\",\n      \
+             \"line\": \"hook pre\"\n    },\n    {\n      \"kind\": \"post-create\",\n      \
+             \"line\": \"hook post '{{title}}'\"\n    },\n    {\n      \
+             \"kind\": \"post-create\",\n      \"line\": \"hook after\"\n    }\n  ],\n  \
+             \"file\": \"[ROOT]/home/proj/.tasq.toml\",\n  \"schema\": 1\n}\n"
+        );
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .success();
+        assert_eq!(hook_log(&env).lines().count(), 3, "--json approved them");
+        let other = env.home.join("other");
+        env.git_repo(&other);
+        let out = env
+            .tasq_wt()
+            .args(["--json", "worktree", "trust", other.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "{\n  \"approved\": [],\n  \"file\": \"[ROOT]/home/other\",\n  \"schema\": 1\n}\n"
+        );
+    }
+
+    #[test]
     fn up_creates_the_declared_worktree() {
         let env = TestEnv::fixture();
         let project = env.home.join("proj");

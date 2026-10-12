@@ -28,6 +28,7 @@ use crate::app::App;
 use crate::cli::{Command, WorktreeAction};
 use crate::commands::{existing_dir, finish};
 use crate::error::{CliError, Result};
+use crate::json;
 use crate::plugins::HookEvent;
 
 /// `tasq worktree`: a subcommand, else declare or track (`run`).
@@ -326,6 +327,9 @@ pub fn trust(app: &App, dir: Option<&Path>) -> Result<()> {
     let settings = RepoSettings::load(app, &dir)?;
     let approved = worktree_hooks::trust(app, &settings)?;
     let file = settings.repo_file.as_deref().unwrap_or(&settings.main);
+    if app.out.json_mode() {
+        return app.out.json(&trusted_json(file, &approved));
+    }
     let text = if approved.is_empty() {
         format!("no hooks to approve in {}\n", file.display())
     } else {
@@ -338,6 +342,18 @@ pub fn trust(app: &App, dir: Option<&Path>) -> Result<()> {
         lines.join("\n") + "\n"
     };
     app.out.print(&text)
+}
+
+/// The JSON document of `trust`: the file and the lines it approved.
+fn trusted_json(file: &Path, approved: &[(Kind, String)]) -> serde_json::Value {
+    let approved = approved
+        .iter()
+        .map(|(kind, line)| serde_json::json!({"kind": kind.key(), "line": line}))
+        .collect();
+    json::document([
+        ("file", serde_json::json!(file)),
+        ("approved", serde_json::Value::Array(approved)),
+    ])
 }
 
 /// A worktree [`materialize`] created, or would create on a dry run.
