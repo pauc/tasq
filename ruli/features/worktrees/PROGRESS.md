@@ -53,7 +53,7 @@ Where things stand (2026-10-08, after WT-207):
 | WT-208 | Switch the author's workspaces off gwm (manual acceptance) | done | 6e7140a, d85937a. tasq_lab and silverfin: `.tasq.toml` written, hooks trusted, full cycle passed twice each on the real notebook (tasks 51, 52; see Learnings). zantop_atelier dropped and gwm kept installed by the author (see Deviations) |
 | WT-301 | `prune` | done | 35000d3 (core), 7fc735d (crate), cfb86a9 (CLI, docs). core `worktree::prune::plan` (scope: done tasks to release, repositories to prune, `here` first); `tasq_worktree::Git::prune(repo, dry_run)` now `--verbose` and returns git's lines; CLI `worktree_nav::prune` (`tasq worktree prune [--all] [--dry-run] [--yes]`, `--json`), docs/config.md, docs/json.md; 998 tests green; 0 missed mutants (diff: 19, 18 caught, 1 unviable) |
 | WT-302 | Status-rich `ls` | todo | |
-| WT-303 | Fast copies of ignored files | todo | |
+| WT-303 | Fast copies of ignored files | todo | `worktree.copy_ignored` is rejected in config since 18f6bd8 (PR #7 review P-5: it parsed but did nothing). WT-303 re-adds it: the `WorktreeConfig` field (`not_yet_copy_ignored` goes), the `docs/config.md` row and example line, the `config show` snapshots, and replaces `copy_ignored_is_rejected_until_it_is_implemented` |
 | WT-304 | Port blocks and database names | todo | |
 
 ## Learnings
@@ -218,3 +218,6 @@ None.
 - 2026-10-08: WT-208 drops `~/code/zantop_atelier` and leaves gwm installed (its `~/.zshrc` line,
   `~/.local/bin/gwm`, the `gwm.yml` files), both by the author's decision. tasq neither reads
   nor calls gwm; the two coexist (`gwm` and `tasq` shell functions do not clash).
+- 2026-10-12: `worktree.copy_ignored` (WT-303) shipped in PR #7 as a parsed key nothing read.
+  Rejected in config until WT-303 lands (18f6bd8), with the same error shape as the removed
+  `work.*` keys; WT-303 re-adds it.
