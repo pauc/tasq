@@ -3851,7 +3851,7 @@ mod worktrees_disabled {
             .args(["worktree", "3", "--create", "b"])
             .assert()
             .code(1)
-            .stderr("tasq: worktrees are disabled; set worktree.enabled = true (docs/config.md, \"Worktrees\")\n");
+            .stderr("tasq: worktrees are disabled; set worktree.enabled = true (docs/config.md#worktrees)\n");
     }
 
     #[test]
