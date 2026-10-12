@@ -75,7 +75,7 @@ Reads never spawn a process. A write takes `.git/tasq/lock` (`Bookkeeper::lock`,
 
 ### Injected everything
 
-Time comes from a `Clock` trait, config loading from `LoadOptions` (cwd, home, env), the `nb` executable from the injected PATH. This is what makes mutation testing affordable: logic is cheap to run thousands of times against temp dirs and fake processes. Keep new code in that shape.
+Time comes from a `Clock` trait, config loading from `LoadOptions` (cwd, home, env), and every child process (`git`, the bookkeeping `sh` job, launchers) runs with `env_clear()` plus an injected environment (`PATH`, `HOME`, ...), so tests pick the binaries and git identity. This is what makes mutation testing affordable: logic is cheap to run thousands of times against temp dirs and fake processes. Keep new code in that shape.
 
 ### Config
 
