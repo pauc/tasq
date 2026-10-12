@@ -6,7 +6,9 @@
 //! the task as stored). A task that changed on disk since it was read
 //! fails with the store's conflict error; nothing retries.
 
-use std::io::Read;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::process::{Command, ExitStatus};
 
 use chrono::NaiveDate;
 use tasq_core::dates::parse_day;
@@ -16,6 +18,7 @@ use tasq_core::store::Store;
 
 use crate::app::App;
 use crate::commands::finish;
+use crate::editor::configured_editor;
 use crate::error::{CliError, Result};
 
 /// `tasq rename <id> <title> [--note TEXT]`.
@@ -77,6 +80,51 @@ pub fn desc(app: &App, id: &str, text: Option<&str>, note: Option<&str>) -> Resu
     let clock = app.clock()?;
     let task = edit::describe(&mut store, &id, &text, note, clock.as_ref())?;
     finish(app, &store, &id, &described(&id, &task))
+}
+
+/// `tasq desc <id> --edit [--note TEXT]`: the description in `$VISUAL`
+/// or `$EDITOR`. The task is read before the editor starts and written
+/// with that read, so a change made meanwhile is the store's conflict.
+pub fn desc_edit(app: &App, id: &str, note: Option<&str>) -> Result<()> {
+    let id = App::task_id(id)?;
+    let editor = configured_editor(&app.opts.env)
+        .ok_or_else(|| CliError::user("no editor: set $VISUAL or $EDITOR"))?;
+    let mut store = app.open_store()?;
+    let task = store.get(&id)?;
+    let before = task
+        .description
+        .as_ref()
+        .map_or_else(String::new, |text| format!("{text}\n"));
+    let mut file = tempfile::Builder::new()
+        .prefix("tasq-desc-")
+        .suffix(".md")
+        .tempfile()?;
+    file.write_all(before.as_bytes())?;
+    file.flush()?;
+    let program = &editor[0];
+    let status = run_editor(&editor, file.path())
+        .map_err(|e| CliError::user(format!("could not run {program}: {e}")))?;
+    if !status.success() {
+        return Err(CliError::user(format!(
+            "{program} exited with {status}; the description was not changed"
+        )));
+    }
+    let after = std::fs::read_to_string(file.path())?;
+    if edit::description_text(&after) == task.description {
+        return finish(app, &store, &id, &format!("[{id}] description unchanged\n"));
+    }
+    let clock = app.clock()?;
+    let task = edit::describe_read(&mut store, task, &after, note, clock.as_ref())?;
+    finish(app, &store, &id, &described(&id, &task))
+}
+
+// Spawns the user's editor on a terminal and waits; nothing to assert.
+#[mutants::skip]
+fn run_editor(editor: &[String], path: &Path) -> std::io::Result<ExitStatus> {
+    Command::new(&editor[0])
+        .args(&editor[1..])
+        .arg(path)
+        .status()
 }
 
 /// The line `desc` prints after a write.

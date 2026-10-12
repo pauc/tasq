@@ -57,7 +57,7 @@ of the file) and its `tasq` counterpart.
 | none (`nb edit`, or the `tasq view --json \| jq \| tasq apply` round trip) | `tasq rename <ID> <TITLE> [--note TEXT]` | Trimmed, one non-empty line. |
 | none (`nb edit`, or the `tasq apply` round trip) | `tasq due <ID> <DATE\|none> [--note TEXT]` | DATE as for `create --due` (YYYY-MM-DD, today, tomorrow, yesterday); `none` removes `## Due`. |
 | none (edit `## Tags` by hand, or the `tasq apply` round trip) | `tasq tag <ID> <TAG>... [--note TEXT]` | `+name` or `name` adds, `-name` removes, the other tags stay. Status and priority words are refused (use `tasq set`). Long options go before or after the tags; short ones (`-v`) before, since `-name` is a tag. |
-| none (`nb edit`, or the `tasq apply` round trip) | `tasq desc <ID> [TEXT\|-] [--note TEXT]` | No TEXT prints the description; `-` reads stdin to EOF; `""` removes `## Description`. Blank lines at either end are dropped; a line starting with `## ` is refused (it would start a section). |
+| none (`nb edit`, or the `tasq apply` round trip) | `tasq desc <ID> [TEXT\|-\|--edit] [--note TEXT]` | No TEXT prints the description; `-` reads stdin to EOF; `""` removes `## Description`; `--edit` opens `$VISUAL`, else `$EDITOR`, on it (a non-zero exit or an unchanged file writes nothing). Blank lines at either end are dropped; a line starting with `## ` is refused (it would start a section). |
 | `tasks view <id>` | `tasq view <ID>` | glow rendering and OSC 8 links as before. |
 | `tasks view <id> <nb args>` (nb passthrough) | none; `tasq view <ID> --raw`, or `nb show <notebook>:<ID> <args>` | Decided in T-305. |
 | `tasks project <id> [path]` | `tasq project <ID> [PATH]` | |

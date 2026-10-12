@@ -256,7 +256,13 @@ pub enum Command {
     /// A description that is literally "-" goes through stdin:
     /// `printf -- - | tasq desc ID -`. Prints `[id] description updated`
     /// or `[id] description cleared`.
+    ///
+    /// --edit opens $VISUAL, else $EDITOR, on a temporary file holding the
+    /// description; when the editor exits 0 the file becomes the
+    /// description (empty clears it). A non-zero exit or an unchanged file
+    /// writes nothing, and a task changed meanwhile is a conflict.
     #[command(after_help = DESC_HELP)]
+    #[command(group(clap::ArgGroup::new("content").args(["text", "edit"])))]
     Desc {
         /// Task id.
         #[arg(value_name = "ID")]
@@ -264,8 +270,11 @@ pub enum Command {
         /// The new description, - for stdin, "" to clear.
         #[arg(value_name = "TEXT", allow_hyphen_values = true)]
         text: Option<String>,
-        /// Progress note to append at the same time (needs TEXT).
-        #[arg(long, value_name = "TEXT", requires = "text")]
+        /// Edit the description in $VISUAL or $EDITOR.
+        #[arg(long)]
+        edit: bool,
+        /// Progress note to append at the same time (needs TEXT or --edit).
+        #[arg(long, value_name = "TEXT", requires = "content")]
         note: Option<String>,
     },
 
@@ -489,6 +498,7 @@ const DESC_HELP: &str = "\
 Examples:
   tasq desc 31 \"Add due, tag, rename and desc commands\"
   wl-paste | tasq desc 31 -
+  tasq desc 31 --edit
   { tasq desc 31; echo \"Also: completions.\"; } | tasq desc 31 -";
 
 const LIST_HELP: &str = "\

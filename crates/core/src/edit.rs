@@ -359,12 +359,36 @@ pub fn describe(
     note: Option<&str>,
     clock: &dyn Clock,
 ) -> Result<Task, EditError> {
-    if let Some(line) = text.lines().find(|l| l.starts_with("## ")) {
-        return Err(EditError::DescriptionHeading(line.to_owned()));
-    }
+    checked_description(text)?;
     change(store, id, note, clock, |task| {
         task.description = description_text(text);
     })
+}
+
+/// [`describe`] for a task the caller read earlier, such as before opening
+/// an editor on its description: the store's conflict check then covers
+/// the whole time since that read.
+pub fn describe_read(
+    store: &mut dyn Store,
+    task: Task,
+    text: &str,
+    note: Option<&str>,
+    clock: &dyn Clock,
+) -> Result<Task, EditError> {
+    checked_description(text)?;
+    let note = checked_note(note)?;
+    write(store, task, note, clock, |task| {
+        task.description = description_text(text);
+    })
+}
+
+/// Refuses a description with a line the file would read as a section
+/// heading.
+fn checked_description(text: &str) -> Result<(), EditError> {
+    match text.lines().find(|l| l.starts_with("## ")) {
+        Some(line) => Err(EditError::DescriptionHeading(line.to_owned())),
+        None => Ok(()),
+    }
 }
 
 /// `tasq log <id> <note>`: appends a dated progress note and returns the
@@ -1011,6 +1035,25 @@ mod tests {
         // Deeper headings and a bare `##` are plain text.
         let task = describe(&mut store, &id, "### Steps\n##\n #", None, &clock()).unwrap();
         assert_eq!(task.description.as_deref(), Some("### Steps\n##\n #"));
+    }
+
+    #[test]
+    fn describe_read_writes_the_task_it_was_given() {
+        let mut store = store();
+        let id = TaskId::from(2);
+        let read = store.get(&id).unwrap();
+        let task = describe_read(&mut store, read.clone(), "Edited.\n", None, &clock()).unwrap();
+        assert_eq!(task.description.as_deref(), Some("Edited."));
+        assert_eq!(task.progress, Vec::new());
+        assert_eq!(store.get(&id).unwrap(), task);
+        let task = describe_read(&mut store, task, "", Some("cleared"), &clock()).unwrap();
+        assert_eq!(task.description, None);
+        assert_eq!(task.progress, vec![entry("cleared")]);
+        let err = describe_read(&mut store, read.clone(), "x", Some(" "), &clock()).unwrap_err();
+        assert!(matches!(err, EditError::EmptyNote));
+        let err = describe_read(&mut store, read, "## x", None, &clock()).unwrap_err();
+        assert!(matches!(err, EditError::DescriptionHeading(ref l) if l == "## x"));
+        assert_eq!(store.get(&id).unwrap().progress, vec![entry("cleared")]);
     }
 
     #[test]

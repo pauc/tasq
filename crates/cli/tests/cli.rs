@@ -1172,6 +1172,136 @@ mod fields {
             .stderr("tasq: no task with id 99\n");
     }
 
+    /// `tasq desc 3 --edit` with `VISUAL=fake-editor`, a script that runs
+    /// `body` with the temp file as `$1`.
+    fn edit_with(env: &TestEnv, body: &str) -> assert_cmd::assert::Assert {
+        env.fake_tool("fake-editor", body);
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .env("VISUAL", "fake-editor")
+            .env("EDITOR", "not-this-one")
+            .args(["desc", "3", "--edit"])
+            .assert()
+    }
+
+    #[test]
+    fn desc_edit_opens_the_description_and_saves_it() {
+        let env = TestEnv::fixture();
+        let seen = env.home.join("seen");
+        edit_with(
+            &env,
+            &format!(
+                "/bin/cat \"$1\" > {}\nprintf 'Edited.\\n\\nTwice.\\n' > \"$1\"",
+                seen.display()
+            ),
+        )
+        .success()
+        .stdout("[3] description updated\n");
+        assert_eq!(
+            std::fs::read_to_string(&seen).unwrap(),
+            "Customer asks about the export format.\n"
+        );
+        env.tasq()
+            .args(["desc", "3"])
+            .assert()
+            .stdout("Edited.\n\nTwice.\n");
+    }
+
+    #[test]
+    fn desc_edit_falls_back_to_editor_and_takes_a_note() {
+        let env = TestEnv::fixture();
+        env.fake_tool("fake-editor", "printf 'Via EDITOR' > \"$1\"");
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .env("VISUAL", " ")
+            .env("EDITOR", "fake-editor")
+            .args(["desc", "3", "--edit", "--note", "rewritten", "--json"])
+            .output()
+            .unwrap();
+        let value = json(&out);
+        assert_eq!(value["task"]["description"], "Via EDITOR");
+        assert!(support(&env).ends_with("- 2026-10-07 09:30: rewritten\n"));
+    }
+
+    #[test]
+    fn desc_edit_clears_on_an_empty_file() {
+        let env = TestEnv::fixture();
+        edit_with(&env, ": > \"$1\"")
+            .success()
+            .stdout("[3] description cleared\n");
+        assert!(!support(&env).contains("## Description"));
+    }
+
+    #[test]
+    fn desc_edit_writes_nothing_when_unchanged_or_aborted() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        edit_with(&env, ":")
+            .success()
+            .stdout("[3] description unchanged\n");
+        edit_with(
+            &env,
+            "printf '\\n\\nCustomer asks about the export format.\\n\\n\\n' > \"$1\"",
+        )
+        .success()
+        .stdout("[3] description unchanged\n");
+        edit_with(&env, "printf 'Lost.' > \"$1\"\nexit 3")
+            .code(1)
+            .stderr(
+                "tasq: fake-editor exited with exit status: 3; the description was not changed\n",
+            );
+        assert_eq!(support(&env), before);
+    }
+
+    #[test]
+    fn desc_edit_conflicts_when_the_task_changed_meanwhile() {
+        let env = TestEnv::fixture();
+        let file = env.notebook().join(SUPPORT);
+        edit_with(
+            &env,
+            &format!(
+                "printf -- '- 2026-10-07 09:00: elsewhere\\n' >> {}\nprintf 'Mine.' > \"$1\"",
+                file.display()
+            ),
+        )
+        .code(1)
+        .stderr(predicate::str::starts_with(
+            "tasq: task 3 changed since it was read (",
+        ));
+        assert!(support(&env).ends_with("- 2026-10-07 09:00: elsewhere\n"));
+        assert!(support(&env).contains("Customer asks about the export format."));
+    }
+
+    #[test]
+    fn desc_edit_needs_an_editor_and_no_text() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["desc", "3", "--edit"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no editor: set $VISUAL or $EDITOR\n");
+        env.tasq()
+            .env("VISUAL", "missing-editor")
+            .args(["desc", "3", "--edit"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with(
+                "tasq: could not run missing-editor: ",
+            ));
+        env.tasq()
+            .env("VISUAL", "fake-editor")
+            .args(["desc", "3", "x", "--edit"])
+            .assert()
+            .code(2);
+        env.tasq()
+            .env("VISUAL", "fake-editor")
+            .args(["desc", "99", "--edit"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+
     #[test]
     fn rename_errors_write_nothing() {
         let env = TestEnv::fixture();

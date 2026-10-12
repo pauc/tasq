@@ -16,6 +16,7 @@
 pub mod app;
 pub mod cli;
 pub mod commands;
+pub mod editor;
 pub mod error;
 pub mod json;
 pub mod output;

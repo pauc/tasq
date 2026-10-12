@@ -133,7 +133,16 @@ fn edit(app: &App, command: Command) -> Result<()> {
         }
         Command::Due { id, date, note } => commands::fields::due(app, &id, &date, note.as_deref()),
         Command::Tag { id, tags, note } => commands::fields::tag(app, &id, &tags, note.as_deref()),
-        Command::Desc { id, text, note } => {
+        Command::Desc {
+            id,
+            text,
+            edit: true,
+            note,
+        } => {
+            debug_assert!(text.is_none(), "clap keeps TEXT and --edit apart");
+            commands::fields::desc_edit(app, &id, note.as_deref())
+        }
+        Command::Desc { id, text, note, .. } => {
             commands::fields::desc(app, &id, text.as_deref(), note.as_deref())
         }
         other => unreachable!("not an edit command: {}", command_name(&other)),
