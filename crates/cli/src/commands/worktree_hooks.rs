@@ -120,24 +120,24 @@ impl Hooks {
 /// ([`Approval::Given`]), asked about on a terminal ([`Approval::Ask`]; a
 /// yes is stored), or skipped with a warning; a dry run neither asks nor
 /// stores nor warns.
-pub fn prepare(
+pub fn prepare<const N: usize>(
     app: &App,
     settings: &RepoSettings,
-    kinds: &[Kind],
+    kinds: [Kind; N],
     vars: &Vars,
     approval: Approval,
     dry_run: bool,
     report: &mut dyn FnMut(HookEvent),
-) -> Result<Vec<Hooks>> {
-    let pending = pending(app, settings, kinds)?;
+) -> Result<[Hooks; N]> {
+    let pending = pending(app, settings, &kinds)?;
     let approved = pending.is_empty()
         || match approval {
             Approval::Given => true,
             Approval::Ask => approve(app, settings, &pending, dry_run)?,
             Approval::Skip => false,
         };
-    let mut all = Vec::new();
-    for &kind in kinds {
+    let mut failed = None;
+    let all = kinds.map(|kind| {
         let mut hooks = Hooks {
             kind,
             run: Vec::new(),
@@ -148,13 +148,20 @@ pub fn prepare(
                 hooks.skipped.push(line.clone());
                 continue;
             }
-            let argv = hooks::argv(kind, line, vars).map_err(|e| CliError::user(e.to_string()))?;
-            hooks.run.push(Command {
-                line: line.clone(),
-                argv,
-            });
+            match hooks::argv(kind, line, vars) {
+                Ok(argv) => hooks.run.push(Command {
+                    line: line.clone(),
+                    argv,
+                }),
+                Err(e) => {
+                    failed.get_or_insert_with(|| CliError::user(e.to_string()));
+                }
+            }
         }
-        all.push(hooks);
+        hooks
+    });
+    if let Some(e) = failed {
+        return Err(e);
     }
     if !approved && !dry_run {
         let file = settings.repo_file.as_deref().unwrap_or(Path::new(""));

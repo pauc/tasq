@@ -92,12 +92,7 @@ pub fn run(app: &App, id: &str, target: Option<&str>, create: Option<&str>) -> R
         }
         branch => {
             let mut task = store.get(&id)?;
-            let project = project_of(app, &task)?;
-            let (worktree, new) = declare(app, &task, branch, &project)?;
-            if new {
-                task.add_worktree(worktree.clone());
-                store.update(&task)?;
-            }
+            let (worktree, new) = declare_and_save(app, &mut store, &mut task, branch)?;
             let already = if new { "" } else { "already " };
             finish(
                 app,
@@ -110,6 +105,11 @@ pub fn run(app: &App, id: &str, target: Option<&str>, create: Option<&str>) -> R
             )
         }
     }
+}
+
+/// A failure of `git` or of the worktree logic, shown as a user error.
+fn user(e: impl std::fmt::Display) -> CliError {
+    CliError::user(e.to_string())
 }
 
 /// The error for a worktree command or flag while the feature is off.
@@ -145,6 +145,23 @@ pub fn declare(
     project: &Path,
 ) -> Result<(Worktree, bool)> {
     declare_in(app, task, branch, &RepoSettings::load(app, project)?)
+}
+
+/// [`declare`] in the task's project, added to `task` and saved when it is
+/// new: the worktree and whether it is new.
+fn declare_and_save(
+    app: &App,
+    store: &mut NbStore,
+    task: &mut Task,
+    branch: Option<&str>,
+) -> Result<(Worktree, bool)> {
+    let project = project_of(app, task)?;
+    let (worktree, new) = declare(app, task, branch, &project)?;
+    if new {
+        task.add_worktree(worktree.clone());
+        store.update(task)?;
+    }
+    Ok((worktree, new))
 }
 
 /// [`declare`] with the repository's settings loaded already. Templates
@@ -226,6 +243,13 @@ impl RepoSettings {
     pub fn name(&self) -> Option<&str> {
         self.repo.as_ref().and_then(|r| r.name.as_deref())
     }
+
+    /// The template variables of `task`'s worktree at `path` on `branch`.
+    pub fn vars(&self, task: &Task, branch: &str, path: &Path) -> Vars {
+        Vars::for_task(task, &self.main, self.name(), &self.config.variables)
+            .with_branch(branch, self.config.ports)
+            .with_worktree(path)
+    }
 }
 
 /// A git repository as found on disk, without running `git`.
@@ -268,12 +292,7 @@ impl Repo {
 /// `branch` and creates it, unless its directory exists already.
 pub fn create_and_track(app: &App, store: &mut NbStore, id: &TaskId, branch: &str) -> Result<()> {
     let mut task = store.get(id)?;
-    let project = project_of(app, &task)?;
-    let (worktree, new) = declare(app, &task, Some(branch), &project)?;
-    if new {
-        task.add_worktree(worktree.clone());
-        store.update(&task)?;
-    }
+    let (worktree, _) = declare_and_save(app, store, &mut task, Some(branch))?;
     let only = Task {
         worktrees: vec![worktree.clone()],
         ..task
@@ -382,7 +401,7 @@ pub fn materialize(
     yes: bool,
     dry_run: bool,
 ) -> Result<Option<Created>> {
-    let git = Git { env: app.env_vec() };
+    let git = app.git();
     let settings = match project_of(app, task) {
         Ok(project) => Some(RepoSettings::load(app, &project)?),
         Err(_) => None,
@@ -427,42 +446,31 @@ pub fn materialize(
     for note in note.into_iter().chain(start.fresh_note(&branch)) {
         app.out.warn(&note);
     }
-    let user = |e: &dyn std::fmt::Display| CliError::user(e.to_string());
     let steps = provision::plan(
         &settings.config,
         &settings.main,
         &path,
         &settings.templates_dir,
     )
-    .map_err(|e| user(&e))?;
-    let vars = Vars::for_task(
-        task,
-        &settings.main,
-        settings.name(),
-        &settings.config.variables,
-    )
-    .with_branch(&branch, settings.config.ports)
-    .with_worktree(&path);
-    let ready = prepare(&steps, &vars).map_err(|e| user(&e))?;
-    let kinds = [Kind::PreCreate, Kind::PostCreate];
+    .map_err(user)?;
+    let vars = settings.vars(task, &branch, &path);
+    let ready = prepare(&steps, &vars).map_err(user)?;
     let mut report = worktree_hooks::to_terminal(app);
     let approval = Approval::from_yes(yes);
     let [pre, post] = worktree_hooks::prepare(
         app,
         &settings,
-        &kinds,
+        [Kind::PreCreate, Kind::PostCreate],
         &vars,
         approval,
         dry_run,
         &mut report,
-    )?
-    .try_into()
-    .unwrap_or_else(|_| unreachable!("one Hooks per kind"));
+    )?;
     if !dry_run {
         let env = hooks::env(&vars);
         pre.run(app, &settings.main, &env, &mut report)?;
         git.add(&settings.project, &path, &branch, &start)
-            .map_err(|e| user(&e))?;
+            .map_err(user)?;
         let warnings = apply(&ready).map_err(|e| {
             CliError::user(format!(
                 "worktree {} was created, but provisioning it failed: {e}",
@@ -498,7 +506,7 @@ fn track(app: &App, store: &mut NbStore, id: &TaskId, path: &Path) -> Result<()>
             &format!("[{id}] worktree already tracked: {}\n", dir.display()),
         );
     }
-    let branch = Git { env: app.env_vec() }.current_branch(&dir);
+    let branch = app.git().current_branch(&dir);
     task.add_worktree(Worktree {
         path: dir.clone(),
         branch: branch.clone(),
@@ -616,9 +624,8 @@ pub fn release(
             settings.project.display()
         )));
     }
-    let git = Git { env: app.env_vec() };
-    let user = |e: &dyn std::fmt::Display| CliError::user(e.to_string());
-    let listed = git.worktrees(&settings.main).map_err(|e| user(&e))?;
+    let git = app.git();
+    let listed = git.worktrees(&settings.main).map_err(user)?;
     let main = canonical(&settings.main);
     let cwd = canonical(&app.opts.cwd);
     let mut lines = Vec::new();
@@ -631,7 +638,7 @@ pub fn release(
                 .unwrap_or_else(|e| vec![e.to_string()])
         });
         let safety = match &worktree.branch {
-            Some(branch) => git.safety(&settings.main, branch).map_err(|e| user(&e))?,
+            Some(branch) => git.safety(&settings.main, branch).map_err(user)?,
             None => None,
         };
         let seen = safety.as_ref().map_or(BranchSeen::Absent, Safety::seen);
@@ -700,11 +707,10 @@ impl WorktreeRelease<'_> {
             WorktreeFate::Remove if self.how.dry_run => {
                 let settings = self.settings;
                 let vars = self.vars();
-                let kinds = [Kind::PreRemove, Kind::PostRemove];
                 let hooks = worktree_hooks::prepare(
                     self.app,
                     settings,
-                    &kinds,
+                    [Kind::PreRemove, Kind::PostRemove],
                     &vars,
                     self.how.approval,
                     true,
@@ -728,18 +734,15 @@ impl WorktreeRelease<'_> {
         let settings = self.settings;
         let path = self.path.display();
         let vars = self.vars();
-        let kinds = [Kind::PreRemove, Kind::PostRemove];
         let [pre, post] = worktree_hooks::prepare(
             self.app,
             settings,
-            &kinds,
+            [Kind::PreRemove, Kind::PostRemove],
             &vars,
             self.how.approval,
             false,
             report,
-        )?
-        .try_into()
-        .unwrap_or_else(|_| unreachable!("one Hooks per kind"));
+        )?;
         let env = hooks::env(&vars);
         if let Err(e) = pre.run(self.app, self.path, &env, report) {
             report(HookEvent::Warning(format!("kept worktree {path}: {e}")));
@@ -795,18 +798,11 @@ impl WorktreeRelease<'_> {
 
     /// The template variables of this worktree, for its hooks.
     fn vars(&self) -> Vars {
-        let settings = self.settings;
-        Vars::for_task(
+        self.settings.vars(
             self.task,
-            &settings.main,
-            settings.name(),
-            &settings.config.variables,
-        )
-        .with_branch(
             self.worktree.branch.as_deref().unwrap_or_default(),
-            settings.config.ports,
+            self.path,
         )
-        .with_worktree(self.path)
     }
 }
 

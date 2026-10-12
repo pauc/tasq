@@ -7,6 +7,7 @@ use tasq_core::clock::{Clock, FixedClock, SystemClock, When, parse_timestamp};
 use tasq_core::config::{Config, LoadOptions, Loaded};
 use tasq_core::model::{TaskId, Workflow};
 use tasq_store_nb::{NbStore, NbStoreOptions};
+use tasq_worktree::Git;
 
 use crate::cli::{Cli, Command, GlobalArgs, ListArgs};
 use crate::commands;
@@ -217,6 +218,13 @@ impl App {
     /// The environment as the store wants it.
     pub fn env_vec(&self) -> Vec<(String, String)> {
         env_vec(&self.opts.env)
+    }
+
+    /// `git`, run with this environment.
+    pub fn git(&self) -> Git {
+        Git {
+            env: self.env_vec(),
+        }
     }
 
     /// Store options from the config and the process environment: `NB_DIR`

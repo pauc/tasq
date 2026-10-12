@@ -21,7 +21,6 @@ use tasq_core::store::Store;
 use tasq_core::worktree::target::{self, Found, Target};
 use tasq_core::worktree::{git, hooks, prune as scope};
 use tasq_store_nb::NbStore;
-use tasq_worktree::Git;
 
 use crate::app::App;
 use crate::commands::existing_dir;
@@ -148,7 +147,7 @@ pub fn rows(app: &App, store: &NbStore, id: Option<&TaskId>, all: bool) -> Resul
     } else {
         None
     };
-    let git = Git { env: app.env_vec() };
+    let git = app.git();
     let mut settings: BTreeMap<PathBuf, Option<RepoSettings>> = BTreeMap::new();
     let mut rows = Vec::new();
     for task in &tasks {
@@ -225,7 +224,7 @@ pub fn prune(app: &App, all: bool, yes: bool, dry_run: bool) -> Result<()> {
     });
     // First, so the lines name every missing worktree: a release prunes
     // too, silently, before it deletes a branch.
-    let git = Git { env: app.env_vec() };
+    let git = app.git();
     let mut forgotten = Vec::new();
     for repo in &plan.repos {
         match git.prune(repo, dry_run) {
@@ -370,7 +369,7 @@ fn resolve(app: &App, store: &NbStore, arg: &str, create: Option<bool>) -> Resul
         Target::Path(path) => existing_dir(&path)
             .ok_or_else(|| CliError::user(format!("directory not found: {}", path.display()))),
         Target::Branch(branch) => {
-            let git = Git { env: app.env_vec() };
+            let git = app.git();
             let listed = match Repo::of(&app.opts.cwd) {
                 Some(repo) => git.worktrees(&repo.main).unwrap_or_default(),
                 None => Vec::new(),
