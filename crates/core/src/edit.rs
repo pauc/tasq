@@ -1,7 +1,7 @@
 //! The small edits of the original script, `set`, `log` and `done`, as
 //! operations on a [`Store`], plus [`reopen`], the inverse of `done`,
 //! [`revise`], the TUI form's save, and the one-field edits of the CLI
-//! ([`rename`], [`due`]).
+//! ([`rename`], [`due`], [`retag`]).
 //!
 //! The CLI (`tasq set/log/done`) and the TUI (`t`, `p`, `l`, `d`) both call
 //! these, so the two front ends cannot drift (FR-10): a status change is
@@ -15,7 +15,7 @@ use chrono::NaiveDate;
 use thiserror::Error;
 
 use crate::clock::Clock;
-use crate::model::{Priority, Status, Tag, Task, TaskDraft, TaskId, Workflow};
+use crate::model::{ModelError, Priority, Status, Tag, Task, TaskDraft, TaskId, Workflow};
 use crate::store::{Store, StoreError};
 
 /// What `set` changes: a workflow status or a priority.
@@ -192,6 +192,18 @@ pub enum EditError {
     /// file.
     #[error("the title must be a single line")]
     MultiLineTitle,
+    /// A `tag` word names a status or a priority, which are fields of the
+    /// task, not topic tags.
+    #[error("'{word}' is a {field}, not a tag; use set to change it")]
+    NotATag {
+        /// The word, without sign or `#`.
+        word: String,
+        /// `status` or `priority`.
+        field: &'static str,
+    },
+    /// A `tag` word is not a valid tag.
+    #[error(transparent)]
+    InvalidTag(#[from] ModelError),
     /// `reopen` was asked for a task that is still open.
     #[error("task {0} is not done")]
     NotDone(TaskId),
@@ -244,6 +256,81 @@ pub fn due(
     clock: &dyn Clock,
 ) -> Result<Task, EditError> {
     change(store, id, note, clock, |task| task.due = day)
+}
+
+/// One word of `tasq tag`: `+name` or a bare `name` adds the topic tag,
+/// `-name` removes it. A `#` after the sign is accepted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TagChange {
+    /// Add the tag when the task does not have it.
+    Add(Tag),
+    /// Remove the tag when the task has it.
+    Remove(Tag),
+}
+
+impl TagChange {
+    /// Interprets `word`. A name that is a priority letter or a status of
+    /// `workflow` is refused: those are fields, changed with `set`.
+    pub fn parse(word: &str, workflow: &Workflow) -> Result<Self, EditError> {
+        let (add, name) = match word.strip_prefix('-') {
+            Some(rest) => (false, rest),
+            None => (true, word.strip_prefix('+').unwrap_or(word)),
+        };
+        let field = match Value::parse(name, workflow) {
+            Some(Value::Status(_)) => Some("status"),
+            Some(Value::Priority(_)) => Some("priority"),
+            None => None,
+        };
+        if let Some(field) = field {
+            return Err(EditError::NotATag {
+                word: name.strip_prefix('#').unwrap_or(name).to_owned(),
+                field,
+            });
+        }
+        let tag = name.parse::<Tag>()?;
+        Ok(if add {
+            Self::Add(tag)
+        } else {
+            Self::Remove(tag)
+        })
+    }
+
+    /// `+name` or `-name`.
+    pub fn label(&self) -> String {
+        match self {
+            Self::Add(tag) => format!("+{tag}"),
+            Self::Remove(tag) => format!("-{tag}"),
+        }
+    }
+
+    /// Applies the change to `tags`; adding keeps file order and appends.
+    fn apply(&self, tags: &mut Vec<Tag>) {
+        match self {
+            Self::Add(tag) => {
+                if !tags.contains(tag) {
+                    tags.push(tag.clone());
+                }
+            }
+            Self::Remove(tag) => tags.retain(|t| t != tag),
+        }
+    }
+}
+
+/// `tasq tag <id> <change>...`: applies `changes` in order to the topic
+/// tags (the others stay as they are), logs `note` when given and returns
+/// the task as stored.
+pub fn retag(
+    store: &mut dyn Store,
+    id: &TaskId,
+    changes: &[TagChange],
+    note: Option<&str>,
+    clock: &dyn Clock,
+) -> Result<Task, EditError> {
+    change(store, id, note, clock, |task| {
+        for change in changes {
+            change.apply(&mut task.tags);
+        }
+    })
 }
 
 /// `tasq log <id> <note>`: appends a dated progress note and returns the
@@ -761,6 +848,89 @@ mod tests {
         let err = due(&mut store, &id, Some(day), Some(""), &clock()).unwrap_err();
         assert!(matches!(err, EditError::EmptyNote));
         assert_eq!(store.get(&id).unwrap().due, None);
+    }
+
+    fn tags(names: &[&str]) -> Vec<Tag> {
+        names.iter().map(|n| Tag::new(*n).unwrap()).collect()
+    }
+
+    #[test]
+    fn tag_change_parsing() {
+        let wf = Workflow::default();
+        let parse = |w: &str| TagChange::parse(w, &wf);
+        assert_eq!(parse("+a").unwrap(), TagChange::Add(Tag::new("a").unwrap()));
+        assert_eq!(parse("a").unwrap(), TagChange::Add(Tag::new("a").unwrap()));
+        assert_eq!(parse("#a").unwrap(), TagChange::Add(Tag::new("a").unwrap()));
+        assert_eq!(
+            parse("+#a").unwrap(),
+            TagChange::Add(Tag::new("a").unwrap())
+        );
+        assert_eq!(
+            parse("-b").unwrap(),
+            TagChange::Remove(Tag::new("b").unwrap())
+        );
+        assert_eq!(
+            parse("-#b").unwrap(),
+            TagChange::Remove(Tag::new("b").unwrap())
+        );
+        // Lowercase letters are tags, as for `set`.
+        assert_eq!(parse("+a").unwrap().label(), "+a");
+        assert_eq!(parse("-b").unwrap().label(), "-b");
+        assert_eq!(
+            parse("+ready").unwrap_err().to_string(),
+            "'ready' is a status, not a tag; use set to change it"
+        );
+        assert_eq!(
+            parse("-#blocked").unwrap_err().to_string(),
+            "'blocked' is a status, not a tag; use set to change it"
+        );
+        assert_eq!(
+            parse("A").unwrap_err().to_string(),
+            "'A' is a priority, not a tag; use set to change it"
+        );
+        assert_eq!(
+            parse("-#C").unwrap_err().to_string(),
+            "'C' is a priority, not a tag; use set to change it"
+        );
+        assert_eq!(
+            parse("+").unwrap_err().to_string(),
+            "invalid tag \"\": must not be empty"
+        );
+        assert_eq!(
+            parse("-##x").unwrap_err().to_string(),
+            "invalid tag \"#x\": must not start with '#'"
+        );
+    }
+
+    #[test]
+    fn retag_adds_and_removes_only_the_named_tags() {
+        let mut task = Task::new(TaskId::from(1), "A");
+        task.set_status(Status::READY);
+        task.tags = tags(&["gitlab", "needs-triage", "ux"]);
+        let mut store = MemoryStore::new([task]);
+        let id = TaskId::from(1);
+        let wf = Workflow::default();
+        let changes: Vec<TagChange> = ["+needs-info", "-needs-triage", "ux", "-absent"]
+            .iter()
+            .map(|w| TagChange::parse(w, &wf).unwrap())
+            .collect();
+        let task = retag(&mut store, &id, &changes, None, &clock()).unwrap();
+        assert_eq!(task.tags, tags(&["gitlab", "ux", "needs-info"]));
+        assert_eq!(task.status, Some(Status::READY));
+        assert_eq!(task.progress, Vec::new());
+        assert_eq!(store.get(&id).unwrap(), task);
+        // Later words win: add then remove leaves it out.
+        let changes = [
+            TagChange::parse("x", &wf).unwrap(),
+            TagChange::parse("-x", &wf).unwrap(),
+            TagChange::parse("-gitlab", &wf).unwrap(),
+            TagChange::parse("+gitlab", &wf).unwrap(),
+        ];
+        let task = retag(&mut store, &id, &changes, Some("triaged"), &clock()).unwrap();
+        assert_eq!(task.tags, tags(&["ux", "needs-info", "gitlab"]));
+        assert_eq!(task.progress, vec![entry("triaged")]);
+        let err = retag(&mut store, &id, &changes, Some(" "), &clock()).unwrap_err();
+        assert!(matches!(err, EditError::EmptyNote));
     }
 
     #[test]

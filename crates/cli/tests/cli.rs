@@ -949,6 +949,95 @@ mod fields {
     }
 
     #[test]
+    fn tag_adds_and_removes_only_the_named_tags() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["tag", "3", "+needs-info", "-support", "urgent"])
+            .assert()
+            .success()
+            .stdout("[3] tags: +needs-info -support +urgent\n");
+        assert_eq!(
+            support(&env),
+            "# [ ] Answer the support ticket\n\n## Description\n\n\
+             Customer asks about the export format.\n\n## Tags\n\n\
+             #needs-info #urgent #B #ready\n\n\
+             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+        );
+    }
+
+    #[test]
+    fn tag_takes_the_note_before_or_after_the_tags() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["tag", "3", "-support", "--note", "triaged", "--json"])
+            .output()
+            .unwrap();
+        let value = json(&out);
+        assert_eq!(value["task"]["tags"], serde_json::json!([]));
+        assert!(support(&env).ends_with("- 2026-10-07 09:30: triaged\n"));
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["tag", "3", "--note", "again", "-x", "+support"])
+            .assert()
+            .success()
+            .stdout("[3] tags: -x +support\n");
+        assert!(support(&env).contains("\n#support #B #ready\n"));
+        assert!(support(&env).ends_with("- 2026-10-07 09:30: again\n"));
+    }
+
+    #[test]
+    fn tag_adds_a_tags_section_when_there_is_none() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["tag", "7", "new"])
+            .assert()
+            .success()
+            .stdout("[7] tags: +new\n");
+        assert_eq!(
+            env.read_task("20260906140000.todo.md"),
+            "# [ ] Task without a tags section\n\n## Progress\n\n\
+             - 2026-10-06 14:00: created via tasks create\n\n## Tags\n\n#new\n"
+        );
+    }
+
+    #[test]
+    fn tag_rejects_status_and_priority_words_before_writing() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        env.tasq()
+            .args(["tag", "3", "+x", "-ready"])
+            .assert()
+            .code(1)
+            .stderr("tasq: 'ready' is a status, not a tag; use set to change it\n");
+        env.tasq()
+            .args(["tag", "3", "#A"])
+            .assert()
+            .code(1)
+            .stderr("tasq: 'A' is a priority, not a tag; use set to change it\n");
+        env.tasq()
+            .args(["tag", "3", "+"])
+            .assert()
+            .code(1)
+            .stderr("tasq: invalid tag \"\": must not be empty\n");
+        env.tasq().args(["tag", "3"]).assert().code(2);
+        env.tasq()
+            .args(["tag", "3", "-b", "--note", "n", "+a"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::starts_with(
+                "error: tag: put the options before or after the tags, not on both sides\n",
+            ));
+        assert_eq!(support(&env), before);
+        env.tasq()
+            .args(["tag", "99", "x"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+
+    #[test]
     fn rename_errors_write_nothing() {
         let env = TestEnv::fixture();
         let before = support(&env);

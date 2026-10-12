@@ -7,7 +7,7 @@ refuse anything else; a future shape change bumps the number.
 | Command | Payload next to `"schema": 1` |
 |---|---|
 | `tasq [list ...]` | `"tasks": [Task, ...]` in display order (group order, then priority, due, id); done tasks only with `--all` (after the open ones) or `--done` |
-| `tasq create`, `set`, `log`, `done`, `reopen`, `rename`, `due`, `view`, `project`, `worktree`, `worktree up`, `worktree release`, `session`, `mr`, `apply` | `"task": Task` as stored after the command |
+| `tasq create`, `set`, `log`, `done`, `reopen`, `rename`, `due`, `tag`, `view`, `project`, `worktree`, `worktree up`, `worktree release`, `session`, `mr`, `apply` | `"task": Task` as stored after the command |
 | `tasq worktree ls` | `"worktrees": [{task, title, status, done, path, branch, exists, changes}]`: `task` is the id, `status` the task's (`"done"` for a closed task, `null` without one), `branch` `null` for a directory tracked without one, `exists` whether the directory is there, `changes` the changed paths git reports (files provisioning wrote left out; `[]` when clean), `null` when it does not exist or git cannot say |
 | `tasq worktree prune` | `"dry_run": bool`, `"forgotten": [{repo, lines}]` (per repository, the lines `git worktree prune --verbose` printed), `"released": [{task, lines}]` (per done task, what was removed and deleted, or would be); repositories and tasks with nothing to report are left out, and what was kept goes to stderr as warnings |
 | `tasq worktree switch`, `tasq worktree path` | `"path"`: the directory (`switch` with `--json` neither prints a hint nor writes `$TASQ_CD_FILE`) |

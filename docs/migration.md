@@ -56,6 +56,7 @@ of the file) and its `tasq` counterpart.
 | none (`nb todo undo`, then `tasks set`) | `tasq reopen <ID> [STATUS] [NOTE]` | Clears `# [x]`, sets STATUS (default `workflow.default_status`) and logs NOTE (default `reopened`) in one write. A lone word that is not a status is the note. |
 | none (`nb edit`, or the `tasq view --json \| jq \| tasq apply` round trip) | `tasq rename <ID> <TITLE> [--note TEXT]` | Trimmed, one non-empty line. |
 | none (`nb edit`, or the `tasq apply` round trip) | `tasq due <ID> <DATE\|none> [--note TEXT]` | DATE as for `create --due` (YYYY-MM-DD, today, tomorrow, yesterday); `none` removes `## Due`. |
+| none (edit `## Tags` by hand, or the `tasq apply` round trip) | `tasq tag <ID> <TAG>... [--note TEXT]` | `+name` or `name` adds, `-name` removes, the other tags stay. Status and priority words are refused (use `tasq set`). Long options go before or after the tags; short ones (`-v`) before, since `-name` is a tag. |
 | `tasks view <id>` | `tasq view <ID>` | glow rendering and OSC 8 links as before. |
 | `tasks view <id> <nb args>` (nb passthrough) | none; `tasq view <ID> --raw`, or `nb show <notebook>:<ID> <args>` | Decided in T-305. |
 | `tasks project <id> [path]` | `tasq project <ID> [PATH]` | |

@@ -8,7 +8,7 @@
 
 use chrono::NaiveDate;
 use tasq_core::dates::parse_day;
-use tasq_core::edit;
+use tasq_core::edit::{self, TagChange};
 
 use crate::app::App;
 use crate::commands::finish;
@@ -35,6 +35,27 @@ pub fn due(app: &App, id: &str, date: &str, note: Option<&str>) -> Result<()> {
         |day| format!("[{id}] due {day}\n"),
     );
     finish(app, &store, &id, &line)
+}
+
+/// `tasq tag <id> <tag>... [--note TEXT]`. Every word is checked before
+/// the task is read.
+pub fn tag(app: &App, id: &str, words: &[String], note: Option<&str>) -> Result<()> {
+    let id = App::task_id(id)?;
+    let workflow = app.workflow();
+    let changes = words
+        .iter()
+        .map(|word| TagChange::parse(word, &workflow))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut store = app.open_store()?;
+    let clock = app.clock()?;
+    edit::retag(&mut store, &id, &changes, note, clock.as_ref())?;
+    let labels: Vec<String> = changes.iter().map(TagChange::label).collect();
+    finish(
+        app,
+        &store,
+        &id,
+        &format!("[{id}] tags: {}\n", labels.join(" ")),
+    )
 }
 
 /// Interprets `tasq due`'s DATE: `none` (any case) clears, anything else

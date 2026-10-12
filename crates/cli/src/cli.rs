@@ -9,9 +9,10 @@
 // TASQ_PROFILE are noise rather than markup.
 #![allow(clippy::doc_markdown)]
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, FromArgMatches, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 
 pub use crate::commands::worktree_nav::InitShell;
@@ -43,6 +44,7 @@ Examples:
   tasq reopen 12 ready \"not merged after all\"
   tasq rename 12 \"Fix the CI build\"
   tasq due 12 tomorrow       set the due date (none clears it)
+  tasq tag 12 +ci -flaky     add and remove topic tags
   tasq ui                    full-screen UI over the same tasks
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
@@ -220,6 +222,26 @@ pub enum Command {
         /// The due date, or none.
         #[arg(value_name = "DATE")]
         date: String,
+        /// Progress note to append at the same time.
+        #[arg(long, value_name = "TEXT")]
+        note: Option<String>,
+    },
+
+    /// Add or remove topic tags of a task, optionally logging a note.
+    ///
+    /// +NAME or NAME adds the tag, -NAME removes it; the other tags stay.
+    /// Status and priority words are refused: they are fields, changed
+    /// with `tasq set`. --note and the other long options go before or
+    /// after the tags; short ones such as -v before them. Prints
+    /// `[id] tags: +a -b`.
+    #[command(after_help = "Example:\n  tasq tag 31 +needs-info -needs-triage")]
+    Tag {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Tags to add (+name, name) or remove (-name).
+        #[arg(value_name = "TAG", required = true, allow_hyphen_values = true)]
+        tags: Vec<String>,
         /// Progress note to append at the same time.
         #[arg(long, value_name = "TEXT")]
         note: Option<String>,
@@ -961,9 +983,95 @@ fn parse_key_value(text: &str) -> Result<(String, String), String> {
     }
 }
 
+/// Parses `argv` with [`command`] for `worktrees`, with one fix-up for
+/// `tasq tag`. TAG accepts words starting with `-` (`-name` removes a tag),
+/// and clap then takes every later word as a tag as well, `--note` and
+/// `--json` included. So the first such `--word` and everything after it is
+/// moved in front of the tags and parsed again: options work on either side
+/// of the tags, but not on both, which is a usage error.
+pub fn parse_from(worktrees: bool, argv: &[OsString]) -> Result<Cli, clap::Error> {
+    let parse = |argv: &[OsString]| {
+        command(worktrees)
+            .try_get_matches_from(argv)
+            .and_then(|matches| Cli::from_arg_matches(&matches))
+    };
+    let cli = parse(argv)?;
+    let Some(Command::Tag { tags, .. }) = &cli.command else {
+        return Ok(cli);
+    };
+    let Some(at) = tags.iter().position(|w| w.starts_with("--")) else {
+        return Ok(cli);
+    };
+    // Once TAG starts, clap takes every word to the end of argv.
+    let start = argv.len() - tags.len();
+    let mut moved = argv[..start].to_vec();
+    moved.extend_from_slice(&argv[start + at..]);
+    moved.extend_from_slice(&argv[start..start + at]);
+    let again = parse(&moved)?;
+    let Some(Command::Tag { tags: kept, .. }) = &again.command else {
+        unreachable!("moving words after the subcommand keeps it");
+    };
+    if let Some(word) = kept.iter().find(|w| w.starts_with("--")) {
+        return Err(command(worktrees).error(
+            clap::error::ErrorKind::UnknownArgument,
+            format!("unexpected argument '{word}' found"),
+        ));
+    }
+    if kept[..] != tags[..at] {
+        return Err(command(worktrees).error(
+            clap::error::ErrorKind::ArgumentConflict,
+            "tag: put the options before or after the tags, not on both sides",
+        ));
+    }
+    Ok(again)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse(words: &[&str]) -> Result<Cli, clap::Error> {
+        let argv: Vec<OsString> = words.iter().map(OsString::from).collect();
+        parse_from(false, &argv)
+    }
+
+    fn tag_args(cli: &Cli) -> (Vec<String>, Option<String>) {
+        match &cli.command {
+            Some(Command::Tag { tags, note, .. }) => (tags.clone(), note.clone()),
+            other => panic!("not tag: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tag_options_on_either_side_of_the_tags() {
+        let words = |w: &[&str]| w.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let cli = parse(&["tasq", "tag", "3", "+a", "-b"]).unwrap();
+        assert_eq!(tag_args(&cli), (words(&["+a", "-b"]), None));
+        let cli = parse(&["tasq", "tag", "3", "--note", "n", "-b", "+a"]).unwrap();
+        assert_eq!(tag_args(&cli), (words(&["-b", "+a"]), Some("n".into())));
+        assert!(!cli.global.json);
+        let cli = parse(&["tasq", "tag", "3", "-b", "+a", "--note", "n", "--json"]).unwrap();
+        assert_eq!(tag_args(&cli), (words(&["-b", "+a"]), Some("n".into())));
+        assert!(cli.global.json);
+        let cli = parse(&["tasq", "--json", "tag", "3", "x", "--note=n"]).unwrap();
+        assert_eq!(tag_args(&cli), (words(&["x"]), Some("n".into())));
+        assert!(cli.global.json);
+        let err = parse(&["tasq", "tag", "3", "-b", "--note", "n", "+a"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+        assert_eq!(
+            err.to_string().lines().next().unwrap(),
+            "error: tag: put the options before or after the tags, not on both sides"
+        );
+        let err = parse(&["tasq", "tag", "3", "a", "--nope"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+        assert_eq!(
+            err.to_string().lines().next().unwrap(),
+            "error: unexpected argument '--nope' found"
+        );
+        // Other commands are parsed as they always were.
+        let cli = parse(&["tasq", "log", "3", "--json", "--", "--x"]).unwrap();
+        assert!(cli.global.json);
+    }
 
     #[test]
     fn command_line_is_well_formed() {
