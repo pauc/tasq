@@ -149,12 +149,9 @@ pub enum Command {
         /// New status or priority.
         #[arg(value_name = "VALUE")]
         value: String,
-        /// Progress note to append at the same time.
-        #[arg(value_name = "NOTE")]
-        note: Option<String>,
-        /// The same note as a flag (--note TEXT); not both.
-        #[arg(long = "note", value_name = "TEXT", conflicts_with = "note")]
-        note_flag: Option<String>,
+        /// The progress note, positional or `--note`.
+        #[command(flatten)]
+        note: NoteArg,
     },
 
     /// Append a dated progress note to a task.
@@ -172,12 +169,9 @@ pub enum Command {
         /// Task id.
         #[arg(value_name = "ID")]
         id: String,
-        /// Final progress note, appended before closing.
-        #[arg(value_name = "NOTE")]
-        note: Option<String>,
-        /// The same note as a flag (--note TEXT); not both.
-        #[arg(long = "note", value_name = "TEXT", conflicts_with = "note")]
-        note_flag: Option<String>,
+        /// The progress note, positional or `--note`.
+        #[command(flatten)]
+        note: NoteArg,
         /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
         #[arg(long)]
         yes: bool,
@@ -194,12 +188,9 @@ pub enum Command {
         /// Status to reopen with, or the note when it is not a status.
         #[arg(value_name = "STATUS")]
         status: Option<String>,
-        /// Progress note to append.
-        #[arg(value_name = "NOTE")]
-        note: Option<String>,
-        /// The same note as a flag (--note TEXT); not both.
-        #[arg(long = "note", value_name = "TEXT", conflicts_with = "note")]
-        note_flag: Option<String>,
+        /// The progress note, positional or `--note`.
+        #[command(flatten)]
+        note: NoteArg,
     },
 
     /// Replace the title of a task, optionally logging a note.
@@ -242,8 +233,9 @@ pub enum Command {
     /// +NAME or NAME adds the tag, -NAME removes it; the other tags stay.
     /// Status and priority words are refused: they are fields, changed
     /// with `tasq set`. --note and the other long options go before or
-    /// after the tags; short ones such as -v before them. Prints
-    /// `[id] tags: +a -b`.
+    /// after the tags; short ones such as -v before them. Prints the
+    /// changes that took effect, `[id] tags: +a -b`, or `[id] tags
+    /// unchanged` (then nothing is written unless there is a --note).
     #[command(after_help = "Example:\n  tasq tag 31 +needs-info -needs-triage")]
     Tag {
         /// Task id.
@@ -1029,6 +1021,25 @@ fn parse_key_value(text: &str) -> Result<(String, String), String> {
             Ok((key.trim().to_owned(), value.to_owned()))
         }
         _ => Err(format!("expected KEY=VALUE, got {text:?}")),
+    }
+}
+
+/// The progress note of `set`, `done` and `reopen`: the last positional
+/// word, as the original script took it, or `--note TEXT`; not both.
+#[derive(Debug, Clone, Args, Default)]
+pub struct NoteArg {
+    /// Progress note to append.
+    #[arg(value_name = "NOTE")]
+    positional: Option<String>,
+    /// The same note as a flag; not both.
+    #[arg(long = "note", value_name = "TEXT", conflicts_with = "positional")]
+    flag: Option<String>,
+}
+
+impl NoteArg {
+    /// The note, whichever way it was given.
+    pub fn into_note(self) -> Option<String> {
+        self.positional.or(self.flag)
     }
 }
 

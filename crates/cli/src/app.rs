@@ -122,25 +122,16 @@ pub fn run(cli: Cli) -> Result<()> {
 /// `reopen` and the one-field edits.
 fn edit(app: &App, command: Command) -> Result<()> {
     match command {
-        Command::Set {
-            id,
-            value,
-            note,
-            note_flag,
-        } => commands::edit::set(app, &id, &value, note.or(note_flag).as_deref()),
+        Command::Set { id, value, note } => {
+            commands::edit::set(app, &id, &value, note.into_note().as_deref())
+        }
         Command::Log { id, note } => commands::edit::log(app, &id, &note),
-        Command::Done {
-            id,
-            note,
-            note_flag,
-            yes,
-        } => commands::edit::done(app, &id, note.or(note_flag).as_deref(), yes),
-        Command::Reopen {
-            id,
-            status,
-            note,
-            note_flag,
-        } => commands::edit::reopen(app, &id, status.as_deref(), note.or(note_flag).as_deref()),
+        Command::Done { id, note, yes } => {
+            commands::edit::done(app, &id, note.into_note().as_deref(), yes)
+        }
+        Command::Reopen { id, status, note } => {
+            commands::edit::reopen(app, &id, status.as_deref(), note.into_note().as_deref())
+        }
         Command::Rename { id, title, note } => {
             commands::fields::rename(app, &id, &title, note.as_deref())
         }

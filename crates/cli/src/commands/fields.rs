@@ -56,14 +56,14 @@ pub fn tag(app: &App, id: &str, words: &[String], note: Option<&str>) -> Result<
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut store = app.open_store()?;
     let clock = app.clock()?;
-    edit::retag(&mut store, &id, &changes, note, clock.as_ref())?;
-    let labels: Vec<String> = changes.iter().map(TagChange::label).collect();
-    finish(
-        app,
-        &store,
-        &id,
-        &format!("[{id}] tags: {}\n", labels.join(" ")),
-    )
+    let done = edit::retag(&mut store, &id, &changes, note, clock.as_ref())?;
+    let line = if done.applied.is_empty() {
+        format!("[{id}] tags unchanged\n")
+    } else {
+        let labels: Vec<String> = done.applied.iter().map(TagChange::label).collect();
+        format!("[{id}] tags: {}\n", labels.join(" "))
+    };
+    finish(app, &store, &id, &line)
 }
 
 /// `tasq desc <id> [text|-] [--note TEXT]`: prints the description
@@ -92,10 +92,7 @@ pub fn desc_edit(app: &App, id: &str, note: Option<&str>) -> Result<()> {
         .ok_or_else(|| CliError::user("no editor: set $VISUAL or $EDITOR"))?;
     let mut store = app.open_store()?;
     let task = store.get(&id)?;
-    let before = task
-        .description
-        .as_ref()
-        .map_or_else(String::new, |text| format!("{text}\n"));
+    let before = as_lines(task.description.as_deref());
     let mut file = tempfile::Builder::new()
         .prefix("tasq-desc-")
         .suffix(".md")
@@ -123,8 +120,7 @@ pub fn desc_edit(app: &App, id: &str, note: Option<&str>) -> Result<()> {
 }
 
 /// The part of `desc --edit` after a zero exit: writes `after` with
-/// `task`, the read from before the editor started. An unchanged
-/// description writes nothing unless there is a note to log.
+/// `task`, the read from before the editor started.
 fn save_edit(
     app: &App,
     store: &mut NbStore,
@@ -133,16 +129,12 @@ fn save_edit(
     note: Option<&str>,
 ) -> Result<()> {
     let id = task.id.clone();
-    let unchanged = edit::description_text(after) == task.description;
-    if unchanged && note.is_none() {
-        return finish(app, store, &id, &format!("[{id}] description unchanged\n"));
-    }
     let clock = app.clock()?;
-    let task = edit::describe_read(store, task, after, note, clock.as_ref())?;
-    let line = if unchanged {
+    let revised = edit::describe_read(store, task, after, note, clock.as_ref())?;
+    let line = if revised.changed.is_empty() {
         format!("[{id}] description unchanged\n")
     } else {
-        described(&id, &task)
+        described(&id, &revised.task)
     };
     finish(app, store, &id, &line)
 }
@@ -150,15 +142,15 @@ fn save_edit(
 /// `error` with where the edited text was kept, so a failed save never
 /// loses what was typed in the editor.
 fn kept_in(error: CliError, path: &Path) -> CliError {
-    let where_ = format!("the edited text is kept in {}", path.display());
+    let kept = format!("the edited text is kept in {}", path.display());
     match error {
-        CliError::User(message) => CliError::User(format!("{message}; {where_}")),
-        CliError::Internal(e) => CliError::Internal(e.context(where_)),
+        CliError::User(message) => CliError::User(format!("{message}; {kept}")),
+        CliError::Internal(e) => CliError::Internal(e.context(kept)),
         silent @ CliError::Silent(_) => silent,
     }
 }
 
-// Spawns the user's editor on a terminal and waits; nothing to assert.
+/// Reason: spawns the user's editor on a terminal and waits; nothing to assert.
 #[mutants::skip]
 fn run_editor(editor: &[String], path: &Path) -> std::io::Result<ExitStatus> {
     Command::new(&editor[0])
@@ -182,10 +174,12 @@ fn described(id: &TaskId, task: &Task) -> String {
 fn print_description(app: &App, id: &TaskId) -> Result<()> {
     let store = app.open_store()?;
     let task = store.get(id)?;
-    let text = task
-        .description
-        .map_or_else(String::new, |text| format!("{text}\n"));
-    finish(app, &store, id, &text)
+    finish(app, &store, id, &as_lines(task.description.as_deref()))
+}
+
+/// A description as lines of text: a newline after it, nothing for none.
+fn as_lines(description: Option<&str>) -> String {
+    description.map_or_else(String::new, |text| format!("{text}\n"))
 }
 
 /// Stdin until EOF, one trailing newline dropped (`-` as in `cat -`).

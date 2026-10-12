@@ -237,7 +237,11 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   a status (only reachable once `--note` existed). Editor selection moved to `crate::editor`.
   `tasq due` takes the `create --due` words only (no weekday names). Mutants: 0 missed in
   `core/src/edit.rs`, `cli/src/commands/{fields,edit}.rs`, `cli/src/{cli,app,editor}.rs`.
-  Commits 38cc64a .. ee84f3b.
+  Two-axis review follow-up: `retag` returns `Retagged { task, applied }` (net changes in
+  request order; surviving tags keep their place; no write without a change or a note) and
+  `describe_read` returns `Revised` (the unchanged decision moved out of the CLI); `set`,
+  `done` and `reopen` share a flattened `cli::NoteArg`; `EditError::NotATag` carries
+  `edit::Field`. Commits from 340751e (rebased on ed41ab2).
 - **TUI DONE group, reopen, Today view, detail position (follow-up 2026-10-07, todo 33).**
   `Task::closed_at` (ADR 0020): a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`, read
   like `## Due`, `None` on open tasks whatever the file says). `Task::close(clock)` stamps it

@@ -1041,9 +1041,30 @@ mod fields {
             .args(["tag", "3", "--note", "again", "-x", "+support"])
             .assert()
             .success()
-            .stdout("[3] tags: -x +support\n");
+            .stdout("[3] tags: +support\n");
         assert!(support(&env).contains("\n#support #B #ready\n"));
         assert!(support(&env).ends_with("- 2026-10-07 09:30: again\n"));
+    }
+
+    #[test]
+    fn tag_reports_only_real_changes_and_writes_nothing_without_one() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        env.tasq()
+            .args(["tag", "3", "support", "-absent", "+x", "-x"])
+            .assert()
+            .success()
+            .stdout("[3] tags unchanged\n");
+        assert_eq!(support(&env), before);
+        env.tasq()
+            .args(["tag", "3", "-support", "+support", "+new"])
+            .assert()
+            .success()
+            .stdout("[3] tags: +new\n");
+        assert!(
+            support(&env).contains("\n#support #new #B #ready\n"),
+            "order kept"
+        );
     }
 
     #[test]

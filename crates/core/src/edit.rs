@@ -47,12 +47,38 @@ impl Value {
         }
     }
 
+    /// Which field of the task this value is for.
+    pub fn field(&self) -> Field {
+        match self {
+            Self::Status(_) => Field::Status,
+            Self::Priority(_) => Field::Priority,
+        }
+    }
+
     /// Changes the field on `task`.
     pub fn apply(&self, task: &mut Task) {
         match self {
             Self::Status(status) => task.set_status(status.clone()),
             Self::Priority(priority) => task.set_priority(*priority),
         }
+    }
+}
+
+/// The task field a [`Value`] sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    /// The workflow status.
+    Status,
+    /// The priority.
+    Priority,
+}
+
+impl std::fmt::Display for Field {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Status => "status",
+            Self::Priority => "priority",
+        })
     }
 }
 
@@ -198,8 +224,8 @@ pub enum EditError {
     NotATag {
         /// The word, without sign or `#`.
         word: String,
-        /// `status` or `priority`.
-        field: &'static str,
+        /// The field the word names.
+        field: Field,
     },
     /// A `tag` word is not a valid tag.
     #[error(transparent)]
@@ -280,15 +306,10 @@ impl TagChange {
             Some(rest) => (false, rest),
             None => (true, word.strip_prefix('+').unwrap_or(word)),
         };
-        let field = match Value::parse(name, workflow) {
-            Some(Value::Status(_)) => Some("status"),
-            Some(Value::Priority(_)) => Some("priority"),
-            None => None,
-        };
-        if let Some(field) = field {
+        if let Some(value) = Value::parse(name, workflow) {
             return Err(EditError::NotATag {
                 word: name.strip_prefix('#').unwrap_or(name).to_owned(),
-                field,
+                field: value.field(),
             });
         }
         let tag = name.parse::<Tag>()?;
@@ -307,6 +328,14 @@ impl TagChange {
         }
     }
 
+    /// Whether going from `before` to `after` made this change.
+    fn took_effect(&self, before: &[Tag], after: &[Tag]) -> bool {
+        match self {
+            Self::Add(tag) => !before.contains(tag) && after.contains(tag),
+            Self::Remove(tag) => before.contains(tag) && !after.contains(tag),
+        }
+    }
+
     /// Applies the change to `tags`; adding keeps file order and appends.
     fn apply(&self, tags: &mut Vec<Tag>) {
         match self {
@@ -320,21 +349,49 @@ impl TagChange {
     }
 }
 
+/// What [`retag`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Retagged {
+    /// The task as stored afterwards (as read when nothing was written).
+    pub task: Task,
+    /// The requested changes that took effect, in request order, each
+    /// once: adding a tag the task had, removing one it did not have, or
+    /// adding and then removing the same tag is no change.
+    pub applied: Vec<TagChange>,
+}
+
 /// `tasq tag <id> <change>...`: applies `changes` in order to the topic
-/// tags (the others stay as they are), logs `note` when given and returns
-/// the task as stored.
+/// tags. Tags that stay keep their place and new ones go at the end; the
+/// others are left alone. Logs `note` when given and returns the task as
+/// stored with the changes that took effect. Nothing is written when no
+/// tag changes and there is no note.
 pub fn retag(
     store: &mut dyn Store,
     id: &TaskId,
     changes: &[TagChange],
     note: Option<&str>,
     clock: &dyn Clock,
-) -> Result<Task, EditError> {
-    change(store, id, note, clock, |task| {
-        for change in changes {
-            change.apply(&mut task.tags);
+) -> Result<Retagged, EditError> {
+    let note = checked_note(note)?;
+    let task = store.get(id)?;
+    let mut wanted = task.tags.clone();
+    for change in changes {
+        change.apply(&mut wanted);
+    }
+    let mut applied: Vec<TagChange> = Vec::new();
+    for change in changes {
+        if change.took_effect(&task.tags, &wanted) && !applied.contains(change) {
+            applied.push(change.clone());
         }
-    })
+    }
+    if applied.is_empty() && note.is_none() {
+        return Ok(Retagged { task, applied });
+    }
+    let kept = task.tags.iter().filter(|t| wanted.contains(t));
+    let added = wanted.iter().filter(|t| !task.tags.contains(t));
+    let tags: Vec<Tag> = kept.chain(added).cloned().collect();
+    let task = write(store, task, note, clock, |task| task.tags = tags)?;
+    Ok(Retagged { task, applied })
 }
 
 /// `text` as the file reads a description back: CRLF line ends become LF,
@@ -369,19 +426,31 @@ pub fn describe(
 /// an editor on its description. A store that checks for conflicts
 /// compares against its own last read of the id (the nb store keeps one
 /// revision per id), so the check covers the time since that read only
-/// when the caller does not read the same id again in between.
+/// when the caller does not read the same id again in between. Returns the
+/// task as stored and `["description"]` when the description changed;
+/// nothing is written when it did not and there is no note.
 pub fn describe_read(
     store: &mut dyn Store,
     task: Task,
     text: &str,
     note: Option<&str>,
     clock: &dyn Clock,
-) -> Result<Task, EditError> {
+) -> Result<Revised, EditError> {
     checked_description(text)?;
     let note = checked_note(note)?;
-    write(store, task, note, clock, |task| {
-        task.description = description_text(text);
-    })
+    let description = description_text(text);
+    let changed = if description == task.description {
+        Vec::new()
+    } else {
+        vec!["description"]
+    };
+    if changed.is_empty() && note.is_none() {
+        return Ok(Revised { task, changed });
+    }
+    let task = write(store, task, note, clock, |task| {
+        task.description = description;
+    })?;
+    Ok(Revised { task, changed })
 }
 
 /// Refuses a description with a line the file would read as a section
@@ -974,23 +1043,52 @@ mod tests {
             .iter()
             .map(|w| TagChange::parse(w, &wf).unwrap())
             .collect();
-        let task = retag(&mut store, &id, &changes, None, &clock()).unwrap();
+        let done = retag(&mut store, &id, &changes, None, &clock()).unwrap();
+        let task = done.task;
         assert_eq!(task.tags, tags(&["gitlab", "ux", "needs-info"]));
         assert_eq!(task.status, Some(Status::READY));
         assert_eq!(task.progress, Vec::new());
         assert_eq!(store.get(&id).unwrap(), task);
-        // Later words win: add then remove leaves it out.
+        // `ux` was there and `absent` was not: only the real changes count.
+        assert_eq!(labels(&done.applied), ["+needs-info", "-needs-triage"]);
+        // Later words win: add then remove leaves it out, and is no change.
         let changes = [
             TagChange::parse("x", &wf).unwrap(),
             TagChange::parse("-x", &wf).unwrap(),
             TagChange::parse("-gitlab", &wf).unwrap(),
             TagChange::parse("+gitlab", &wf).unwrap(),
+            TagChange::parse("-ux", &wf).unwrap(),
+            TagChange::parse("-ux", &wf).unwrap(),
         ];
-        let task = retag(&mut store, &id, &changes, Some("triaged"), &clock()).unwrap();
-        assert_eq!(task.tags, tags(&["ux", "needs-info", "gitlab"]));
-        assert_eq!(task.progress, vec![entry("triaged")]);
+        let done = retag(&mut store, &id, &changes, Some("triaged"), &clock()).unwrap();
+        assert_eq!(
+            done.task.tags,
+            tags(&["gitlab", "needs-info"]),
+            "order kept"
+        );
+        assert_eq!(done.task.progress, vec![entry("triaged")]);
+        assert_eq!(labels(&done.applied), ["-ux"]);
         let err = retag(&mut store, &id, &changes, Some(" "), &clock()).unwrap_err();
         assert!(matches!(err, EditError::EmptyNote));
+    }
+
+    fn labels(changes: &[TagChange]) -> Vec<String> {
+        changes.iter().map(TagChange::label).collect()
+    }
+
+    #[test]
+    fn retag_without_a_change_or_a_note_writes_nothing() {
+        let mut task = Task::new(TaskId::from(1), "A");
+        task.tags = tags(&["ux"]);
+        let mut store = NoWrite(MemoryStore::new([task]));
+        let wf = Workflow::default();
+        let changes = [
+            TagChange::parse("ux", &wf).unwrap(),
+            TagChange::parse("-absent", &wf).unwrap(),
+        ];
+        let done = retag(&mut store, &TaskId::from(1), &changes, None, &clock()).unwrap();
+        assert_eq!(done.applied, Vec::new());
+        assert_eq!(done.task.tags, tags(&["ux"]));
     }
 
     #[test]
@@ -1044,18 +1142,47 @@ mod tests {
         let mut store = store();
         let id = TaskId::from(2);
         let read = store.get(&id).unwrap();
-        let task = describe_read(&mut store, read.clone(), "Edited.\n", None, &clock()).unwrap();
-        assert_eq!(task.description.as_deref(), Some("Edited."));
-        assert_eq!(task.progress, Vec::new());
-        assert_eq!(store.get(&id).unwrap(), task);
-        let task = describe_read(&mut store, task, "", Some("cleared"), &clock()).unwrap();
-        assert_eq!(task.description, None);
-        assert_eq!(task.progress, vec![entry("cleared")]);
+        let done = describe_read(&mut store, read.clone(), "Edited.\n", None, &clock()).unwrap();
+        assert_eq!(done.changed, ["description"]);
+        assert_eq!(done.task.description.as_deref(), Some("Edited."));
+        assert_eq!(done.task.progress, Vec::new());
+        assert_eq!(store.get(&id).unwrap(), done.task);
+        let done = describe_read(&mut store, done.task, "", Some("cleared"), &clock()).unwrap();
+        assert_eq!(done.changed, ["description"]);
+        assert_eq!(done.task.description, None);
+        assert_eq!(done.task.progress, vec![entry("cleared")]);
+        // Unchanged, with a note: the note is still logged.
+        let done =
+            describe_read(&mut store, done.task, "\n", Some("still none"), &clock()).unwrap();
+        assert_eq!(done.changed, Vec::<&str>::new());
+        assert_eq!(
+            done.task.progress,
+            vec![entry("cleared"), entry("still none")]
+        );
+        assert_eq!(store.get(&id).unwrap(), done.task);
         let err = describe_read(&mut store, read.clone(), "x", Some(" "), &clock()).unwrap_err();
         assert!(matches!(err, EditError::EmptyNote));
         let err = describe_read(&mut store, read, "## x", None, &clock()).unwrap_err();
         assert!(matches!(err, EditError::DescriptionHeading(ref l) if l == "## x"));
-        assert_eq!(store.get(&id).unwrap().progress, vec![entry("cleared")]);
+        assert_eq!(store.get(&id).unwrap().progress.len(), 2);
+    }
+
+    #[test]
+    fn describe_read_without_a_change_or_a_note_writes_nothing() {
+        let mut task = Task::new(TaskId::from(1), "A");
+        task.description = Some("Same.".into());
+        let mut store = NoWrite(MemoryStore::new([task.clone()]));
+        let done = describe_read(&mut store, task.clone(), "\nSame.\n\n", None, &clock()).unwrap();
+        assert_eq!(done.changed, Vec::<&str>::new());
+        assert_eq!(done.task, task);
+    }
+
+    #[test]
+    fn values_name_their_field() {
+        assert_eq!(Value::Status(Status::READY).field(), Field::Status);
+        assert_eq!(Value::Priority(Priority::A).field(), Field::Priority);
+        assert_eq!(Field::Status.to_string(), "status");
+        assert_eq!(Field::Priority.to_string(), "priority");
     }
 
     #[test]
