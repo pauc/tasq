@@ -994,7 +994,7 @@ fn env_overrides_files() {
         ("TASQ_NOTEBOOK", "env"),
         ("TASQ_SYNC_INTERVAL", "0"),
         ("TASQ_DEFAULT_PROJECT", "~/code/x"),
-        ("TASQ_WORKTREES", "true"),
+        ("TASQ_WORKTREE_ENABLED", "true"),
         (
             "TASQ_WORKTREE_PATH",
             "{{project}}/.worktrees/{{branch_safe}}",
@@ -1064,6 +1064,16 @@ fn env_overrides_files() {
     assert_eq!(env_layer.origin, Origin::Env);
     assert_eq!(env_layer.keys.len(), 25);
     assert_eq!(Origin::Env.to_string(), "env");
+}
+
+#[test]
+fn worktrees_env_var_is_not_an_alias_for_worktree_enabled() {
+    let sb = Sandbox::new();
+    let mut opts = sb.opts();
+    opts.env = env(&[("TASQ_WORKTREES", "true")]);
+    let loaded = Config::load(&opts).unwrap();
+    assert!(!loaded.config.worktree.enabled);
+    assert_ne!(loaded.explain("worktree.enabled"), Some(&Origin::Env));
 }
 
 #[test]

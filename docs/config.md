@@ -185,7 +185,7 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
 | `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
 | `TASQ_SUMMARY_PROMPT_FILE` | `report.summary.prompt_file` |
-| `TASQ_WORKTREES` | `worktree.enabled` |
+| `TASQ_WORKTREE_ENABLED` | `worktree.enabled` |
 | `TASQ_WORKTREE_PATH` | `worktree.path` |
 | `TASQ_WORKTREE_BRANCH` | `worktree.branch` |
 | `TASQ_WORKTREE_BASE` | `worktree.base` |

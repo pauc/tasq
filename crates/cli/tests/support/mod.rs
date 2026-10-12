@@ -84,10 +84,10 @@ impl TestEnv {
         cmd
     }
 
-    /// [`Self::tasq`] with worktrees enabled (`TASQ_WORKTREES=1`, ADR 0022).
+    /// [`Self::tasq`] with worktrees enabled (`TASQ_WORKTREE_ENABLED=1`, ADR 0022).
     pub fn tasq_wt(&self) -> assert_cmd::Command {
         let mut cmd = self.tasq();
-        cmd.env("TASQ_WORKTREES", "1");
+        cmd.env("TASQ_WORKTREE_ENABLED", "1");
         cmd
     }
 

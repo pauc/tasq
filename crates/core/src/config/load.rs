@@ -44,7 +44,7 @@ pub const ENV_SET: &str = "TASQ_SET";
 /// | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
 /// | `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
 /// | `TASQ_SUMMARY_PROMPT_FILE` | `report.summary.prompt_file` |
-/// | `TASQ_WORKTREES` | `worktree.enabled` |
+/// | `TASQ_WORKTREE_ENABLED` | `worktree.enabled` |
 /// | `TASQ_WORKTREE_PATH` | `worktree.path` |
 /// | `TASQ_WORKTREE_BRANCH` | `worktree.branch` |
 /// | `TASQ_WORKTREE_BASE` | `worktree.base` |
@@ -76,7 +76,7 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_SUMMARY_MODEL", "report.summary.model"),
     ("TASQ_SUMMARY_COMMAND", "report.summary.command"),
     ("TASQ_SUMMARY_PROMPT_FILE", "report.summary.prompt_file"),
-    ("TASQ_WORKTREES", "worktree.enabled"),
+    ("TASQ_WORKTREE_ENABLED", "worktree.enabled"),
     ("TASQ_WORKTREE_PATH", "worktree.path"),
     ("TASQ_WORKTREE_BRANCH", "worktree.branch"),
     ("TASQ_WORKTREE_BASE", "worktree.base"),

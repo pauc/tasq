@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `[worktree]` configuration for worktrees per task (ADR 0022): `enabled` (default `false`),
   `path` and `branch` templates, `base`, `on_create`, `on_done`, `delete_branch`, `symlinks`,
   `copies`, `copy_ignored`, `templates`, `variables`, `ports` and `[worktree.hooks]`, with
-  `TASQ_WORKTREES` and `TASQ_WORKTREE_*` variables. The keys are validated; the lifecycle that
-  uses them is still being built.
+  `TASQ_WORKTREE_*` variables (`TASQ_WORKTREE_ENABLED` for `enabled`). The keys are validated;
+  the lifecycle that uses them is still being built.
 - Worktrees are invisible unless `worktree.enabled = true`: `tasq worktree` is hidden from
   help and completions and refused, task JSON and hook documents leave out `worktrees` (and
   `pick --dry-run --json` `in_worktree`), the TUI detail and the Claude prompt say nothing about
