@@ -97,6 +97,7 @@ fn the_detail_shows_worktrees_only_when_enabled() {
     let mut model = fixture(false);
     update(&mut model, Msg::ShowDetail);
     let on = screen(&mut model, 120, 40);
+    assert_snapshot!("detail_with_worktrees", on);
     assert!(on.contains("Worktrees"), "{on}");
     assert!(
         on.contains("/home/me/code/app-fix-cache (fix-cache)"),
@@ -105,6 +106,7 @@ fn the_detail_shows_worktrees_only_when_enabled() {
     let mut model = fixture(false).with_worktrees(false);
     update(&mut model, Msg::ShowDetail);
     let off = screen(&mut model, 120, 40);
+    assert_snapshot!("detail_without_worktrees", off);
     assert!(!off.contains("Worktrees"), "{off}");
     assert!(!off.contains("app-fix-cache"), "{off}");
     assert!(off.contains("Sessions"), "{off}");
