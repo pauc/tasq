@@ -42,6 +42,7 @@ Examples:
   tasq done 12 \"merged\"
   tasq reopen 12 ready \"not merged after all\"
   tasq rename 12 \"Fix the CI build\"
+  tasq due 12 tomorrow       set the due date (none clears it)
   tasq ui                    full-screen UI over the same tasks
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
@@ -201,6 +202,24 @@ pub enum Command {
         /// The new title.
         #[arg(value_name = "TITLE")]
         title: String,
+        /// Progress note to append at the same time.
+        #[arg(long, value_name = "TEXT")]
+        note: Option<String>,
+    },
+
+    /// Set or clear the due date of a task, optionally logging a note.
+    ///
+    /// DATE is YYYY-MM-DD, today, tomorrow or yesterday (as for create
+    /// --due), or none to remove the date. Prints `[id] due <date>` or
+    /// `[id] due cleared`.
+    #[command(after_help = "Example:\n  tasq due 31 tomorrow")]
+    Due {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// The due date, or none.
+        #[arg(value_name = "DATE")]
+        date: String,
         /// Progress note to append at the same time.
         #[arg(long, value_name = "TEXT")]
         note: Option<String>,

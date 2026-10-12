@@ -874,6 +874,81 @@ mod fields {
     }
 
     #[test]
+    fn due_sets_a_date_after_the_description() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["due", "3", "2026-10-17"])
+            .assert()
+            .success()
+            .stdout("[3] due 2026-10-17\n");
+        assert_eq!(
+            support(&env),
+            "# [ ] Answer the support ticket\n\n## Description\n\n\
+             Customer asks about the export format.\n\n## Due\n\n2026-10-17\n\n\
+             ## Tags\n\n#support #B #ready\n\n\
+             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+        );
+    }
+
+    #[test]
+    fn due_takes_relative_days_a_note_and_json() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["due", "3", "Tomorrow", "--note", "promised", "--json"])
+            .output()
+            .unwrap();
+        let value = json(&out);
+        assert_eq!(value["task"]["id"], "3");
+        assert_eq!(value["task"]["due"], "2026-10-08");
+        assert!(
+            support(&env).ends_with("- 2026-10-07 09:30: promised\n"),
+            "{}",
+            support(&env)
+        );
+    }
+
+    #[test]
+    fn due_none_clears_the_date() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["due", "1", "NONE"])
+            .assert()
+            .success()
+            .stdout("[1] due cleared\n");
+        let file = env.read_task("20260901090000.todo.md");
+        assert!(!file.contains("## Due"), "{file}");
+        assert!(
+            file.contains("## Project\n\n/home/pau/code/tasks\n\n## Related\n"),
+            "{file}"
+        );
+    }
+
+    #[test]
+    fn due_errors_write_nothing() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        env.tasq()
+            .args(["due", "3", "friday"])
+            .assert()
+            .code(1)
+            .stderr("tasq: invalid due date \"friday\" (expected YYYY-MM-DD, today, tomorrow, yesterday or none)\n");
+        env.tasq()
+            .args(["due", "3", "today", "--note", " "])
+            .assert()
+            .code(1)
+            .stderr("tasq: the note must not be empty\n");
+        env.tasq().args(["due", "3"]).assert().code(2);
+        assert_eq!(support(&env), before);
+        env.tasq()
+            .args(["due", "99", "none"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+
+    #[test]
     fn rename_errors_write_nothing() {
         let env = TestEnv::fixture();
         let before = support(&env);

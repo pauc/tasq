@@ -55,6 +55,7 @@ of the file) and its `tasq` counterpart.
 | `tasks done <id> [note]` | `tasq done <ID> [NOTE]` | `tasq` edits the title line itself instead of calling `nb todo do`; same result (`# [x]`, status tag removed). |
 | none (`nb todo undo`, then `tasks set`) | `tasq reopen <ID> [STATUS] [NOTE]` | Clears `# [x]`, sets STATUS (default `workflow.default_status`) and logs NOTE (default `reopened`) in one write. A lone word that is not a status is the note. |
 | none (`nb edit`, or the `tasq view --json \| jq \| tasq apply` round trip) | `tasq rename <ID> <TITLE> [--note TEXT]` | Trimmed, one non-empty line. |
+| none (`nb edit`, or the `tasq apply` round trip) | `tasq due <ID> <DATE\|none> [--note TEXT]` | DATE as for `create --due` (YYYY-MM-DD, today, tomorrow, yesterday); `none` removes `## Due`. |
 | `tasks view <id>` | `tasq view <ID>` | glow rendering and OSC 8 links as before. |
 | `tasks view <id> <nb args>` (nb passthrough) | none; `tasq view <ID> --raw`, or `nb show <notebook>:<ID> <args>` | Decided in T-305. |
 | `tasks project <id> [path]` | `tasq project <ID> [PATH]` | |

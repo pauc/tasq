@@ -6,11 +6,13 @@
 //! the task as stored). A task that changed on disk since it was read
 //! fails with the store's conflict error; nothing retries.
 
+use chrono::NaiveDate;
+use tasq_core::dates::parse_day;
 use tasq_core::edit;
 
 use crate::app::App;
 use crate::commands::finish;
-use crate::error::Result;
+use crate::error::{CliError, Result};
 
 /// `tasq rename <id> <title> [--note TEXT]`.
 pub fn rename(app: &App, id: &str, title: &str, note: Option<&str>) -> Result<()> {
@@ -19,4 +21,55 @@ pub fn rename(app: &App, id: &str, title: &str, note: Option<&str>) -> Result<()
     let clock = app.clock()?;
     edit::rename(&mut store, &id, title, note, clock.as_ref())?;
     finish(app, &store, &id, &format!("[{id}] renamed\n"))
+}
+
+/// `tasq due <id> <date|none> [--note TEXT]`.
+pub fn due(app: &App, id: &str, date: &str, note: Option<&str>) -> Result<()> {
+    let id = App::task_id(id)?;
+    let clock = app.clock()?;
+    let day = due_date(date, clock.today())?;
+    let mut store = app.open_store()?;
+    edit::due(&mut store, &id, day, note, clock.as_ref())?;
+    let line = day.map_or_else(
+        || format!("[{id}] due cleared\n"),
+        |day| format!("[{id}] due {day}\n"),
+    );
+    finish(app, &store, &id, &line)
+}
+
+/// Interprets `tasq due`'s DATE: `none` (any case) clears, anything else
+/// goes through [`parse_day`], the parser of `create --due`.
+pub fn due_date(text: &str, today: NaiveDate) -> Result<Option<NaiveDate>> {
+    if text.trim().eq_ignore_ascii_case("none") {
+        return Ok(None);
+    }
+    parse_day(text, today).map(Some).map_err(|_| {
+        CliError::user(format!(
+            "invalid due date {text:?} (expected YYYY-MM-DD, today, tomorrow, yesterday or none)"
+        ))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn due_dates() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
+        assert_eq!(due_date("none", today).unwrap(), None);
+        assert_eq!(due_date(" None ", today).unwrap(), None);
+        assert_eq!(
+            due_date("tomorrow", today).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 10, 8)
+        );
+        assert_eq!(
+            due_date("2026-12-01", today).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 12, 1)
+        );
+        assert_eq!(
+            due_date("nope", today).unwrap_err().to_string(),
+            "invalid due date \"nope\" (expected YYYY-MM-DD, today, tomorrow, yesterday or none)"
+        );
+    }
 }

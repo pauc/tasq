@@ -1,7 +1,7 @@
 //! The small edits of the original script, `set`, `log` and `done`, as
 //! operations on a [`Store`], plus [`reopen`], the inverse of `done`,
 //! [`revise`], the TUI form's save, and the one-field edits of the CLI
-//! ([`rename`]).
+//! ([`rename`], [`due`]).
 //!
 //! The CLI (`tasq set/log/done`) and the TUI (`t`, `p`, `l`, `d`) both call
 //! these, so the two front ends cannot drift (FR-10): a status change is
@@ -232,6 +232,18 @@ pub fn rename(
     change(store, id, note, clock, |task| {
         title.clone_into(&mut task.title);
     })
+}
+
+/// `tasq due <id> <date|none>`: sets the due date, or removes it with
+/// `None`, logs `note` when given and returns the task as stored.
+pub fn due(
+    store: &mut dyn Store,
+    id: &TaskId,
+    day: Option<NaiveDate>,
+    note: Option<&str>,
+    clock: &dyn Clock,
+) -> Result<Task, EditError> {
+    change(store, id, note, clock, |task| task.due = day)
 }
 
 /// `tasq log <id> <note>`: appends a dated progress note and returns the
@@ -731,6 +743,24 @@ mod tests {
         assert_eq!(store.get(&id).unwrap(), before);
         let err = rename(&mut store, &TaskId::from(9), "x", None, &clock()).unwrap_err();
         assert_eq!(err.to_string(), "no task with id 9");
+    }
+
+    #[test]
+    fn due_sets_and_clears_the_date() {
+        let mut store = store();
+        let id = TaskId::from(2);
+        let day = NaiveDate::from_ymd_opt(2026, 10, 17).unwrap();
+        let task = due(&mut store, &id, Some(day), None, &clock()).unwrap();
+        assert_eq!(task.due, Some(day));
+        assert_eq!(task.progress, Vec::new());
+        assert_eq!(store.get(&id).unwrap(), task);
+        let task = due(&mut store, &id, None, Some("no deadline"), &clock()).unwrap();
+        assert_eq!(task.due, None);
+        assert_eq!(task.progress, vec![entry("no deadline")]);
+        assert_eq!(store.get(&id).unwrap(), task);
+        let err = due(&mut store, &id, Some(day), Some(""), &clock()).unwrap_err();
+        assert!(matches!(err, EditError::EmptyNote));
+        assert_eq!(store.get(&id).unwrap().due, None);
     }
 
     #[test]

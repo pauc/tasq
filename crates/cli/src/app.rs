@@ -65,7 +65,8 @@ pub fn run(cli: Cli) -> Result<()> {
                     | Command::Log { .. }
                     | Command::Done { .. }
                     | Command::Reopen { .. }
-                    | Command::Rename { .. }),
+                    | Command::Rename { .. }
+                    | Command::Due { .. }),
                 ) => edit(&app, command),
                 Some(command @ (Command::Next { .. } | Command::Pick { .. })) => {
                     commands::launch::dispatch(&app, &command)
@@ -128,6 +129,7 @@ fn edit(app: &App, command: Command) -> Result<()> {
         Command::Rename { id, title, note } => {
             commands::fields::rename(app, &id, &title, note.as_deref())
         }
+        Command::Due { id, date, note } => commands::fields::due(app, &id, &date, note.as_deref()),
         other => unreachable!("not an edit command: {}", command_name(&other)),
     }
 }
@@ -141,6 +143,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::Done { .. } => "done",
         Command::Reopen { .. } => "reopen",
         Command::Rename { .. } => "rename",
+        Command::Due { .. } => "due",
         Command::Next { .. } => "next",
         Command::Pick { .. } => "pick",
         Command::View { .. } => "view",
