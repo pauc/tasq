@@ -1037,6 +1037,141 @@ mod fields {
             .stderr("tasq: no task with id 99\n");
     }
 
+    const NO_TAGS: &str = "20260906140000.todo.md";
+
+    #[test]
+    fn desc_sets_the_description() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["desc", "3", "Export as CSV.\n\nThey use Excel."])
+            .assert()
+            .success()
+            .stdout("[3] description updated\n");
+        assert_eq!(
+            support(&env),
+            "# [ ] Answer the support ticket\n\n## Description\n\n\
+             Export as CSV.\n\nThey use Excel.\n\n## Tags\n\n#support #B #ready\n\n\
+             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+        );
+        env.tasq()
+            .args(["desc", "7", "New"])
+            .assert()
+            .success()
+            .stdout("[7] description updated\n");
+        assert_eq!(
+            env.read_task(NO_TAGS),
+            "# [ ] Task without a tags section\n\n## Description\n\nNew\n\n## Progress\n\n\
+             - 2026-10-06 14:00: created via tasks create\n"
+        );
+    }
+
+    #[test]
+    fn desc_dash_reads_stdin() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["desc", "3", "-"])
+            .write_stdin("From a pipe.\n\nSecond paragraph.\n")
+            .assert()
+            .success()
+            .stdout("[3] description updated\n");
+        env.tasq()
+            .args(["desc", "3"])
+            .assert()
+            .success()
+            .stdout("From a pipe.\n\nSecond paragraph.\n");
+        // A description that is literally "-" goes through stdin.
+        env.tasq()
+            .args(["desc", "3", "-"])
+            .write_stdin("-")
+            .assert()
+            .success();
+        env.tasq().args(["desc", "3"]).assert().stdout("-\n");
+    }
+
+    #[test]
+    fn desc_without_text_prints_the_description() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["desc", "1"])
+            .assert()
+            .success()
+            .stdout("Port the bash script to a Rust workspace.\nKeep the nb files unchanged.\n");
+        env.tasq().args(["desc", "7"]).assert().success().stdout("");
+        let value = json(&env.tasq().args(["desc", "3", "--json"]).output().unwrap());
+        assert_eq!(
+            value["task"]["description"],
+            "Customer asks about the export format."
+        );
+        env.tasq()
+            .args(["desc", "99"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+
+    #[test]
+    fn desc_empty_text_clears_the_description() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["desc", "3", ""])
+            .assert()
+            .success()
+            .stdout("[3] description cleared\n");
+        assert_eq!(
+            support(&env),
+            "# [ ] Answer the support ticket\n\n## Tags\n\n#support #B #ready\n\n\
+             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+        );
+        env.tasq()
+            .args(["desc", "3", "-"])
+            .write_stdin("\n")
+            .assert()
+            .success()
+            .stdout("[3] description cleared\n");
+    }
+
+    #[test]
+    fn desc_with_a_note_and_json() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["desc", "3", "-", "--note", "from the ticket", "--json"])
+            .write_stdin("Pasted.\n")
+            .output()
+            .unwrap();
+        let value = json(&out);
+        assert_eq!(value["task"]["description"], "Pasted.");
+        assert!(support(&env).ends_with("- 2026-10-07 09:30: from the ticket\n"));
+    }
+
+    #[test]
+    fn desc_errors_write_nothing() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        env.tasq()
+            .args(["desc", "3", "x", "--note", " "])
+            .assert()
+            .code(1)
+            .stderr("tasq: the note must not be empty\n");
+        env.tasq()
+            .args(["desc", "3", "--note", "n"])
+            .assert()
+            .code(2);
+        env.tasq()
+            .args(["desc", "3", "-"])
+            .write_stdin("Intro\n## Steps\n")
+            .assert()
+            .code(1)
+            .stderr("tasq: a description line cannot start with '## ' (it would start a new section): ## Steps\n");
+        assert_eq!(support(&env), before);
+        env.tasq()
+            .args(["desc", "99", "x"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+
     #[test]
     fn rename_errors_write_nothing() {
         let env = TestEnv::fixture();

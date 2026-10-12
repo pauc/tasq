@@ -1,7 +1,7 @@
 //! The small edits of the original script, `set`, `log` and `done`, as
 //! operations on a [`Store`], plus [`reopen`], the inverse of `done`,
 //! [`revise`], the TUI form's save, and the one-field edits of the CLI
-//! ([`rename`], [`due`], [`retag`]).
+//! ([`rename`], [`due`], [`retag`], [`describe`]).
 //!
 //! The CLI (`tasq set/log/done`) and the TUI (`t`, `p`, `l`, `d`) both call
 //! these, so the two front ends cannot drift (FR-10): a status change is
@@ -204,6 +204,10 @@ pub enum EditError {
     /// A `tag` word is not a valid tag.
     #[error(transparent)]
     InvalidTag(#[from] ModelError),
+    /// A description line starts with `## `, which the file would read as
+    /// the heading of a new section.
+    #[error("a description line cannot start with '## ' (it would start a new section): {0}")]
+    DescriptionHeading(String),
     /// `reopen` was asked for a task that is still open.
     #[error("task {0} is not done")]
     NotDone(TaskId),
@@ -330,6 +334,36 @@ pub fn retag(
         for change in changes {
             change.apply(&mut task.tags);
         }
+    })
+}
+
+/// `text` as the file reads a description back: CRLF line ends become LF,
+/// blank lines are dropped at both ends, and nothing left is `None` (no
+/// `## Description` section).
+pub fn description_text(text: &str) -> Option<String> {
+    let text = text.replace("\r\n", "\n");
+    let lines: Vec<&str> = text.split('\n').collect();
+    let start = lines.iter().position(|l| !l.trim().is_empty())?;
+    let end = lines.iter().rposition(|l| !l.trim().is_empty())?;
+    Some(lines[start..=end].join("\n"))
+}
+
+/// `tasq desc <id> <text>`: replaces the description with
+/// [`description_text`] of `text` (so blank text removes the section),
+/// logs `note` when given and returns the task as stored. A line starting
+/// with `## ` is refused before anything is read.
+pub fn describe(
+    store: &mut dyn Store,
+    id: &TaskId,
+    text: &str,
+    note: Option<&str>,
+    clock: &dyn Clock,
+) -> Result<Task, EditError> {
+    if let Some(line) = text.lines().find(|l| l.starts_with("## ")) {
+        return Err(EditError::DescriptionHeading(line.to_owned()));
+    }
+    change(store, id, note, clock, |task| {
+        task.description = description_text(text);
     })
 }
 
@@ -931,6 +965,52 @@ mod tests {
         assert_eq!(task.progress, vec![entry("triaged")]);
         let err = retag(&mut store, &id, &changes, Some(" "), &clock()).unwrap_err();
         assert!(matches!(err, EditError::EmptyNote));
+    }
+
+    #[test]
+    fn description_text_is_what_the_file_reads_back() {
+        assert_eq!(description_text(""), None);
+        assert_eq!(description_text(" \n\t\n"), None);
+        assert_eq!(description_text("x"), Some("x".into()));
+        assert_eq!(description_text("x\n"), Some("x".into()));
+        assert_eq!(
+            description_text("\n \n  kept\n\nalso kept  \n\n"),
+            Some("  kept\n\nalso kept  ".into())
+        );
+        assert_eq!(description_text("a\r\nb\r\n"), Some("a\nb".into()));
+        assert_eq!(description_text("-"), Some("-".into()));
+    }
+
+    #[test]
+    fn describe_sets_and_clears_the_description() {
+        let mut store = store();
+        let id = TaskId::from(2);
+        let task = describe(&mut store, &id, "Why.\n\nHow.\n", None, &clock()).unwrap();
+        assert_eq!(task.description.as_deref(), Some("Why.\n\nHow."));
+        assert_eq!(task.progress, Vec::new());
+        assert_eq!(store.get(&id).unwrap(), task);
+        let task = describe(&mut store, &id, "\n", Some("dropped"), &clock()).unwrap();
+        assert_eq!(task.description, None);
+        assert_eq!(task.progress, vec![entry("dropped")]);
+        assert_eq!(store.get(&id).unwrap(), task);
+        let err = describe(&mut store, &id, "x", Some(""), &clock()).unwrap_err();
+        assert!(matches!(err, EditError::EmptyNote));
+        assert_eq!(store.get(&id).unwrap().description, None);
+    }
+
+    #[test]
+    fn describe_refuses_a_line_that_would_start_a_section() {
+        let mut store = store();
+        let id = TaskId::from(2);
+        let err = describe(&mut store, &id, "Intro\n## Steps\n1. x", None, &clock()).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "a description line cannot start with '## ' (it would start a new section): ## Steps"
+        );
+        assert_eq!(store.get(&id).unwrap().description, None);
+        // Deeper headings and a bare `##` are plain text.
+        let task = describe(&mut store, &id, "### Steps\n##\n #", None, &clock()).unwrap();
+        assert_eq!(task.description.as_deref(), Some("### Steps\n##\n #"));
     }
 
     #[test]

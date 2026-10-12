@@ -6,9 +6,13 @@
 //! the task as stored). A task that changed on disk since it was read
 //! fails with the store's conflict error; nothing retries.
 
+use std::io::Read;
+
 use chrono::NaiveDate;
 use tasq_core::dates::parse_day;
 use tasq_core::edit::{self, TagChange};
+use tasq_core::model::{Task, TaskId};
+use tasq_core::store::Store;
 
 use crate::app::App;
 use crate::commands::finish;
@@ -56,6 +60,51 @@ pub fn tag(app: &App, id: &str, words: &[String], note: Option<&str>) -> Result<
         &id,
         &format!("[{id}] tags: {}\n", labels.join(" ")),
     )
+}
+
+/// `tasq desc <id> [text|-] [--note TEXT]`: prints the description
+/// without TEXT, reads it from stdin for `-`, sets it otherwise.
+pub fn desc(app: &App, id: &str, text: Option<&str>, note: Option<&str>) -> Result<()> {
+    let id = App::task_id(id)?;
+    let Some(text) = text else {
+        return print_description(app, &id);
+    };
+    let text = match text {
+        "-" => read_stdin()?,
+        text => text.to_owned(),
+    };
+    let mut store = app.open_store()?;
+    let clock = app.clock()?;
+    let task = edit::describe(&mut store, &id, &text, note, clock.as_ref())?;
+    finish(app, &store, &id, &described(&id, &task))
+}
+
+/// The line `desc` prints after a write.
+fn described(id: &TaskId, task: &Task) -> String {
+    let what = if task.description.is_some() {
+        "updated"
+    } else {
+        "cleared"
+    };
+    format!("[{id}] description {what}\n")
+}
+
+/// `tasq desc <id>`: the description and a newline, nothing when there is
+/// none; with `--json`, the task.
+fn print_description(app: &App, id: &TaskId) -> Result<()> {
+    let store = app.open_store()?;
+    let task = store.get(id)?;
+    let text = task
+        .description
+        .map_or_else(String::new, |text| format!("{text}\n"));
+    finish(app, &store, id, &text)
+}
+
+/// Stdin until EOF, one trailing newline dropped (`-` as in `cat -`).
+fn read_stdin() -> Result<String> {
+    let mut text = String::new();
+    std::io::stdin().read_to_string(&mut text)?;
+    Ok(text.strip_suffix('\n').unwrap_or(&text).to_owned())
 }
 
 /// Interprets `tasq due`'s DATE: `none` (any case) clears, anything else

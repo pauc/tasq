@@ -25,6 +25,7 @@ Commands:
   rename       Replace the title of a task, optionally logging a note
   due          Set or clear the due date of a task, optionally logging a note
   tag          Add or remove topic tags of a task, optionally logging a note
+  desc         Print, set or clear the description of a task
   next         Open a work session on the next task: the first in-progress one, else the first ready one
   pick         Open a work session on a specific task
   view         Show a task: rendered with glow on a terminal, plain markdown otherwise
@@ -100,6 +101,7 @@ Examples:
   tasq rename 12 "Fix the CI build"
   tasq due 12 tomorrow       set the due date (none clears it)
   tasq tag 12 +ci -flaky     add and remove topic tags
+  tasq desc 12 -             description from stdin (no TEXT prints it)
   tasq ui                    full-screen UI over the same tasks
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts

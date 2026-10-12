@@ -45,6 +45,7 @@ Examples:
   tasq rename 12 \"Fix the CI build\"
   tasq due 12 tomorrow       set the due date (none clears it)
   tasq tag 12 +ci -flaky     add and remove topic tags
+  tasq desc 12 -             description from stdin (no TEXT prints it)
   tasq ui                    full-screen UI over the same tasks
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
@@ -244,6 +245,27 @@ pub enum Command {
         tags: Vec<String>,
         /// Progress note to append at the same time.
         #[arg(long, value_name = "TEXT")]
+        note: Option<String>,
+    },
+
+    /// Print, set or clear the description of a task.
+    ///
+    /// Without TEXT the description is printed (nothing when there is
+    /// none). TEXT replaces it; - reads it from stdin until EOF; "" clears
+    /// it (the section is removed). Blank lines at either end are dropped.
+    /// A description that is literally "-" goes through stdin:
+    /// `printf -- - | tasq desc ID -`. Prints `[id] description updated`
+    /// or `[id] description cleared`.
+    #[command(after_help = DESC_HELP)]
+    Desc {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// The new description, - for stdin, "" to clear.
+        #[arg(value_name = "TEXT", allow_hyphen_values = true)]
+        text: Option<String>,
+        /// Progress note to append at the same time (needs TEXT).
+        #[arg(long, value_name = "TEXT", requires = "text")]
         note: Option<String>,
     },
 
@@ -462,6 +484,12 @@ pub enum Command {
         shell: Shell,
     },
 }
+
+const DESC_HELP: &str = "\
+Examples:
+  tasq desc 31 \"Add due, tag, rename and desc commands\"
+  wl-paste | tasq desc 31 -
+  { tasq desc 31; echo \"Also: completions.\"; } | tasq desc 31 -";
 
 const LIST_HELP: &str = "\
 With no filter, open tasks are grouped by status in workflow order
