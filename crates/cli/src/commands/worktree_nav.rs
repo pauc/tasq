@@ -234,12 +234,7 @@ pub fn prune(app: &App, all: bool, yes: bool, dry_run: bool) -> Result<()> {
             Err(e) => app.out.warn(&format!("{}: {e}", repo.display())),
         }
     }
-    let how = Releasing {
-        force: false,
-        approval: Approval::from_yes(yes),
-        dry_run,
-        closing: false,
-    };
+    let how = Releasing::on_demand(false, Approval::from_yes(yes), dry_run);
     let mut report = worktree_hooks::to_terminal(app);
     let mut released = Vec::new();
     for task in &plan.tasks {

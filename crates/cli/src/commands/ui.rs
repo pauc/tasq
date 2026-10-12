@@ -150,12 +150,7 @@ impl Host for CliHost<'_> {
             return hooks;
         }
         let mut warnings: Vec<String> = hooks.err().into_iter().collect();
-        let how = Releasing {
-            force: false,
-            approval: Approval::Skip,
-            dry_run: false,
-            closing: true,
-        };
+        let how = Releasing::closing(Approval::Skip);
         let mut collect = |event| {
             if let HookEvent::Warning(text) = event {
                 warnings.push(text);

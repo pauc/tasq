@@ -505,12 +505,7 @@ pub fn release_command(app: &App, id: &str, force: bool, yes: bool, dry_run: boo
     let id = App::task_id(id)?;
     let store = app.open_store()?;
     let task = store.get(&id)?;
-    let how = Releasing {
-        force,
-        approval: Approval::from_yes(yes),
-        dry_run,
-        closing: false,
-    };
+    let how = Releasing::on_demand(force, Approval::from_yes(yes), dry_run);
     let lines = release(app, &task, how, &mut worktree_hooks::to_terminal(app))?;
     let text = if lines.is_empty() {
         format!("[{id}] nothing released\n")
@@ -547,6 +542,30 @@ pub struct Releasing {
     pub dry_run: bool,
     /// Called for a close: `worktree.on_done = "keep"` skips it all.
     pub closing: bool,
+}
+
+impl Releasing {
+    /// For a task being closed (`tasq done`, the UI): never forced, never
+    /// a dry run, and subject to `worktree.on_done`.
+    pub fn closing(approval: Approval) -> Self {
+        Self {
+            force: false,
+            approval,
+            dry_run: false,
+            closing: true,
+        }
+    }
+
+    /// Asked for by name (`tasq worktree release`, `tasq worktree prune`),
+    /// whatever the task's status and `worktree.on_done`.
+    pub fn on_demand(force: bool, approval: Approval, dry_run: bool) -> Self {
+        Self {
+            force,
+            approval,
+            dry_run,
+            closing: false,
+        }
+    }
 }
 
 /// Step 3 of the lifecycle for every declared worktree of `task`: a clean
@@ -780,4 +799,44 @@ pub fn provisioned(settings: &RepoSettings, path: &Path) -> Vec<PathBuf> {
 /// `path` with symlinks resolved when it exists, as git records paths.
 fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closing_is_never_forced_nor_a_dry_run() {
+        assert_eq!(
+            Releasing::closing(Approval::Skip),
+            Releasing {
+                force: false,
+                approval: Approval::Skip,
+                dry_run: false,
+                closing: true,
+            }
+        );
+    }
+
+    #[test]
+    fn on_demand_keeps_its_flags_and_ignores_on_done() {
+        assert_eq!(
+            Releasing::on_demand(true, Approval::Given, true),
+            Releasing {
+                force: true,
+                approval: Approval::Given,
+                dry_run: true,
+                closing: false,
+            }
+        );
+        assert_eq!(
+            Releasing::on_demand(false, Approval::Ask, false),
+            Releasing {
+                force: false,
+                approval: Approval::Ask,
+                dry_run: false,
+                closing: false,
+            }
+        );
+    }
 }
