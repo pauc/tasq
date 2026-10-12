@@ -12,7 +12,7 @@ use std::process::{Command, ExitStatus};
 
 use chrono::NaiveDate;
 use tasq_core::dates::parse_day;
-use tasq_core::edit::{self, TagChange};
+use tasq_core::edit::{self, Revised, TagChange};
 use tasq_core::model::{Task, TaskId};
 use tasq_core::store::Store;
 use tasq_store_nb::NbStore;
@@ -84,8 +84,8 @@ pub fn desc(app: &App, id: &str, text: Option<&str>, note: Option<&str>) -> Resu
         return save_read(app, &mut store, task, &text, note);
     }
     let clock = app.clock()?;
-    let task = edit::describe(&mut store, &id, text, note, clock.as_ref())?;
-    finish(app, &store, &id, &described(&id, &task))
+    let revised = edit::describe(&mut store, &id, text, note, clock.as_ref())?;
+    finish(app, &store, &id, &described(&id, &revised))
 }
 
 /// `tasq desc <id> --edit [--note TEXT]`: the description in `$VISUAL`
@@ -108,6 +108,8 @@ pub fn desc_edit(app: &App, id: &str, note: Option<&str>) -> Result<()> {
     let status = run_editor(&editor, file.path())
         .map_err(|e| CliError::user(format!("could not run {program}: {e}")))?;
     let after = std::fs::read_to_string(file.path())?;
+    // Worth keeping when a save fails: the text says something new.
+    let edited = edit::description_text(&after) != task.description;
     let saved = if status.success() {
         save_read(app, &mut store, task, &after, note)
     } else {
@@ -116,7 +118,7 @@ pub fn desc_edit(app: &App, id: &str, note: Option<&str>) -> Result<()> {
         )))
     };
     match saved {
-        Err(e) if after != before => {
+        Err(e) if edited => {
             let (_, path) = file.keep().map_err(|e| CliError::Internal(e.into()))?;
             Err(kept_in(e, &path))
         }
@@ -136,12 +138,7 @@ fn save_read(
     let id = task.id.clone();
     let clock = app.clock()?;
     let revised = edit::describe_read(store, task, after, note, clock.as_ref())?;
-    let line = if revised.changed.is_empty() {
-        format!("[{id}] description unchanged\n")
-    } else {
-        described(&id, &revised.task)
-    };
-    finish(app, store, &id, &line)
+    finish(app, store, &id, &described(&id, &revised))
 }
 
 /// `error` with where the edited text was kept, so a failed save never
@@ -164,9 +161,11 @@ fn run_editor(editor: &[String], path: &Path) -> std::io::Result<ExitStatus> {
         .status()
 }
 
-/// The line `desc` prints after a write.
-fn described(id: &TaskId, task: &Task) -> String {
-    let what = if task.description.is_some() {
+/// The line `desc` prints: what happened to the description.
+fn described(id: &TaskId, revised: &Revised) -> String {
+    let what = if revised.changed.is_empty() {
+        "unchanged"
+    } else if revised.task.description.is_some() {
         "updated"
     } else {
         "cleared"

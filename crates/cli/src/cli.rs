@@ -257,14 +257,14 @@ pub enum Command {
     /// which makes `tasq desc ID | ... | tasq desc ID -` safe); "" clears
     /// it (the section is removed). Blank lines at either end are dropped.
     /// A description that is literally "-" goes through stdin:
-    /// `printf -- - | tasq desc ID -`. Prints `[id] description updated`
-    /// or `[id] description cleared`.
+    /// `printf -- - | tasq desc ID -`. Prints `[id] description updated`,
+    /// `cleared` or `unchanged`; an unchanged description writes nothing,
+    /// and with --note that is an error (the note is not logged either).
     ///
     /// --edit opens $VISUAL, else $EDITOR, on a temporary file holding the
     /// description; when the editor exits 0 the file becomes the
     /// description (empty clears it). A non-zero exit or an unchanged file
-    /// writes nothing (a --note is still logged when unchanged), and a task
-    /// changed meanwhile is a conflict. When the edit cannot be saved, the
+    /// writes nothing, and a task changed meanwhile is a conflict. When the edit cannot be saved, the
     /// edited text is kept and the error names the file.
     #[command(after_help = DESC_HELP)]
     #[command(group(clap::ArgGroup::new("content").args(["text", "edit"])))]

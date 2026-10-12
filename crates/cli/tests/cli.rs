@@ -1433,18 +1433,44 @@ mod fields {
     }
 
     #[test]
-    fn desc_edit_logs_a_note_even_when_unchanged() {
+    fn desc_with_a_note_and_nothing_to_change_writes_nothing_and_says_so() {
         let env = TestEnv::fixture();
-        env.fake_tool("fake-editor", ":");
+        let before = support(&env);
+        let refused =
+            "tasq: description unchanged; the note was not logged (use log to add it alone)\n";
+        env.fake_tool(
+            "fake-editor",
+            "printf '\\nCustomer asks about the export format.\\n\\n' > \"$1\"",
+        );
         env.tasq()
-            .env("TASQ_NOW", NOW)
             .env("VISUAL", "fake-editor")
             .args(["desc", "3", "--edit", "--note", "still accurate"])
             .assert()
+            .code(1)
+            .stderr(refused);
+        env.tasq()
+            .args(["desc", "3", "-", "--note", "same"])
+            .write_stdin("Customer asks about the export format.\n")
+            .assert()
+            .code(1)
+            .stderr(refused);
+        env.tasq()
+            .args([
+                "desc",
+                "3",
+                "Customer asks about the export format.",
+                "--note",
+                "same",
+            ])
+            .assert()
+            .code(1)
+            .stderr(refused);
+        assert_eq!(support(&env), before);
+        env.tasq()
+            .args(["desc", "3", "Customer asks about the export format."])
+            .assert()
             .success()
             .stdout("[3] description unchanged\n");
-        assert!(support(&env).contains("Customer asks about the export format."));
-        assert!(support(&env).ends_with("- 2026-10-07 09:30: still accurate\n"));
     }
 
     #[test]

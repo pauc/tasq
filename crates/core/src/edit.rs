@@ -234,6 +234,10 @@ pub enum EditError {
     /// the heading of a new section.
     #[error("a description line cannot start with '## ' (it would start a new section): {0}")]
     DescriptionHeading(String),
+    /// A note came with a description that stayed the same; nothing was
+    /// written, so the note was not logged either.
+    #[error("description unchanged; the note was not logged (use log to add it alone)")]
+    NoteNotLogged,
     /// `reopen` was asked for a task that is still open.
     #[error("task {0} is not done")]
     NotDone(TaskId),
@@ -405,30 +409,31 @@ pub fn description_text(text: &str) -> Option<String> {
     Some(lines[start..=end].join("\n"))
 }
 
-/// `tasq desc <id> <text>`: replaces the description with
-/// [`description_text`] of `text` (so blank text removes the section),
-/// logs `note` when given and returns the task as stored. A line starting
-/// with `## ` is refused before anything is read.
+/// `tasq desc <id> <text>`: [`describe_read`] on the task as it is now.
 pub fn describe(
     store: &mut dyn Store,
     id: &TaskId,
     text: &str,
     note: Option<&str>,
     clock: &dyn Clock,
-) -> Result<Task, EditError> {
+) -> Result<Revised, EditError> {
     checked_description(text)?;
-    change(store, id, note, clock, |task| {
-        task.description = description_text(text);
-    })
+    let task = store.get(id)?;
+    describe_read(store, task, text, note, clock)
 }
 
 /// [`describe`] for a task the caller read earlier, such as before opening
 /// an editor on its description. A store that checks for conflicts
 /// compares against its own last read of the id (the nb store keeps one
 /// revision per id), so the check covers the time since that read only
-/// when the caller does not read the same id again in between. Returns the
-/// task as stored and `["description"]` when the description changed;
-/// nothing is written when it did not and there is no note.
+/// when the caller does not read the same id again in between.
+///
+/// Replaces the description with [`description_text`] of `text` (blank
+/// text removes the section), logs `note` when given and returns the task
+/// as stored with `["description"]` as the change. When the description
+/// stays the same nothing is written: that is no error without a note, and
+/// [`EditError::NoteNotLogged`] with one. A line starting with `## ` is
+/// refused.
 pub fn describe_read(
     store: &mut dyn Store,
     task: Task,
@@ -444,8 +449,11 @@ pub fn describe_read(
     } else {
         vec!["description"]
     };
-    if changed.is_empty() && note.is_none() {
-        return Ok(Revised { task, changed });
+    if changed.is_empty() {
+        return match note {
+            Some(_) => Err(EditError::NoteNotLogged),
+            None => Ok(Revised { task, changed }),
+        };
     }
     let task = write(store, task, note, clock, |task| {
         task.description = description;
@@ -1109,17 +1117,20 @@ mod tests {
     fn describe_sets_and_clears_the_description() {
         let mut store = store();
         let id = TaskId::from(2);
-        let task = describe(&mut store, &id, "Why.\n\nHow.\n", None, &clock()).unwrap();
-        assert_eq!(task.description.as_deref(), Some("Why.\n\nHow."));
-        assert_eq!(task.progress, Vec::new());
-        assert_eq!(store.get(&id).unwrap(), task);
-        let task = describe(&mut store, &id, "\n", Some("dropped"), &clock()).unwrap();
-        assert_eq!(task.description, None);
-        assert_eq!(task.progress, vec![entry("dropped")]);
-        assert_eq!(store.get(&id).unwrap(), task);
+        let done = describe(&mut store, &id, "Why.\n\nHow.\n", None, &clock()).unwrap();
+        assert_eq!(done.changed, ["description"]);
+        assert_eq!(done.task.description.as_deref(), Some("Why.\n\nHow."));
+        assert_eq!(done.task.progress, Vec::new());
+        assert_eq!(store.get(&id).unwrap(), done.task);
+        let done = describe(&mut store, &id, "\n", Some("dropped"), &clock()).unwrap();
+        assert_eq!(done.task.description, None);
+        assert_eq!(done.task.progress, vec![entry("dropped")]);
+        assert_eq!(store.get(&id).unwrap(), done.task);
         let err = describe(&mut store, &id, "x", Some(""), &clock()).unwrap_err();
         assert!(matches!(err, EditError::EmptyNote));
         assert_eq!(store.get(&id).unwrap().description, None);
+        let err = describe(&mut store, &TaskId::from(9), "x", None, &clock()).unwrap_err();
+        assert_eq!(err.to_string(), "no task with id 9");
     }
 
     #[test]
@@ -1133,8 +1144,8 @@ mod tests {
         );
         assert_eq!(store.get(&id).unwrap().description, None);
         // Deeper headings and a bare `##` are plain text.
-        let task = describe(&mut store, &id, "### Steps\n##\n #", None, &clock()).unwrap();
-        assert_eq!(task.description.as_deref(), Some("### Steps\n##\n #"));
+        let done = describe(&mut store, &id, "### Steps\n##\n #", None, &clock()).unwrap();
+        assert_eq!(done.task.description.as_deref(), Some("### Steps\n##\n #"));
     }
 
     #[test]
@@ -1151,20 +1162,12 @@ mod tests {
         assert_eq!(done.changed, ["description"]);
         assert_eq!(done.task.description, None);
         assert_eq!(done.task.progress, vec![entry("cleared")]);
-        // Unchanged, with a note: the note is still logged.
-        let done =
-            describe_read(&mut store, done.task, "\n", Some("still none"), &clock()).unwrap();
-        assert_eq!(done.changed, Vec::<&str>::new());
-        assert_eq!(
-            done.task.progress,
-            vec![entry("cleared"), entry("still none")]
-        );
         assert_eq!(store.get(&id).unwrap(), done.task);
         let err = describe_read(&mut store, read.clone(), "x", Some(" "), &clock()).unwrap_err();
         assert!(matches!(err, EditError::EmptyNote));
         let err = describe_read(&mut store, read, "## x", None, &clock()).unwrap_err();
         assert!(matches!(err, EditError::DescriptionHeading(ref l) if l == "## x"));
-        assert_eq!(store.get(&id).unwrap().progress.len(), 2);
+        assert_eq!(store.get(&id).unwrap().progress, vec![entry("cleared")]);
     }
 
     #[test]
@@ -1175,6 +1178,20 @@ mod tests {
         let done = describe_read(&mut store, task.clone(), "\nSame.\n\n", None, &clock()).unwrap();
         assert_eq!(done.changed, Vec::<&str>::new());
         assert_eq!(done.task, task);
+    }
+
+    #[test]
+    fn describe_read_refuses_a_note_when_nothing_changed() {
+        let mut task = Task::new(TaskId::from(1), "A");
+        task.description = Some("Same.".into());
+        let mut store = NoWrite(MemoryStore::new([task.clone()]));
+        let err =
+            describe_read(&mut store, task, "Same.\n", Some("checked"), &clock()).unwrap_err();
+        assert!(matches!(err, EditError::NoteNotLogged));
+        assert_eq!(
+            err.to_string(),
+            "description unchanged; the note was not logged (use log to add it alone)"
+        );
     }
 
     #[test]
