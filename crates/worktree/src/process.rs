@@ -31,8 +31,8 @@ impl Finished {
 /// Runs `program` with `args` in `cwd`, with exactly `env` as its
 /// environment. Failing to start the program at all (not on `PATH`) is
 /// reported like a failed run, with the OS error as `stderr`.
-///
-/// Reason: wraps `std::process::Command`; nothing to assert without a process.
+
+// Reason: wraps `std::process::Command`; nothing to assert without a process.
 #[mutants::skip]
 pub fn run(program: &str, args: &[&str], cwd: &Path, env: &[(String, String)]) -> Finished {
     let mut command = Command::new(program);

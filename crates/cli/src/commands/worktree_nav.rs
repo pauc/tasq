@@ -481,8 +481,8 @@ pub fn chosen(reply: &str, count: usize) -> Option<usize> {
 }
 
 /// Runs fzf over `lines` and returns the line picked.
-///
-/// Reason: runs fzf on the terminal; `chosen` reads what it returns.
+
+// Reason: runs fzf on the terminal; `chosen` reads what it returns.
 #[mutants::skip]
 fn fzf_pick(fzf: &Path, lines: &[String], env: &[(String, String)]) -> Result<String> {
     let mut child = Command::new(fzf)
@@ -504,8 +504,8 @@ fn fzf_pick(fzf: &Path, lines: &[String], env: &[(String, String)]) -> Result<St
 }
 
 /// Prints `lines` on stderr and reads the number typed on stdin.
-///
-/// Reason: reads stdin; `chosen` reads the reply.
+
+// Reason: reads stdin; `chosen` reads the reply.
 #[mutants::skip]
 fn numbered_pick(lines: &[String]) -> Result<String> {
     let mut stderr = std::io::stderr().lock();

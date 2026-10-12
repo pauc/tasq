@@ -141,8 +141,8 @@ pub fn sync_due(last: Option<u64>, now: u64, interval: u64) -> bool {
 }
 
 /// The current time in Unix seconds.
-///
-/// Reason: reads the system clock; [`sync_due`] holds the logic.
+
+// Reason: reads the system clock; `sync_due` holds the logic.
 #[mutants::skip]
 pub fn unix_now() -> u64 {
     SystemTime::now()
@@ -154,9 +154,8 @@ pub fn unix_now() -> u64 {
 /// background: `sh` puts the job in a subshell and exits, so nothing waits
 /// for the commit and no zombie is left behind. The job owns `lock` from
 /// here on. `env` is the whole environment it gets.
-///
-/// Reason: spawns a process; the commits and syncs it makes are asserted by
-/// the integration tests on temporary repositories.
+
+// Reason: spawns a process; integration tests on temp repositories assert its commits and syncs.
 #[mutants::skip]
 pub fn spawn(
     notebook: &Path,

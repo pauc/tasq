@@ -192,11 +192,30 @@ fn pending(app: &App, settings: &RepoSettings, kinds: &[Kind]) -> Result<Vec<(Ki
         .collect())
 }
 
+/// What approving the pending lines takes, decided before any I/O.
+#[derive(Debug, PartialEq, Eq)]
+enum Approve {
+    /// Nothing to approve: no repository file holds the lines.
+    Yes,
+    /// A dry run: never asks, never stores.
+    No,
+    /// Ask this on the terminal; a yes is stored.
+    Ask(String),
+}
+
+/// What approving `pending`, from the repository's `file`, takes.
+fn approval(file: Option<&Path>, pending: &[(Kind, String)], dry_run: bool) -> Approve {
+    match file {
+        None => Approve::Yes,
+        Some(_) if dry_run => Approve::No,
+        Some(file) => Approve::Ask(question(file, pending)),
+    }
+}
+
 /// Asks on the terminal whether the pending lines may run (never on a
 /// dry run); a yes approves every hook line of the repository's file and
 /// stores that.
-///
-/// Reason: asks the terminal, then calls `trust`, which is tested.
+// Reason: asks the terminal and stores a yes with `trust`; `approval` decides whether to ask.
 #[mutants::skip]
 fn approve(
     app: &App,
@@ -204,14 +223,17 @@ fn approve(
     pending: &[(Kind, String)],
     dry_run: bool,
 ) -> Result<bool> {
-    let Some(file) = &settings.repo_file else {
-        return Ok(true);
-    };
-    if dry_run || !ask(&question(file, pending))? {
-        return Ok(false);
+    match approval(settings.repo_file.as_deref(), pending, dry_run) {
+        Approve::Yes => Ok(true),
+        Approve::No => Ok(false),
+        Approve::Ask(question) => {
+            let yes = ask(&question)?;
+            if yes {
+                trust(app, settings)?;
+            }
+            Ok(yes)
+        }
     }
-    trust(app, settings)?;
-    Ok(true)
 }
 
 /// The approval question for the `pending` lines of `file`.
@@ -246,8 +268,7 @@ pub fn trust(app: &App, settings: &RepoSettings) -> Result<Vec<(Kind, String)>> 
 }
 
 /// Asks `question` on stderr and reads a line; `false` without a terminal.
-///
-/// Reason: reads the terminal; nothing to assert without one.
+// Reason: reads the terminal; `is_yes` reads the reply.
 #[mutants::skip]
 fn ask(question: &str) -> Result<bool> {
     if !std::io::stdin().is_terminal() {
@@ -257,7 +278,13 @@ fn ask(question: &str) -> Result<bool> {
     std::io::stderr().flush()?;
     let mut reply = String::new();
     std::io::stdin().lock().read_line(&mut reply)?;
-    Ok(reply.trim_start().starts_with(['y', 'Y']))
+    Ok(is_yes(&reply))
+}
+
+/// Whether a reply to a `[y/N]` question is a yes: its first non-blank
+/// character is `y` or `Y`.
+fn is_yes(reply: &str) -> bool {
+    reply.trim_start().starts_with(['y', 'Y'])
 }
 
 /// The trust file for this environment.
@@ -297,6 +324,29 @@ mod tests {
     fn approval_from_yes() {
         assert_eq!(Approval::from_yes(true), Approval::Given);
         assert_eq!(Approval::from_yes(false), Approval::Ask);
+    }
+
+    #[test]
+    fn approval_needs_a_repository_file_and_no_dry_run_to_ask() {
+        let file = Path::new("/ws/.tasq.toml");
+        let pending = [(Kind::PostCreate, "direnv allow .".to_owned())];
+        assert_eq!(approval(None, &pending, false), Approve::Yes);
+        assert_eq!(approval(None, &pending, true), Approve::Yes);
+        assert_eq!(approval(Some(file), &pending, true), Approve::No);
+        assert_eq!(
+            approval(Some(file), &pending, false),
+            Approve::Ask(question(file, &pending))
+        );
+    }
+
+    #[test]
+    fn a_yes_starts_with_y() {
+        for reply in ["y\n", "Y\n", "  yes\n", "Yep"] {
+            assert!(is_yes(reply), "{reply:?}");
+        }
+        for reply in ["", "\n", "n\n", "N", "no", " ny", "x y"] {
+            assert!(!is_yes(reply), "{reply:?}");
+        }
     }
 
     #[test]
