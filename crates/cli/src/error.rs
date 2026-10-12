@@ -8,6 +8,8 @@ use tasq_core::dates::DateError;
 use tasq_core::model::ModelError;
 use tasq_core::report::ReportError;
 use tasq_core::store::StoreError;
+use tasq_worktree::create::CreateError;
+use tasq_worktree::hooks::HookFailure;
 
 /// What a command can fail with.
 #[derive(Debug)]
@@ -95,6 +97,24 @@ impl From<DateError> for CliError {
 impl From<ReportError> for CliError {
     fn from(e: ReportError) -> Self {
         Self::User(e.to_string())
+    }
+}
+
+impl From<HookFailure> for CliError {
+    fn from(e: HookFailure) -> Self {
+        match e {
+            HookFailure::Ask(e) => e.into(),
+            e => Self::User(e.to_string()),
+        }
+    }
+}
+
+impl From<CreateError> for CliError {
+    fn from(e: CreateError) -> Self {
+        match e {
+            CreateError::Hooks(e) => e.into(),
+            e => Self::User(e.to_string()),
+        }
     }
 }
 

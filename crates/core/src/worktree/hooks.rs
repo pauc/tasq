@@ -187,6 +187,153 @@ impl TrustStore {
     }
 }
 
+/// What a hook command had to say while it ran: worktree hooks, and the
+/// plugin hooks of the CLI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HookEvent {
+    /// A command exited 0 with something on stdout (`-v` material).
+    Output(String),
+    /// A non-blocking command failed or could not start; the event it was
+    /// attached to already happened, so this is a warning, not an error.
+    Warning(String),
+}
+
+/// One hook line, rendered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Command {
+    /// The line as configured.
+    pub line: String,
+    /// The program and its arguments.
+    pub argv: Vec<String>,
+}
+
+/// The hooks of one kind for one worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hooks {
+    /// When they run.
+    pub kind: Kind,
+    /// What runs.
+    pub run: Vec<Command>,
+    /// Lines left out because nobody approved them.
+    pub skipped: Vec<String>,
+}
+
+impl Hooks {
+    /// The lines of `kind` in `hooks`, rendered with `vars`; a line `skip`
+    /// says yes to is left out, unrendered, as skipped.
+    ///
+    /// # Errors
+    ///
+    /// The [`HookError`] of the first line that cannot be rendered.
+    pub fn render(
+        kind: Kind,
+        hooks: &WorktreeHooks,
+        vars: &Vars,
+        skip: impl Fn(&str) -> bool,
+    ) -> Result<Self, HookError> {
+        let mut rendered = Self {
+            kind,
+            run: Vec::new(),
+            skipped: Vec::new(),
+        };
+        for line in kind.lines(hooks) {
+            if skip(line) {
+                rendered.skipped.push(line.clone());
+            } else {
+                rendered.run.push(Command {
+                    line: line.clone(),
+                    argv: argv(kind, line, vars)?,
+                });
+            }
+        }
+        Ok(rendered)
+    }
+
+    /// `--dry-run` lines: what would run, and what would be skipped.
+    pub fn describe(&self) -> Vec<String> {
+        let key = self.kind.key();
+        let run = self
+            .run
+            .iter()
+            .map(|c| format!("run {key} hook: {}", shell_words::join(&c.argv)));
+        let skipped = self
+            .skipped
+            .iter()
+            .map(|line| format!("skip {key} hook (not approved): {line}"));
+        run.chain(skipped).collect()
+    }
+}
+
+/// The lines of `kinds` in `hooks` that need approval and do not have it:
+/// those of the `untrusted` kinds (set by the repository's own `file`)
+/// that `store` has not approved for `file`.
+pub fn pending(
+    store: &TrustStore,
+    file: &Path,
+    untrusted: &[Kind],
+    kinds: &[Kind],
+    hooks: &WorktreeHooks,
+) -> Vec<(Kind, String)> {
+    kinds
+        .iter()
+        .filter(|kind| untrusted.contains(kind))
+        .flat_map(|&kind| {
+            store
+                .pending(file, kind.lines(hooks))
+                .into_iter()
+                .map(move |line| (kind, line.to_owned()))
+        })
+        .collect()
+}
+
+/// What approving the pending lines takes, decided before any I/O.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Approve {
+    /// Nothing to approve: no repository file holds the lines.
+    Yes,
+    /// A dry run: never asks, never stores.
+    No,
+    /// Ask this; a yes is stored.
+    Ask(String),
+}
+
+/// What approving `pending`, from the repository's `file`, takes.
+pub fn approval(file: Option<&Path>, pending: &[(Kind, String)], dry_run: bool) -> Approve {
+    match file {
+        None => Approve::Yes,
+        Some(_) if dry_run => Approve::No,
+        Some(file) => Approve::Ask(question(file, pending)),
+    }
+}
+
+/// The approval question for the `pending` lines of `file`.
+pub fn question(file: &Path, pending: &[(Kind, String)]) -> String {
+    let mut lines = vec![format!("{} wants to run these hooks:", file.display())];
+    lines.extend(
+        pending
+            .iter()
+            .map(|(kind, line)| format!("  {}: {line}", kind.key())),
+    );
+    lines.push("Run them, now and from now on? [y/N] ".to_owned());
+    lines.join("\n")
+}
+
+/// The warning for the `pending` lines of `file` left out unapproved, for
+/// the repository whose main checkout is `main`.
+pub fn not_approved(file: &Path, pending: &[(Kind, String)], main: &Path) -> String {
+    format!(
+        "hooks from {} are not approved and were skipped: {}; approve them with \
+         tasq worktree trust {}, or pass --yes",
+        file.display(),
+        pending
+            .iter()
+            .map(|(_, line)| format!("{line:?}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        main.display()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,5 +489,113 @@ mod tests {
         assert_eq!(TrustStore::parse(&text), Ok(store));
         assert_eq!(TrustStore::parse(""), Ok(TrustStore::default()));
         assert!(TrustStore::parse("other = 1").is_err());
+    }
+
+    #[test]
+    fn hooks_render_their_lines_and_skip_what_they_are_told() {
+        let hooks = WorktreeHooks {
+            post_create: vec!["echo '{{branch}}'".into(), "make setup".into()],
+            ..WorktreeHooks::default()
+        };
+        let rendered = Hooks::render(Kind::PostCreate, &hooks, &vars(), |line| {
+            line == "make setup"
+        })
+        .unwrap();
+        assert_eq!(
+            rendered,
+            Hooks {
+                kind: Kind::PostCreate,
+                run: vec![Command {
+                    line: "echo '{{branch}}'".into(),
+                    argv: vec!["echo".into(), "feat/x".into()],
+                }],
+                skipped: vec!["make setup".into()],
+            }
+        );
+        assert_eq!(
+            rendered.describe(),
+            [
+                "run post-create hook: echo feat/x",
+                "skip post-create hook (not approved): make setup"
+            ]
+        );
+        let other = Hooks::render(Kind::PreCreate, &hooks, &vars(), |_| false).unwrap();
+        assert_eq!(other.run, Vec::new());
+        assert_eq!(other.describe(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_bad_line_fails_to_render_unless_skipped() {
+        let hooks = WorktreeHooks {
+            pre_remove: vec!["ok".into(), "echo {{nope}}".into()],
+            ..WorktreeHooks::default()
+        };
+        let failed = Hooks::render(Kind::PreRemove, &hooks, &vars(), |_| false).unwrap_err();
+        assert_eq!(failed.line, "echo {{nope}}");
+        let skipped = Hooks::render(Kind::PreRemove, &hooks, &vars(), |line| line != "ok").unwrap();
+        assert_eq!(skipped.skipped, ["echo {{nope}}"]);
+    }
+
+    #[test]
+    fn pending_lines_are_the_untrusted_kinds_not_approved() {
+        let file = Path::new("/ws/.tasq.toml");
+        let hooks = WorktreeHooks {
+            pre_create: vec!["make setup".into()],
+            post_create: vec!["direnv allow .".into(), "ok".into()],
+            pre_remove: vec!["make clean".into()],
+            ..WorktreeHooks::default()
+        };
+        let mut store = TrustStore::default();
+        store.approve(file, &["ok".to_owned()]);
+        let untrusted = [Kind::PreCreate, Kind::PostCreate];
+        assert_eq!(
+            pending(
+                &store,
+                file,
+                &untrusted,
+                &[Kind::PreCreate, Kind::PostCreate, Kind::PreRemove],
+                &hooks
+            ),
+            [
+                (Kind::PreCreate, "make setup".to_owned()),
+                (Kind::PostCreate, "direnv allow .".to_owned())
+            ]
+        );
+        assert_eq!(
+            pending(&store, file, &untrusted, &[Kind::PreRemove], &hooks),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn approval_needs_a_repository_file_and_no_dry_run_to_ask() {
+        let file = Path::new("/ws/.tasq.toml");
+        let pending = [(Kind::PostCreate, "direnv allow .".to_owned())];
+        assert_eq!(approval(None, &pending, false), Approve::Yes);
+        assert_eq!(approval(None, &pending, true), Approve::Yes);
+        assert_eq!(approval(Some(file), &pending, true), Approve::No);
+        assert_eq!(
+            approval(Some(file), &pending, false),
+            Approve::Ask(question(file, &pending))
+        );
+    }
+
+    #[test]
+    fn the_question_and_the_warning_list_the_pending_lines() {
+        let pending = [
+            (Kind::PreCreate, "make setup".to_owned()),
+            (Kind::PostCreate, "direnv allow .".to_owned()),
+        ];
+        let file = Path::new("/ws/.tasq.toml");
+        assert_eq!(
+            question(file, &pending),
+            "/ws/.tasq.toml wants to run these hooks:\n  pre-create: make setup\n  \
+             post-create: direnv allow .\nRun them, now and from now on? [y/N] "
+        );
+        assert_eq!(
+            not_approved(file, &pending, Path::new("/ws")),
+            "hooks from /ws/.tasq.toml are not approved and were skipped: \"make setup\", \
+             \"direnv allow .\"; approve them with tasq worktree trust /ws, or pass --yes"
+        );
     }
 }

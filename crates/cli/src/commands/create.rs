@@ -155,7 +155,7 @@ pub fn new_task_worktree(app: &App, task: &Task, asked: Asked) -> Result<Option<
         Err(_) if asked == Asked::OnCreate => return Ok(None),
         Err(e) => return Err(e),
     };
-    let settings = worktree::RepoSettings::load(app, &project)?;
+    let settings = worktree::repo_settings(app, &project)?;
     let in_work_tree = settings.repo.is_some();
     if !declaration::wanted(
         settings.config.on_create,

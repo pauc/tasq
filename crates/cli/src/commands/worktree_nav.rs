@@ -27,6 +27,7 @@ use crate::app::App;
 use crate::commands::existing_dir;
 use crate::commands::worktree::{
     Releasing, RepoSettings, disabled, materialize, prefixed, project_of, provisioned, release,
+    repo_settings,
 };
 use crate::commands::worktree_hooks::{self, Approval};
 use crate::error::{CliError, Result};
@@ -168,7 +169,7 @@ pub fn rows(app: &App, store: &NbStore, id: Option<&TaskId>, all: bool) -> Resul
                 (Some(project), true) => {
                     let repo_settings = settings
                         .entry(project.clone())
-                        .or_insert_with(|| RepoSettings::load(app, project).ok());
+                        .or_insert_with(|| repo_settings(app, project).ok());
                     let path = worktree
                         .path
                         .canonicalize()

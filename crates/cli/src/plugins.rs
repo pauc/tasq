@@ -328,14 +328,7 @@ pub fn hook_document(hook: Hook, task: &Task, worktrees: bool, extra: &[(&str, V
 }
 
 /// What a hook command had to say while [`run_hooks_with`] ran it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HookEvent {
-    /// A command exited 0 with something on stdout (`-v` material).
-    Output(String),
-    /// A non-blocking command failed or could not start; the event it was
-    /// attached to already happened, so this is a warning, not an error.
-    Warning(String),
-}
+pub use tasq_core::worktree::hooks::HookEvent;
 
 /// Runs every command configured for `hook` with `document` on stdin,
 /// printing each command's output at `-v` and each failure as a warning.
