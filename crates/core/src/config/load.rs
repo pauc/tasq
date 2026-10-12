@@ -711,6 +711,7 @@ impl Config {
 /// has (ADR 0022). Checked whether or not worktrees are enabled, so turning
 /// them on never surfaces an old mistake.
 fn check_worktree_templates(loaded: &Loaded) -> Result<(), ConfigError> {
+    use crate::worktree::hooks::Kind;
     use crate::worktree::vars::{Scope, check, is_builtin};
     let origin_of = |key: &str| loaded.explain(key).cloned().unwrap_or(Origin::Defaults);
     let worktree = &loaded.config.worktree;
@@ -729,46 +730,32 @@ fn check_worktree_templates(loaded: &Loaded) -> Result<(), ConfigError> {
         });
     }
     let ports = worktree.ports.is_some();
-    let hooks = &worktree.hooks;
+    let hooks = Kind::ALL.map(|kind| {
+        (
+            format!("worktree.hooks.{}", kind.key()),
+            Scope::Worktree,
+            kind.lines(&worktree.hooks),
+        )
+    });
     let templates = [
         (
-            "worktree.branch",
+            "worktree.branch".to_owned(),
             Scope::Branch,
             std::slice::from_ref(&worktree.branch),
         ),
         (
-            "worktree.path",
+            "worktree.path".to_owned(),
             Scope::Path,
             std::slice::from_ref(&worktree.path),
         ),
-        (
-            "worktree.hooks.pre-create",
-            Scope::Worktree,
-            hooks.pre_create.as_slice(),
-        ),
-        (
-            "worktree.hooks.post-create",
-            Scope::Worktree,
-            hooks.post_create.as_slice(),
-        ),
-        (
-            "worktree.hooks.pre-remove",
-            Scope::Worktree,
-            hooks.pre_remove.as_slice(),
-        ),
-        (
-            "worktree.hooks.post-remove",
-            Scope::Worktree,
-            hooks.post_remove.as_slice(),
-        ),
     ];
-    for (key, scope, texts) in templates {
+    for (key, scope, texts) in templates.into_iter().chain(hooks) {
         for text in texts {
             check(text, scope, ports, &worktree.variables).map_err(|source| {
                 ConfigError::UnknownTemplateVariable {
-                    key: key.to_owned(),
+                    origin: origin_of(&key),
+                    key: key.clone(),
                     source,
-                    origin: origin_of(key),
                 }
             })?;
         }
