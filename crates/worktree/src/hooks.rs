@@ -336,7 +336,11 @@ mod tests {
         };
         assert_eq!(
             sh("echo $X; pwd"),
-            Ok(format!("y\n{}", dir.path().display()))
+            // `pwd` prints the physical path (macOS: /var is /private/var).
+            Ok(format!(
+                "y\n{}",
+                dir.path().canonicalize().unwrap().display()
+            ))
         );
         assert_eq!(
             sh("echo no >&2; exit 2"),
