@@ -340,9 +340,10 @@ pub enum Command {
     /// Update a task from JSON (`tasq view --json` shape) on stdin or in FILE.
     ///
     /// The document is `{"schema": 1, "task": {...}}`; see docs/json.md.
-    /// The store applies the differences it can express (status, priority,
-    /// project, done, appended progress, sessions, links) and refuses
-    /// anything else without writing.
+    /// The store applies the differences it can express (title, description,
+    /// status, priority, due, project, topic tags, done, closed_at, and
+    /// appended progress, worktrees, sessions and links) and refuses anything
+    /// else without writing.
     Apply {
         /// File to read instead of stdin.
         #[arg(value_name = "FILE")]
