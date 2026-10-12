@@ -334,7 +334,7 @@ base = 4000
 span = 4000
 block = 10
 
-[worktree.hooks]               # command lines run inside the worktree
+[worktree.hooks]               # command lines, where they run: table below
 pre-create = []
 post-create = ["direnv allow ."]
 pre-remove = []
@@ -355,7 +355,7 @@ post-remove = []
 | `worktree.templates` | array of `{source, target}` | `[]` | Files rendered into a new worktree; `source` relative to the config file, `target` to the worktree. |
 | `worktree.variables` | table of strings | empty | Extra template variables. |
 | `worktree.ports` | `{base, span, block}` | unset | Enables `{{port}}`: `base` plus a stable per-branch offset below `span`, a multiple of `block`. |
-| `worktree.hooks.pre-create`, `post-create`, `pre-remove`, `post-remove` | arrays of command lines | `[]` | Templates, split into words and run without a shell (see above). `pre-create` runs in the main checkout, the others in the worktree. A failing `pre-*` hook aborts the step; a failing `post-*` hook is a warning. |
+| `worktree.hooks.pre-create`, `post-create`, `pre-remove`, `post-remove` | arrays of command lines | `[]` | Templates, split into words and run without a shell (see above). `pre-create` and `post-remove` run in the main checkout, `post-create` and `pre-remove` in the worktree. A failing `pre-*` hook aborts the step; a failing `post-*` hook is a warning. |
 
 Per-repository settings (links, copies, templates, hooks) belong in a `.tasq.toml` next to the
 repository or in the directory above it; the worktree commands load the configuration from the

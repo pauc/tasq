@@ -367,7 +367,9 @@ pub struct PortsConfig {
     pub block: u16,
 }
 
-/// `[worktree.hooks]`: command lines run inside the worktree.
+/// `[worktree.hooks]`: command lines run around creating and removing a
+/// worktree. `pre-create` and `post-remove` run in the main checkout,
+/// `post-create` and `pre-remove` in the worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct WorktreeHooks {
