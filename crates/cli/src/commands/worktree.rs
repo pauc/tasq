@@ -19,10 +19,10 @@ use tasq_core::worktree::lifecycle::{
     WorktreeFate,
 };
 use tasq_core::worktree::vars::Vars;
-use tasq_core::worktree::{declaration, git, provision, status, vars};
+use tasq_core::worktree::{declaration, provision, status};
 use tasq_store_nb::NbStore;
 use tasq_worktree::provision::{apply, prepare};
-use tasq_worktree::{Git, describe as describe_start};
+use tasq_worktree::{Git, Repo, describe as describe_start};
 
 use crate::app::App;
 use crate::cli::{Command, WorktreeAction};
@@ -249,42 +249,6 @@ impl RepoSettings {
         Vars::for_task(task, &self.main, self.name(), &self.config.variables)
             .with_branch(branch, self.config.ports)
             .with_worktree(path)
-    }
-}
-
-/// A git repository as found on disk, without running `git`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Repo {
-    /// The main checkout: where the shared git directory lives, so a
-    /// linked worktree names the repository it belongs to.
-    pub main: PathBuf,
-    /// The repository name from `remote.origin.url`, when there is one.
-    pub name: Option<String>,
-}
-
-impl Repo {
-    /// The repository `dir` is inside, if any.
-    pub fn of(dir: &Path) -> Option<Self> {
-        let root = git::work_tree_root(dir, Path::exists)?;
-        let dot_git = root.join(".git");
-        let git_dir = if dot_git.is_file() {
-            let text = std::fs::read_to_string(&dot_git).unwrap_or_default();
-            git::gitdir(&text).map_or_else(|| dot_git.clone(), |d| root.join(d))
-        } else {
-            dot_git
-        };
-        let common = std::fs::read_to_string(git_dir.join("commondir"))
-            .map_or_else(|_| git_dir.clone(), |rel| git_dir.join(rel.trim()));
-        let common = common.canonicalize().unwrap_or(common);
-        let main = match common.parent() {
-            Some(parent) if common.file_name().is_some_and(|n| n == ".git") => parent.to_path_buf(),
-            _ => root.to_path_buf(),
-        };
-        let name = std::fs::read_to_string(common.join("config"))
-            .ok()
-            .and_then(|config| git::origin_url(&config))
-            .and_then(|url| vars::repo_name(&url));
-        Some(Self { main, name })
     }
 }
 

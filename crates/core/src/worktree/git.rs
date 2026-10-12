@@ -3,7 +3,44 @@
 //!
 //! The caller reads the files; these functions only interpret them.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use super::vars;
+
+/// The git directory of the work tree at `root`, given what its `.git`
+/// entry holds: `None` for a directory (`root/.git` itself), the text of
+/// the file for a linked worktree. A file that names no `gitdir` stands for
+/// itself.
+pub fn git_dir(root: &Path, dot_git_file: Option<&str>) -> PathBuf {
+    let dot_git = root.join(".git");
+    match dot_git_file.and_then(gitdir) {
+        Some(dir) => root.join(dir),
+        None => dot_git,
+    }
+}
+
+/// The shared git directory of `git_dir`, given the text of its
+/// `commondir` file (relative to `git_dir`, as git writes it in a linked
+/// worktree's directory); without one, `git_dir` is the shared one.
+pub fn common_dir(git_dir: &Path, commondir: Option<&str>) -> PathBuf {
+    commondir.map_or_else(|| git_dir.to_path_buf(), |rel| git_dir.join(rel.trim()))
+}
+
+/// The main checkout of the repository whose shared git directory is
+/// `common`: the directory holding it when it is a `.git`, else `root`,
+/// the work tree it was found from.
+pub fn main_checkout(root: &Path, common: &Path) -> PathBuf {
+    match common.parent() {
+        Some(parent) if common.file_name().is_some_and(|n| n == ".git") => parent.to_path_buf(),
+        _ => root.to_path_buf(),
+    }
+}
+
+/// The repository name (`{{repo}}`) in the text of a git `config` file:
+/// the last path segment of `remote.origin.url`, without `.git`.
+pub fn repo_name(config: &str) -> Option<String> {
+    origin_url(config).and_then(|url| vars::repo_name(&url))
+}
 
 /// The work tree `dir` belongs to: the nearest of `dir` and its ancestors
 /// with a `.git` entry (a directory in a checkout, a file in a linked
@@ -93,6 +130,66 @@ mod tests {
         );
         assert_eq!(work_tree_root(dir, has(&["/.git"])), Some(Path::new("/")));
         assert_eq!(work_tree_root(dir, has(&["/other/.git"])), None);
+    }
+
+    #[test]
+    fn the_git_dir_of_a_checkout_and_of_a_linked_worktree() {
+        let root = Path::new("/code/app-b");
+        assert_eq!(git_dir(root, None), Path::new("/code/app-b/.git"));
+        assert_eq!(
+            git_dir(root, Some("gitdir: /code/app/.git/worktrees/b\n")),
+            Path::new("/code/app/.git/worktrees/b")
+        );
+        assert_eq!(
+            git_dir(root, Some("gitdir: ../app/.git/worktrees/b")),
+            Path::new("/code/app-b/../app/.git/worktrees/b"),
+            "relative to the work tree"
+        );
+        assert_eq!(
+            git_dir(root, Some("")),
+            Path::new("/code/app-b/.git"),
+            "a file without gitdir stands for itself"
+        );
+    }
+
+    #[test]
+    fn the_common_dir_follows_commondir() {
+        let dir = Path::new("/code/app/.git/worktrees/b");
+        assert_eq!(common_dir(dir, None), dir);
+        assert_eq!(
+            common_dir(dir, Some("../..\n")),
+            Path::new("/code/app/.git/worktrees/b/../..")
+        );
+        assert_eq!(
+            common_dir(dir, Some("/srv/app.git")),
+            Path::new("/srv/app.git")
+        );
+    }
+
+    #[test]
+    fn the_main_checkout_holds_the_common_git_dir() {
+        let root = Path::new("/code/app-b");
+        assert_eq!(
+            main_checkout(root, Path::new("/code/app/.git")),
+            Path::new("/code/app")
+        );
+        assert_eq!(
+            main_checkout(root, Path::new("/srv/app.git")),
+            root,
+            "a bare repository has no main checkout"
+        );
+        assert_eq!(main_checkout(root, Path::new("/")), root);
+        assert_eq!(main_checkout(root, Path::new(".git")), Path::new(""));
+    }
+
+    #[test]
+    fn repo_name_from_a_config() {
+        assert_eq!(
+            repo_name("[remote \"origin\"]\n\turl = git@gitlab.com:group/app.git\n").as_deref(),
+            Some("app")
+        );
+        assert_eq!(repo_name("[remote \"origin\"]\n\turl = app\n"), None);
+        assert_eq!(repo_name("[core]\n"), None);
     }
 
     #[test]

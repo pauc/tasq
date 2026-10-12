@@ -13,5 +13,7 @@ pub mod git;
 pub mod hooks;
 pub mod process;
 pub mod provision;
+pub mod repo;
 
 pub use self::git::{Git, GitError, add_args, describe};
+pub use self::repo::Repo;

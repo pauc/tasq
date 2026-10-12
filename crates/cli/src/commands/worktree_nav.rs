@@ -21,12 +21,12 @@ use tasq_core::store::Store;
 use tasq_core::worktree::target::{self, Found, Target};
 use tasq_core::worktree::{git, hooks, prune as scope};
 use tasq_store_nb::NbStore;
+use tasq_worktree::Repo;
 
 use crate::app::App;
 use crate::commands::existing_dir;
 use crate::commands::worktree::{
-    Releasing, Repo, RepoSettings, disabled, materialize, prefixed, project_of, provisioned,
-    release,
+    Releasing, RepoSettings, disabled, materialize, prefixed, project_of, provisioned, release,
 };
 use crate::commands::worktree_hooks::{self, Approval};
 use crate::error::{CliError, Result};
