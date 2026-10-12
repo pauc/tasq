@@ -31,6 +31,10 @@ Where things stand (2026-10-08, after WT-207):
 - 2026-10-09: WT-301 done (`tasq worktree prune`), 40 commits ahead of `main`. Next: WT-302,
   WT-303 or WT-304 (independent). The installed `tasq` is still bb1e820 and has no `prune`;
   ask before reinstalling.
+- 2026-10-13: PR #7 review fixes done (every finding in `REVIEW-PR7.md`, up to 8074867). Final
+  checks at 8074867: fmt and clippy clean, `TASQ_REQUIRE_NB=1 cargo test --workspace` 1078
+  passed, 0 failed, 1 ignored; `cargo mutants --in-diff` on `main...HEAD` 591 mutants, 518
+  caught, 73 unviable, 0 missed.
 - Cleanup the author must do: a WT-207 test run on 2026-10-08 20:21 created
   `/home/pau/code/tasks-wt/feature-a` (a worktree of a deleted temp repository: `.git`,
   `README`, `.tasq.toml`) and its parent `/home/pau/code/tasks-wt`. Deleting them was refused
