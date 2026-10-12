@@ -1168,6 +1168,54 @@ mod fields {
         env.tasq().args(["desc", "3"]).assert().stdout("-\n");
     }
 
+    /// `<producer> | tasq desc 3 -` through a real pipe, so the producer
+    /// can act after `tasq` started.
+    fn desc_from_pipe(env: &TestEnv, producer: &str) -> std::process::Output {
+        std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!(
+                "{{ {producer}; }} | {} desc 3 -",
+                env!("CARGO_BIN_EXE_tasq")
+            ))
+            .env_clear()
+            .env("TASQ_NOW", NOW)
+            .env("HOME", &env.home)
+            .env("NB_DIR", &env.nb_dir)
+            .env("PATH", &env.bin)
+            .current_dir(&env.home)
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn desc_dash_conflicts_when_the_task_changed_while_stdin_was_open() {
+        let env = TestEnv::fixture();
+        let file = env.notebook().join(SUPPORT);
+        let out = desc_from_pipe(
+            &env,
+            &format!(
+                "/bin/sleep 1; printf -- '- 2026-10-07 09:00: elsewhere\\n' >> {}; printf 'Mine.'",
+                file.display()
+            ),
+        );
+        assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+        assert!(
+            stderr(&out).starts_with("tasq: task 3 changed since it was read ("),
+            "{}",
+            stderr(&out)
+        );
+        assert!(support(&env).contains("Customer asks about the export format."));
+        assert!(support(&env).ends_with("- 2026-10-07 09:00: elsewhere\n"));
+    }
+
+    #[test]
+    fn desc_dash_with_the_same_text_writes_nothing() {
+        let env = TestEnv::fixture();
+        let out = desc_from_pipe(&env, "printf 'Customer asks about the export format.\\n'");
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stdout(&out), "[3] description unchanged\n");
+    }
+
     #[test]
     fn desc_without_text_prints_the_description() {
         let env = TestEnv::fixture();
@@ -1203,11 +1251,17 @@ mod fields {
              ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
         );
         env.tasq()
-            .args(["desc", "3", "-"])
+            .args(["desc", "1", "-"])
             .write_stdin("\n")
             .assert()
             .success()
-            .stdout("[3] description cleared\n");
+            .stdout("[1] description cleared\n");
+        env.tasq()
+            .args(["desc", "1", "-"])
+            .write_stdin("")
+            .assert()
+            .success()
+            .stdout("[1] description unchanged\n");
     }
 
     #[test]

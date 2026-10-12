@@ -67,19 +67,24 @@ pub fn tag(app: &App, id: &str, words: &[String], note: Option<&str>) -> Result<
 }
 
 /// `tasq desc <id> [text|-] [--note TEXT]`: prints the description
-/// without TEXT, reads it from stdin for `-`, sets it otherwise.
+/// without TEXT, reads it from stdin for `-` (after reading the task),
+/// sets it otherwise.
 pub fn desc(app: &App, id: &str, text: Option<&str>, note: Option<&str>) -> Result<()> {
     let id = App::task_id(id)?;
     let Some(text) = text else {
         return print_description(app, &id);
     };
-    let text = match text {
-        "-" => read_stdin()?,
-        text => text.to_owned(),
-    };
     let mut store = app.open_store()?;
+    if text == "-" {
+        // Read before draining stdin: in `tasq desc 31 | ... | tasq desc 31 -`
+        // both ends start together, so a change made while the producer
+        // runs is then a conflict instead of being overwritten.
+        let task = store.get(&id)?;
+        let text = read_stdin()?;
+        return save_read(app, &mut store, task, &text, note);
+    }
     let clock = app.clock()?;
-    let task = edit::describe(&mut store, &id, &text, note, clock.as_ref())?;
+    let task = edit::describe(&mut store, &id, text, note, clock.as_ref())?;
     finish(app, &store, &id, &described(&id, &task))
 }
 
@@ -104,7 +109,7 @@ pub fn desc_edit(app: &App, id: &str, note: Option<&str>) -> Result<()> {
         .map_err(|e| CliError::user(format!("could not run {program}: {e}")))?;
     let after = std::fs::read_to_string(file.path())?;
     let saved = if status.success() {
-        save_edit(app, &mut store, task, &after, note)
+        save_read(app, &mut store, task, &after, note)
     } else {
         Err(CliError::user(format!(
             "{program} exited with {status}; the description was not changed"
@@ -119,9 +124,9 @@ pub fn desc_edit(app: &App, id: &str, note: Option<&str>) -> Result<()> {
     }
 }
 
-/// The part of `desc --edit` after a zero exit: writes `after` with
-/// `task`, the read from before the editor started.
-fn save_edit(
+/// Writes `after` as the description of `task`, a read from before stdin
+/// was drained or the editor started (`desc -`, `desc --edit`).
+fn save_read(
     app: &App,
     store: &mut NbStore,
     task: Task,

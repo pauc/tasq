@@ -252,7 +252,9 @@ pub enum Command {
     /// Print, set or clear the description of a task.
     ///
     /// Without TEXT the description is printed (nothing when there is
-    /// none). TEXT replaces it; - reads it from stdin until EOF; "" clears
+    /// none). TEXT replaces it; - reads it from stdin until EOF (the task
+    /// is read first, so a change made while stdin is open is a conflict,
+    /// which makes `tasq desc ID | ... | tasq desc ID -` safe); "" clears
     /// it (the section is removed). Blank lines at either end are dropped.
     /// A description that is literally "-" goes through stdin:
     /// `printf -- - | tasq desc ID -`. Prints `[id] description updated`

@@ -241,7 +241,11 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   request order; surviving tags keep their place; no write without a change or a note) and
   `describe_read` returns `Revised` (the unchanged decision moved out of the CLI); `set`,
   `done` and `reopen` share a flattened `cli::NoteArg`; `EditError::NotATag` carries
-  `edit::Field`. Commits from 340751e (rebased on ed41ab2).
+  `edit::Field`. `desc -` reads the task before draining stdin and writes with
+  `describe_read`: the two ends of `tasq desc 31 | ... | tasq desc 31 -` start together, so a
+  change made while the producer runs is a Conflict (a revision never crosses processes; the
+  read used to come after EOF, which overwrote such a change). Commits from 340751e (rebased
+  on ed41ab2).
 - **TUI DONE group, reopen, Today view, detail position (follow-up 2026-10-07, todo 33).**
   `Task::closed_at` (ADR 0020): a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`, read
   like `## Due`, `None` on open tasks whatever the file says). `Task::close(clock)` stamps it
