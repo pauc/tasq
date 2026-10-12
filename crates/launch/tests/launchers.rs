@@ -201,9 +201,10 @@ fn claude_prompt_without_worktrees_says_nothing_about_them() {
     let on = launcher.prompt(&sb.ctx()).unwrap();
     assert!(on.contains("/wt/feature-a (`feature-a`)"), "{on}");
     assert!(
-        on.contains("tasq worktree 3 --create <branch>, which runs git worktree add and tracks the result. Track Claude sessions"),
+        on.contains("tasq worktree 3 <branch>, then create it with: tasq worktree up 3, which runs git worktree add. Track Claude sessions"),
         "{on}"
     );
+    assert!(!on.contains("--create"), "{on}");
 }
 
 #[test]
