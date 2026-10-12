@@ -95,6 +95,24 @@ pub enum Start {
     New(String),
 }
 
+impl Start {
+    /// The note a launch prints before it creates `branch` from a base
+    /// (step 4): neither the repository nor its remote has the branch, so
+    /// whatever it held is not picked up again. git keeps no trace that
+    /// tells a branch gone everywhere (merged, remote deleted) from one
+    /// never created, so both get the note. `None` when the branch is
+    /// checked out or tracked.
+    pub fn fresh_note(&self, branch: &str) -> Option<String> {
+        match self {
+            Self::New(base) => Some(format!(
+                "branch {branch} is gone or new: neither the repository nor origin has it; \
+                 it starts fresh from {base}"
+            )),
+            Self::Local | Self::Track(_) => None,
+        }
+    }
+}
+
 /// What a launch does about worktrees (step 2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchAction {
@@ -443,6 +461,19 @@ mod tests {
             );
             assert_eq!(asked.into_inner(), "x");
         }
+    }
+
+    #[test]
+    fn only_a_fresh_start_has_a_note() {
+        assert_eq!(Start::Local.fresh_note("x"), None);
+        assert_eq!(Start::Track("origin/x".into()).fresh_note("x"), None);
+        assert_eq!(
+            Start::New("origin/HEAD".into()).fresh_note("x").as_deref(),
+            Some(
+                "branch x is gone or new: neither the repository nor origin has it; \
+                 it starts fresh from origin/HEAD"
+            )
+        );
     }
 
     #[test]

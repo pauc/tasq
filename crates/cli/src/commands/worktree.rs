@@ -424,7 +424,7 @@ pub fn materialize(
         return Ok(None);
     };
     let (start, note) = git.resolve_start(&s.project, &branch, &start);
-    if let Some(note) = note {
+    for note in note.into_iter().chain(start.fresh_note(&branch)) {
         app.out.warn(&note);
     }
     let user = |e: &dyn std::fmt::Display| CliError::user(e.to_string());

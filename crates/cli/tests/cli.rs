@@ -2182,6 +2182,14 @@ mod launch {
             "{}",
             stderr(&dry)
         );
+        assert!(
+            stderr(&dry).contains(
+                "tasq: warning: branch feat/x is gone or new: neither the repository nor \
+                 origin has it; it starts fresh from HEAD\n"
+            ),
+            "{}",
+            stderr(&dry)
+        );
         assert!(!wt.exists(), "a dry run creates nothing");
         let out = env
             .tasq_wt()

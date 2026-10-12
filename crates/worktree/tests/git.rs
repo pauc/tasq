@@ -5,8 +5,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use tasq_core::model::Worktree;
 use tasq_core::worktree::integration::{Check, Safety};
-use tasq_core::worktree::lifecycle::{BranchState, Start};
+use tasq_core::worktree::lifecycle::{self, BranchState, LaunchAction, Start};
 use tasq_worktree::{Git, GitError};
 use tempfile::TempDir;
 
@@ -220,6 +221,56 @@ fn a_new_branch_starts_from_the_base_without_tracking_it() {
         r.sh(&path, &["rev-parse", "HEAD"]),
         r.sh(&r.project, &["rev-parse", "origin/main"])
     );
+}
+
+#[test]
+fn a_branch_gone_everywhere_starts_fresh_with_a_note() {
+    let r = Repos::new();
+    let wt = Worktree::on_branch(r.wt("app-gone"), "feat/gone");
+    let old = r.push_from_other("feat/gone");
+    let launch = |r: &Repos| {
+        lifecycle::on_launch(
+            std::slice::from_ref(&wt),
+            Path::is_dir,
+            |b| r.git.branch_state(&r.project, b, true).unwrap(),
+            "origin/HEAD",
+        )
+    };
+    let LaunchAction::Materialize { path, start, .. } = launch(&r) else {
+        panic!("materializes");
+    };
+    assert_eq!(start, Start::Track("origin/feat/gone".into()));
+    assert_eq!(start.fresh_note("feat/gone"), None);
+    r.git.add(&r.project, &path, "feat/gone", &start).unwrap();
+    // Released after the merge request merged and its branch was deleted:
+    // the project keeps a stale origin/feat/gone.
+    r.git.remove(&r.project, &path).unwrap();
+    r.git.delete_branch(&r.project, "feat/gone").unwrap();
+    r.sh(&r.other, &["push", "-q", "origin", "--delete", "feat/gone"]);
+    assert_eq!(
+        r.sh(&r.project, &["rev-parse", "origin/feat/gone"]),
+        old,
+        "stale remote-tracking ref"
+    );
+
+    let LaunchAction::Materialize { path, start, .. } = launch(&r) else {
+        panic!("materializes again");
+    };
+    assert_eq!(start, Start::New("origin/HEAD".into()));
+    assert_eq!(
+        start.fresh_note("feat/gone").as_deref(),
+        Some(
+            "branch feat/gone is gone or new: neither the repository nor origin has it; \
+             it starts fresh from origin/HEAD"
+        )
+    );
+    r.git.add(&r.project, &path, "feat/gone", &start).unwrap();
+    assert_eq!(
+        r.sh(&path, &["rev-parse", "HEAD"]),
+        r.sh(&r.project, &["rev-parse", "origin/main"]),
+        "fresh from the base, not the old tip"
+    );
+    assert_eq!(r.upstream(&path), None);
 }
 
 #[test]
