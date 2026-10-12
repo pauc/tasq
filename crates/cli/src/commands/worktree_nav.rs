@@ -167,16 +167,16 @@ pub fn rows(app: &App, store: &NbStore, id: Option<&TaskId>, all: bool) -> Resul
             }
             let changes = match (&project, exists) {
                 (Some(project), true) => {
-                    let s = settings
+                    let repo_settings = settings
                         .entry(project.clone())
                         .or_insert_with(|| RepoSettings::load(app, project).ok());
                     let path = worktree
                         .path
                         .canonicalize()
                         .unwrap_or_else(|_| worktree.path.clone());
-                    let skip = s
+                    let skip = repo_settings
                         .as_ref()
-                        .map(|s| provisioned(s, &path))
+                        .map(|repo_settings| provisioned(repo_settings, &path))
                         .unwrap_or_default();
                     git.changes(&path, &skip).ok()
                 }

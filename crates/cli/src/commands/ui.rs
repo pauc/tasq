@@ -181,7 +181,7 @@ impl Host for CliHost<'_> {
         task: &Task,
         branch: Option<&str>,
     ) -> std::result::Result<Option<Worktree>, String> {
-        let asked = branch.map_or(Asked::No, Asked::Branch);
+        let asked = branch.map_or(Asked::OnCreate, Asked::Branch);
         new_task_worktree(self.app, task, asked).map_err(|e| format!("no worktree: {e}"))
     }
 

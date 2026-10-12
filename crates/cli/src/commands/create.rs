@@ -96,8 +96,9 @@ pub fn run(app: &App, args: &CreateArgs) -> Result<()> {
 /// What `--worktree [BRANCH]` asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Asked<'a> {
-    /// No flag: `worktree.on_create` decides.
-    No,
+    /// Nothing asked (no flag, no branch typed): `worktree.on_create`
+    /// decides.
+    OnCreate,
     /// `--worktree`: on the default branch.
     Default,
     /// `--worktree BRANCH`.
@@ -107,7 +108,7 @@ pub enum Asked<'a> {
 /// Reads `--worktree`, checked before anything is written.
 fn worktree_flag<'a>(app: &App, args: &'a CreateArgs) -> Result<Asked<'a>> {
     let Some(flag) = &args.worktree else {
-        return Ok(Asked::No);
+        return Ok(Asked::OnCreate);
     };
     if !app.worktrees() {
         return Err(worktree::disabled());
@@ -151,17 +152,21 @@ pub fn new_task_worktree(app: &App, task: &Task, asked: Asked) -> Result<Option<
     }
     let project = match worktree::project_of(app, task) {
         Ok(project) => project,
-        Err(_) if asked == Asked::No => return Ok(None),
+        Err(_) if asked == Asked::OnCreate => return Ok(None),
         Err(e) => return Err(e),
     };
     let settings = worktree::RepoSettings::load(app, &project)?;
     let in_work_tree = settings.repo.is_some();
-    if !declaration::wanted(settings.config.on_create, asked != Asked::No, in_work_tree) {
+    if !declaration::wanted(
+        settings.config.on_create,
+        asked != Asked::OnCreate,
+        in_work_tree,
+    ) {
         return Ok(None);
     }
     let branch = match asked {
         Asked::Branch(branch) => Some(branch),
-        Asked::No | Asked::Default => None,
+        Asked::OnCreate | Asked::Default => None,
     };
     let (declared, _) = worktree::declare_in(app, task, branch, &settings)?;
     Ok(Some(declared))

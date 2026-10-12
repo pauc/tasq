@@ -389,7 +389,7 @@ pub fn materialize(
     };
     let configured = settings
         .as_ref()
-        .map_or(&app.config().worktree, |s| &s.config);
+        .map_or(&app.config().worktree, |settings| &settings.config);
     let base = from.unwrap_or(&configured.base);
     let mut failed = None;
     let action = lifecycle::on_launch(
@@ -397,8 +397,8 @@ pub fn materialize(
         Path::is_dir,
         |branch| {
             let state = match &settings {
-                Some(s) => git
-                    .branch_state(&s.project, branch, !dry_run)
+                Some(settings) => git
+                    .branch_state(&settings.project, branch, !dry_run)
                     .map_err(|e| CliError::user(e.to_string())),
                 None => project_of(app, task).map(|_| BranchState::Absent),
             };
@@ -418,33 +418,50 @@ pub fn materialize(
             branch,
             start,
         },
-        Some(s),
+        Some(settings),
     ) = (action, settings)
     else {
         return Ok(None);
     };
-    let (start, note) = git.resolve_start(&s.project, &branch, &start);
+    let (start, note) = git.resolve_start(&settings.project, &branch, &start);
     for note in note.into_iter().chain(start.fresh_note(&branch)) {
         app.out.warn(&note);
     }
     let user = |e: &dyn std::fmt::Display| CliError::user(e.to_string());
-    let steps =
-        provision::plan(&s.config, &s.main, &path, &s.templates_dir).map_err(|e| user(&e))?;
-    let vars = Vars::for_task(task, &s.main, s.name(), &s.config.variables)
-        .with_branch(&branch, s.config.ports)
-        .with_worktree(&path);
+    let steps = provision::plan(
+        &settings.config,
+        &settings.main,
+        &path,
+        &settings.templates_dir,
+    )
+    .map_err(|e| user(&e))?;
+    let vars = Vars::for_task(
+        task,
+        &settings.main,
+        settings.name(),
+        &settings.config.variables,
+    )
+    .with_branch(&branch, settings.config.ports)
+    .with_worktree(&path);
     let ready = prepare(&steps, &vars).map_err(|e| user(&e))?;
     let kinds = [Kind::PreCreate, Kind::PostCreate];
     let mut report = worktree_hooks::to_terminal(app);
     let approval = Approval::from_yes(yes);
-    let [pre, post] =
-        worktree_hooks::prepare(app, &s, &kinds, &vars, approval, dry_run, &mut report)?
-            .try_into()
-            .unwrap_or_else(|_| unreachable!("one Hooks per kind"));
+    let [pre, post] = worktree_hooks::prepare(
+        app,
+        &settings,
+        &kinds,
+        &vars,
+        approval,
+        dry_run,
+        &mut report,
+    )?
+    .try_into()
+    .unwrap_or_else(|_| unreachable!("one Hooks per kind"));
     if !dry_run {
         let env = hooks::env(&vars);
-        pre.run(app, &s.main, &env, &mut report)?;
-        git.add(&s.project, &path, &branch, &start)
+        pre.run(app, &settings.main, &env, &mut report)?;
+        git.add(&settings.project, &path, &branch, &start)
             .map_err(|e| user(&e))?;
         let warnings = apply(&ready).map_err(|e| {
             CliError::user(format!(
@@ -589,53 +606,53 @@ pub fn release(
     if task.worktrees.is_empty() {
         return Ok(Vec::new());
     }
-    let s = RepoSettings::load(app, &project_of(app, task)?)?;
-    if how.closing && s.config.on_done == OnDone::Keep {
+    let settings = RepoSettings::load(app, &project_of(app, task)?)?;
+    if how.closing && settings.config.on_done == OnDone::Keep {
         return Ok(Vec::new());
     }
-    if s.repo.is_none() {
+    if settings.repo.is_none() {
         return Err(CliError::user(format!(
             "{} is not in a git repository",
-            s.project.display()
+            settings.project.display()
         )));
     }
     let git = Git { env: app.env_vec() };
     let user = |e: &dyn std::fmt::Display| CliError::user(e.to_string());
-    let listed = git.worktrees(&s.main).map_err(|e| user(&e))?;
-    let main = canonical(&s.main);
+    let listed = git.worktrees(&settings.main).map_err(|e| user(&e))?;
+    let main = canonical(&settings.main);
     let cwd = canonical(&app.opts.cwd);
     let mut lines = Vec::new();
     for worktree in &task.worktrees {
         let path = canonical(&worktree.path);
-        let provisioned = provisioned(&s, &path);
+        let provisioned = provisioned(&settings, &path);
         let dir = status::dir_seen(&path, path.is_dir(), &main, &cwd, &listed, || {
             // Doubt keeps it: an unreadable status counts as a change.
             git.changes(&path, &provisioned)
                 .unwrap_or_else(|e| vec![e.to_string()])
         });
         let safety = match &worktree.branch {
-            Some(branch) => git.safety(&s.main, branch).map_err(|e| user(&e))?,
+            Some(branch) => git.safety(&settings.main, branch).map_err(|e| user(&e))?,
             None => None,
         };
         let seen = safety.as_ref().map_or(BranchSeen::Absent, Safety::seen);
-        let decided = lifecycle::on_close(dir, seen, s.config.delete_branch, how.force);
-        let one = One {
+        let decided = lifecycle::on_close(dir, seen, settings.config.delete_branch, how.force);
+        let job = WorktreeRelease {
             app,
             git: &git,
-            settings: &s,
+            settings: &settings,
             task,
             worktree,
             path: &path,
             how,
         };
-        let gone = one.directory(decided.worktree, &mut lines, report)?;
-        one.branch(decided.branch, gone, safety.as_ref(), &mut lines, report);
+        let gone = job.directory(decided.worktree, &mut lines, report)?;
+        job.branch(decided.branch, gone, safety.as_ref(), &mut lines, report);
     }
     Ok(lines)
 }
 
-/// One declared worktree being released.
-struct One<'a> {
+/// One declared worktree being released, with what releasing it needs.
+struct WorktreeRelease<'a> {
     app: &'a App,
     git: &'a Git,
     settings: &'a RepoSettings,
@@ -645,7 +662,7 @@ struct One<'a> {
     how: Releasing,
 }
 
-impl One<'_> {
+impl WorktreeRelease<'_> {
     /// Carries out `fate` for the directory; whether it is gone after.
     fn directory(
         &self,
@@ -681,12 +698,12 @@ impl One<'_> {
                 Ok(false)
             }
             WorktreeFate::Remove if self.how.dry_run => {
-                let s = self.settings;
+                let settings = self.settings;
                 let vars = self.vars();
                 let kinds = [Kind::PreRemove, Kind::PostRemove];
                 let hooks = worktree_hooks::prepare(
                     self.app,
-                    s,
+                    settings,
                     &kinds,
                     &vars,
                     self.how.approval,
@@ -708,25 +725,32 @@ impl One<'_> {
 
     /// The remove hooks around `git worktree remove`; whether it is gone.
     fn remove(&self, lines: &mut Vec<String>, report: &mut dyn FnMut(HookEvent)) -> Result<bool> {
-        let s = self.settings;
+        let settings = self.settings;
         let path = self.path.display();
         let vars = self.vars();
         let kinds = [Kind::PreRemove, Kind::PostRemove];
-        let [pre, post] =
-            worktree_hooks::prepare(self.app, s, &kinds, &vars, self.how.approval, false, report)?
-                .try_into()
-                .unwrap_or_else(|_| unreachable!("one Hooks per kind"));
+        let [pre, post] = worktree_hooks::prepare(
+            self.app,
+            settings,
+            &kinds,
+            &vars,
+            self.how.approval,
+            false,
+            report,
+        )?
+        .try_into()
+        .unwrap_or_else(|_| unreachable!("one Hooks per kind"));
         let env = hooks::env(&vars);
         if let Err(e) = pre.run(self.app, self.path, &env, report) {
             report(HookEvent::Warning(format!("kept worktree {path}: {e}")));
             return Ok(false);
         }
-        if let Err(e) = self.git.remove(&s.main, self.path) {
+        if let Err(e) = self.git.remove(&settings.main, self.path) {
             report(HookEvent::Warning(format!("kept worktree {path}: {e}")));
             return Ok(false);
         }
         lines.push(format!("removed worktree {path}"));
-        post.run(self.app, &s.main, &env, report)?;
+        post.run(self.app, &settings.main, &env, report)?;
         Ok(true)
     }
 
@@ -771,13 +795,18 @@ impl One<'_> {
 
     /// The template variables of this worktree, for its hooks.
     fn vars(&self) -> Vars {
-        let s = self.settings;
-        Vars::for_task(self.task, &s.main, s.name(), &s.config.variables)
-            .with_branch(
-                self.worktree.branch.as_deref().unwrap_or_default(),
-                s.config.ports,
-            )
-            .with_worktree(self.path)
+        let settings = self.settings;
+        Vars::for_task(
+            self.task,
+            &settings.main,
+            settings.name(),
+            &settings.config.variables,
+        )
+        .with_branch(
+            self.worktree.branch.as_deref().unwrap_or_default(),
+            settings.config.ports,
+        )
+        .with_worktree(self.path)
     }
 }
 
