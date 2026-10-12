@@ -9,7 +9,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use chrono::NaiveDate;
-use tasq_core::clock::FixedClock;
+use tasq_core::clock::{Clock, FixedClock};
 use tasq_core::model::{Link, Priority, Status, Tag, TaskDraft, TaskId};
 use tasq_store_nb::{
     Bookkeeper, NbStore, Store, StoreError, StoreWarning, SyncOutcome, Verification, WriteLock,
@@ -208,7 +208,7 @@ impl Bookkeeper for Scripted {
     fn name(&self) -> &'static str {
         "scripted"
     }
-    fn lock(&self) -> Result<WriteLock, StoreError> {
+    fn lock(&self, _clock: &dyn Clock) -> Result<WriteLock, StoreError> {
         self.calls.borrow_mut().push("lock".to_owned());
         Ok(WriteLock::none())
     }
@@ -219,7 +219,12 @@ impl Bookkeeper for Scripted {
         ));
         (self.register)(file)
     }
-    fn checkpoint(&self, _lock: WriteLock, message: &str) -> Result<bool, StoreError> {
+    fn checkpoint(
+        &self,
+        _lock: WriteLock,
+        message: &str,
+        _clock: &dyn Clock,
+    ) -> Result<bool, StoreError> {
         self.calls
             .borrow_mut()
             .push(format!("checkpoint {message}"));
@@ -231,7 +236,7 @@ impl Bookkeeper for Scripted {
     fn verify(&self) -> Result<Verification, StoreError> {
         Ok(Verification::consistent("scripted"))
     }
-    fn sync(&self) -> Result<SyncOutcome, StoreError> {
+    fn sync(&self, _clock: &dyn Clock) -> Result<SyncOutcome, StoreError> {
         Ok(SyncOutcome::skipped("scripted"))
     }
 }
@@ -334,8 +339,14 @@ fn create_in_a_git_notebook_commits_as_nb_would() {
     assert_eq!(nb.git_status(), "", "index and file both committed");
     assert_eq!(store.warnings(), []);
     // Nothing changed since: the job commits nothing.
-    let lock = store.bookkeeper().lock().unwrap();
-    assert!(store.bookkeeper().checkpoint(lock, "[tasq] noop").unwrap());
+    let clock = FixedClock::at(CLOCK);
+    let lock = store.bookkeeper().lock(&clock).unwrap();
+    assert!(
+        store
+            .bookkeeper()
+            .checkpoint(lock, "[tasq] noop", &clock)
+            .unwrap()
+    );
     store.wait_for_bookkeeping().unwrap();
     assert_eq!(nb.git_subjects().len(), 2);
     assert_eq!(store.warnings(), []);

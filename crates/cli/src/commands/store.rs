@@ -30,7 +30,7 @@ pub fn run(app: &App, command: StoreCommand) -> Result<()> {
             for warning in store.take_warnings() {
                 app.out.warn(&warning.to_string());
             }
-            let outcome = store.bookkeeper().sync()?;
+            let outcome = store.sync()?;
             if let Some(raw) = &outcome.raw_output {
                 app.out.verbose(raw);
             }

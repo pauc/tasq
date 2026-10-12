@@ -389,7 +389,7 @@ impl Bookkeeper for Recording {
     fn name(&self) -> &'static str {
         "recording"
     }
-    fn lock(&self) -> Result<WriteLock, StoreError> {
+    fn lock(&self, _clock: &dyn Clock) -> Result<WriteLock, StoreError> {
         self.calls.borrow_mut().push("lock".to_owned());
         Ok(WriteLock::none())
     }
@@ -399,7 +399,12 @@ impl Bookkeeper for Recording {
             .push(format!("register {}", file.display()));
         Ok(())
     }
-    fn checkpoint(&self, _lock: WriteLock, message: &str) -> Result<bool, StoreError> {
+    fn checkpoint(
+        &self,
+        _lock: WriteLock,
+        message: &str,
+        _clock: &dyn Clock,
+    ) -> Result<bool, StoreError> {
         self.calls
             .borrow_mut()
             .push(format!("checkpoint {message}"));
@@ -417,7 +422,7 @@ impl Bookkeeper for Recording {
     fn verify(&self) -> Result<Verification, StoreError> {
         Ok(Verification::consistent("recorded"))
     }
-    fn sync(&self) -> Result<SyncOutcome, StoreError> {
+    fn sync(&self, _clock: &dyn Clock) -> Result<SyncOutcome, StoreError> {
         Ok(SyncOutcome::skipped("recorded"))
     }
 }

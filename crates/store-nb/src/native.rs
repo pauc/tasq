@@ -8,6 +8,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use tasq_core::clock::Clock;
 use tasq_core::store::StoreError;
 
 use crate::bookkeeper::{Bookkeeper, SyncOutcome, Verification, WriteLock, failure};
@@ -154,27 +155,35 @@ impl Bookkeeper for NativeBookkeeper {
             .map_err(|e| io(path, e))
     }
 
-    /// Waits for the previous job and takes `.git/tasq/lock`. A notebook
-    /// that is not a repository has no lock.
-    fn lock(&self) -> Result<WriteLock, StoreError> {
+    /// Waits for the previous job and takes `.git/tasq/lock`, breaking a
+    /// lock that is stale by `clock`. A notebook that is not a repository
+    /// has no lock.
+    fn lock(&self, clock: &dyn Clock) -> Result<WriteLock, StoreError> {
         if !self.git.is_repository() {
             return Ok(WriteLock::none());
         }
         self.state
-            .acquire()
+            .acquire(clock)
             .map(WriteLock::held)
             .map_err(|e| failure("taking the notebook lock", &e, JOB_FIX))
     }
 
     /// Starts the background job (see [`crate::job::SCRIPT`]): `git add -A`,
     /// `git commit -q -m <message>`, then a pull and push when
-    /// [`job::sync_due`]. The job releases `lock`. Nothing is started when
-    /// the notebook is not a repository.
-    fn checkpoint(&self, lock: WriteLock, message: &str) -> Result<bool, StoreError> {
+    /// [`job::sync_due`] at `clock`'s time, which the job then records. The
+    /// job releases `lock`. Nothing is started when the notebook is not a
+    /// repository.
+    fn checkpoint(
+        &self,
+        lock: WriteLock,
+        message: &str,
+        clock: &dyn Clock,
+    ) -> Result<bool, StoreError> {
         if !self.git.is_repository() {
             return Ok(false);
         }
-        let sync = job::sync_due(self.state.last_sync(), job::unix_now(), self.sync_interval);
+        let now = job::unix_time(clock);
+        let sync = job::sync_due(self.state.last_sync(), now, self.sync_interval);
         let lock_path = lock.path().map(Path::to_path_buf).unwrap_or_default();
         job::spawn(
             self.dir(),
@@ -183,6 +192,7 @@ impl Bookkeeper for NativeBookkeeper {
             &lock_path,
             message,
             sync,
+            now,
         )
         .map_err(|e| failure("starting the commit", &e, JOB_FIX))?;
         lock.hand_over();
@@ -200,14 +210,15 @@ impl Bookkeeper for NativeBookkeeper {
     }
 
     /// `git pull --rebase` then `git push` when the notebook is a repository
-    /// with a remote; otherwise nothing, with a `detail` saying why.
-    fn sync(&self) -> Result<SyncOutcome, StoreError> {
+    /// with a remote, recorded at `clock`'s time; otherwise nothing, with a
+    /// `detail` saying why.
+    fn sync(&self, clock: &dyn Clock) -> Result<SyncOutcome, StoreError> {
         if !self.git.is_repository() {
             return Ok(SyncOutcome::skipped(
                 "not a git repository; nothing to sync",
             ));
         }
-        let _lock = self.lock()?;
+        let _lock = self.lock(clock)?;
         let fix = "sync by hand with 'git pull --rebase && git push'";
         let remotes = self
             .git
@@ -218,7 +229,7 @@ impl Bookkeeper for NativeBookkeeper {
                 "no remote configured; nothing to sync",
             ));
         }
-        let _ = self.state.record_sync(job::unix_now());
+        let _ = self.state.record_sync(job::unix_time(clock));
         let pulled = self
             .git
             .run(&["pull", "--rebase", "-q"])

@@ -223,8 +223,8 @@ impl NbStore {
         self
     }
 
-    /// Replaces the clock that stamps new files and notes (default: the
-    /// system clock).
+    /// Replaces the clock that stamps new files and notes and that the
+    /// bookkeeping runs on (default: the system clock).
     #[must_use]
     pub fn with_clock(mut self, clock: Box<dyn Clock>) -> Self {
         self.clock = clock;
@@ -282,9 +282,15 @@ impl NbStore {
     /// (tests, and `tasq store sync`, which must not race a job). A failed
     /// job becomes a warning.
     pub fn wait_for_bookkeeping(&mut self) -> Result<(), StoreError> {
-        drop(self.bookkeeper.lock()?);
+        drop(self.bookkeeper.lock(self.clock.as_ref())?);
         self.collect_job_failure();
         Ok(())
+    }
+
+    /// Pulls and pushes now through the bookkeeper (see
+    /// [`Bookkeeper::sync`]), on the store's clock.
+    pub fn sync(&self) -> Result<crate::bookkeeper::SyncOutcome, StoreError> {
+        self.bookkeeper.sync(self.clock.as_ref())
     }
 
     /// Repairs `.index` without renumbering (ADR-0023): lines naming a file
@@ -314,7 +320,7 @@ impl NbStore {
     /// of the previous job is left for the next [`NbStore::open`] to report:
     /// the TUI writes through `dyn Store` and has nowhere to show it.
     fn lock(&self) -> Result<WriteLock, StoreError> {
-        self.bookkeeper.lock()
+        self.bookkeeper.lock(self.clock.as_ref())
     }
 
     /// Turns the last background job's failure, if any, into a warning.
@@ -431,7 +437,10 @@ impl NbStore {
     /// Hands `lock` to the bookkeeper's checkpoint, turning a failure into a
     /// warning: the file is already written, so this is never data loss.
     fn checkpoint(&mut self, lock: WriteLock, message: &str) {
-        if let Err(e) = self.bookkeeper.checkpoint(lock, message) {
+        if let Err(e) = self
+            .bookkeeper
+            .checkpoint(lock, message, self.clock.as_ref())
+        {
             self.warnings.push(StoreWarning::Bookkeeping {
                 message: e.to_string(),
             });

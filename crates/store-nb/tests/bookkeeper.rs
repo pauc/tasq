@@ -6,21 +6,28 @@ mod support;
 
 use std::time::{Duration, Instant};
 
+use tasq_core::clock::FixedClock;
 use tasq_core::model::{Priority, TaskDraft, TaskId, Workflow};
-use tasq_store_nb::job::{STALE_AFTER, State, unix_now};
+use tasq_store_nb::job::{STALE_AFTER, State, instant, unix_time};
 use tasq_store_nb::{
     Bookkeeper, NativeBookkeeper, NbStore, NbStoreOptions, Store, StoreError, StoreWarning,
 };
 
 use support::{NbEnv, fake_calls, fake_tool, file_name, id, slow_git};
 
+/// The bookkeeper's clock: whatever the wall clock says, these tests run
+/// at this time.
+fn clock() -> FixedClock {
+    FixedClock::at("2026-10-07 09:30")
+}
+
 /// Writes `notes.md` under the lock and hands the lock to a checkpoint, as
 /// the store does, then waits for the job.
 fn write_and_commit(nb: &NbEnv, b: &NativeBookkeeper, text: &str, message: &str) -> bool {
-    let lock = b.lock().unwrap();
+    let lock = b.lock(&clock()).unwrap();
     nb.write("notes.md", text);
-    let started = b.checkpoint(lock, message).unwrap();
-    drop(b.lock().unwrap());
+    let started = b.checkpoint(lock, message, &clock()).unwrap();
+    drop(b.lock(&clock()).unwrap());
     started
 }
 
@@ -39,9 +46,9 @@ fn notebooks_without_git_get_no_lock_and_no_job() {
     let nb = NbEnv::fixture();
     let b = NativeBookkeeper::new(nb.notebook(), nb.env.clone());
     assert_eq!(b.name(), "native");
-    let lock = b.lock().unwrap();
+    let lock = b.lock(&clock()).unwrap();
     assert_eq!(lock.path(), None);
-    assert!(!(b.checkpoint(lock, "[tasq] Update: x").unwrap()));
+    assert!(!(b.checkpoint(lock, "[tasq] Update: x", &clock()).unwrap()));
     assert!(!nb.notebook().join(".git").exists(), "nothing created");
     assert_eq!(b.take_failure(), None);
 }
@@ -51,13 +58,16 @@ fn checkpoint_commits_in_the_background_and_releases_the_lock() {
     let nb = NbEnv::fixture();
     nb.git_init();
     let b = NativeBookkeeper::new(nb.notebook(), nb.env.clone());
-    let lock = b.lock().unwrap();
+    let lock = b.lock(&clock()).unwrap();
     let lock_file = nb.notebook().join(".git/tasq/lock");
     assert_eq!(lock.path(), Some(lock_file.as_path()));
     assert!(lock_file.is_file());
     nb.write("notes.md", "# Notes\n\nchanged\n");
-    assert!(b.checkpoint(lock, "[tasq] Update: notes.md").unwrap());
-    drop(b.lock().unwrap());
+    assert!(
+        b.checkpoint(lock, "[tasq] Update: notes.md", &clock())
+            .unwrap()
+    );
+    drop(b.lock(&clock()).unwrap());
     assert!(!lock_file.exists(), "the job and the wait both release it");
     assert_eq!(
         nb.git_subjects(),
@@ -68,21 +78,26 @@ fn checkpoint_commits_in_the_background_and_releases_the_lock() {
     );
     assert_eq!(nb.git_status(), "");
     // A new untracked file is added too.
-    let lock = b.lock().unwrap();
+    let lock = b.lock(&clock()).unwrap();
     nb.write("fresh.todo.md", "# [ ] Fresh\n");
-    assert!(b.checkpoint(lock, "[tasq] Add: fresh.todo.md").unwrap());
-    drop(b.lock().unwrap());
+    assert!(
+        b.checkpoint(lock, "[tasq] Add: fresh.todo.md", &clock())
+            .unwrap()
+    );
+    drop(b.lock(&clock()).unwrap());
     assert_eq!(nb.git_status(), "");
     assert_eq!(nb.git_subjects().len(), 3);
     // A change git ignores commits nothing and is not a failure.
-    let lock = b.lock().unwrap();
+    let lock = b.lock(&clock()).unwrap();
     nb.write(".gitignore", "ignored.md\n");
-    b.checkpoint(lock, "[tasq] Update: .gitignore").unwrap();
-    drop(b.lock().unwrap());
-    let lock = b.lock().unwrap();
+    b.checkpoint(lock, "[tasq] Update: .gitignore", &clock())
+        .unwrap();
+    drop(b.lock(&clock()).unwrap());
+    let lock = b.lock(&clock()).unwrap();
     nb.write("ignored.md", "# Ignored\n");
-    b.checkpoint(lock, "[tasq] Update: ignored.md").unwrap();
-    drop(b.lock().unwrap());
+    b.checkpoint(lock, "[tasq] Update: ignored.md", &clock())
+        .unwrap();
+    drop(b.lock(&clock()).unwrap());
     assert_eq!(nb.git_subjects().len(), 4);
     assert_eq!(b.take_failure(), None);
 }
@@ -93,17 +108,20 @@ fn checkpoint_does_not_wait_for_git() {
     nb.git_init();
     let slow = slow_git(1);
     let b = NativeBookkeeper::new(nb.notebook(), nb.env_with_path_first(slow.path()));
-    let lock = b.lock().unwrap();
+    let lock = b.lock(&clock()).unwrap();
     nb.write("notes.md", "# Notes\n\nslow\n");
     let started = Instant::now();
-    assert!(b.checkpoint(lock, "[tasq] Update: notes.md").unwrap());
+    assert!(
+        b.checkpoint(lock, "[tasq] Update: notes.md", &clock())
+            .unwrap()
+    );
     assert!(
         started.elapsed() < Duration::from_millis(500),
         "returned after {:?}",
         started.elapsed()
     );
     assert_eq!(nb.git_subjects(), vec!["[nb] Initialize".to_owned()]);
-    drop(b.lock().unwrap());
+    drop(b.lock(&clock()).unwrap());
     assert!(
         started.elapsed() >= Duration::from_secs(1),
         "the next lock waits"
@@ -140,32 +158,39 @@ fn writes_sync_at_most_once_per_interval() {
     let b = NativeBookkeeper::new(nb.notebook(), nb.env.clone()).with_sync_interval(3600);
     let state = State::new(&nb.notebook());
     assert_eq!(state.last_sync(), None);
-    let before = unix_now();
+    let now = unix_time(&clock());
     write_and_commit(&nb, &b, "# Notes\n\none\n", "[tasq] Update: one");
     assert_eq!(
         nb.subjects_of(&remote)[0],
         "[tasq] Update: one",
         "never synced: due"
     );
-    let last = state.last_sync().expect("recorded");
-    assert!(last >= before && last <= unix_now(), "{last}");
+    assert_eq!(state.last_sync(), Some(now), "the job records the clock");
     write_and_commit(&nb, &b, "# Notes\n\ntwo\n", "[tasq] Update: two");
     assert_eq!(nb.git_subjects()[0], "[tasq] Update: two");
     assert_eq!(
         nb.subjects_of(&remote)[0],
         "[tasq] Update: one",
-        "synced a moment ago: not due"
+        "synced at the same time: not due"
     );
-    state.record_sync(unix_now() - 3600).unwrap();
+    // Days before the wall clock, but one second short of the interval by
+    // the bookkeeper's clock: not due.
+    state.record_sync(now - 3599).unwrap();
     write_and_commit(&nb, &b, "# Notes\n\nthree\n", "[tasq] Update: three");
+    assert_eq!(nb.subjects_of(&remote)[0], "[tasq] Update: one");
+    assert_eq!(state.last_sync(), Some(now - 3599), "no attempt recorded");
+    state.record_sync(now - 3600).unwrap();
+    write_and_commit(&nb, &b, "# Notes\n\nfour\n", "[tasq] Update: four");
     assert_eq!(
-        nb.subjects_of(&remote)[..3],
+        nb.subjects_of(&remote)[..4],
         [
+            "[tasq] Update: four".to_owned(),
             "[tasq] Update: three".to_owned(),
             "[tasq] Update: two".to_owned(),
             "[tasq] Update: one".to_owned()
         ]
     );
+    assert_eq!(state.last_sync(), Some(now));
     assert_eq!(b.take_failure(), None);
 }
 
@@ -239,7 +264,7 @@ fn lock_waits_for_a_running_job_and_breaks_a_stale_one() {
     nb.git_init();
     let b = NativeBookkeeper::new(nb.notebook(), nb.env.clone());
     let state = State::new(&nb.notebook());
-    let held = state.acquire().unwrap();
+    let held = state.acquire(&clock()).unwrap();
     let release = std::thread::spawn({
         let held = held.clone();
         move || {
@@ -248,22 +273,22 @@ fn lock_waits_for_a_running_job_and_breaks_a_stale_one() {
         }
     });
     let started = Instant::now();
-    drop(b.lock().unwrap());
+    drop(b.lock(&clock()).unwrap());
     assert!(started.elapsed() >= Duration::from_millis(200));
     release.join().unwrap();
 
-    let held = state.acquire().unwrap();
+    let held = state.acquire(&clock()).unwrap();
     std::fs::File::options()
         .write(true)
         .open(&held)
         .unwrap()
-        .set_modified(std::time::SystemTime::now() - STALE_AFTER)
+        .set_modified(instant(&clock()) - STALE_AFTER)
         .unwrap();
     let started = Instant::now();
-    drop(b.lock().unwrap());
+    drop(b.lock(&clock()).unwrap());
     assert!(
         started.elapsed() < Duration::from_secs(1),
-        "a stale lock is broken"
+        "a lock stale by the bookkeeper's clock is broken"
     );
 }
 
@@ -300,18 +325,17 @@ fn verify_reports_the_fixture_gap_and_recovers() {
 fn sync_pulls_and_pushes_when_there_is_a_remote() {
     let nb = NbEnv::fixture();
     let b = NativeBookkeeper::new(nb.notebook(), nb.env.clone());
-    let s = b.sync().unwrap();
+    let s = b.sync(&clock()).unwrap();
     assert!(!s.synced);
     assert_eq!(s.detail, "not a git repository; nothing to sync");
     nb.git_init();
-    let s = b.sync().unwrap();
+    let s = b.sync(&clock()).unwrap();
     assert!(!s.synced);
     assert_eq!(s.detail, "no remote configured; nothing to sync");
     let remote = nb.add_bare_remote();
     write_and_commit(&nb, &b, "# Notes\n\nsynced\n", "[tasq] Update: notes.md");
     assert_eq!(nb.subjects_of(&remote)[0], "[nb] Initialize", "interval 0");
-    let before = unix_now();
-    let s = b.sync().unwrap();
+    let s = b.sync(&clock()).unwrap();
     assert!(s.synced, "{s:?}");
     assert_eq!(s.detail, "pulled and pushed (origin)");
     assert_eq!(s.raw_output, None, "quiet pull and push print nothing");
@@ -322,7 +346,10 @@ fn sync_pulls_and_pushes_when_there_is_a_remote() {
             "[nb] Initialize".to_owned()
         ]
     );
-    assert!(State::new(&nb.notebook()).last_sync().unwrap() >= before);
+    assert_eq!(
+        State::new(&nb.notebook()).last_sync(),
+        Some(unix_time(&clock()))
+    );
     assert!(!nb.notebook().join(".git/tasq/lock").exists(), "released");
     // A broken remote is an error with the manual fix.
     nb.git(&[
@@ -331,7 +358,7 @@ fn sync_pulls_and_pushes_when_there_is_a_remote() {
         "origin",
         &nb.root.path().join("gone.git").display().to_string(),
     ]);
-    let err = b.sync().unwrap_err();
+    let err = b.sync(&clock()).unwrap_err();
     assert!(
         err.to_string().starts_with(
             "bookkeeping failed after the write: pulling: git pull --rebase -q failed"
@@ -419,7 +446,7 @@ fn a_failed_job_is_a_warning_when_the_store_opens_next() {
     // Wait for the job without taking its failure.
     drop(
         NativeBookkeeper::new(nb.notebook(), nb.env.clone())
-            .lock()
+            .lock(&clock())
             .unwrap(),
     );
     let mut next = nb.open();
@@ -440,4 +467,24 @@ fn opening_takes_the_sync_interval_from_the_config() {
     let nb = NbEnv::fixture();
     assert_eq!(nb.open().sync_interval(), 0);
     assert_eq!(nb.open_syncing(3600).sync_interval(), 3600);
+}
+
+#[test]
+fn the_store_runs_its_bookkeeping_on_its_own_clock() {
+    let nb = NbEnv::fixture();
+    nb.git_init();
+    let remote = nb.add_bare_remote();
+    let mut store = nb.open_syncing(3600).with_clock(Box::new(clock()));
+    let state = State::new(&nb.notebook());
+    store.set_done(&TaskId::from(id::SUPPORT), true).unwrap();
+    store.wait_for_bookkeeping().unwrap();
+    assert_eq!(state.last_sync(), Some(unix_time(&clock())));
+    assert_eq!(
+        nb.subjects_of(&remote)[0],
+        format!("[tasq] Done: {}", file_name(id::SUPPORT))
+    );
+    state.record_sync(0).unwrap();
+    let s = store.sync().unwrap();
+    assert!(s.synced, "{s:?}");
+    assert_eq!(state.last_sync(), Some(unix_time(&clock())));
 }

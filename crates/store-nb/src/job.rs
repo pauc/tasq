@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use chrono::{Local, TimeZone};
+use tasq_core::clock::Clock;
+
 /// The job's state directory, relative to the notebook.
 pub const STATE_DIR: &str = ".git/tasq";
 
@@ -24,13 +27,14 @@ pub const STALE_AFTER: Duration = Duration::from_secs(120);
 const POLL: Duration = Duration::from_millis(10);
 
 /// The job, run by `sh` with the notebook as working directory and
-/// `lock failed last-sync message sync` as `$1`..`$5`. It commits what is
-/// staged by `git add -A` (nothing when the write changed nothing git
-/// tracks), then, when `$5` is `1` and a remote exists, records the time
-/// and runs `git pull --rebase` and `git push` with SSH in batch mode so it
-/// never prompts. A failed rebase is aborted. Any failure writes
+/// `lock failed last-sync message sync now` as `$1`..`$6`. It commits what
+/// is staged by `git add -A` (nothing when the write changed nothing git
+/// tracks), then, when `$5` is `1` and a remote exists, records `$6` (the
+/// store's clock, in Unix seconds) as the time of the sync and runs
+/// `git pull --rebase` and `git push` with SSH in batch mode so it never
+/// prompts. A failed rebase is aborted. Any failure writes
 /// `<step>: <git output>` to the `failed` file. The lock goes on exit.
-pub const SCRIPT: &str = r#"lock=$1 failed=$2 last=$3 msg=$4 sync=$5
+pub const SCRIPT: &str = r#"lock=$1 failed=$2 last=$3 msg=$4 sync=$5 now=$6
 trap 'rm -f "$lock"' EXIT
 fail() { printf '%s: %s\n' "$1" "$2" | tr '\n' ' ' >"$failed"; exit 1; }
 out=$(git add -A 2>&1) || fail staging "$out"
@@ -39,7 +43,7 @@ if ! git diff --cached --quiet 2>/dev/null; then
 fi
 [ "$sync" = 1 ] || exit 0
 [ -n "$(git remote)" ] || exit 0
-date +%s >"$last"
+printf '%s\n' "$now" >"$last"
 if [ -z "${GIT_SSH_COMMAND:-}" ] && [ -z "${GIT_SSH:-}" ]; then
   GIT_SSH_COMMAND="$(git config core.sshCommand || echo ssh) -o BatchMode=yes"
   export GIT_SSH_COMMAND
@@ -77,16 +81,16 @@ impl State {
         self.dir.join("last-sync")
     }
 
-    /// Takes the lock once nobody holds it, removing a stale one, and
-    /// returns its path. Waits as long as a live job holds it.
-    pub fn acquire(&self) -> std::io::Result<PathBuf> {
+    /// Takes the lock once nobody holds it, removing one that is stale by
+    /// `clock`, and returns its path. Waits as long as a live job holds it.
+    pub fn acquire(&self, clock: &dyn Clock) -> std::io::Result<PathBuf> {
         std::fs::create_dir_all(&self.dir)?;
         let path = self.lock_path();
         loop {
             match OpenOptions::new().write(true).create_new(true).open(&path) {
                 Ok(_) => return Ok(path),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if is_stale(&path, SystemTime::now()) {
+                    if is_stale(&path, instant(clock)) {
                         let _ = std::fs::remove_file(&path);
                     } else {
                         std::thread::sleep(POLL);
@@ -140,12 +144,20 @@ pub fn sync_due(last: Option<u64>, now: u64, interval: u64) -> bool {
     interval > 0 && last.is_none_or(|last| now.saturating_sub(last) >= interval)
 }
 
-/// The current time in Unix seconds.
+/// The instant `clock` says it is. Its local time is read in the local
+/// zone; a local time that does not exist (skipped by a daylight saving
+/// change) is read as UTC.
+pub fn instant(clock: &dyn Clock) -> SystemTime {
+    let now = clock.now();
+    Local
+        .from_local_datetime(&now)
+        .earliest()
+        .map_or_else(|| now.and_utc().into(), Into::into)
+}
 
-// Reason: reads the system clock; `sync_due` holds the logic.
-#[mutants::skip]
-pub fn unix_now() -> u64 {
-    SystemTime::now()
+/// The instant `clock` says it is, in Unix seconds (`0` before 1970).
+pub fn unix_time(clock: &dyn Clock) -> u64 {
+    instant(clock)
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
 }
@@ -153,7 +165,8 @@ pub fn unix_now() -> u64 {
 /// Starts [`SCRIPT`] detached in `notebook` and returns once it runs in the
 /// background: `sh` puts the job in a subshell and exits, so nothing waits
 /// for the commit and no zombie is left behind. The job owns `lock` from
-/// here on. `env` is the whole environment it gets.
+/// here on. `env` is the whole environment it gets; `now` is the time to
+/// record when it syncs.
 
 // Reason: spawns a process; integration tests on temp repositories assert its commits and syncs.
 #[mutants::skip]
@@ -164,6 +177,7 @@ pub fn spawn(
     lock: &Path,
     message: &str,
     sync: bool,
+    now: u64,
 ) -> std::io::Result<()> {
     use std::os::unix::process::CommandExt;
     let status = Command::new("sh")
@@ -175,6 +189,7 @@ pub fn spawn(
         .arg(state.last_sync_path())
         .arg(message)
         .arg(if sync { "1" } else { "0" })
+        .arg(now.to_string())
         .current_dir(notebook)
         .env_clear()
         .envs(env.iter().map(|(k, v)| (k, v)))
@@ -196,16 +211,42 @@ pub fn spawn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::Receiver;
 
-    /// `state.acquire()` on a thread, `None` when it has not returned
-    /// within two seconds (a wait that would never end).
-    fn acquire_soon(state: &State) -> Option<std::io::Result<PathBuf>> {
+    use chrono::DateTime;
+    use tasq_core::clock::FixedClock;
+
+    /// Whatever the wall clock says, the tests run at this time.
+    fn clock() -> FixedClock {
+        FixedClock::at("2026-10-07 09:30")
+    }
+
+    /// `state.acquire(&clock())` on a thread; its result arrives on the
+    /// receiver.
+    fn acquire_in_background(state: &State) -> Receiver<std::io::Result<PathBuf>> {
         let (tx, rx) = std::sync::mpsc::channel();
         let state = state.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(state.acquire());
+            let _ = tx.send(state.acquire(&clock()));
         });
-        rx.recv_timeout(Duration::from_secs(2)).ok()
+        rx
+    }
+
+    /// `state.acquire(&clock())` on a thread, `None` when it has not
+    /// returned within two seconds (a wait that would never end).
+    fn acquire_soon(state: &State) -> Option<std::io::Result<PathBuf>> {
+        acquire_in_background(state)
+            .recv_timeout(Duration::from_secs(2))
+            .ok()
+    }
+
+    fn touch(path: &Path, at: SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
     }
 
     #[test]
@@ -216,6 +257,19 @@ mod tests {
         assert_eq!(
             s.last_sync_path(),
             PathBuf::from("/nb/home/.git/tasq/last-sync")
+        );
+    }
+
+    #[test]
+    fn the_clock_is_read_in_the_local_zone() {
+        let at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let local = FixedClock(DateTime::<Local>::from(at).naive_local());
+        assert_eq!(instant(&local), at);
+        assert_eq!(unix_time(&local), 1_700_000_000);
+        assert_eq!(
+            unix_time(&FixedClock::at("1960-01-01 00:00")),
+            0,
+            "before the epoch"
         );
     }
 
@@ -253,18 +307,23 @@ mod tests {
     fn acquire_takes_a_free_lock_and_replaces_a_stale_one() {
         let dir = tempfile::tempdir().unwrap();
         let state = State::new(dir.path());
-        let lock = state.acquire().unwrap();
+        let lock = state.acquire(&clock()).unwrap();
         assert_eq!(lock, state.lock_path());
         assert!(lock.is_file());
-        // An abandoned lock: older than STALE_AFTER.
-        let old = SystemTime::now() - STALE_AFTER - Duration::from_secs(1);
-        std::fs::File::options()
-            .write(true)
-            .open(&lock)
-            .unwrap()
-            .set_modified(old)
-            .unwrap();
-        assert_eq!(acquire_soon(&state).expect("not waited on").unwrap(), lock);
+        // Stale by the clock, not by the wall clock: one second short of
+        // STALE_AFTER the lock is live and waited on.
+        let now = instant(&clock());
+        touch(&lock, now - STALE_AFTER + Duration::from_secs(1));
+        let waiting = acquire_in_background(&state);
+        assert!(
+            waiting.recv_timeout(Duration::from_millis(300)).is_err(),
+            "a live lock is waited on"
+        );
+        // An abandoned lock: STALE_AFTER old. The waiting writer breaks it.
+        let old = now - STALE_AFTER;
+        touch(&lock, old);
+        let taken = waiting.recv_timeout(Duration::from_secs(2));
+        assert_eq!(taken.expect("not waited on").unwrap(), lock);
         let modified = std::fs::metadata(&lock).unwrap().modified().unwrap();
         assert!(modified > old, "a fresh lock replaced the stale one");
     }
@@ -273,7 +332,7 @@ mod tests {
     fn acquire_waits_for_a_live_lock() {
         let dir = tempfile::tempdir().unwrap();
         let state = State::new(dir.path());
-        let lock = state.acquire().unwrap();
+        let lock = state.acquire(&clock()).unwrap();
         let release = std::thread::spawn({
             let lock = lock.clone();
             move || {
@@ -282,7 +341,7 @@ mod tests {
             }
         });
         let started = std::time::Instant::now();
-        state.acquire().unwrap();
+        state.acquire(&clock()).unwrap();
         assert!(started.elapsed() >= Duration::from_millis(150));
         release.join().unwrap();
     }
@@ -312,7 +371,7 @@ mod tests {
     fn acquire_reports_a_state_directory_it_cannot_make() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(".git"), "gitdir: elsewhere\n").unwrap();
-        assert!(State::new(dir.path()).acquire().is_err());
+        assert!(State::new(dir.path()).acquire(&clock()).is_err());
     }
 
     #[test]

@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use tasq_core::clock::Clock;
 use tasq_core::store::StoreError;
 
 pub use crate::native::NativeBookkeeper;
@@ -118,14 +119,16 @@ impl SyncOutcome {
 }
 
 /// Keeps the notebook's `.index` and history consistent after the store
-/// wrote a file (ADR-0023).
+/// wrote a file (ADR-0023). The methods that need the time take the
+/// store's clock.
 pub trait Bookkeeper {
     /// Strategy name, for diagnostics (`native`, `none`).
     fn name(&self) -> &str;
 
     /// Waits until earlier background bookkeeping is done and takes the
-    /// write lock. The store calls it before writing anything.
-    fn lock(&self) -> Result<WriteLock, StoreError>;
+    /// write lock; `clock` tells an abandoned lock from a live one. The
+    /// store calls it before writing anything.
+    fn lock(&self, clock: &dyn Clock) -> Result<WriteLock, StoreError>;
 
     /// Adds a newly created `file` (a path inside the notebook) to the
     /// index. The file must already exist.
@@ -135,8 +138,14 @@ pub trait Bookkeeper {
     /// calls it only after a write changed bytes on disk. Returns `false`
     /// when nothing will be committed (not a repository, no bookkeeper).
     /// The commit itself may still be running when this returns; its
-    /// failure is reported by [`take_failure`](Self::take_failure).
-    fn checkpoint(&self, lock: WriteLock, message: &str) -> Result<bool, StoreError>;
+    /// failure is reported by [`take_failure`](Self::take_failure). `clock`
+    /// decides whether a sync is due.
+    fn checkpoint(
+        &self,
+        lock: WriteLock,
+        message: &str,
+        clock: &dyn Clock,
+    ) -> Result<bool, StoreError>;
 
     /// The failure of the last background job, once.
     fn take_failure(&self) -> Option<String>;
@@ -145,8 +154,8 @@ pub trait Bookkeeper {
     fn verify(&self) -> Result<Verification, StoreError>;
 
     /// Exchanges commits with the notebook's remote, when it has one, and
-    /// waits for the result.
-    fn sync(&self) -> Result<SyncOutcome, StoreError>;
+    /// waits for the result. The sync is recorded at `clock`'s time.
+    fn sync(&self, clock: &dyn Clock) -> Result<SyncOutcome, StoreError>;
 }
 
 /// Does no bookkeeping at all: files are written, nothing else happens.
@@ -158,7 +167,7 @@ impl Bookkeeper for NoopBookkeeper {
         "none"
     }
 
-    fn lock(&self) -> Result<WriteLock, StoreError> {
+    fn lock(&self, _clock: &dyn Clock) -> Result<WriteLock, StoreError> {
         Ok(WriteLock::none())
     }
 
@@ -166,7 +175,12 @@ impl Bookkeeper for NoopBookkeeper {
         Ok(())
     }
 
-    fn checkpoint(&self, _lock: WriteLock, _message: &str) -> Result<bool, StoreError> {
+    fn checkpoint(
+        &self,
+        _lock: WriteLock,
+        _message: &str,
+        _clock: &dyn Clock,
+    ) -> Result<bool, StoreError> {
         Ok(false)
     }
 
@@ -180,7 +194,7 @@ impl Bookkeeper for NoopBookkeeper {
         ))
     }
 
-    fn sync(&self) -> Result<SyncOutcome, StoreError> {
+    fn sync(&self, _clock: &dyn Clock) -> Result<SyncOutcome, StoreError> {
         Ok(SyncOutcome::skipped("nothing to sync (no bookkeeper)"))
     }
 }
@@ -195,15 +209,17 @@ pub(crate) fn failure(what: &str, error: &dyn std::fmt::Display, fix: &str) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tasq_core::clock::FixedClock;
 
     #[test]
     fn noop_succeeds_at_everything() {
         let b = NoopBookkeeper;
+        let clock = FixedClock::at("2026-10-07 09:30");
         assert_eq!(b.name(), "none");
-        assert_eq!(b.lock().unwrap(), WriteLock::none());
+        assert_eq!(b.lock(&clock).unwrap(), WriteLock::none());
         assert!(b.register(Path::new("/x/y.todo.md")).is_ok());
         assert!(
-            !(b.checkpoint(WriteLock::none(), "[tasq] Update: y.todo.md")
+            !(b.checkpoint(WriteLock::none(), "[tasq] Update: y.todo.md", &clock)
                 .unwrap())
         );
         assert_eq!(b.take_failure(), None);
@@ -211,7 +227,7 @@ mod tests {
         assert!(v.consistent);
         assert_eq!(v.detail, "index not verified (no bookkeeper)");
         assert_eq!(v.fix(), None);
-        let s = b.sync().unwrap();
+        let s = b.sync(&clock).unwrap();
         assert!(!s.synced);
         assert_eq!(s.detail, "nothing to sync (no bookkeeper)");
         assert_eq!(s.raw_output, None);
