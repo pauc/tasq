@@ -583,6 +583,7 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `help` | `?` | list | the key overlay (any key closes it) |
 | `toggle-detail` | `tab` | list | switch between list and detail |
 | `show-detail`, `hide-detail` | `right` / `left` | list | show / hide the selected task's detail |
+| `detail-up`, `detail-down` | `K`, `ctrl+y` / `J`, `ctrl+e` | list | scroll the detail a line; `page-up`/`page-down` page it when it replaces the list |
 | `cancel` | `esc` | list, pickers | clear the filter, close the detail or the dialog |
 | `confirm` | `enter` | pickers | apply the choice; in the source picker, run the checked sources |
 | `quit` | `q` | list, pickers | leave `tasq ui`; in a picker, close it |

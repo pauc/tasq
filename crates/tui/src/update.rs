@@ -6,11 +6,22 @@ use tasq_core::model::{Priority, TaskId};
 use crate::calendar::Calendar;
 use crate::form::{Field, Form, FormError, Text};
 use crate::history::History;
-use crate::model::{Message, Mode, Model, NoteTarget, PAGE};
+use crate::model::{LayoutKind, Message, Mode, Model, NoteTarget, PAGE};
 use crate::msg::{Cmd, LaunchTarget, Msg};
+use crate::view;
 
-/// Applies `msg` to `model` and returns the commands to run.
+/// Applies `msg` to `model` and returns the commands to run. Another
+/// selection shows its detail from the top.
 pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
+    let selected = model.selected.clone();
+    let cmds = apply(model, msg);
+    if model.selected != selected {
+        model.detail_scroll = 0;
+    }
+    cmds
+}
+
+fn apply(model: &mut Model, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Resize(width, height) => {
             model.width = width;
@@ -64,8 +75,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::Quit => model.quit = true,
         Msg::Down => model.select_offset(1),
         Msg::Up => model.select_offset(-1),
-        Msg::PageDown => model.select_offset(PAGE.cast_signed()),
-        Msg::PageUp => model.select_offset(-PAGE.cast_signed()),
+        Msg::PageDown | Msg::PageUp | Msg::DetailDown | Msg::DetailUp => scroll(model, msg),
         Msg::Top => model.select_first(),
         Msg::Bottom => model.select_last(),
         Msg::ToggleGroup => model.toggle_group(),
@@ -160,6 +170,30 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         }
     }
     Vec::new()
+}
+
+/// The page keys move the selection, or page the detail when it
+/// replaces the list; `J`/`K` scroll the detail a line.
+fn scroll(model: &mut Model, msg: &Msg) {
+    let pages_detail = model.show_detail && model.layout() == LayoutKind::OnePane;
+    let page = i32::from(view::detail_rows(model));
+    match msg {
+        Msg::PageDown if pages_detail => scroll_detail(model, page),
+        Msg::PageUp if pages_detail => scroll_detail(model, -page),
+        Msg::PageDown => model.select_offset(PAGE.cast_signed()),
+        Msg::PageUp => model.select_offset(-PAGE.cast_signed()),
+        Msg::DetailDown => scroll_detail(model, 1),
+        Msg::DetailUp => scroll_detail(model, -1),
+        _ => {}
+    }
+}
+
+/// Scrolls the detail `delta` lines down (up when negative), between its
+/// top and [`view::detail_max_scroll`].
+fn scroll_detail(model: &mut Model, delta: i32) {
+    let target = i32::from(model.detail_scroll) + delta;
+    let max = i32::from(view::detail_max_scroll(model));
+    model.detail_scroll = u16::try_from(target.clamp(0, max)).unwrap_or(0);
 }
 
 const NO_SELECTION: &str = "no task selected";
@@ -559,6 +593,7 @@ mod tests {
     use super::*;
     use crate::form::Text;
     use crate::model::{Cursor, SourceChoice};
+    use tasq_core::config::DetailPosition;
     use tasq_core::edit::Fields;
     use tasq_core::model::{Status, Tag, Task, TaskDraft, Workflow};
     use tasq_core::theme::Theme;
@@ -680,6 +715,96 @@ mod tests {
         assert!(!m.quit);
         update(&mut m, Msg::Quit);
         assert!(m.quit);
+    }
+
+    /// A model in the one-pane layout (60x10) showing the detail of a
+    /// task with a 30-line description: 34 lines in a pane of 7 rows.
+    fn long_detail() -> Model {
+        let mut long = task(1, "Long", None);
+        long.description = Some(
+            (1..=30)
+                .map(|n| format!("line {n}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        let mut m = Model::new(Workflow::default(), Theme::default(), true);
+        feed(
+            &mut m,
+            [
+                Msg::Loaded(vec![long, task(2, "Short", None)]),
+                Msg::Resize(60, 10),
+                Msg::ShowDetail,
+            ],
+        );
+        m
+    }
+
+    #[test]
+    fn the_detail_scrolls_between_its_top_and_its_last_line() {
+        let mut m = long_detail();
+        assert_eq!(m.detail_scroll, 0);
+        update(&mut m, Msg::DetailUp);
+        assert_eq!(m.detail_scroll, 0, "already at the top");
+        update(&mut m, Msg::DetailDown);
+        assert_eq!(m.detail_scroll, 1);
+        feed(&mut m, std::iter::repeat_n(Msg::DetailDown, 40));
+        assert_eq!(m.detail_scroll, 27, "the last line at the bottom row");
+        update(&mut m, Msg::DetailUp);
+        assert_eq!(m.detail_scroll, 26);
+    }
+
+    #[test]
+    fn page_keys_page_the_detail_when_it_replaces_the_list() {
+        let mut m = long_detail();
+        update(&mut m, Msg::PageDown);
+        assert_eq!(m.detail_scroll, 7, "one pane of 7 rows");
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
+        feed(&mut m, std::iter::repeat_n(Msg::PageDown, 5));
+        assert_eq!(m.detail_scroll, 27);
+        update(&mut m, Msg::PageUp);
+        assert_eq!(m.detail_scroll, 20);
+        feed(&mut m, std::iter::repeat_n(Msg::PageUp, 5));
+        assert_eq!(m.detail_scroll, 0);
+        // Beside the list, they move the selection.
+        feed(&mut m, [Msg::Resize(120, 10), Msg::PageDown]);
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(2))));
+        // So they do with the detail hidden.
+        feed(&mut m, [Msg::Resize(60, 10), Msg::HideDetail, Msg::PageUp]);
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
+        assert_eq!(m.detail_scroll, 0);
+    }
+
+    #[test]
+    fn a_hidden_detail_does_not_scroll() {
+        for (position, width, height) in [
+            (DetailPosition::Right, 60, 10),
+            (DetailPosition::Right, 120, 10),
+            (DetailPosition::Bottom, 60, 30),
+        ] {
+            let mut m = long_detail().with_detail_position(position);
+            feed(
+                &mut m,
+                [Msg::HideDetail, Msg::Resize(width, height), Msg::DetailDown],
+            );
+            assert_eq!(m.detail_scroll, 0, "{position:?} at {width}x{height}");
+            // Shown, it does.
+            feed(&mut m, [Msg::ShowDetail, Msg::DetailDown]);
+            assert_eq!(m.detail_scroll, 1, "{position:?} at {width}x{height}");
+        }
+    }
+
+    #[test]
+    fn another_selection_starts_its_detail_at_the_top() {
+        let mut m = long_detail();
+        feed(&mut m, [Msg::DetailDown, Msg::DetailDown, Msg::Down]);
+        assert_eq!(m.detail_scroll, 0, "moved to the next task");
+        feed(&mut m, [Msg::Up, Msg::DetailDown, Msg::DetailDown]);
+        assert_eq!(m.detail_scroll, 2);
+        let tasks = m.tasks.clone();
+        update(&mut m, Msg::Loaded(tasks));
+        assert_eq!(m.detail_scroll, 2, "a reload keeps the place");
+        update(&mut m, Msg::Select(TaskId::from(2)));
+        assert_eq!(m.detail_scroll, 0, "a created task got selected");
     }
 
     #[test]

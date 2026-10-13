@@ -20,7 +20,9 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Padding, Paragraph};
+use ratatui::widgets::{
+    Block, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 use tasq_core::clock::format_timestamp;
 use tasq_core::config::DueFormat;
 use tasq_core::dates::{Due, due_label};
@@ -33,9 +35,6 @@ use crate::keys::{Action, KeyMap};
 use crate::model::{
     Cursor, GroupKey, LayoutKind, Mode, Model, NoteTarget, Row, TWO_PANE_MIN_WIDTH,
 };
-
-/// How many progress notes the detail pane shows (the most recent ones).
-pub const PROGRESS_SHOWN: usize = 8;
 
 /// The help overlay, one `(actions, what they do)` per line; the keys
 /// come from the model's [`KeyMap`] (see [`help_rows`]).
@@ -91,7 +90,10 @@ pub const HELP: &[(&[Action], &str)] = &[
         &[Action::ShowDetail, Action::HideDetail],
         "show / hide the selected task's detail",
     ),
-    (&[Action::ToggleDetail], "switch between list and detail"),
+    (
+        &[Action::ToggleDetail, Action::DetailUp, Action::DetailDown],
+        "switch between list and detail; scroll the detail",
+    ),
     (&[Action::Confirm], "in a picker: apply the choice"),
     (&[Action::Help], "this help"),
     (&[Action::Quit], "quit"),
@@ -177,10 +179,62 @@ fn join(parts: impl Iterator<Item = Option<String>>) -> String {
     parts.flatten().collect::<Vec<_>>().join("  ")
 }
 
+/// The main area and the status bar of a terminal of `area`.
+fn screen(area: Rect) -> [Rect; 2] {
+    Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area)
+}
+
+/// Where the list and the detail go in `main`, each `None` when hidden.
+fn panes(model: &Model, main: Rect) -> (Option<Rect>, Option<Rect>) {
+    match model.layout() {
+        LayoutKind::TwoPane if model.show_detail => {
+            let [left, right] =
+                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .areas(main);
+            (Some(left), Some(right))
+        }
+        LayoutKind::Stacked if model.show_detail => {
+            let [top, bottom] =
+                Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .areas(main);
+            (Some(top), Some(bottom))
+        }
+        LayoutKind::OnePane if model.show_detail => (None, Some(main)),
+        LayoutKind::TwoPane | LayoutKind::Stacked | LayoutKind::OnePane => (Some(main), None),
+    }
+}
+
+/// The rows of text the detail pane shows at once; 0 when it is hidden.
+pub fn detail_rows(model: &Model) -> u16 {
+    detail_inner(model).map_or(0, |inner| inner.height)
+}
+
+/// Inside the detail pane's border, when the detail is shown.
+fn detail_inner(model: &Model) -> Option<Rect> {
+    let [main, _] = screen(Rect::new(0, 0, model.width, model.height));
+    panes(model, main)
+        .1
+        .map(|area| Block::bordered().inner(area))
+}
+
+/// How many lines the detail of the selected task scrolls down until
+/// its last line sits on the pane's bottom row; 0 when it fits or is
+/// not shown.
+pub fn detail_max_scroll(model: &Model) -> u16 {
+    let (Some(inner), Some(task)) = (detail_inner(model), model.selected_task()) else {
+        return 0;
+    };
+    let rows = Paragraph::new(detail_lines(model, task))
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .line_count(inner.width);
+    u16::try_from(rows)
+        .unwrap_or(u16::MAX)
+        .saturating_sub(inner.height)
+}
+
 /// Draws `model` onto `frame`.
 pub fn view(model: &Model, frame: &mut Frame) {
-    let [main, bar] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
+    let [main, bar] = screen(frame.area());
     match &model.mode {
         Mode::Form(form) => {
             if let Some(position) = render_form(model, frame, main, form) {
@@ -199,25 +253,12 @@ pub fn view(model: &Model, frame: &mut Frame) {
         }
         _ => {}
     }
-    match model.layout() {
-        LayoutKind::TwoPane if model.show_detail => {
-            let [left, right] =
-                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .areas(main);
-            render_list(model, frame, left);
-            render_detail(model, frame, right);
-        }
-        LayoutKind::Stacked if model.show_detail => {
-            let [top, bottom] =
-                Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .areas(main);
-            render_list(model, frame, top);
-            render_detail(model, frame, bottom);
-        }
-        LayoutKind::OnePane if model.show_detail => render_detail(model, frame, main),
-        LayoutKind::TwoPane | LayoutKind::Stacked | LayoutKind::OnePane => {
-            render_list(model, frame, main);
-        }
+    let (list, detail) = panes(model, main);
+    if let Some(area) = list {
+        render_list(model, frame, area);
+    }
+    if let Some(area) = detail {
+        render_detail(model, frame, area);
     }
     render_status_bar(model, frame, bar);
     match &model.mode {
@@ -615,17 +656,8 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
     }
     if !task.progress.is_empty() {
         lines.push(Line::default());
-        let skipped = task.progress.len().saturating_sub(PROGRESS_SHOWN);
-        let heading = if skipped > 0 {
-            format!(
-                "Progress (last {PROGRESS_SHOWN} of {})",
-                task.progress.len()
-            )
-        } else {
-            "Progress".to_owned()
-        };
-        lines.push(Line::styled(heading, header(model)));
-        for entry in task.progress.iter().skip(skipped) {
+        lines.push(Line::styled("Progress", header(model)));
+        for entry in &task.progress {
             lines.push(Line::from(vec![
                 Span::styled(format!("- {}: ", entry.at), dim(model)),
                 Span::raw(entry.note.as_str()),
@@ -696,10 +728,29 @@ fn render_detail(model: &Model, frame: &mut Frame, area: Rect) {
     }
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    // A reload can shorten the task under the offset.
+    let max = detail_max_scroll(model);
+    let scroll = model.detail_scroll.min(max);
     frame.render_widget(
-        Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }),
+        Paragraph::new(lines)
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .scroll((scroll, 0)),
         inner,
     );
+    if max > 0 {
+        // On the right border, between the corners.
+        let mut state = ScrollbarState::new(usize::from(max) + 1)
+            .viewport_content_length(usize::from(inner.height))
+            .position(usize::from(scroll));
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(Some(ratatui::symbols::line::VERTICAL)),
+            area.inner(Margin::new(0, 1)),
+            &mut state,
+        );
+    }
 }
 
 /// The bottom line: the input being typed, else the last message, else
@@ -1652,6 +1703,13 @@ mod tests {
             (
                 "Right, Left".to_owned(),
                 "show / hide the selected task's detail"
+            )
+        );
+        assert_eq!(
+            rows[21],
+            (
+                "Tab, K/C-y, J/C-e".to_owned(),
+                "switch between list and detail; scroll the detail"
             )
         );
         assert_eq!(

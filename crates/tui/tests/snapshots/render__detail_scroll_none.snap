@@ -1,0 +1,19 @@
+---
+source: crates/tui/tests/render.rs
+assertion_line: 182
+expression: "screen(&mut model, 80, 14)"
+---
+"┌ [5] ─────────────────────────────────────────────────────────────────────────┐"
+"│Call the bank                                                                 │"
+"│[5]  #B                                                                       │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"└────────────────────────────────────────────────────────────────── Left: list ┘"
+"j/k  /  c t p l d e  Enter open  s/S sync  ? help  q quit                       "

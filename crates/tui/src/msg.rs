@@ -102,6 +102,10 @@ pub enum Msg {
     ShowDetail,
     /// `Left`: hide the detail.
     HideDetail,
+    /// `J`/`Ctrl+E`: scroll the detail one line down.
+    DetailDown,
+    /// `K`/`Ctrl+Y`: scroll the detail one line up.
+    DetailUp,
     /// `q`: leave.
     Quit,
     /// The terminal is now this size.

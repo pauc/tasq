@@ -245,6 +245,9 @@ pub struct Model {
     /// layout, instead of it in the one-pane layout. Off until `Right`
     /// (or `Tab`); `Left` and `Esc` turn it off again.
     pub show_detail: bool,
+    /// How many lines the detail is scrolled down, at most
+    /// [`crate::view::detail_max_scroll`].
+    pub detail_scroll: u16,
     /// Set by `q`; the runtime stops.
     pub quit: bool,
 }
@@ -279,6 +282,7 @@ impl Model {
             width: 0,
             height: 0,
             show_detail: false,
+            detail_scroll: 0,
             quit: false,
         }
     }

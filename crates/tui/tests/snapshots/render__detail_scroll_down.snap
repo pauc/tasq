@@ -1,0 +1,19 @@
+---
+source: crates/tui/tests/render.rs
+assertion_line: 176
+expression: "screen(&mut model, 80, 14)"
+---
+"┌ [1] ─────────────────────────────────────────────────────────────────────────┐"
+"│                                                                              │"
+"│Project: /home/me/code/app                                                    █"
+"│                                                                              █"
+"│Description                                                                   █"
+"│The nightly job fails one time in three.                                      █"
+"│Suspect the cache.                                                            █"
+"│                                                                              │"
+"│Related                                                                       │"
+"│- https://example.com/issue/1                                                 │"
+"│                                                                              │"
+"│Merge requests                                                                │"
+"└────────────────────────────────────────────────────────────────── Left: list ┘"
+"j/k  /  c t p l d e  Enter open  s/S sync  ? help  q quit                       "

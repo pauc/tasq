@@ -168,6 +168,23 @@ fn one_pane_layout_list_and_detail() {
 }
 
 #[test]
+fn a_long_detail_scrolls_under_a_scrollbar() {
+    let mut model = fixture(true);
+    update(&mut model, Msg::ShowDetail);
+    assert_snapshot!("detail_scroll_top", screen(&mut model, 80, 14));
+    for _ in 0..3 {
+        update(&mut model, Msg::DetailDown);
+    }
+    assert_snapshot!("detail_scroll_down", screen(&mut model, 80, 14));
+    update(&mut model, Msg::PageDown);
+    update(&mut model, Msg::PageDown);
+    assert_snapshot!("detail_scroll_bottom", screen(&mut model, 80, 14));
+    // A detail that fits has no scrollbar.
+    update(&mut model, Msg::Select(TaskId::from(5)));
+    assert_snapshot!("detail_scroll_none", screen(&mut model, 80, 14));
+}
+
+#[test]
 fn selection_and_filter() {
     let mut model = fixture(true);
     update(&mut model, Msg::Down);
@@ -728,7 +745,7 @@ fn detail_head_and_progress_heading() {
         text(&Task::new(TaskId::from(5), "Call the bank"))[1],
         "[5]  #B"
     );
-    // The progress heading counts only when notes were left out.
+    // Every progress note is shown, the pane scrolls to the old ones.
     let clock = FixedClock::at("2026-10-04 09:30");
     let mut few = Task::new(TaskId::from(8), "Few");
     few.log("one", &clock);
@@ -742,15 +759,13 @@ fn detail_head_and_progress_heading() {
         many.log(format!("note {i}"), &clock);
     }
     let lines = text(&many);
-    assert!(
-        lines.contains(&"Progress (last 8 of 10)".to_owned()),
-        "{lines:?}"
+    let progress = lines.iter().position(|l| l == "Progress").unwrap();
+    assert_eq!(
+        lines[progress + 1..],
+        (1..=10)
+            .map(|i| format!("- 2026-10-04 09:30: note {i}"))
+            .collect::<Vec<_>>()
     );
-    assert!(
-        !lines.iter().any(|l| l.ends_with("note 1")),
-        "the first two notes are left out: {lines:?}"
-    );
-    assert!(lines.iter().any(|l| l.ends_with("note 3")), "{lines:?}");
 }
 
 #[test]
