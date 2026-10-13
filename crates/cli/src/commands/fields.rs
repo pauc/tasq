@@ -27,8 +27,13 @@ pub fn rename(app: &App, id: &str, title: &str, note: Option<&str>) -> Result<()
     let id = App::task_id(id)?;
     let mut store = app.open_store()?;
     let clock = app.clock()?;
-    edit::rename(&mut store, &id, title, note, clock.as_ref())?;
-    finish(app, &store, &id, &format!("[{id}] renamed\n"))
+    let revised = edit::rename(&mut store, &id, title, note, clock.as_ref())?;
+    let line = if revised.changed.is_empty() {
+        format!("[{id}] title unchanged\n")
+    } else {
+        format!("[{id}] renamed\n")
+    };
+    finish(app, &store, &id, &line)
 }
 
 /// `tasq due <id> <date|none> [--note TEXT]`.
@@ -37,11 +42,12 @@ pub fn due(app: &App, id: &str, date: &str, note: Option<&str>) -> Result<()> {
     let clock = app.clock()?;
     let day = due_date(date, clock.today())?;
     let mut store = app.open_store()?;
-    edit::due(&mut store, &id, day, note, clock.as_ref())?;
-    let line = day.map_or_else(
-        || format!("[{id}] due cleared\n"),
-        |day| format!("[{id}] due {day}\n"),
-    );
+    let revised = edit::due(&mut store, &id, day, note, clock.as_ref())?;
+    let line = match day {
+        _ if revised.changed.is_empty() => format!("[{id}] due unchanged\n"),
+        None => format!("[{id}] due cleared\n"),
+        Some(day) => format!("[{id}] due {day}\n"),
+    };
     finish(app, &store, &id, &line)
 }
 

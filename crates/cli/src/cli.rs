@@ -141,7 +141,10 @@ pub enum Command {
     /// Set the status or the priority of a task, optionally logging a note.
     ///
     /// VALUE is a status of the workflow (in-progress, ready, ...) or a
-    /// priority (A, B, C, with or without the #). Prints `[id] -> value`.
+    /// priority (A, B, C, with or without the #). Prints `[id] -> value`,
+    /// or `[id] status unchanged` when the task already has it (then
+    /// nothing is written, and with a note that is an error: the note is
+    /// not logged either).
     Set {
         /// Task id.
         #[arg(value_name = "ID")]
@@ -165,6 +168,8 @@ pub enum Command {
     },
 
     /// Mark a task done (`# [x]`, status tag removed), optionally logging a final note.
+    ///
+    /// A task that is already done is refused.
     Done {
         /// Task id.
         #[arg(value_name = "ID")]
@@ -196,7 +201,8 @@ pub enum Command {
     /// Replace the title of a task, optionally logging a note.
     ///
     /// Surrounding whitespace is trimmed; the title must be one non-empty
-    /// line. Prints `[id] renamed`.
+    /// line. Prints `[id] renamed`, or `[id] title unchanged` for the same
+    /// title (then nothing is written, and with --note that is an error).
     #[command(after_help = "Example:\n  tasq rename 31 \"CLI field-level commands\"")]
     Rename {
         /// Task id.
@@ -213,8 +219,9 @@ pub enum Command {
     /// Set or clear the due date of a task, optionally logging a note.
     ///
     /// DATE is YYYY-MM-DD, today, tomorrow or yesterday (as for create
-    /// --due), or none to remove the date. Prints `[id] due <date>` or
-    /// `[id] due cleared`.
+    /// --due), or none to remove the date. Prints `[id] due <date>`, `[id]
+    /// due cleared` or `[id] due unchanged` (then nothing is written, and
+    /// with --note that is an error).
     #[command(after_help = "Example:\n  tasq due 31 tomorrow")]
     Due {
         /// Task id.
@@ -235,7 +242,8 @@ pub enum Command {
     /// with `tasq set`. --note and the other long options go before or
     /// after the tags; short ones such as -v before them. Prints the
     /// changes that took effect, `[id] tags: +a -b`, or `[id] tags
-    /// unchanged` (then nothing is written unless there is a --note).
+    /// unchanged` (then nothing is written, and with --note that is an
+    /// error).
     #[command(after_help = "Example:\n  tasq tag 31 +needs-info -needs-triage")]
     Tag {
         /// Task id.

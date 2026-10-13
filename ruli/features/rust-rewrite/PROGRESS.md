@@ -247,8 +247,12 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   read used to come after EOF, which overwrote such a change). Decided 2026-10-13: an
   unchanged description writes nothing in every `desc` form, and with `--note` that is
   `EditError::NoteNotLogged` (exit 1) rather than a note logged alone or silently dropped;
-  `edit::describe` is `describe_read` on a fresh read. Commits from 340751e (rebased on
-  ed41ab2).
+  `edit::describe` is `describe_read` on a fresh read. Decided 2026-10-13, extended to every
+  one-field edit: `set`, `rename`, `due` and `tag` that change nothing write nothing, print
+  `[id] <field> unchanged`, and with a note fail with `NoteNotLogged(field)`; `edit::change`
+  compares `Fields` before and after and returns `Revised`. `done` on a done task is refused
+  (`EditError::AlreadyDone`, exit 1) instead of logging the note and running `post_done` hooks
+  again; the TUI shows the same error. Commits from 340751e (rebased on ed41ab2).
 - **TUI DONE group, reopen, Today view, detail position (follow-up 2026-10-07, todo 33).**
   `Task::closed_at` (ADR 0020): a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`, read
   like `## Due`, `None` on open tasks whatever the file says). `Task::close(clock)` stamps it

@@ -709,15 +709,16 @@ mod edit {
     }
 
     #[test]
-    fn done_on_a_done_task_changes_nothing() {
+    fn done_on_a_done_task_is_refused() {
         let env = TestEnv::fixture();
         let before =
             std::fs::read_to_string(env.notebook().join("20260903110000.todo.md")).unwrap();
         env.tasq()
-            .args(["done", "4"])
+            .args(["done", "4", "--note", "again"])
             .assert()
-            .success()
-            .stdout("[4] done: Ship the release notes\n");
+            .code(1)
+            .stdout("")
+            .stderr("tasq: task 4 is already done\n");
         let after = std::fs::read_to_string(env.notebook().join("20260903110000.todo.md")).unwrap();
         assert_eq!(after, before);
     }
@@ -1429,6 +1430,35 @@ mod fields {
             "tasq: a description line cannot start with '## ' (it would start a new section): ## Steps; the edited text is kept in "
         ));
         assert_eq!(kept_text(&assert), "Intro\n## Steps\n");
+        assert_eq!(support(&env), before);
+    }
+
+    #[test]
+    fn field_edits_that_change_nothing_write_nothing_and_say_so() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        for (args, line) in [
+            (&["set", "3", "ready"][..], "[3] status unchanged\n"),
+            (&["set", "3", "#B"], "[3] priority unchanged\n"),
+            (
+                &["rename", "3", " Answer the support ticket "],
+                "[3] title unchanged\n",
+            ),
+            (&["due", "3", "none"], "[3] due unchanged\n"),
+            (&["tag", "3", "+support"], "[3] tags unchanged\n"),
+        ] {
+            env.tasq().args(args).assert().success().stdout(line);
+            let field = line["[3] ".len()..].trim_end_matches(" unchanged\n");
+            env.tasq()
+                .args(args)
+                .args(["--note", "why"])
+                .assert()
+                .code(1)
+                .stdout("")
+                .stderr(format!(
+                    "tasq: {field} unchanged; the note was not logged (use log to add it alone)\n"
+                ));
+        }
         assert_eq!(support(&env), before);
     }
 
@@ -5089,14 +5119,14 @@ mod worktree_release {
         let plain = env.home.join("plain");
         std::fs::create_dir(&plain).unwrap();
         env.tasq_wt()
-            .args(["project", "4", plain.to_str().unwrap()])
+            .args(["project", "7", plain.to_str().unwrap()])
             .assert()
             .success();
         env.tasq_wt()
-            .args(["worktree", "4", wt.to_str().unwrap()])
+            .args(["worktree", "7", wt.to_str().unwrap()])
             .assert()
             .success();
-        let out = env.tasq_wt().args(["done", "4"]).output().unwrap();
+        let out = env.tasq_wt().args(["done", "7"]).output().unwrap();
         assert!(out.status.success());
         assert_eq!(
             env.normalize(&stderr(&out)),

@@ -27,20 +27,21 @@ pub fn parse_value(value: &str, workflow: &Workflow) -> Result<Value> {
     })
 }
 
-/// `tasq set <id> <value> [note]`.
+/// `tasq set <id> <value> [note]`: `[id] -> value`, or `[id] status
+/// unchanged` (nothing written) when the task already has the value.
 pub fn set(app: &App, id: &str, value: &str, note: Option<&str>) -> Result<()> {
     let id = App::task_id(id)?;
     let value = parse_value(value, &app.workflow())?;
     let mut store = app.open_store()?;
     let clock = app.clock()?;
-    edit::set(&mut store, &id, &value, note, clock.as_ref())?;
-    let suffix = note.map_or_else(String::new, |n| format!(" ({n})"));
-    finish(
-        app,
-        &store,
-        &id,
-        &format!("[{id}] -> {}{suffix}\n", value.label()),
-    )
+    let revised = edit::set(&mut store, &id, &value, note, clock.as_ref())?;
+    let line = if revised.changed.is_empty() {
+        format!("[{id}] {} unchanged\n", value.field())
+    } else {
+        let suffix = note.map_or_else(String::new, |n| format!(" ({n})"));
+        format!("[{id}] -> {}{suffix}\n", value.label())
+    };
+    finish(app, &store, &id, &line)
 }
 
 /// `tasq log <id> <note>`.
@@ -54,9 +55,9 @@ pub fn log(app: &App, id: &str, note: &str) -> Result<()> {
 
 /// `tasq done <id> [note]`: the note first, then `# [x]` with the status
 /// tag removed, as the script did (`append_progress`, `nb todo do`,
-/// `strip_status_tag`). Then, with worktrees enabled, the task's worktrees
-/// are released (plan 4.2 step 3); a failure there is a warning, the task
-/// is closed either way.
+/// `strip_status_tag`). A task that is already done is refused. Then,
+/// with worktrees enabled, the task's worktrees are released (plan 4.2
+/// step 3); a failure there is a warning, the task is closed either way.
 pub fn done(app: &App, id: &str, note: Option<&str>, yes: bool) -> Result<()> {
     let id = App::task_id(id)?;
     let mut store = app.open_store()?;

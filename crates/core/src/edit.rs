@@ -73,12 +73,19 @@ pub enum Field {
     Priority,
 }
 
-impl std::fmt::Display for Field {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
+impl Field {
+    /// The field's name, as [`FIELD_NAMES`] spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
             Self::Status => "status",
             Self::Priority => "priority",
-        })
+        }
+    }
+}
+
+impl std::fmt::Display for Field {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -234,10 +241,13 @@ pub enum EditError {
     /// the heading of a new section.
     #[error("a description line cannot start with '## ' (it would start a new section): {0}")]
     DescriptionHeading(String),
-    /// A note came with a description that stayed the same; nothing was
-    /// written, so the note was not logged either.
-    #[error("description unchanged; the note was not logged (use log to add it alone)")]
-    NoteNotLogged,
+    /// A note came with an edit that changed nothing; nothing was
+    /// written, so the note was not logged either. Holds the field's name.
+    #[error("{0} unchanged; the note was not logged (use log to add it alone)")]
+    NoteNotLogged(&'static str),
+    /// `done` was asked for a task that is already done.
+    #[error("task {0} is already done")]
+    AlreadyDone(TaskId),
     /// `reopen` was asked for a task that is still open.
     #[error("task {0} is not done")]
     NotDone(TaskId),
@@ -247,27 +257,31 @@ pub enum EditError {
 }
 
 /// `tasq set <id> <value> [note]`: changes the status or priority, logs
-/// `note` when given, writes the task and returns it as stored.
+/// `note` when given, writes the task and returns it as stored. A value
+/// the task already has is [`change`]'s no change.
 pub fn set(
     store: &mut dyn Store,
     id: &TaskId,
     value: &Value,
     note: Option<&str>,
     clock: &dyn Clock,
-) -> Result<Task, EditError> {
-    change(store, id, note, clock, |task| value.apply(task))
+) -> Result<Revised, EditError> {
+    change(store, id, value.field().as_str(), note, clock, |task| {
+        value.apply(task);
+    })
 }
 
 /// `tasq rename <id> <title>`: replaces the title (trimmed), logs `note`
 /// when given and returns the task as stored. An empty or multi-line title
-/// is refused before anything is read.
+/// is refused before anything is read; the same title is [`change`]'s no
+/// change.
 pub fn rename(
     store: &mut dyn Store,
     id: &TaskId,
     title: &str,
     note: Option<&str>,
     clock: &dyn Clock,
-) -> Result<Task, EditError> {
+) -> Result<Revised, EditError> {
     let title = title.trim();
     if title.is_empty() {
         return Err(EditError::EmptyTitle);
@@ -275,21 +289,22 @@ pub fn rename(
     if title.contains(['\n', '\r']) {
         return Err(EditError::MultiLineTitle);
     }
-    change(store, id, note, clock, |task| {
+    change(store, id, "title", note, clock, |task| {
         title.clone_into(&mut task.title);
     })
 }
 
 /// `tasq due <id> <date|none>`: sets the due date, or removes it with
-/// `None`, logs `note` when given and returns the task as stored.
+/// `None`, logs `note` when given and returns the task as stored. The
+/// date the task already has is [`change`]'s no change.
 pub fn due(
     store: &mut dyn Store,
     id: &TaskId,
     day: Option<NaiveDate>,
     note: Option<&str>,
     clock: &dyn Clock,
-) -> Result<Task, EditError> {
-    change(store, id, note, clock, |task| task.due = day)
+) -> Result<Revised, EditError> {
+    change(store, id, "due", note, clock, |task| task.due = day)
 }
 
 /// One word of `tasq tag`: `+name` or a bare `name` adds the topic tag,
@@ -367,8 +382,9 @@ pub struct Retagged {
 /// `tasq tag <id> <change>...`: applies `changes` in order to the topic
 /// tags. Tags that stay keep their place and new ones go at the end; the
 /// others are left alone. Logs `note` when given and returns the task as
-/// stored with the changes that took effect. Nothing is written when no
-/// tag changes and there is no note.
+/// stored with the changes that took effect. When no tag changes nothing
+/// is written: that is no error without a note, and
+/// [`EditError::NoteNotLogged`] with one.
 pub fn retag(
     store: &mut dyn Store,
     id: &TaskId,
@@ -388,13 +404,15 @@ pub fn retag(
             applied.push(change.clone());
         }
     }
-    if applied.is_empty() && note.is_none() {
-        return Ok(Retagged { task, applied });
+    if applied.is_empty() {
+        return unchanged("tags", note).map(|()| Retagged { task, applied });
     }
     let kept = task.tags.iter().filter(|t| wanted.contains(t));
     let added = wanted.iter().filter(|t| !task.tags.contains(t));
     let tags: Vec<Tag> = kept.chain(added).cloned().collect();
-    let task = write(store, task, note, clock, |task| task.tags = tags)?;
+    let mut task = task;
+    task.tags = tags;
+    let task = save(store, task, note, clock)?;
     Ok(Retagged { task, applied })
 }
 
@@ -430,10 +448,8 @@ pub fn describe(
 ///
 /// Replaces the description with [`description_text`] of `text` (blank
 /// text removes the section), logs `note` when given and returns the task
-/// as stored with `["description"]` as the change. When the description
-/// stays the same nothing is written: that is no error without a note, and
-/// [`EditError::NoteNotLogged`] with one. A line starting with `## ` is
-/// refused.
+/// as stored with `["description"]` as the change. The same description
+/// is [`change`]'s no change. A line starting with `## ` is refused.
 pub fn describe_read(
     store: &mut dyn Store,
     task: Task,
@@ -444,21 +460,9 @@ pub fn describe_read(
     checked_description(text)?;
     let note = checked_note(note)?;
     let description = description_text(text);
-    let changed = if description == task.description {
-        Vec::new()
-    } else {
-        vec!["description"]
-    };
-    if changed.is_empty() {
-        return match note {
-            Some(_) => Err(EditError::NoteNotLogged),
-            None => Ok(Revised { task, changed }),
-        };
-    }
-    let task = write(store, task, note, clock, |task| {
+    edited(store, task, "description", note, clock, |task| {
         task.description = description;
-    })?;
-    Ok(Revised { task, changed })
+    })
 }
 
 /// Refuses a description with a line the file would read as a section
@@ -487,7 +491,8 @@ pub fn log(
 
 /// `tasq done <id> [note]`: logs `note` when given and closes the task
 /// (`# [x]`, status tag removed, `closed_at` stamped with `clock.now()`,
-/// see [`Task::close`]) in one write, and returns it as stored.
+/// see [`Task::close`]) in one write, and returns it as stored. A task
+/// that is already done is refused before anything is written.
 pub fn done(
     store: &mut dyn Store,
     id: &TaskId,
@@ -496,12 +501,11 @@ pub fn done(
 ) -> Result<Task, EditError> {
     let note = checked_note(note)?;
     let mut task = store.get(id)?;
-    if let Some(note) = note {
-        task.log(note, clock);
+    if task.done {
+        return Err(EditError::AlreadyDone(id.clone()));
     }
     task.close(clock);
-    store.update(&task)?;
-    Ok(store.get(id)?)
+    save(store, task, note, clock)
 }
 
 /// The note [`reopen`] logs when the caller gives none.
@@ -533,31 +537,65 @@ pub fn reopen(
     Ok(store.get(id)?)
 }
 
-/// The shape of every field edit: checks `note`, reads the task, lets
-/// `edit` change it, logs the note, writes the whole task and returns it as
-/// stored.
+/// The shape of every one-field edit: checks `note`, reads the task and
+/// hands it to [`edited`].
 fn change(
     store: &mut dyn Store,
     id: &TaskId,
+    field: &'static str,
     note: Option<&str>,
     clock: &dyn Clock,
     edit: impl FnOnce(&mut Task),
-) -> Result<Task, EditError> {
+) -> Result<Revised, EditError> {
     let note = checked_note(note)?;
     let task = store.get(id)?;
-    write(store, task, note, clock, edit)
+    edited(store, task, field, note, clock, edit)
 }
 
 /// The second half of [`change`], for a task the caller already read:
-/// `edit`, log the checked `note`, write, read back.
-fn write(
+/// lets `edit` change `field`, then, when it differs, logs the checked
+/// `note`, writes and returns the task as stored with `[field]` as the
+/// change. When `field` stays the same nothing is written: see
+/// [`unchanged`].
+fn edited(
+    store: &mut dyn Store,
+    task: Task,
+    field: &'static str,
+    note: Option<&str>,
+    clock: &dyn Clock,
+    edit: impl FnOnce(&mut Task),
+) -> Result<Revised, EditError> {
+    let mut after = task.clone();
+    edit(&mut after);
+    if Fields::of(&after) == Fields::of(&task) {
+        return unchanged(field, note).map(|()| Revised {
+            task,
+            changed: Vec::new(),
+        });
+    }
+    let task = save(store, after, note, clock)?;
+    Ok(Revised {
+        task,
+        changed: vec![field],
+    })
+}
+
+/// An edit that changed nothing writes nothing: no error without a note,
+/// [`EditError::NoteNotLogged`] with one, rather than a note logged alone.
+fn unchanged(field: &'static str, note: Option<&str>) -> Result<(), EditError> {
+    match note {
+        Some(_) => Err(EditError::NoteNotLogged(field)),
+        None => Ok(()),
+    }
+}
+
+/// Logs the checked `note` on `task`, writes it and reads it back.
+fn save(
     store: &mut dyn Store,
     mut task: Task,
     note: Option<&str>,
     clock: &dyn Clock,
-    edit: impl FnOnce(&mut Task),
 ) -> Result<Task, EditError> {
-    edit(&mut task);
     if let Some(note) = note {
         task.log(note, clock);
     }
@@ -637,7 +675,8 @@ mod tests {
             None,
             &clock(),
         )
-        .unwrap();
+        .unwrap()
+        .task;
         assert_eq!(task.status, Some(Status::IN_PROGRESS));
         assert_eq!(task.progress, Vec::new());
         assert_eq!(store.get(&id).unwrap(), task);
@@ -649,7 +688,8 @@ mod tests {
             Some("urgent"),
             &clock(),
         )
-        .unwrap();
+        .unwrap()
+        .task;
         assert_eq!(task.priority, Priority::A);
         assert_eq!(task.status, Some(Status::IN_PROGRESS));
         assert_eq!(task.progress, vec![entry("urgent")]);
@@ -730,11 +770,90 @@ mod tests {
         assert_eq!(task.closed_at, Some(clock().now()));
         assert_eq!(task.progress, Vec::new());
 
-        // Done again later: the note is logged, the closing time stays.
+        // Done again: refused, nothing written.
+        let before = store.get(&id).unwrap();
         let later = FixedClock::at("2026-10-09 08:00");
-        let task = done(&mut store, &id, Some("follow-up"), &later).unwrap();
-        assert_eq!(task.closed_at, Some(clock().now()));
-        assert_eq!(task.progress.len(), 2);
+        let err = done(&mut store, &id, Some("follow-up"), &later).unwrap_err();
+        assert!(matches!(err, EditError::AlreadyDone(ref i) if *i == id));
+        assert_eq!(err.to_string(), "task 1 is already done");
+        let err = done(&mut store, &id, None, &later).unwrap_err();
+        assert!(matches!(err, EditError::AlreadyDone(_)));
+        assert_eq!(store.get(&id).unwrap(), before);
+    }
+
+    #[test]
+    fn an_edit_that_changes_nothing_writes_nothing() {
+        let mut store = store();
+        let id = TaskId::from(1);
+        let day = NaiveDate::from_ymd_opt(2026, 10, 17).unwrap();
+        due(&mut store, &id, Some(day), None, &clock()).unwrap();
+        retag(
+            &mut store,
+            &id,
+            &[TagChange::Add(Tag::new("x").unwrap())],
+            None,
+            &clock(),
+        )
+        .unwrap();
+        let before = store.get(&id).unwrap();
+
+        let ready = Value::Status(Status::READY);
+        let revised = set(&mut store, &id, &ready, None, &clock()).unwrap();
+        assert_eq!(
+            revised,
+            Revised {
+                task: before.clone(),
+                changed: Vec::new()
+            }
+        );
+        let revised = rename(&mut store, &id, " A ", None, &clock()).unwrap();
+        assert_eq!(revised.changed, Vec::<&str>::new());
+        let revised = due(&mut store, &id, Some(day), None, &clock()).unwrap();
+        assert_eq!(revised.changed, Vec::<&str>::new());
+
+        let note = Some("why");
+        let message = |err: EditError| err.to_string();
+        let err = set(&mut store, &id, &ready, note, &clock()).unwrap_err();
+        assert!(matches!(err, EditError::NoteNotLogged("status")));
+        let normal = Value::Priority(Priority::default());
+        let err = set(&mut store, &id, &normal, note, &clock()).unwrap_err();
+        assert_eq!(
+            message(err),
+            "priority unchanged; the note was not logged (use log to add it alone)"
+        );
+        let err = rename(&mut store, &id, "A", note, &clock()).unwrap_err();
+        assert!(matches!(err, EditError::NoteNotLogged("title")));
+        let err = due(&mut store, &id, Some(day), note, &clock()).unwrap_err();
+        assert!(matches!(err, EditError::NoteNotLogged("due")));
+        let add_x = [TagChange::Add(Tag::new("x").unwrap())];
+        let err = retag(&mut store, &id, &add_x, note, &clock()).unwrap_err();
+        assert!(matches!(err, EditError::NoteNotLogged("tags")));
+        assert_eq!(store.get(&id).unwrap(), before);
+
+        // A change names its field.
+        let later = Value::Status(Status::LATER);
+        let revised = set(&mut store, &id, &later, note, &clock()).unwrap();
+        assert_eq!(revised.changed, vec!["status"]);
+        let revised = set(
+            &mut store,
+            &id,
+            &Value::Priority(Priority::A),
+            None,
+            &clock(),
+        )
+        .unwrap();
+        assert_eq!(revised.changed, vec!["priority"]);
+        assert_eq!(
+            rename(&mut store, &id, "B", None, &clock())
+                .unwrap()
+                .changed,
+            vec!["title"]
+        );
+        assert_eq!(
+            due(&mut store, &id, None, None, &clock()).unwrap().changed,
+            vec!["due"]
+        );
+        assert_eq!(store.get(&id).unwrap().progress, vec![entry("why")]);
     }
 
     #[test]
@@ -941,12 +1060,16 @@ mod tests {
     fn rename_trims_the_title_and_logs_the_note() {
         let mut store = store();
         let id = TaskId::from(1);
-        let task = rename(&mut store, &id, "  Renamed  ", None, &clock()).unwrap();
+        let task = rename(&mut store, &id, "  Renamed  ", None, &clock())
+            .unwrap()
+            .task;
         assert_eq!(task.title, "Renamed");
         assert_eq!(task.progress, Vec::new());
         assert_eq!(task.status, Some(Status::READY));
         assert_eq!(store.get(&id).unwrap(), task);
-        let task = rename(&mut store, &id, "Again", Some("clearer"), &clock()).unwrap();
+        let task = rename(&mut store, &id, "Again", Some("clearer"), &clock())
+            .unwrap()
+            .task;
         assert_eq!(task.title, "Again");
         assert_eq!(task.progress, vec![entry("clearer")]);
     }
@@ -974,11 +1097,15 @@ mod tests {
         let mut store = store();
         let id = TaskId::from(2);
         let day = NaiveDate::from_ymd_opt(2026, 10, 17).unwrap();
-        let task = due(&mut store, &id, Some(day), None, &clock()).unwrap();
+        let task = due(&mut store, &id, Some(day), None, &clock())
+            .unwrap()
+            .task;
         assert_eq!(task.due, Some(day));
         assert_eq!(task.progress, Vec::new());
         assert_eq!(store.get(&id).unwrap(), task);
-        let task = due(&mut store, &id, None, Some("no deadline"), &clock()).unwrap();
+        let task = due(&mut store, &id, None, Some("no deadline"), &clock())
+            .unwrap()
+            .task;
         assert_eq!(task.due, None);
         assert_eq!(task.progress, vec![entry("no deadline")]);
         assert_eq!(store.get(&id).unwrap(), task);
@@ -1187,7 +1314,7 @@ mod tests {
         let mut store = NoWrite(MemoryStore::new([task.clone()]));
         let err =
             describe_read(&mut store, task, "Same.\n", Some("checked"), &clock()).unwrap_err();
-        assert!(matches!(err, EditError::NoteNotLogged));
+        assert!(matches!(err, EditError::NoteNotLogged("description")));
         assert_eq!(
             err.to_string(),
             "description unchanged; the note was not logged (use log to add it alone)"
