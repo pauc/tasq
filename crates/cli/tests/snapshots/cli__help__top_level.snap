@@ -74,7 +74,7 @@ Options:
           Print long output directly instead of through the pager (`ui.pager`)
 
   -v, --verbose...
-          Show more detail (bookkeeping output, resolved paths). Repeatable
+          Show more detail (bookkeeping output, resolved paths, the launch trace). Repeatable
 
   -h, --help
           Print help (see a summary with '-h')

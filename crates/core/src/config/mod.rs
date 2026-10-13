@@ -31,7 +31,7 @@
 //! # Default configuration
 //!
 //! Serialising [`Config::default`] yields the reference document below.
-//! Keys whose default is "unset" (`work.default_project`,
+//! Keys whose default is "unset" (`work.default_project`, `launch.log`,
 //! `launch.claude.prompt_file`, `report.summary.model`,
 //! `report.summary.prompt_file`) are simply absent.
 //!
@@ -399,6 +399,11 @@ pub struct LaunchConfig {
     pub detached: String,
     /// Where the session's environment comes from. Default: `direnv`.
     pub env: EnvStrategy,
+    /// File every launch appends a trace to: the commands the launcher
+    /// ran (`herdr`, `tmux`) with their output, and its warnings. `~` is
+    /// expanded. Default: unset (no file; `-v` prints the trace instead).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log: Option<PathBuf>,
     /// Settings of the Claude Code launcher.
     pub claude: ClaudeLaunchConfig,
     /// Settings of the herdr launcher.
@@ -411,6 +416,7 @@ impl Default for LaunchConfig {
             default: "claude".to_owned(),
             detached: "auto".to_owned(),
             env: EnvStrategy::Direnv,
+            log: None,
             claude: ClaudeLaunchConfig::default(),
             herdr: HerdrLaunchConfig::default(),
         }

@@ -137,6 +137,7 @@ fn defaults_match_the_script() {
     assert_eq!(c.launch.env, EnvStrategy::Direnv);
     assert_eq!(c.launch.herdr.placement, tasq_core::config::Placement::Auto);
     assert_eq!(c.launch.claude.prompt_file, None);
+    assert_eq!(c.launch.log, None);
     assert_eq!(c.ui.pager, "less -RFX");
     assert!(!c.ui.no_osc8);
     assert_eq!(c.ui.glow_style, "dark");
@@ -1007,6 +1008,7 @@ fn env_overrides_files() {
         ("TASQ_LAUNCHER", "tmux"),
         ("TASQ_LAUNCH_DETACHED", "herdr"),
         ("TASQ_LAUNCH_ENV", "inherit"),
+        ("TASQ_LAUNCH_LOG", "~/tasq/launch.log"),
         ("TASQ_HERDR_PLACEMENT", "workspace"),
         ("TASQ_PAGER", "bat -p"),
         ("TASQ_NO_OSC8", "1"),
@@ -1039,6 +1041,7 @@ fn env_overrides_files() {
     assert_eq!(c.launch.default, "tmux");
     assert_eq!(c.launch.detached, "herdr");
     assert_eq!(c.launch.env, EnvStrategy::Inherit);
+    assert_eq!(c.launch.log, Some(sb.home.join("tasq/launch.log")));
     assert_eq!(
         c.launch.herdr.placement,
         tasq_core::config::Placement::Workspace
@@ -1062,7 +1065,7 @@ fn env_overrides_files() {
     assert_eq!(loaded.explain("ui.pager"), Some(&Origin::Env));
     let env_layer = loaded.layers.last().unwrap();
     assert_eq!(env_layer.origin, Origin::Env);
-    assert_eq!(env_layer.keys.len(), 25);
+    assert_eq!(env_layer.keys.len(), 26);
     assert_eq!(Origin::Env.to_string(), "env");
 }
 

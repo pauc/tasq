@@ -34,6 +34,84 @@ impl Finished {
     }
 }
 
+/// Where a launch records the commands it runs and the warnings it gives,
+/// for debugging a launch that went wrong: stderr at `-v`, and the
+/// `launch.log` file when one is configured. The default records nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Trace {
+    /// Echo every record to stderr (`-v`).
+    pub stderr: bool,
+    /// Append every record and warning to this file (`launch.log`).
+    pub file: Option<PathBuf>,
+}
+
+impl Trace {
+    /// Records that `program args` ran and how it finished.
+    pub fn command(&self, program: &str, args: &[&str], out: &Finished) {
+        self.write(&command_record(program, args, out), true);
+    }
+
+    /// Records a line of context (which task, which launcher, the outcome).
+    pub fn note(&self, line: &str) {
+        self.write(&format!("{line}\n"), true);
+    }
+
+    /// Prints `tasq: warning: <message>` on stderr, always, and appends it
+    /// to the log file.
+    pub fn warn(&self, message: &str) {
+        eprintln!("tasq: warning: {message}");
+        self.write(&format!("warning: {message}\n"), false);
+    }
+
+    /// Appends `text` to the file, and prints it on stderr when `echo` and
+    /// `-v`. A log file that cannot be written is ignored: the trace must
+    /// never be what breaks a launch.
+    ///
+    /// Reason: wraps stderr and a file append; [`command_record`] holds the logic.
+    #[mutants::skip]
+    fn write(&self, text: &str, echo: bool) {
+        use std::io::Write;
+        if echo && self.stderr {
+            eprint!("{text}");
+        }
+        if let Some(path) = &self.file {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let _ = file.write_all(text.as_bytes());
+            }
+        }
+    }
+}
+
+/// The trace record of a finished run: the command line, shell-quoted,
+/// whether it succeeded, then each non-empty stream with its lines
+/// indented.
+pub fn command_record(program: &str, args: &[&str], out: &Finished) -> String {
+    use std::fmt::Write;
+    let mut text = format!(
+        "$ {}\n  {}\n",
+        shell_words::join(std::iter::once(program).chain(args.iter().copied())),
+        if out.success { "ok" } else { "failed" }
+    );
+    for (name, stream) in [("stdout", &out.stdout), ("stderr", &out.stderr)] {
+        let stream = stream.trim_end();
+        if stream.is_empty() {
+            continue;
+        }
+        let _ = writeln!(text, "  {name}:");
+        for line in stream.lines() {
+            let _ = writeln!(text, "    {line}");
+        }
+    }
+    text
+}
+
 /// The value of `name` in `env`, when set and non-empty.
 pub fn env_var<'a>(env: &'a [(String, String)], name: &str) -> Option<&'a str> {
     env.iter()
@@ -198,6 +276,48 @@ mod tests {
             stderr: "  \n".into(),
         };
         assert_eq!(f.message(), "out");
+    }
+
+    #[test]
+    fn command_record_quotes_the_command_and_indents_the_streams() {
+        let failed = Finished {
+            success: false,
+            stdout: "{\"ok\":false}\n".into(),
+            stderr: "error: no such pane\nhint: retry\n\n".into(),
+        };
+        assert_eq!(
+            command_record("herdr", &["tab", "create", "--label", "Fix it"], &failed),
+            "$ herdr tab create --label 'Fix it'\n  failed\n  stdout:\n    {\"ok\":false}\n  \
+             stderr:\n    error: no such pane\n    hint: retry\n"
+        );
+        let quiet = Finished {
+            success: true,
+            stdout: " \n".into(),
+            stderr: String::new(),
+        };
+        assert_eq!(command_record("tmux", &[], &quiet), "$ tmux\n  ok\n");
+    }
+
+    #[test]
+    fn trace_appends_records_notes_and_warnings_to_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logs/launch.log");
+        let trace = Trace {
+            stderr: false,
+            file: Some(path.clone()),
+        };
+        let ok = Finished {
+            success: true,
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+        trace.note("task 3");
+        trace.command("herdr", &["agent", "focus", "task-3"], &ok);
+        trace.warn("focus failed");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "task 3\n$ herdr agent focus task-3\n  ok\nwarning: focus failed\n"
+        );
     }
 
     #[test]

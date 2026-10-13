@@ -32,6 +32,7 @@ pub const ENV_SET: &str = "TASQ_SET";
 /// | `TASQ_LAUNCHER` | `launch.default` |
 /// | `TASQ_LAUNCH_DETACHED` | `launch.detached` |
 /// | `TASQ_LAUNCH_ENV` | `launch.env` |
+/// | `TASQ_LAUNCH_LOG` | `launch.log` |
 /// | `TASQ_HERDR_PLACEMENT` | `launch.herdr.placement` |
 /// | `TASQ_PAGER` | `ui.pager` |
 /// | `TASQ_NO_OSC8` | `ui.no_osc8` |
@@ -64,6 +65,7 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_LAUNCHER", "launch.default"),
     ("TASQ_LAUNCH_DETACHED", "launch.detached"),
     ("TASQ_LAUNCH_ENV", "launch.env"),
+    ("TASQ_LAUNCH_LOG", "launch.log"),
     ("TASQ_HERDR_PLACEMENT", "launch.herdr.placement"),
     ("TASQ_PAGER", "ui.pager"),
     ("TASQ_NO_OSC8", "ui.no_osc8"),
@@ -444,6 +446,7 @@ fn template() -> Table {
         .worktree
         .variables
         .insert("<name>".to_owned(), String::new());
+    config.launch.log = Some(PathBuf::from("~"));
     config.launch.claude.prompt_file = Some(PathBuf::from("~"));
     config.report.summary.model = Some(String::new());
     config.report.summary.prompt_file = Some(PathBuf::from("~"));
@@ -770,6 +773,9 @@ fn finalize(loaded: &mut Loaded, home: Option<&Path>) -> Result<(), ConfigError>
     let config = &mut loaded.config;
     if let Some(p) = &config.work.default_project {
         config.work.default_project = Some(expand_tilde(p, home));
+    }
+    if let Some(p) = &config.launch.log {
+        config.launch.log = Some(expand_tilde(p, home));
     }
     if let Some(p) = &config.launch.claude.prompt_file {
         config.launch.claude.prompt_file = Some(expand_tilde(p, home));

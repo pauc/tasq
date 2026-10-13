@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Launch trace for `tasq pick|next`: `-v` prints every `herdr`/`tmux` command with its result
+  and output on stderr, and `launch.log` (`TASQ_LAUNCH_LOG`) appends it to a file with a header
+  and the outcome. The herdr launcher now names herdr's error when it cannot open a pane, warns
+  when a focus step fails, and reports the error of both `agent start` attempts.
 - `[worktree]` configuration for worktrees per task (ADR 0022): `enabled` (default `false`),
   `path` and `branch` templates, `base`, `on_create`, `on_done`, `delete_branch`, `symlinks`,
   `copies`, `copy_ignored`, `templates`, `variables`, `ports` and `[worktree.hooks]`, with

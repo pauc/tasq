@@ -6,7 +6,7 @@ use tasq_core::config::{EnvStrategy, Placement};
 use tasq_core::launch::{LaunchError, Launcher};
 
 use crate::claude::ClaudeLauncher;
-use crate::process::env_var;
+use crate::process::{Trace, env_var};
 use crate::shell::ShellLauncher;
 use crate::tmux::TmuxLauncher;
 
@@ -31,6 +31,8 @@ pub struct LaunchSettings {
     pub default_project: Option<PathBuf>,
     /// `launch.herdr.placement`.
     pub placement: Placement,
+    /// Where the window launchers record what they ran.
+    pub trace: Trace,
 }
 
 /// Resolves `auto` against the environment; other names pass through.
@@ -98,6 +100,7 @@ pub fn launcher_for(
         })),
         "tmux" => Ok(Box::new(TmuxLauncher {
             env: settings.env.clone(),
+            trace: settings.trace.clone(),
         })),
         "herdr" => herdr(settings, Box::new(claude())),
         other => Err(LaunchError::Unavailable {
@@ -126,6 +129,7 @@ fn herdr(
         placement: settings.placement,
         fallback,
         prompt: Box::new(move |ctx| prompt_source.prompt(ctx)),
+        trace: settings.trace.clone(),
     }))
 }
 
@@ -157,6 +161,7 @@ mod tests {
             template: "{{id}}".to_owned(),
             default_project: None,
             placement: Placement::Auto,
+            trace: Trace::default(),
         }
     }
 

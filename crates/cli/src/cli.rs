@@ -105,7 +105,7 @@ pub struct GlobalArgs {
     #[arg(long, global = true)]
     pub no_pager: bool,
 
-    /// Show more detail (bookkeeping output, resolved paths). Repeatable.
+    /// Show more detail (bookkeeping output, resolved paths, the launch trace). Repeatable.
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,
 }

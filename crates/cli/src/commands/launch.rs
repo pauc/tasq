@@ -6,6 +6,7 @@ use tasq_core::launch::{ENV_NOTEBOOK, ENV_TASK_ID, LaunchContext, LaunchOutcome,
 use tasq_core::model::{Status, TaskId};
 use tasq_core::query::{self, Filter};
 use tasq_core::store::{Store, StoreError};
+use tasq_launch::process::Trace;
 use tasq_launch::prompt::DEFAULT_TEMPLATE;
 use tasq_launch::registry::resolve_name;
 use tasq_launch::{LaunchSettings, launcher_for, resolve_detached};
@@ -128,8 +129,8 @@ pub fn pick(app: &App, id: &str, how: &How, dry_run: bool) -> Result<()> {
 }
 
 /// Launcher settings from the config: the environment, `launch.env`, the
-/// prompt template (`launch.claude.prompt_file` or the built-in one) and
-/// the default project.
+/// prompt template (`launch.claude.prompt_file` or the built-in one), the
+/// default project and the trace (`-v` on stderr, `launch.log`).
 pub fn launch_settings(app: &App) -> Result<LaunchSettings> {
     let template = match &app.config().launch.claude.prompt_file {
         Some(file) => std::fs::read_to_string(file).map_err(|e| {
@@ -143,6 +144,10 @@ pub fn launch_settings(app: &App) -> Result<LaunchSettings> {
         template,
         default_project: app.config().work.default_project.clone(),
         placement: app.config().launch.herdr.placement,
+        trace: Trace {
+            stderr: app.out.verbosity() > 0,
+            file: app.config().launch.log.clone(),
+        },
     })
 }
 
@@ -302,12 +307,24 @@ fn launch_or_describe(
         return app.out.page(&text);
     }
     plugins::run_hooks(app, Hook::PreLaunch, &ctx.task, &hook_fields)?;
-    match launcher
-        .launch(ctx)
-        .map_err(|e| CliError::user(e.to_string()))?
-    {
-        LaunchOutcome::Opened(detail) => app.out.print(&format!("{detail}\n")),
-        LaunchOutcome::Replaced => Ok(()),
+    let trace = &settings.trace;
+    trace.note(&format!(
+        "--- {} task {} with {resolved} in {}{}",
+        app.clock()?.now().format("%Y-%m-%d %H:%M:%S"),
+        ctx.task.id,
+        ctx.workdir.display(),
+        if ctx.focus { "" } else { " (no focus)" }
+    ));
+    match launcher.launch(ctx) {
+        Ok(LaunchOutcome::Opened(detail)) => {
+            trace.note(&format!("opened: {detail}"));
+            app.out.print(&format!("{detail}\n"))
+        }
+        Ok(LaunchOutcome::Replaced) => Ok(()),
+        Err(e) => {
+            trace.note(&format!("error: {e}"));
+            Err(CliError::user(e.to_string()))
+        }
     }
 }
 

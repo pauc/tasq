@@ -12,7 +12,7 @@ use tasq_core::config::Placement;
 use tasq_core::launch::{LaunchContext, LaunchError, LaunchOutcome, Launcher, short_label};
 
 use crate::env::{envrc_status, envrc_warning};
-use crate::process::{env_var, run};
+use crate::process::{Finished, Trace, env_var, run};
 
 /// Environment variable herdr sets inside its panes.
 pub const ENV_HERDR: &str = "HERDR_ENV";
@@ -38,6 +38,17 @@ pub struct HerdrLauncher {
     pub fallback: Box<dyn Launcher>,
     /// Builds the prompt pasted into the agent.
     pub prompt: PromptFn,
+    /// Records every `herdr` call and warning (`-v`, `launch.log`).
+    pub trace: Trace,
+}
+
+/// The pane a session opens in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Pane {
+    workspace: String,
+    /// Set when the pane is a new tab in an existing workspace.
+    tab: Option<String>,
+    id: String,
 }
 
 impl Debug for HerdrLauncher {
@@ -46,6 +57,7 @@ impl Debug for HerdrLauncher {
             .field("default_project", &self.default_project)
             .field("placement", &self.placement)
             .field("fallback", &self.fallback.name())
+            .field("trace", &self.trace)
             .finish_non_exhaustive()
     }
 }
@@ -115,8 +127,23 @@ impl HerdrLauncher {
         }
     }
 
-    fn herdr(&self, args: &[&str]) -> crate::process::Finished {
-        run("herdr", args, None, &self.env, &[])
+    fn herdr(&self, args: &[&str]) -> Finished {
+        let out = run("herdr", args, None, &self.env, &[]);
+        self.trace.command("herdr", args, &out);
+        out
+    }
+
+    /// Runs a `herdr ... focus` step, warning when it fails: the session
+    /// still opened, only the view did not move.
+    fn focus(&self, args: &[&str]) {
+        let out = self.herdr(args);
+        if !out.success {
+            self.trace.warn(&format!(
+                "herdr {} failed: {}",
+                args.join(" "),
+                out.message()
+            ));
+        }
     }
 
     fn env_args(ctx: &LaunchContext) -> Vec<String> {
@@ -150,12 +177,8 @@ impl HerdrLauncher {
         })
     }
 
-    /// Finds or creates the pane: `(workspace_id, tab_id, pane_id)`.
-    fn open_pane(
-        &self,
-        ctx: &LaunchContext,
-        label: &str,
-    ) -> (Option<String>, Option<String>, Option<String>) {
+    /// Finds or creates the pane, or says why herdr did not give one.
+    fn open_pane(&self, ctx: &LaunchContext, label: &str) -> Result<Pane, String> {
         let workdir = ctx.workdir.display().to_string();
         let holding = self.tab_workspace(ctx, &workdir);
         let env_args = Self::env_args(ctx);
@@ -166,11 +189,17 @@ impl HerdrLauncher {
                 args.extend(env_refs);
                 args.push("--no-focus");
                 let out = self.herdr(&args);
-                (
+                match (
                     field(&out.stdout, "workspace_id"),
-                    None,
                     field(&out.stdout, "pane_id"),
-                )
+                ) {
+                    (Some(workspace), Some(id)) => Ok(Pane {
+                        workspace,
+                        tab: None,
+                        id,
+                    }),
+                    _ => Err(no_pane("workspace create", &out)),
+                }
             }
             Some(ws) => {
                 let mut args = vec![
@@ -186,11 +215,14 @@ impl HerdrLauncher {
                 args.extend(env_refs);
                 args.push("--no-focus");
                 let out = self.herdr(&args);
-                (
-                    Some(ws.clone()),
-                    field(&out.stdout, "tab_id"),
-                    field(&out.stdout, "pane_id"),
-                )
+                match field(&out.stdout, "pane_id") {
+                    Some(id) => Ok(Pane {
+                        workspace: ws,
+                        tab: field(&out.stdout, "tab_id"),
+                        id,
+                    }),
+                    None => Err(no_pane("tab create", &out)),
+                }
             }
         }
     }
@@ -198,7 +230,7 @@ impl HerdrLauncher {
     fn start_agent(&self, ctx: &LaunchContext, pane: &str) -> Result<String, LaunchError> {
         let first = format!("task-{}", ctx.task.id);
         let second = format!("task-{}-{}", ctx.task.id, std::process::id());
-        let mut last = None;
+        let mut errors = Vec::new();
         for name in [&first, &second] {
             let out = self.herdr(&[
                 "agent",
@@ -214,12 +246,25 @@ impl HerdrLauncher {
             if out.success {
                 return Ok(name.clone());
             }
-            last = Some(out.message());
+            errors.push(format!("{name}: {}", out.message()));
         }
         Err(LaunchError::Tool {
             tool: "herdr agent start".to_owned(),
-            message: last.unwrap_or_default(),
+            message: errors.join("; then "),
         })
+    }
+}
+
+/// Why `herdr <what>` gave no pane: its error, or the reply it gave
+/// without the ids.
+fn no_pane(what: &str, out: &Finished) -> String {
+    if out.success {
+        format!(
+            "herdr {what} replied without the pane's ids: {}",
+            out.stdout.trim()
+        )
+    } else {
+        format!("herdr {what} failed: {}", out.message())
     }
 }
 
@@ -274,12 +319,19 @@ impl Launcher for HerdrLauncher {
         self.check()?;
         let label = short_label(&ctx.task.title);
         let prompt = (self.prompt)(ctx)?;
-        let (ws_id, tab_id, pane_id) = self.open_pane(ctx, &label);
-        let (Some(ws_id), Some(pane_id)) = (ws_id, pane_id) else {
-            eprintln!(
-                "tasq: warning: herdr workspace creation failed; opening in the current pane"
-            );
-            return self.fallback.launch(ctx);
+        let Pane {
+            workspace: ws_id,
+            tab: tab_id,
+            id: pane_id,
+        } = match self.open_pane(ctx, &label) {
+            Ok(pane) => pane,
+            Err(reason) => {
+                self.trace.warn(&format!(
+                    "herdr could not open a pane ({reason}); opening in the current pane with {}",
+                    self.fallback.name()
+                ));
+                return self.fallback.launch(ctx);
+            }
         };
         // Switch the view as soon as the pane exists: `agent start` below
         // waits for Claude to be ready (seconds), and the user should watch
@@ -288,14 +340,14 @@ impl Launcher for HerdrLauncher {
         // active tab, hence the `tab focus` first.
         if ctx.focus {
             if let Some(tab) = &tab_id {
-                self.herdr(&["tab", "focus", tab]);
+                self.focus(&["tab", "focus", tab]);
             }
-            self.herdr(&["workspace", "focus", &ws_id]);
+            self.focus(&["workspace", "focus", &ws_id]);
         }
         // The pane is an interactive shell at the workdir, so its direnv
         // hook loads .envrc; warn when direnv would refuse.
         if let Some(warning) = envrc_warning(envrc_status(&ctx.workdir, &self.env), &ctx.workdir) {
-            eprintln!("tasq: warning: {warning}");
+            self.trace.warn(&warning);
         }
         let agent = self.start_agent(ctx, &pane_id)?;
         let pasted = self.herdr(&["agent", "prompt", &agent, &prompt]);
@@ -311,7 +363,7 @@ impl Launcher for HerdrLauncher {
             )));
         }
         // `agent focus` moves the server's focus to the agent that now exists.
-        self.herdr(&["agent", "focus", &agent]);
+        self.focus(&["agent", "focus", &agent]);
         Ok(LaunchOutcome::Opened(format!(
             "Opened herdr workspace {ws_id} (\"{label}\") with agent {agent}"
         )))
@@ -334,6 +386,28 @@ mod tests {
         assert_eq!(field(text, "tab_id"), None);
         assert_eq!(field("not json", "pane_id"), None);
         assert_eq!(field("{\"pane_id\": 3}", "pane_id"), None);
+    }
+
+    #[test]
+    fn no_pane_gives_the_error_or_the_reply() {
+        let failed = Finished {
+            success: false,
+            stdout: String::new(),
+            stderr: "error: server not running\n".into(),
+        };
+        assert_eq!(
+            no_pane("workspace create", &failed),
+            "herdr workspace create failed: error: server not running"
+        );
+        let odd = Finished {
+            success: true,
+            stdout: "{\"ok\":true}\n".into(),
+            stderr: String::new(),
+        };
+        assert_eq!(
+            no_pane("tab create", &odd),
+            "herdr tab create replied without the pane's ids: {\"ok\":true}"
+        );
     }
 
     #[test]

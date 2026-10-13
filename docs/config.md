@@ -42,6 +42,7 @@ default_status = "ready"
 default = "claude"           # auto | claude | shell | tmux | herdr
 detached = "auto"            # auto | tmux | herdr   (--detached, the TUI's Ctrl/Shift+Enter)
 env = "direnv"               # inherit | direnv
+# log = "~/.local/state/tasq/launch.log"
 
 [launch.claude]
 # prompt_file = "~/.config/tasq/prompts/claude.md"
@@ -117,6 +118,7 @@ pre-launch = []
 | `launch.default` | string | `claude` | Launcher for `next`/`pick`: `auto`, `claude`, `shell`, `tmux`, `herdr`. Not validated at load time. |
 | `launch.detached` | string | `auto` | Launcher for `next`/`pick --detached` (the TUI's `Ctrl+Enter` and `Shift+Enter`): `herdr`, `tmux`, or `auto` for whichever the terminal runs in; an error when neither. See "Launchers". |
 | `launch.env` | `inherit` \| `direnv` | `direnv` | Where the session's environment comes from. |
+| `launch.log` | path | unset | File every `next`/`pick` appends its launch trace to. See "Debugging a launch". `~` expanded. |
 | `launch.claude.prompt_file` | path | unset | Prompt template replacing the built-in `crates/launch/templates/claude.md`. `~` expanded. |
 | `launch.herdr.placement` | `auto` \| `workspace` \| `tab` | `auto` | What a herdr session opens: `auto` a tab in the workspace already holding the directory, else a workspace; `workspace` always a new workspace; `tab` always a tab (in the holding workspace, else the current one). |
 | `ui.pager` | string | `less -RFX` | Pager for long output on a terminal, split without a shell. `cat` or empty disables it. |
@@ -173,6 +175,7 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_LAUNCHER` | `launch.default` |
 | `TASQ_LAUNCH_DETACHED` | `launch.detached` |
 | `TASQ_LAUNCH_ENV` | `launch.env` |
+| `TASQ_LAUNCH_LOG` | `launch.log` |
 | `TASQ_HERDR_PLACEMENT` | `launch.herdr.placement` |
 | `TASQ_PAGER` | `ui.pager` |
 | `TASQ_NO_OSC8` | `ui.no_osc8` (`1/true/yes/on`, `0/false/no/off`) |
@@ -421,6 +424,18 @@ the kitty keyboard protocol and does not keep the chord for itself; elsewhere th
 plain `Enter`. Ghostty binds `Ctrl+Enter` to fullscreen on Linux: rebind the action
 (`launch-detached = "alt+enter"` under `[ui.keys]`, see "Key bindings") or free the chord with
 `keybind = ctrl+enter=unbind` in its config.
+
+### Debugging a launch
+
+`-v` prints a trace of the launch on stderr: every `herdr` or `tmux` command the launcher ran,
+shell-quoted, whether it succeeded, and its stdout and stderr. `launch.log` (or
+`TASQ_LAUNCH_LOG`) appends the same trace to a file on every launch, under a
+`--- <time> task <id> with <launcher> in <dir>` header and followed by the outcome
+(`opened: ...` or `error: ...`) and any warnings; it is the way to see what happened to a
+session opened from the TUI, which shows only the last line. A log file that cannot be written
+is ignored. Warnings that were silent before now say why: a herdr pane that could not be
+opened names herdr's error, a failed `focus` step is reported, and a failed `agent start`
+lists the error of both names it tried.
 
 The session's environment carries `TASQ_TASK_ID`, `TASQ_NOTEBOOK` and, when a profile is
 selected, `TASQ_PROFILE`. `--dry-run` prints the directory, the commands and the prompt

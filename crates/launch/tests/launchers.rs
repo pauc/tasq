@@ -10,6 +10,7 @@ use std::rc::Rc;
 use tasq_core::config::{EnvStrategy, Placement};
 use tasq_core::launch::{LaunchContext, LaunchError, LaunchOutcome, Launcher};
 use tasq_core::model::{Session, Task, TaskId, Worktree};
+use tasq_launch::process::Trace;
 use tasq_launch::prompt::DEFAULT_TEMPLATE;
 use tasq_launch::{
     ClaudeLauncher, EnvrcStatus, HerdrLauncher, TmuxLauncher, command_in, envrc_status,
@@ -323,8 +324,13 @@ fn claude_describe_and_hint() {
 fn tmux_opens_a_window_through_the_fake() {
     let sb = Sandbox::new();
     sb.fake("tmux", "exit 0");
+    let trace = sb.root.path().join("launch.log");
     let launcher = TmuxLauncher {
         env: sb.env(&[("TMUX", "/tmp/tmux-1000/default,1,0")]),
+        trace: Trace {
+            stderr: false,
+            file: Some(trace.clone()),
+        },
     };
     let ctx = sb.ctx();
     let outcome = launcher.launch(&ctx).unwrap();
@@ -341,6 +347,13 @@ fn tmux_opens_a_window_through_the_fake() {
             "new-window -c {} -n 3 Fix the login -e TASQ_TASK_ID=3 -e TASQ_NOTEBOOK=home",
             sb.work.display()
         )]
+    );
+    assert_eq!(
+        std::fs::read_to_string(&trace).unwrap(),
+        format!(
+            "$ tmux new-window -c {} -n '3 Fix the login' -e 'TASQ_TASK_ID=3' -e 'TASQ_NOTEBOOK=home'\n  ok\n",
+            sb.work.display()
+        )
     );
     sb.fake("tmux", "echo 'no server running' >&2; exit 1");
     assert_eq!(
@@ -369,6 +382,7 @@ fn herdr(
             calls: Rc::clone(&calls),
         }),
         prompt: Box::new(|ctx| Ok(format!("prompt for {}", ctx.task.id))),
+        trace: Trace::default(),
     };
     (launcher, calls)
 }
@@ -586,6 +600,64 @@ fn herdr_skips_the_lookup_in_the_default_project_and_falls_back_without_a_pane()
 }
 
 #[test]
+fn herdr_traces_its_calls_and_warnings_to_the_log_file() {
+    let sb = Sandbox::new();
+    sb.fake(
+        "herdr",
+        "case \"$1 $2\" in \"workspace create\") echo 'error: server not running' >&2; exit 1 ;; *) exit 0 ;; esac",
+    );
+    let (mut launcher, calls) = herdr(&sb, Some(&sb.work));
+    let log = sb.root.path().join("launch.log");
+    launcher.trace = Trace {
+        stderr: false,
+        file: Some(log.clone()),
+    };
+    assert_eq!(
+        launcher.launch(&sb.ctx()).unwrap(),
+        LaunchOutcome::Opened("recorded".into())
+    );
+    assert_eq!(calls.borrow().len(), 1, "fell back");
+    let work = sb.work.display().to_string();
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        format!(
+            "$ herdr workspace create --label 'Fix the login' --cwd {work} --env 'TASQ_TASK_ID=3' \
+             --env 'TASQ_NOTEBOOK=home' --no-focus\n  failed\n  stderr:\n    error: server not running\n\
+             warning: herdr could not open a pane (herdr workspace create failed: error: server not running); \
+             opening in the current pane with recording\n"
+        )
+    );
+}
+
+#[test]
+fn herdr_warns_when_a_focus_step_fails() {
+    let sb = Sandbox::new();
+    sb.fake(
+        "herdr",
+        &HERDR_BODY.replace(
+            "  *) exit 0 ;;",
+            "  \"workspace focus\") echo 'no such workspace' >&2; exit 1 ;;\n  *) exit 0 ;;",
+        ),
+    );
+    let (mut launcher, _) = herdr(&sb, Some(&sb.work));
+    let log = sb.root.path().join("launch.log");
+    launcher.trace = Trace {
+        stderr: false,
+        file: Some(log.clone()),
+    };
+    launcher.launch(&sb.ctx()).unwrap();
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        text.contains("\nwarning: herdr workspace focus ws-new failed: no such workspace\n"),
+        "{text}"
+    );
+    assert!(
+        text.ends_with("$ herdr agent focus task-3\n  ok\n"),
+        "{text}"
+    );
+}
+
+#[test]
 fn herdr_agent_failures_and_absence() {
     let sb = Sandbox::new();
     sb.fake(
@@ -598,7 +670,10 @@ fn herdr_agent_failures_and_absence() {
         launcher.launch(&ctx).unwrap_err(),
         LaunchError::Tool {
             tool: "herdr agent start".into(),
-            message: "agent did not come up".into()
+            message: format!(
+                "task-3: agent did not come up; then task-3-{}: agent did not come up",
+                std::process::id()
+            )
         }
     );
     sb.fake(

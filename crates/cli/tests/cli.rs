@@ -2387,6 +2387,67 @@ mod launch {
     }
 
     #[test]
+    fn detached_launch_traces_to_stderr_at_verbose_and_to_launch_log() {
+        let env = TestEnv::fixture();
+        env.fake_tool(
+            "tmux",
+            "echo 'created' ; echo 'no server running' >&2; exit 1",
+        );
+        let log = env.home.join("logs/launch.log");
+        let home = env.home.display().to_string();
+        env.tasq()
+            .env("TASQ_DEFAULT_PROJECT", &home)
+            .env("TASQ_LAUNCH_LOG", "~/logs/launch.log")
+            .env("TMUX", "/tmp/tmux-1000/default,1,0")
+            .args(["-v", "pick", "3", "--detached", "--no-focus"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains(format!(
+                "$ tmux new-window -d -c {home} -n "
+            )))
+            .stderr(predicate::str::contains(
+                "  failed\n  stdout:\n    created\n  stderr:\n    no server running\n",
+            ))
+            .stderr(predicate::str::ends_with(
+                "tasq: tmux failed: no server running\n",
+            ));
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            text.starts_with(&format!(
+                "--- 2026-10-06 09:00:00 task 3 with tmux in {home} (no focus)\n$ tmux new-window -d "
+            )),
+            "{text}"
+        );
+        assert!(
+            text.ends_with("    no server running\nerror: tmux failed: no server running\n"),
+            "{text}"
+        );
+        // Without -v nothing is traced on stderr; an opened window is logged.
+        env.fake_tool("tmux", "exit 0");
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", &home)
+            .env("TASQ_LAUNCH_LOG", log.to_str().unwrap())
+            .env("TMUX", "/tmp/tmux-1000/default,1,0")
+            .args(["pick", "3", "--detached"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(!stderr(&out).contains("$ tmux"), "{}", stderr(&out));
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            text.contains(&format!(
+                "--- 2026-10-06 09:00:00 task 3 with tmux in {home}\n$ tmux new-window -c "
+            )),
+            "{text}"
+        );
+        assert!(
+            text.contains("  ok\nopened: opened tmux window \"3 "),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn detached_outside_a_window_manager_is_refused_before_any_write() {
         let env = TestEnv::fixture();
         // Outside herdr and tmux there is nowhere to open: the task stays ready.

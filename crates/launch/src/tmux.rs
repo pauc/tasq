@@ -2,7 +2,7 @@
 
 use tasq_core::launch::{LaunchContext, LaunchError, LaunchOutcome, Launcher, short_label};
 
-use crate::process::{env_var, run};
+use crate::process::{Trace, env_var, run};
 
 /// Opens `tmux new-window` at the working directory with the context
 /// variables set (`-e`, tmux 3.0 or later); `-d` keeps the current window
@@ -11,6 +11,8 @@ use crate::process::{env_var, run};
 pub struct TmuxLauncher {
     /// Environment `tmux` runs with and `TMUX` is read from.
     pub env: Vec<(String, String)>,
+    /// Records the `tmux` call (`-v`, `launch.log`).
+    pub trace: Trace,
 }
 
 impl TmuxLauncher {
@@ -70,6 +72,7 @@ impl Launcher for TmuxLauncher {
         let argv = Self::argv(ctx);
         let rest: Vec<&str> = argv[1..].iter().map(String::as_str).collect();
         let out = run("tmux", &rest, None, &self.env, &[]);
+        self.trace.command("tmux", &rest, &out);
         if out.success {
             Ok(LaunchOutcome::Opened(format!(
                 "opened tmux window \"{}\" in {}",
@@ -110,7 +113,10 @@ mod tests {
 
     #[test]
     fn needs_tmux() {
-        let outside = TmuxLauncher { env: Vec::new() };
+        let outside = TmuxLauncher {
+            env: Vec::new(),
+            trace: Trace::default(),
+        };
         assert_eq!(
             outside.describe(&ctx()).unwrap_err(),
             LaunchError::Unavailable {
@@ -130,6 +136,7 @@ mod tests {
     fn argv_and_window_name() {
         let inside = TmuxLauncher {
             env: vec![("TMUX".into(), "/tmp/tmux-1/default,1,0".into())],
+            trace: Trace::default(),
         };
         assert_eq!(
             inside.describe(&ctx()).unwrap(),
