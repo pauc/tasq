@@ -4836,6 +4836,29 @@ mod worktree_release {
     }
 
     #[test]
+    fn done_on_a_done_task_is_refused_before_the_release() {
+        let env = TestEnv::fixture();
+        let (project, wt) = released_project(&env, "");
+        commit(&env, &wt, "feature");
+        std::fs::write(wt.join("README"), "edited\n").unwrap();
+        let (_, err) = run(&env, &["done", "3"]);
+        assert!(err.contains("kept worktree"), "{err}");
+        // Clean and merged now, so a release would remove both.
+        env.git(&wt, &["checkout", "--", "README"]);
+        env.git(&project, &["merge", "-q", "--no-ff", "-m", "merge b", "b"]);
+        let before = env.read_task(TASK);
+        env.tasq_wt()
+            .args(["done", "3"])
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr("tasq: task 3 is already done\n");
+        assert!(wt.is_dir(), "a refused done releases nothing");
+        assert_eq!(branches(&env, &project), "b\nmain\n");
+        assert_eq!(env.read_task(TASK), before);
+    }
+
+    #[test]
     fn dirty_and_unmerged_are_kept_with_one_warning_each() {
         let env = TestEnv::fixture();
         let (project, wt) = released_project(&env, "");
