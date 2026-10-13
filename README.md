@@ -209,9 +209,13 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 |---|---|
 | `tasq [WORD]`, `tasq list [WORD] [--status S] [--tag T]... [--prio P] [--text TEXT] [--all \| --done]` | Open tasks grouped by status; `WORD` is a status, a tag or a priority; `--all` adds a DONE group, `--done` shows only closed tasks |
 | `tasq create TITLE [--desc] [--status] [--prio] [--due] [--project] [--tag]... [--related]... [--mr]... [--note]` | Create a task |
-| `tasq set ID VALUE [NOTE]` | Set the status or the priority, optionally logging a note |
+| `tasq set ID VALUE [NOTE]` | Set the status or the priority, optionally logging a note; a value the task already has writes nothing |
 | `tasq log ID NOTE` | Append a dated progress note |
-| `tasq done ID [NOTE]` | Mark done, status tag removed, optional final note |
+| `tasq done ID [NOTE]` | Mark done, status tag removed, optional final note; a done task is refused |
+| `tasq rename ID TITLE [--note TEXT]` | Replace the title |
+| `tasq due ID DATE\|none [--note TEXT]` | Set the due date (`create --due` words) or remove it |
+| `tasq tag ID TAG... [--note TEXT]` | `+name` or `name` adds a topic tag, `-name` removes one; the other tags stay |
+| `tasq desc ID [TEXT\|-\|--edit] [--note TEXT]` | Print the description, replace it (`-` reads stdin, `""` clears) or open it in `$VISUAL`/`$EDITOR` |
 | `tasq next [--launcher NAME] [--dry-run]` | Open a session on the first in-progress task, else the first ready one |
 | `tasq pick ID [--launcher NAME] [--dry-run]` | Open a session on a specific task |
 | `tasq view ID [--raw]` | Show a task (glow on a terminal, plain markdown otherwise; `--raw` is verbatim) |

@@ -16,6 +16,7 @@
 pub mod app;
 pub mod cli;
 pub mod commands;
+pub mod editor;
 pub mod error;
 pub mod json;
 pub mod output;
@@ -23,10 +24,6 @@ pub mod plugins;
 
 use std::ffi::OsString;
 use std::process::ExitCode;
-
-use clap::FromArgMatches;
-
-use crate::cli::Cli;
 
 /// Parses the process arguments, runs the command and maps the outcome to an
 /// exit code. Clap's help and version requests exit `0`; its usage errors
@@ -46,10 +43,7 @@ pub fn main() -> ExitCode {
         return ExitCode::from(error.exit_code());
     }
     let worktrees = app::worktrees_enabled(&cli::early_globals(&argv));
-    let parsed = cli::command(worktrees)
-        .try_get_matches_from(&argv)
-        .and_then(|matches| Cli::from_arg_matches(&matches));
-    let cli = match parsed {
+    let cli = match cli::parse_from(worktrees, &argv) {
         Ok(cli) => cli,
         Err(e) => {
             let code = if e.use_stderr() { 2 } else { 0 };

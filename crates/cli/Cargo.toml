@@ -48,12 +48,13 @@ toml = "0.9"
 rustix = { version = "1", features = ["termios"] }
 # Column widths of titles and chips when `list` wraps rows to the terminal.
 unicode-width = "0.2"
+# The file `desc --edit` hands to the editor.
+tempfile = "3"
 
 [dev-dependencies]
 assert_cmd = "2"
 insta = "1"
 predicates = "3"
-tempfile = "3"
 
 [lints]
 workspace = true

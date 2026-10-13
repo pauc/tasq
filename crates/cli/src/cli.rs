@@ -9,9 +9,10 @@
 // TASQ_PROFILE are noise rather than markup.
 #![allow(clippy::doc_markdown)]
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, FromArgMatches, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 
 pub use crate::commands::worktree_nav::InitShell;
@@ -41,6 +42,10 @@ Examples:
   tasq log 12 \"found the cause\"
   tasq done 12 \"merged\"
   tasq reopen 12 ready \"not merged after all\"
+  tasq rename 12 \"Fix the CI build\"
+  tasq due 12 tomorrow       set the due date (none clears it)
+  tasq tag 12 +ci -flaky     add and remove topic tags
+  tasq desc 12 -             description from stdin (no TEXT prints it)
   tasq ui                    full-screen UI over the same tasks
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
@@ -133,60 +138,9 @@ pub enum Command {
     #[command(after_help = CREATE_HELP)]
     Create(CreateArgs),
 
-    /// Set the status or the priority of a task, optionally logging a note.
-    ///
-    /// VALUE is a status of the workflow (in-progress, ready, ...) or a
-    /// priority (A, B, C, with or without the #). Prints `[id] -> value`.
-    Set {
-        /// Task id.
-        #[arg(value_name = "ID")]
-        id: String,
-        /// New status or priority.
-        #[arg(value_name = "VALUE")]
-        value: String,
-        /// Progress note to append at the same time.
-        #[arg(value_name = "NOTE")]
-        note: Option<String>,
-    },
-
-    /// Append a dated progress note to a task.
-    Log {
-        /// Task id.
-        #[arg(value_name = "ID")]
-        id: String,
-        /// The note.
-        #[arg(value_name = "NOTE")]
-        note: String,
-    },
-
-    /// Mark a task done (`# [x]`, status tag removed), optionally logging a final note.
-    Done {
-        /// Task id.
-        #[arg(value_name = "ID")]
-        id: String,
-        /// Final progress note, appended before closing.
-        #[arg(value_name = "NOTE")]
-        note: Option<String>,
-        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
-        #[arg(long)]
-        yes: bool,
-    },
-
-    /// Reopen a done task (`# [ ]`), with a status, logging a note.
-    ///
-    /// STATUS defaults to workflow.default_status; a first word that is not
-    /// a status is the note. The note defaults to "reopened".
-    Reopen {
-        /// Task id.
-        #[arg(value_name = "ID")]
-        id: String,
-        /// Status to reopen with, or the note when it is not a status.
-        #[arg(value_name = "STATUS")]
-        status: Option<String>,
-        /// Progress note to append.
-        #[arg(value_name = "NOTE")]
-        note: Option<String>,
-    },
+    /// The commands that change one task in place.
+    #[command(flatten)]
+    Edit(EditCommand),
 
     /// Open a work session on the next task: the first in-progress one, else the first ready one.
     #[command(after_help = LAUNCH_HELP)]
@@ -403,6 +357,172 @@ pub enum Command {
         shell: Shell,
     },
 }
+
+/// The subcommands that change one task in place: `set`, `log`, `done`,
+/// `reopen` and the one-field edits. Flattened into [`Command`], so they
+/// are top-level commands on the command line.
+#[derive(Debug, Subcommand)]
+pub enum EditCommand {
+    /// Set the status or the priority of a task, optionally logging a note.
+    ///
+    /// VALUE is a status of the workflow (in-progress, ready, ...) or a
+    /// priority (A, B, C, with or without the #). Prints `[id] -> value`,
+    /// or `[id] status unchanged` when the task already has it (then
+    /// nothing is written, and with a note that is an error: the note is
+    /// not logged either).
+    Set {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// New status or priority.
+        #[arg(value_name = "VALUE")]
+        value: String,
+        /// The progress note, positional or `--note`.
+        #[command(flatten)]
+        note: NoteArg,
+    },
+
+    /// Append a dated progress note to a task.
+    Log {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// The note.
+        #[arg(value_name = "NOTE")]
+        note: String,
+    },
+
+    /// Mark a task done (`# [x]`, status tag removed), optionally logging a final note.
+    ///
+    /// A task that is already done is refused.
+    Done {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// The progress note, positional or `--note`.
+        #[command(flatten)]
+        note: NoteArg,
+        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Reopen a done task (`# [ ]`), with a status, logging a note.
+    ///
+    /// STATUS defaults to workflow.default_status; a first word that is not
+    /// a status is the note. The note defaults to "reopened".
+    Reopen {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Status to reopen with, or the note when it is not a status.
+        #[arg(value_name = "STATUS")]
+        status: Option<String>,
+        /// The progress note, positional or `--note`.
+        #[command(flatten)]
+        note: NoteArg,
+    },
+
+    /// Replace the title of a task, optionally logging a note.
+    ///
+    /// Surrounding whitespace is trimmed; the title must be one non-empty
+    /// line. Prints `[id] renamed`, or `[id] title unchanged` for the same
+    /// title (then nothing is written, and with --note that is an error).
+    #[command(after_help = "Example:\n  tasq rename 31 \"CLI field-level commands\"")]
+    Rename {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// The new title.
+        #[arg(value_name = "TITLE")]
+        title: String,
+        /// Progress note to append at the same time.
+        #[arg(long, value_name = "TEXT")]
+        note: Option<String>,
+    },
+
+    /// Set or clear the due date of a task, optionally logging a note.
+    ///
+    /// DATE is YYYY-MM-DD, today, tomorrow or yesterday (as for create
+    /// --due), or none to remove the date. Prints `[id] due <date>`, `[id]
+    /// due cleared` or `[id] due unchanged` (then nothing is written, and
+    /// with --note that is an error).
+    #[command(after_help = "Example:\n  tasq due 31 tomorrow")]
+    Due {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// The due date, or none.
+        #[arg(value_name = "DATE")]
+        date: String,
+        /// Progress note to append at the same time.
+        #[arg(long, value_name = "TEXT")]
+        note: Option<String>,
+    },
+
+    /// Add or remove topic tags of a task, optionally logging a note.
+    ///
+    /// +NAME or NAME adds the tag, -NAME removes it; the other tags stay.
+    /// Status and priority words are refused: they are fields, changed
+    /// with `tasq set`. --note and the other long options go before or
+    /// after the tags; short ones such as -v before them. Prints the
+    /// changes that took effect, `[id] tags: +a -b`, or `[id] tags
+    /// unchanged` (then nothing is written, and with --note that is an
+    /// error).
+    #[command(after_help = "Example:\n  tasq tag 31 +needs-info -needs-triage")]
+    Tag {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Tags to add (+name, name) or remove (-name).
+        #[arg(value_name = "TAG", required = true, allow_hyphen_values = true)]
+        tags: Vec<String>,
+        /// Progress note to append at the same time.
+        #[arg(long, value_name = "TEXT")]
+        note: Option<String>,
+    },
+
+    /// Print, set or clear the description of a task.
+    ///
+    /// Without TEXT the description is printed (nothing when there is
+    /// none). TEXT replaces it; - reads it from stdin until EOF (the task
+    /// is read first, so a change made while stdin is open is a conflict,
+    /// which makes `tasq desc ID | ... | tasq desc ID -` safe); "" clears
+    /// it (the section is removed). Blank lines at either end are dropped.
+    /// A description that is literally "-" goes through stdin:
+    /// `printf -- - | tasq desc ID -`. Prints `[id] description updated`,
+    /// `cleared` or `unchanged`; an unchanged description writes nothing,
+    /// and with --note that is an error (the note is not logged either).
+    ///
+    /// --edit opens $VISUAL, else $EDITOR, on a temporary file holding the
+    /// description; when the editor exits 0 the file becomes the
+    /// description (empty clears it). A non-zero exit or an unchanged file
+    /// writes nothing, and a task changed meanwhile is a conflict. When the edit cannot be saved, the
+    /// edited text is kept and the error names the file.
+    #[command(after_help = DESC_HELP)]
+    #[command(group(clap::ArgGroup::new("content").args(["text", "edit"])))]
+    Desc {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// The new description, - for stdin, "" to clear.
+        #[arg(value_name = "TEXT", allow_hyphen_values = true)]
+        text: Option<String>,
+        /// Edit the description in $VISUAL or $EDITOR.
+        #[arg(long)]
+        edit: bool,
+        /// Progress note to append at the same time (needs TEXT or --edit).
+        #[arg(long, value_name = "TEXT", requires = "content")]
+        note: Option<String>,
+    },
+}
+
+const DESC_HELP: &str = "\
+Examples:
+  tasq desc 31 \"Add due, tag, rename and desc commands\"
+  wl-paste | tasq desc 31 -
+  tasq desc 31 --edit
+  { tasq desc 31; echo \"Also: completions.\"; } | tasq desc 31 -";
 
 const LIST_HELP: &str = "\
 With no filter, open tasks are grouped by status in workflow order
@@ -924,9 +1044,116 @@ fn parse_key_value(text: &str) -> Result<(String, String), String> {
     }
 }
 
+/// The progress note of `set`, `done` and `reopen`: the last positional
+/// word, as the original script took it, or `--note TEXT`; not both.
+#[derive(Debug, Clone, Args, Default)]
+pub struct NoteArg {
+    /// Progress note to append.
+    #[arg(value_name = "NOTE")]
+    positional: Option<String>,
+    /// The same note as a flag; not both.
+    #[arg(long = "note", value_name = "TEXT", conflicts_with = "positional")]
+    flag: Option<String>,
+}
+
+impl NoteArg {
+    /// The note, whichever way it was given.
+    pub fn into_note(self) -> Option<String> {
+        self.positional.or(self.flag)
+    }
+}
+
+/// Parses `argv` with [`command`] for `worktrees`, with one fix-up for
+/// `tasq tag`. TAG accepts words starting with `-` (`-name` removes a tag),
+/// and clap then takes every later word as a tag as well, `--note` and
+/// `--json` included. So the first such `--word` and everything after it is
+/// moved in front of the tags and parsed again: options work on either side
+/// of the tags, but not on both, which is a usage error.
+pub fn parse_from(worktrees: bool, argv: &[OsString]) -> Result<Cli, clap::Error> {
+    let parse = |argv: &[OsString]| {
+        command(worktrees)
+            .try_get_matches_from(argv)
+            .and_then(|matches| Cli::from_arg_matches(&matches))
+    };
+    let cli = parse(argv)?;
+    let Some(Command::Edit(EditCommand::Tag { tags, .. })) = &cli.command else {
+        return Ok(cli);
+    };
+    let Some(at) = tags.iter().position(|w| w.starts_with("--")) else {
+        return Ok(cli);
+    };
+    // Once TAG starts, clap takes every word to the end of argv.
+    let start = argv.len() - tags.len();
+    let mut moved = argv[..start].to_vec();
+    moved.extend_from_slice(&argv[start + at..]);
+    moved.extend_from_slice(&argv[start..start + at]);
+    let again = parse(&moved)?;
+    let Some(Command::Edit(EditCommand::Tag { tags: kept, .. })) = &again.command else {
+        unreachable!("moving words after the subcommand keeps it");
+    };
+    if let Some(word) = kept.iter().find(|w| w.starts_with("--")) {
+        return Err(command(worktrees).error(
+            clap::error::ErrorKind::UnknownArgument,
+            format!("unexpected argument '{word}' found"),
+        ));
+    }
+    if kept[..] != tags[..at] {
+        return Err(command(worktrees).error(
+            clap::error::ErrorKind::ArgumentConflict,
+            "tag: put the options before or after the tags, not on both sides",
+        ));
+    }
+    Ok(again)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse(words: &[&str]) -> Result<Cli, clap::Error> {
+        let argv: Vec<OsString> = words.iter().map(OsString::from).collect();
+        parse_from(false, &argv)
+    }
+
+    fn tag_args(cli: &Cli) -> (Vec<String>, Option<String>) {
+        match &cli.command {
+            Some(Command::Edit(EditCommand::Tag { tags, note, .. })) => {
+                (tags.clone(), note.clone())
+            }
+            other => panic!("not tag: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tag_options_on_either_side_of_the_tags() {
+        let words = |w: &[&str]| w.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let cli = parse(&["tasq", "tag", "3", "+a", "-b"]).unwrap();
+        assert_eq!(tag_args(&cli), (words(&["+a", "-b"]), None));
+        let cli = parse(&["tasq", "tag", "3", "--note", "n", "-b", "+a"]).unwrap();
+        assert_eq!(tag_args(&cli), (words(&["-b", "+a"]), Some("n".into())));
+        assert!(!cli.global.json);
+        let cli = parse(&["tasq", "tag", "3", "-b", "+a", "--note", "n", "--json"]).unwrap();
+        assert_eq!(tag_args(&cli), (words(&["-b", "+a"]), Some("n".into())));
+        assert!(cli.global.json);
+        let cli = parse(&["tasq", "--json", "tag", "3", "x", "--note=n"]).unwrap();
+        assert_eq!(tag_args(&cli), (words(&["x"]), Some("n".into())));
+        assert!(cli.global.json);
+        let err = parse(&["tasq", "tag", "3", "-b", "--note", "n", "+a"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+        assert_eq!(
+            err.to_string().lines().next().unwrap(),
+            "error: tag: put the options before or after the tags, not on both sides"
+        );
+        let err = parse(&["tasq", "tag", "3", "a", "--nope"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+        assert_eq!(
+            err.to_string().lines().next().unwrap(),
+            "error: unexpected argument '--nope' found"
+        );
+        // Other commands are parsed as they always were.
+        let cli = parse(&["tasq", "log", "3", "--json", "--", "--x"]).unwrap();
+        assert!(cli.global.json);
+    }
 
     #[test]
     fn command_line_is_well_formed() {

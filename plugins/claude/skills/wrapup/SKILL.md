@@ -69,7 +69,8 @@ Never invent a session id; if you do not know it, skip `tasq session`.
 Pick the status that describes the task now, from the workflow statuses read in step 1:
 
 - the work is finished: `tasq done <id> "<final note>"` (ask first if the user never said the
-  task is finished);
+  task is finished); a task that is already done is refused, so log the note with `tasq log`
+  instead;
 - otherwise, when the status changed: `tasq set <id> <status> ["<why>"]`, for example
   `waiting` with a note naming who or what you wait on, `blocked` with the blocker,
   `ready` when it can be picked up again; priority with `tasq set <id> A|B|C`.

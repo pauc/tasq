@@ -220,6 +220,53 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ### Plugin and release decisions (T-901 to T-904)
 
+- **CLI field commands (follow-up 2026-10-12, todo 31).** `tasq rename`, `due`, `tag`,
+  `desc` (TEXT, `-` for stdin, no TEXT prints, `""` clears, `--edit`), each with `--note` and
+  `--json`; `--note` added to `set`/`done`/`reopen` as an alias of the positional note (both is
+  exit 2). Core: `edit::{rename, due, retag, describe, describe_read}` share a private
+  `change`/`write` helper (check note, read, edit, log, update, read back); `TagChange::parse`
+  refuses status and priority words; `description_text` normalises like the file reads back;
+  a `## ` line is refused up front (the store's `Unsupported` message for it is stale: it
+  still says the store "can only set status, priority, project and done"). Learnings: a
+  multi-value positional with `allow_hyphen_values` makes clap take every later word as a
+  value, `--note`/`--json` included, so `cli::parse_from` moves a trailing `--option`
+  segment in front of the tags and parses again. The nb store keeps one revision per id,
+  updated on every `get`, so `desc --edit` reads once before the editor and writes with
+  `describe_read`; a second read would silently move the conflict baseline. A failed
+  `--edit` save keeps the temp file and names it. `reopen_args` dropped a note given without
+  a status (only reachable once `--note` existed). Editor selection moved to `crate::editor`.
+  `tasq due` takes the `create --due` words only (no weekday names). Mutants: 0 missed in
+  `core/src/edit.rs`, `cli/src/commands/{fields,edit}.rs`, `cli/src/{cli,app,editor}.rs`.
+  Two-axis review follow-up: `retag` returns `Retagged { task, applied }` (net changes in
+  request order; surviving tags keep their place; no write without a change or a note) and
+  `describe_read` returns `Revised` (the unchanged decision moved out of the CLI); `set`,
+  `done` and `reopen` share a flattened `cli::NoteArg`; `EditError::NotATag` carries
+  `edit::Field`. `desc -` reads the task before draining stdin and writes with
+  `describe_read`: the two ends of `tasq desc 31 | ... | tasq desc 31 -` start together, so a
+  change made while the producer runs is a Conflict (a revision never crosses processes; the
+  read used to come after EOF, which overwrote such a change). Decided 2026-10-13: an
+  unchanged description writes nothing in every `desc` form, and with `--note` that is
+  `EditError::NoteNotLogged` (exit 1) rather than a note logged alone or silently dropped;
+  `edit::describe` is `describe_read` on a fresh read. Decided 2026-10-13, extended to every
+  one-field edit: `set`, `rename`, `due` and `tag` that change nothing write nothing, print
+  `[id] <field> unchanged`, and with a note fail with `NoteNotLogged(field)`; `edit::change`
+  goes through `edited`, which compares `Fields` before and after and returns `Revised`. `done` on a done task is refused
+  (`EditError::AlreadyDone`, exit 1) instead of logging the note and running `post_done` hooks
+  again; the TUI shows the same error. The edit subcommands are `cli::EditCommand`,
+  flattened into `Command` (`#[command(flatten)]`, same command line), so `app::run` sends
+  `Command::Edit` to an exhaustive `edit()` (it was split out for clippy's `too_many_lines`
+  and listed every variant twice). Decided 2026-10-13: an editor that exits non-zero aborts
+  `desc --edit` with exit 1 and writes nothing (`:cq` is a deliberate abort). Rebased on
+  e9712df (the worktrees merge): `cli::parse_from` takes the worktrees flag and parses with
+  `cli::command(worktrees)`; `done` refuses a done task before releasing worktrees, so a
+  failed release is retried with `tasq worktree release`, and the release test closes an open
+  task. Second review follow-up: the TUI's status and priority pickers say `[id] <field>
+  unchanged` for a no-op `set`, as the CLI does (943f7f2); a test pins the refusal before the
+  release (a kept worktree, cleaned and merged, survives a second `done`, 694e695). `--json`
+  on `set`, `rename`, `due`, `tag` and a writing `desc` carries `"changed"`, the fields
+  written (`[]` for a no-op), so a script can tell a no-op from a write; other commands keep
+  the plain `{"schema", "task"}` document (86df56c). Rebased on 8adef7f (launch trace; only
+  the CHANGELOG conflicted). Commits 0da428d..86df56c.
 - **TUI DONE group, reopen, Today view, detail position (follow-up 2026-10-07, todo 33).**
   `Task::closed_at` (ADR 0020): a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`, read
   like `## Due`, `None` on open tasks whatever the file says). `Task::close(clock)` stamps it

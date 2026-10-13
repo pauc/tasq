@@ -10,9 +10,9 @@ use tasq_core::model::{Status, Workflow};
 use tasq_core::store::Store;
 
 use crate::app::App;
-use crate::commands::finish;
 use crate::commands::worktree::{self, Releasing};
 use crate::commands::worktree_hooks::{self, Approval};
+use crate::commands::{finish, finish_edit};
 use crate::error::{CliError, Result};
 use crate::plugins::{self, Hook};
 
@@ -27,20 +27,21 @@ pub fn parse_value(value: &str, workflow: &Workflow) -> Result<Value> {
     })
 }
 
-/// `tasq set <id> <value> [note]`.
+/// `tasq set <id> <value> [note]`: `[id] -> value`, or `[id] status
+/// unchanged` (nothing written) when the task already has the value.
 pub fn set(app: &App, id: &str, value: &str, note: Option<&str>) -> Result<()> {
     let id = App::task_id(id)?;
     let value = parse_value(value, &app.workflow())?;
     let mut store = app.open_store()?;
     let clock = app.clock()?;
-    edit::set(&mut store, &id, &value, note, clock.as_ref())?;
-    let suffix = note.map_or_else(String::new, |n| format!(" ({n})"));
-    finish(
-        app,
-        &store,
-        &id,
-        &format!("[{id}] -> {}{suffix}\n", value.label()),
-    )
+    let revised = edit::set(&mut store, &id, &value, note, clock.as_ref())?;
+    let line = if revised.changed.is_empty() {
+        format!("[{id}] {} unchanged\n", value.field())
+    } else {
+        let suffix = note.map_or_else(String::new, |n| format!(" ({n})"));
+        format!("[{id}] -> {}{suffix}\n", value.label())
+    };
+    finish_edit(app, &store, &id, &line, &revised.changed)
 }
 
 /// `tasq log <id> <note>`.
@@ -54,9 +55,9 @@ pub fn log(app: &App, id: &str, note: &str) -> Result<()> {
 
 /// `tasq done <id> [note]`: the note first, then `# [x]` with the status
 /// tag removed, as the script did (`append_progress`, `nb todo do`,
-/// `strip_status_tag`). Then, with worktrees enabled, the task's worktrees
-/// are released (plan 4.2 step 3); a failure there is a warning, the task
-/// is closed either way.
+/// `strip_status_tag`). A task that is already done is refused. Then,
+/// with worktrees enabled, the task's worktrees are released (plan 4.2
+/// step 3); a failure there is a warning, the task is closed either way.
 pub fn done(app: &App, id: &str, note: Option<&str>, yes: bool) -> Result<()> {
     let id = App::task_id(id)?;
     let mut store = app.open_store()?;
@@ -80,7 +81,7 @@ pub fn done(app: &App, id: &str, note: Option<&str>, yes: bool) -> Result<()> {
 /// Splits `tasq reopen`'s optional words into a status and a note: a first
 /// word that is a status of `workflow` is the status, otherwise `default`
 /// is and the word is the note. Two words where the first is not a status
-/// is a user error.
+/// is a user error. `second` alone is `--note` without a status.
 pub fn reopen_args<'a>(
     first: Option<&'a str>,
     second: Option<&'a str>,
@@ -88,7 +89,7 @@ pub fn reopen_args<'a>(
     default: &Status,
 ) -> Result<(Status, Option<&'a str>)> {
     match (first.map(|w| (w, workflow.parse_status(w))), second) {
-        (None, _) => Ok((default.clone(), None)),
+        (None, note) => Ok((default.clone(), note)),
         (Some((_, Some(status))), note) => Ok((status, note)),
         (Some((word, None)), None) => Ok((default.clone(), Some(word))),
         (Some((word, None)), Some(_)) => Err(CliError::user(format!(
@@ -162,6 +163,10 @@ mod tests {
         assert_eq!(
             reopen_args(None, None, &wf, &ready).unwrap(),
             (ready.clone(), None)
+        );
+        assert_eq!(
+            reopen_args(None, Some("flag note"), &wf, &ready).unwrap(),
+            (ready.clone(), Some("flag note"))
         );
         assert_eq!(
             reopen_args(Some("#blocked"), None, &wf, &ready).unwrap(),

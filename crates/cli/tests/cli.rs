@@ -709,15 +709,16 @@ mod edit {
     }
 
     #[test]
-    fn done_on_a_done_task_changes_nothing() {
+    fn done_on_a_done_task_is_refused() {
         let env = TestEnv::fixture();
         let before =
             std::fs::read_to_string(env.notebook().join("20260903110000.todo.md")).unwrap();
         env.tasq()
-            .args(["done", "4"])
+            .args(["done", "4", "--note", "again"])
             .assert()
-            .success()
-            .stdout("[4] done: Ship the release notes\n");
+            .code(1)
+            .stdout("")
+            .stderr("tasq: task 4 is already done\n");
         let after = std::fs::read_to_string(env.notebook().join("20260903110000.todo.md")).unwrap();
         assert_eq!(after, before);
     }
@@ -809,6 +810,65 @@ mod edit {
     }
 
     #[test]
+    fn note_flag_is_an_alias_of_the_positional_note() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["set", "3", "A", "--note", "bumped"])
+            .assert()
+            .success()
+            .stdout("[3] -> priority #A (bumped)\n");
+        assert!(support_file(&env).ends_with("- 2026-10-07 09:30: bumped\n"));
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["done", "3", "--note", "answered"])
+            .assert()
+            .success()
+            .stdout("[3] done: Answer the support ticket\n");
+        assert!(support_file(&env).ends_with("- 2026-10-07 09:30: answered\n"));
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["reopen", "3", "--note", "not answered"])
+            .assert()
+            .success()
+            .stdout("[3] reopened -> ready: Answer the support ticket\n");
+        assert!(support_file(&env).ends_with("- 2026-10-07 09:30: not answered\n"));
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["reopen", "4", "blocked", "--note", "typo"])
+            .assert()
+            .success()
+            .stdout("[4] reopened -> blocked: Ship the release notes\n");
+        assert!(release_file(&env).ends_with("- 2026-10-07 09:30: typo\n"));
+    }
+
+    #[test]
+    fn note_flag_and_positional_note_together_are_a_usage_error() {
+        let env = TestEnv::fixture();
+        let before = support_file(&env);
+        for args in [
+            &["set", "3", "A", "x", "--note", "y"][..],
+            &["done", "3", "x", "--note", "y"],
+            &["reopen", "4", "ready", "x", "--note", "y"],
+        ] {
+            env.tasq()
+                .args(args)
+                .assert()
+                .code(2)
+                .stderr(predicate::str::contains("cannot be used with"));
+        }
+        // With --note, a lone word after the id must be a status.
+        env.tasq()
+            .args(["reopen", "4", "not shipped", "--note", "y"])
+            .assert()
+            .code(1)
+            .stderr(
+                "tasq: unknown status 'not shipped' (statuses: in-progress ready waiting blocked later)\n",
+            );
+        assert_eq!(support_file(&env), before);
+    }
+
+    #[test]
     fn invalid_tasq_now_is_a_user_error() {
         let env = TestEnv::fixture();
         env.tasq()
@@ -817,6 +877,747 @@ mod edit {
             .assert()
             .code(1)
             .stderr("tasq: TASQ_NOW=\"yesterday\": expected YYYY-MM-DD HH:MM\n");
+    }
+}
+
+/// `tasq rename`, `due`, `tag` and `desc`: one field each, an optional
+/// `--note`, and the task as stored with `--json`.
+mod fields {
+    use super::*;
+
+    const SUPPORT: &str = "20260902100000.todo.md";
+
+    fn support(env: &TestEnv) -> String {
+        env.read_task(SUPPORT)
+    }
+
+    fn json(out: &std::process::Output) -> serde_json::Value {
+        assert!(out.status.success(), "{}", stderr(out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["schema"], 1);
+        value
+    }
+
+    #[test]
+    fn rename() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["rename", "3", "Answer the export question"])
+            .assert()
+            .success()
+            .stdout("[3] renamed\n");
+        assert_eq!(
+            support(&env),
+            "# [ ] Answer the export question\n\n## Description\n\n\
+             Customer asks about the export format.\n\n## Tags\n\n#support #B #ready\n\n\
+             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+        );
+    }
+
+    #[test]
+    fn rename_with_a_note_and_json() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["rename", "3", "Reply", "--note", "shorter", "--json"])
+            .output()
+            .unwrap();
+        let value = json(&out);
+        assert_eq!(value["task"]["id"], "3");
+        assert_eq!(value["task"]["title"], "Reply");
+        assert_eq!(value["changed"], serde_json::json!(["title"]));
+        assert!(
+            support(&env).ends_with("- 2026-10-07 09:30: shorter\n"),
+            "{}",
+            support(&env)
+        );
+    }
+
+    #[test]
+    fn due_sets_a_date_after_the_description() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["due", "3", "2026-10-17"])
+            .assert()
+            .success()
+            .stdout("[3] due 2026-10-17\n");
+        assert_eq!(
+            support(&env),
+            "# [ ] Answer the support ticket\n\n## Description\n\n\
+             Customer asks about the export format.\n\n## Due\n\n2026-10-17\n\n\
+             ## Tags\n\n#support #B #ready\n\n\
+             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+        );
+    }
+
+    #[test]
+    fn due_takes_relative_days_a_note_and_json() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["due", "3", "Tomorrow", "--note", "promised", "--json"])
+            .output()
+            .unwrap();
+        let value = json(&out);
+        assert_eq!(value["task"]["id"], "3");
+        assert_eq!(value["task"]["due"], "2026-10-08");
+        assert_eq!(value["changed"], serde_json::json!(["due"]));
+        assert!(
+            support(&env).ends_with("- 2026-10-07 09:30: promised\n"),
+            "{}",
+            support(&env)
+        );
+    }
+
+    #[test]
+    fn due_none_clears_the_date() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["due", "1", "NONE"])
+            .assert()
+            .success()
+            .stdout("[1] due cleared\n");
+        let file = env.read_task("20260901090000.todo.md");
+        assert!(!file.contains("## Due"), "{file}");
+        assert!(
+            file.contains("## Project\n\n/home/pau/code/tasks\n\n## Related\n"),
+            "{file}"
+        );
+    }
+
+    #[test]
+    fn due_errors_write_nothing() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        env.tasq()
+            .args(["due", "3", "friday"])
+            .assert()
+            .code(1)
+            .stderr("tasq: invalid due date \"friday\" (expected YYYY-MM-DD, today, tomorrow, yesterday or none)\n");
+        env.tasq()
+            .args(["due", "3", "today", "--note", " "])
+            .assert()
+            .code(1)
+            .stderr("tasq: the note must not be empty\n");
+        env.tasq().args(["due", "3"]).assert().code(2);
+        assert_eq!(support(&env), before);
+        env.tasq()
+            .args(["due", "99", "none"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+
+    #[test]
+    fn tag_adds_and_removes_only_the_named_tags() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["tag", "3", "+needs-info", "-support", "urgent"])
+            .assert()
+            .success()
+            .stdout("[3] tags: +needs-info -support +urgent\n");
+        assert_eq!(
+            support(&env),
+            "# [ ] Answer the support ticket\n\n## Description\n\n\
+             Customer asks about the export format.\n\n## Tags\n\n\
+             #needs-info #urgent #B #ready\n\n\
+             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+        );
+    }
+
+    #[test]
+    fn tag_takes_the_note_before_or_after_the_tags() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["tag", "3", "-support", "--note", "triaged", "--json"])
+            .output()
+            .unwrap();
+        let value = json(&out);
+        assert_eq!(value["task"]["tags"], serde_json::json!([]));
+        assert_eq!(value["changed"], serde_json::json!(["tags"]));
+        assert!(support(&env).ends_with("- 2026-10-07 09:30: triaged\n"));
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["tag", "3", "--note", "again", "-x", "+support"])
+            .assert()
+            .success()
+            .stdout("[3] tags: +support\n");
+        assert!(support(&env).contains("\n#support #B #ready\n"));
+        assert!(support(&env).ends_with("- 2026-10-07 09:30: again\n"));
+    }
+
+    #[test]
+    fn tag_reports_only_real_changes_and_writes_nothing_without_one() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        env.tasq()
+            .args(["tag", "3", "support", "-absent", "+x", "-x"])
+            .assert()
+            .success()
+            .stdout("[3] tags unchanged\n");
+        assert_eq!(support(&env), before);
+        env.tasq()
+            .args(["tag", "3", "-support", "+support", "+new"])
+            .assert()
+            .success()
+            .stdout("[3] tags: +new\n");
+        assert!(
+            support(&env).contains("\n#support #new #B #ready\n"),
+            "order kept"
+        );
+    }
+
+    #[test]
+    fn tag_adds_a_tags_section_when_there_is_none() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["tag", "7", "new"])
+            .assert()
+            .success()
+            .stdout("[7] tags: +new\n");
+        assert_eq!(
+            env.read_task("20260906140000.todo.md"),
+            "# [ ] Task without a tags section\n\n## Progress\n\n\
+             - 2026-10-06 14:00: created via tasks create\n\n## Tags\n\n#new\n"
+        );
+    }
+
+    #[test]
+    fn tag_rejects_status_and_priority_words_before_writing() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        env.tasq()
+            .args(["tag", "3", "+x", "-ready"])
+            .assert()
+            .code(1)
+            .stderr("tasq: 'ready' is a status, not a tag; use set to change it\n");
+        env.tasq()
+            .args(["tag", "3", "#A"])
+            .assert()
+            .code(1)
+            .stderr("tasq: 'A' is a priority, not a tag; use set to change it\n");
+        env.tasq()
+            .args(["tag", "3", "+"])
+            .assert()
+            .code(1)
+            .stderr("tasq: invalid tag \"\": must not be empty\n");
+        env.tasq().args(["tag", "3"]).assert().code(2);
+        env.tasq()
+            .args(["tag", "3", "-b", "--note", "n", "+a"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::starts_with(
+                "error: tag: put the options before or after the tags, not on both sides\n",
+            ));
+        assert_eq!(support(&env), before);
+        env.tasq()
+            .args(["tag", "99", "x"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+
+    const NO_TAGS: &str = "20260906140000.todo.md";
+
+    #[test]
+    fn desc_sets_the_description() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["desc", "3", "Export as CSV.\n\nThey use Excel."])
+            .assert()
+            .success()
+            .stdout("[3] description updated\n");
+        assert_eq!(
+            support(&env),
+            "# [ ] Answer the support ticket\n\n## Description\n\n\
+             Export as CSV.\n\nThey use Excel.\n\n## Tags\n\n#support #B #ready\n\n\
+             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+        );
+        env.tasq()
+            .args(["desc", "7", "New"])
+            .assert()
+            .success()
+            .stdout("[7] description updated\n");
+        assert_eq!(
+            env.read_task(NO_TAGS),
+            "# [ ] Task without a tags section\n\n## Description\n\nNew\n\n## Progress\n\n\
+             - 2026-10-06 14:00: created via tasks create\n"
+        );
+    }
+
+    #[test]
+    fn desc_dash_reads_stdin() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["desc", "3", "-"])
+            .write_stdin("From a pipe.\n\nSecond paragraph.\n")
+            .assert()
+            .success()
+            .stdout("[3] description updated\n");
+        env.tasq()
+            .args(["desc", "3"])
+            .assert()
+            .success()
+            .stdout("From a pipe.\n\nSecond paragraph.\n");
+        // A description that is literally "-" goes through stdin.
+        env.tasq()
+            .args(["desc", "3", "-"])
+            .write_stdin("-")
+            .assert()
+            .success();
+        env.tasq().args(["desc", "3"]).assert().stdout("-\n");
+    }
+
+    /// `<producer> | tasq desc 3 -` through a real pipe, so the producer
+    /// can act after `tasq` started.
+    fn desc_from_pipe(env: &TestEnv, producer: &str) -> std::process::Output {
+        std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!(
+                "{{ {producer}; }} | {} desc 3 -",
+                env!("CARGO_BIN_EXE_tasq")
+            ))
+            .env_clear()
+            .env("TASQ_NOW", NOW)
+            .env("HOME", &env.home)
+            .env("NB_DIR", &env.nb_dir)
+            .env("PATH", &env.bin)
+            .current_dir(&env.home)
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn desc_dash_conflicts_when_the_task_changed_while_stdin_was_open() {
+        let env = TestEnv::fixture();
+        let file = env.notebook().join(SUPPORT);
+        let out = desc_from_pipe(
+            &env,
+            &format!(
+                "/bin/sleep 1; printf -- '- 2026-10-07 09:00: elsewhere\\n' >> {}; printf 'Mine.'",
+                file.display()
+            ),
+        );
+        assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+        assert!(
+            stderr(&out).starts_with("tasq: task 3 changed since it was read ("),
+            "{}",
+            stderr(&out)
+        );
+        assert!(support(&env).contains("Customer asks about the export format."));
+        assert!(support(&env).ends_with("- 2026-10-07 09:00: elsewhere\n"));
+    }
+
+    #[test]
+    fn desc_dash_with_the_same_text_writes_nothing() {
+        let env = TestEnv::fixture();
+        let out = desc_from_pipe(&env, "printf 'Customer asks about the export format.\\n'");
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stdout(&out), "[3] description unchanged\n");
+    }
+
+    #[test]
+    fn desc_dash_normalises_like_the_file_reads_back() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["desc", "3", "-"])
+            .write_stdin("\r\n \r\nPasted  \r\n\r\n  indented\r\n\r\n\t\r\n")
+            .assert()
+            .success()
+            .stdout("[3] description updated\n");
+        env.tasq()
+            .args(["desc", "3"])
+            .assert()
+            .stdout("Pasted  \n\n  indented\n");
+    }
+
+    #[test]
+    fn desc_without_text_prints_the_description() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["desc", "1"])
+            .assert()
+            .success()
+            .stdout("Port the bash script to a Rust workspace.\nKeep the nb files unchanged.\n");
+        env.tasq().args(["desc", "7"]).assert().success().stdout("");
+        let value = json(&env.tasq().args(["desc", "3", "--json"]).output().unwrap());
+        assert_eq!(
+            value["task"]["description"],
+            "Customer asks about the export format."
+        );
+        env.tasq()
+            .args(["desc", "99"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+
+    #[test]
+    fn desc_empty_text_clears_the_description() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["desc", "3", ""])
+            .assert()
+            .success()
+            .stdout("[3] description cleared\n");
+        assert_eq!(
+            support(&env),
+            "# [ ] Answer the support ticket\n\n## Tags\n\n#support #B #ready\n\n\
+             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+        );
+        env.tasq()
+            .args(["desc", "1", "-"])
+            .write_stdin("\n")
+            .assert()
+            .success()
+            .stdout("[1] description cleared\n");
+        env.tasq()
+            .args(["desc", "1", "-"])
+            .write_stdin("")
+            .assert()
+            .success()
+            .stdout("[1] description unchanged\n");
+    }
+
+    #[test]
+    fn desc_with_a_note_and_json() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .args(["desc", "3", "-", "--note", "from the ticket", "--json"])
+            .write_stdin("Pasted.\n")
+            .output()
+            .unwrap();
+        let value = json(&out);
+        assert_eq!(value["task"]["description"], "Pasted.");
+        assert_eq!(value["changed"], serde_json::json!(["description"]));
+        assert!(support(&env).ends_with("- 2026-10-07 09:30: from the ticket\n"));
+    }
+
+    #[test]
+    fn desc_errors_write_nothing() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        env.tasq()
+            .args(["desc", "3", "x", "--note", " "])
+            .assert()
+            .code(1)
+            .stderr("tasq: the note must not be empty\n");
+        env.tasq()
+            .args(["desc", "3", "--note", "n"])
+            .assert()
+            .code(2);
+        env.tasq()
+            .args(["desc", "3", "-"])
+            .write_stdin("Intro\n## Steps\n")
+            .assert()
+            .code(1)
+            .stderr("tasq: a description line cannot start with '## ' (it would start a new section): ## Steps\n");
+        assert_eq!(support(&env), before);
+        env.tasq()
+            .args(["desc", "99", "x"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+
+    /// `tasq desc 3 --edit` with `VISUAL=fake-editor`, a script that runs
+    /// `body` with the temp file as `$1`.
+    fn edit_with(env: &TestEnv, body: &str) -> assert_cmd::assert::Assert {
+        env.fake_tool("fake-editor", body);
+        env.tasq()
+            .env("TASQ_NOW", NOW)
+            .env("VISUAL", "fake-editor")
+            .env("EDITOR", "not-this-one")
+            .args(["desc", "3", "--edit"])
+            .assert()
+    }
+
+    #[test]
+    fn desc_edit_opens_the_description_and_saves_it() {
+        let env = TestEnv::fixture();
+        let seen = env.home.join("seen");
+        edit_with(
+            &env,
+            &format!(
+                "/bin/cat \"$1\" > {}\nprintf 'Edited.\\n\\nTwice.\\n' > \"$1\"",
+                seen.display()
+            ),
+        )
+        .success()
+        .stdout("[3] description updated\n");
+        assert_eq!(
+            std::fs::read_to_string(&seen).unwrap(),
+            "Customer asks about the export format.\n"
+        );
+        env.tasq()
+            .args(["desc", "3"])
+            .assert()
+            .stdout("Edited.\n\nTwice.\n");
+    }
+
+    #[test]
+    fn desc_edit_falls_back_to_editor_and_takes_a_note() {
+        let env = TestEnv::fixture();
+        env.fake_tool("fake-editor", "printf 'Via EDITOR' > \"$1\"");
+        let out = env
+            .tasq()
+            .env("TASQ_NOW", NOW)
+            .env("VISUAL", " ")
+            .env("EDITOR", "fake-editor")
+            .args(["desc", "3", "--edit", "--note", "rewritten", "--json"])
+            .output()
+            .unwrap();
+        let value = json(&out);
+        assert_eq!(value["task"]["description"], "Via EDITOR");
+        assert_eq!(value["changed"], serde_json::json!(["description"]));
+        assert!(support(&env).ends_with("- 2026-10-07 09:30: rewritten\n"));
+    }
+
+    #[test]
+    fn desc_edit_clears_on_an_empty_file() {
+        let env = TestEnv::fixture();
+        edit_with(&env, ": > \"$1\"")
+            .success()
+            .stdout("[3] description cleared\n");
+        assert!(!support(&env).contains("## Description"));
+    }
+
+    #[test]
+    fn desc_edit_writes_nothing_when_unchanged_or_aborted() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        edit_with(&env, ":")
+            .success()
+            .stdout("[3] description unchanged\n");
+        edit_with(
+            &env,
+            "printf '\\n\\nCustomer asks about the export format.\\n\\n\\n' > \"$1\"",
+        )
+        .success()
+        .stdout("[3] description unchanged\n");
+        edit_with(&env, "exit 3").code(1).stderr(
+            "tasq: fake-editor exited with exit status: 3; the description was not changed\n",
+        );
+        assert_eq!(support(&env), before);
+    }
+
+    /// The path a failed `desc --edit` names as holding the edited text.
+    fn kept_text(assert: &assert_cmd::assert::Assert) -> String {
+        let err = stderr(assert.get_output());
+        let path = err
+            .trim_end()
+            .rsplit_once("; the edited text is kept in ")
+            .unwrap_or_else(|| panic!("no kept path in {err:?}"))
+            .1
+            .to_owned();
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        text
+    }
+
+    #[test]
+    fn desc_edit_keeps_the_text_when_the_save_fails() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        let assert = edit_with(&env, "printf 'Lost.' > \"$1\"\nexit 3").code(1);
+        assert!(stderr(assert.get_output()).starts_with(
+            "tasq: fake-editor exited with exit status: 3; the description was not changed; the edited text is kept in "
+        ));
+        assert_eq!(kept_text(&assert), "Lost.");
+        let assert = edit_with(&env, "printf 'Intro\\n## Steps\\n' > \"$1\"").code(1);
+        assert!(stderr(assert.get_output()).starts_with(
+            "tasq: a description line cannot start with '## ' (it would start a new section): ## Steps; the edited text is kept in "
+        ));
+        assert_eq!(kept_text(&assert), "Intro\n## Steps\n");
+        assert_eq!(support(&env), before);
+    }
+
+    #[test]
+    fn field_edits_that_change_nothing_write_nothing_and_say_so() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        for (args, line) in [
+            (&["set", "3", "ready"][..], "[3] status unchanged\n"),
+            (&["set", "3", "#B"], "[3] priority unchanged\n"),
+            (
+                &["rename", "3", " Answer the support ticket "],
+                "[3] title unchanged\n",
+            ),
+            (&["due", "3", "none"], "[3] due unchanged\n"),
+            (&["tag", "3", "+support"], "[3] tags unchanged\n"),
+        ] {
+            env.tasq().args(args).assert().success().stdout(line);
+            let field = line["[3] ".len()..].trim_end_matches(" unchanged\n");
+            env.tasq()
+                .args(args)
+                .args(["--note", "why"])
+                .assert()
+                .code(1)
+                .stdout("")
+                .stderr(format!(
+                    "tasq: {field} unchanged; the note was not logged (use log to add it alone)\n"
+                ));
+        }
+        assert_eq!(support(&env), before);
+    }
+
+    #[test]
+    fn json_names_the_fields_written_and_is_empty_for_a_no_op() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        for args in [
+            &["set", "3", "ready"][..],
+            &["set", "3", "#B"],
+            &["rename", "3", "Answer the support ticket"],
+            &["due", "3", "none"],
+            &["tag", "3", "+support"],
+            &["desc", "3", "Customer asks about the export format."],
+        ] {
+            let value = json(&env.tasq().args(args).arg("--json").output().unwrap());
+            assert_eq!(value["changed"], serde_json::json!([]), "{args:?}");
+            assert_eq!(value["task"]["id"], "3", "{args:?}");
+        }
+        assert_eq!(support(&env), before);
+        for (args, changed) in [
+            (&["set", "3", "waiting"][..], "status"),
+            (&["set", "3", "A"], "priority"),
+            (&["rename", "3", "Reply"], "title"),
+            (&["due", "3", "2026-10-17"], "due"),
+            (&["tag", "3", "+export"], "tags"),
+            (&["desc", "3", ""], "description"),
+        ] {
+            let value = json(&env.tasq().args(args).arg("--json").output().unwrap());
+            assert_eq!(value["changed"], serde_json::json!([changed]), "{args:?}");
+        }
+        // Commands that are not one-field edits keep the plain document.
+        let value = json(&env.tasq().args(["desc", "3", "--json"]).output().unwrap());
+        assert_eq!(value.get("changed"), None);
+    }
+
+    #[test]
+    fn desc_with_a_note_and_nothing_to_change_writes_nothing_and_says_so() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        let refused =
+            "tasq: description unchanged; the note was not logged (use log to add it alone)\n";
+        env.fake_tool(
+            "fake-editor",
+            "printf '\\nCustomer asks about the export format.\\n\\n' > \"$1\"",
+        );
+        env.tasq()
+            .env("VISUAL", "fake-editor")
+            .args(["desc", "3", "--edit", "--note", "still accurate"])
+            .assert()
+            .code(1)
+            .stderr(refused);
+        env.tasq()
+            .args(["desc", "3", "-", "--note", "same"])
+            .write_stdin("Customer asks about the export format.\n")
+            .assert()
+            .code(1)
+            .stderr(refused);
+        env.tasq()
+            .args([
+                "desc",
+                "3",
+                "Customer asks about the export format.",
+                "--note",
+                "same",
+            ])
+            .assert()
+            .code(1)
+            .stderr(refused);
+        assert_eq!(support(&env), before);
+        env.tasq()
+            .args(["desc", "3", "Customer asks about the export format."])
+            .assert()
+            .success()
+            .stdout("[3] description unchanged\n");
+    }
+
+    #[test]
+    fn desc_edit_conflicts_when_the_task_changed_meanwhile() {
+        let env = TestEnv::fixture();
+        let file = env.notebook().join(SUPPORT);
+        let assert = edit_with(
+            &env,
+            &format!(
+                "printf -- '- 2026-10-07 09:00: elsewhere\\n' >> {}\nprintf 'Mine.' > \"$1\"",
+                file.display()
+            ),
+        )
+        .code(1);
+        assert!(
+            stderr(assert.get_output()).starts_with("tasq: task 3 changed since it was read ("),
+            "{}",
+            stderr(assert.get_output())
+        );
+        assert_eq!(kept_text(&assert), "Mine.");
+        assert!(support(&env).ends_with("- 2026-10-07 09:00: elsewhere\n"));
+        assert!(support(&env).contains("Customer asks about the export format."));
+    }
+
+    #[test]
+    fn desc_edit_needs_an_editor_and_no_text() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["desc", "3", "--edit"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no editor: set $VISUAL or $EDITOR\n");
+        env.tasq()
+            .env("VISUAL", "missing-editor")
+            .args(["desc", "3", "--edit"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with(
+                "tasq: could not run missing-editor: ",
+            ));
+        env.tasq()
+            .env("VISUAL", "fake-editor")
+            .args(["desc", "3", "x", "--edit"])
+            .assert()
+            .code(2);
+        env.tasq()
+            .env("VISUAL", "fake-editor")
+            .args(["desc", "99", "--edit"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+
+    #[test]
+    fn rename_errors_write_nothing() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        env.tasq()
+            .args(["rename", "3", "  "])
+            .assert()
+            .code(1)
+            .stderr("tasq: the title must not be empty\n");
+        env.tasq()
+            .args(["rename", "3", "a\nb"])
+            .assert()
+            .code(1)
+            .stderr("tasq: the title must be a single line\n");
+        env.tasq()
+            .args(["rename", "3", "x", "--note", ""])
+            .assert()
+            .code(1)
+            .stderr("tasq: the note must not be empty\n");
+        env.tasq().args(["rename", "3"]).assert().code(2);
+        assert_eq!(support(&env), before);
+        env.tasq()
+            .args(["rename", "99", "x"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
     }
 }
 
@@ -4073,6 +4874,29 @@ mod worktree_release {
     }
 
     #[test]
+    fn done_on_a_done_task_is_refused_before_the_release() {
+        let env = TestEnv::fixture();
+        let (project, wt) = released_project(&env, "");
+        commit(&env, &wt, "feature");
+        std::fs::write(wt.join("README"), "edited\n").unwrap();
+        let (_, err) = run(&env, &["done", "3"]);
+        assert!(err.contains("kept worktree"), "{err}");
+        // Clean and merged now, so a release would remove both.
+        env.git(&wt, &["checkout", "--", "README"]);
+        env.git(&project, &["merge", "-q", "--no-ff", "-m", "merge b", "b"]);
+        let before = env.read_task(TASK);
+        env.tasq_wt()
+            .args(["done", "3"])
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr("tasq: task 3 is already done\n");
+        assert!(wt.is_dir(), "a refused done releases nothing");
+        assert_eq!(branches(&env, &project), "b\nmain\n");
+        assert_eq!(env.read_task(TASK), before);
+    }
+
+    #[test]
     fn dirty_and_unmerged_are_kept_with_one_warning_each() {
         let env = TestEnv::fixture();
         let (project, wt) = released_project(&env, "");
@@ -4356,14 +5180,14 @@ mod worktree_release {
         let plain = env.home.join("plain");
         std::fs::create_dir(&plain).unwrap();
         env.tasq_wt()
-            .args(["project", "4", plain.to_str().unwrap()])
+            .args(["project", "7", plain.to_str().unwrap()])
             .assert()
             .success();
         env.tasq_wt()
-            .args(["worktree", "4", wt.to_str().unwrap()])
+            .args(["worktree", "7", wt.to_str().unwrap()])
             .assert()
             .success();
-        let out = env.tasq_wt().args(["done", "4"]).output().unwrap();
+        let out = env.tasq_wt().args(["done", "7"]).output().unwrap();
         assert!(out.status.success());
         assert_eq!(
             env.normalize(&stderr(&out)),

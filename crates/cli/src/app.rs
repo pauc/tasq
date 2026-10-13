@@ -9,7 +9,7 @@ use tasq_core::model::{TaskId, Workflow};
 use tasq_store_nb::{NbStore, NbStoreOptions};
 use tasq_worktree::Git;
 
-use crate::cli::{Cli, Command, GlobalArgs, ListArgs};
+use crate::cli::{Cli, Command, EditCommand, GlobalArgs, ListArgs};
 use crate::commands;
 use crate::error::{CliError, Result};
 use crate::output::Output;
@@ -60,16 +60,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 ),
                 Some(Command::List(args)) => commands::list::run(&app, &args),
                 Some(Command::Create(args)) => commands::create::run(&app, &args),
-                Some(Command::Set { id, value, note }) => {
-                    commands::edit::set(&app, &id, &value, note.as_deref())
-                }
-                Some(Command::Log { id, note }) => commands::edit::log(&app, &id, &note),
-                Some(Command::Done { id, note, yes }) => {
-                    commands::edit::done(&app, &id, note.as_deref(), yes)
-                }
-                Some(Command::Reopen { id, status, note }) => {
-                    commands::edit::reopen(&app, &id, status.as_deref(), note.as_deref())
-                }
+                Some(Command::Edit(command)) => edit(&app, command),
                 Some(command @ (Command::Next { .. } | Command::Pick { .. })) => {
                     commands::launch::dispatch(&app, &command)
                 }
@@ -118,14 +109,58 @@ pub fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// The commands that change one task in place: `set`, `log`, `done`,
+/// `reopen` and the one-field edits.
+fn edit(app: &App, command: EditCommand) -> Result<()> {
+    match command {
+        EditCommand::Set { id, value, note } => {
+            commands::edit::set(app, &id, &value, note.into_note().as_deref())
+        }
+        EditCommand::Log { id, note } => commands::edit::log(app, &id, &note),
+        EditCommand::Done { id, note, yes } => {
+            commands::edit::done(app, &id, note.into_note().as_deref(), yes)
+        }
+        EditCommand::Reopen { id, status, note } => {
+            commands::edit::reopen(app, &id, status.as_deref(), note.into_note().as_deref())
+        }
+        EditCommand::Rename { id, title, note } => {
+            commands::fields::rename(app, &id, &title, note.as_deref())
+        }
+        EditCommand::Due { id, date, note } => {
+            commands::fields::due(app, &id, &date, note.as_deref())
+        }
+        EditCommand::Tag { id, tags, note } => {
+            commands::fields::tag(app, &id, &tags, note.as_deref())
+        }
+        EditCommand::Desc {
+            id,
+            text,
+            edit: true,
+            note,
+        } => {
+            debug_assert!(text.is_none(), "clap keeps TEXT and --edit apart");
+            commands::fields::desc_edit(app, &id, note.as_deref())
+        }
+        EditCommand::Desc { id, text, note, .. } => {
+            commands::fields::desc(app, &id, text.as_deref(), note.as_deref())
+        }
+    }
+}
+
 fn command_name(command: &Command) -> &'static str {
     match command {
         Command::List(_) => "list",
         Command::Create(_) => "create",
-        Command::Set { .. } => "set",
-        Command::Log { .. } => "log",
-        Command::Done { .. } => "done",
-        Command::Reopen { .. } => "reopen",
+        Command::Edit(edit) => match edit {
+            EditCommand::Set { .. } => "set",
+            EditCommand::Log { .. } => "log",
+            EditCommand::Done { .. } => "done",
+            EditCommand::Reopen { .. } => "reopen",
+            EditCommand::Rename { .. } => "rename",
+            EditCommand::Due { .. } => "due",
+            EditCommand::Tag { .. } => "tag",
+            EditCommand::Desc { .. } => "desc",
+        },
         Command::Next { .. } => "next",
         Command::Pick { .. } => "pick",
         Command::View { .. } => "view",

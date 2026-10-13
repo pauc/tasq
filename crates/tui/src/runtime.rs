@@ -48,21 +48,11 @@ pub fn dispatch(
     let mut created = None;
     let outcome: Result<String, String> = match cmd {
         Cmd::Load => return vec![reload(store)],
-        Cmd::SetStatus(id, status) => {
-            let value = Value::Status(status.clone());
-            edit::set(store, id, &value, None, clock)
-                .map(|_| format!("[{id}] -> {}", value.label()))
-                .map_err(|e| e.to_string())
-        }
+        Cmd::SetStatus(id, status) => set(store, id, &Value::Status(status.clone()), clock),
         Cmd::Reopen(id, status) => edit::reopen(store, id, status, None, clock)
             .map(|_| format!("[{id}] reopened -> {status}"))
             .map_err(|e| e.to_string()),
-        Cmd::SetPriority(id, priority) => {
-            let value = Value::Priority(*priority);
-            edit::set(store, id, &value, None, clock)
-                .map(|_| format!("[{id}] -> {}", value.label()))
-                .map_err(|e| e.to_string())
-        }
+        Cmd::SetPriority(id, priority) => set(store, id, &Value::Priority(*priority), clock),
         Cmd::Log(id, note) => edit::log(store, id, note, clock)
             .map(|_| format!("[{id}] logged: {note}"))
             .map_err(|e| e.to_string()),
@@ -143,6 +133,22 @@ fn close(
     match host.after_done(&task) {
         Ok(()) => Ok(line),
         Err(warning) => Err(format!("{line} ({warning})")),
+    }
+}
+
+/// `edit::set`: `[id] -> value`, or `[id] <field> unchanged` when the task
+/// already has the value (nothing was written then), as `tasq set` says.
+fn set(
+    store: &mut dyn Store,
+    id: &TaskId,
+    value: &Value,
+    clock: &dyn Clock,
+) -> Result<String, String> {
+    let revised = edit::set(store, id, value, None, clock).map_err(|e| e.to_string())?;
+    if revised.changed.is_empty() {
+        Ok(format!("[{id}] {} unchanged", value.field()))
+    } else {
+        Ok(format!("[{id}] -> {}", value.label()))
     }
 }
 
@@ -410,6 +416,30 @@ mod tests {
         assert!(store.get(&TaskId::from(2)).unwrap().done);
         // Only a close reaches the host, once per task, after the write.
         assert_eq!(host.calls, vec!["after_done 1", "after_done 2"]);
+    }
+
+    #[test]
+    fn setting_the_value_a_task_has_says_unchanged_and_writes_nothing() {
+        let mut store = store();
+        let mut host = RecordingHost::default();
+        let id = TaskId::from(1);
+        let before = store.get(&id).unwrap();
+        let msgs = dispatch(
+            &Cmd::SetStatus(id.clone(), Status::READY),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(msgs[0], Msg::Info("[1] status unchanged".into()));
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
+        let msgs = dispatch(
+            &Cmd::SetPriority(id.clone(), Priority::B),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(msgs[0], Msg::Info("[1] priority unchanged".into()));
+        assert_eq!(store.get(&id).unwrap(), before);
     }
 
     #[test]
