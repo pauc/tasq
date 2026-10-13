@@ -261,9 +261,12 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   `cli::command(worktrees)`; `done` refuses a done task before releasing worktrees, so a
   failed release is retried with `tasq worktree release`, and the release test closes an open
   task. Second review follow-up: the TUI's status and priority pickers say `[id] <field>
-  unchanged` for a no-op `set`, as the CLI does (35f7e99); a test pins the refusal before the
-  release (a kept worktree, cleaned and merged, survives a second `done`, 2810c76). Commits
-  2c8c00c..2810c76.
+  unchanged` for a no-op `set`, as the CLI does (943f7f2); a test pins the refusal before the
+  release (a kept worktree, cleaned and merged, survives a second `done`, 694e695). `--json`
+  on `set`, `rename`, `due`, `tag` and a writing `desc` carries `"changed"`, the fields
+  written (`[]` for a no-op), so a script can tell a no-op from a write; other commands keep
+  the plain `{"schema", "task"}` document (86df56c). Rebased on 8adef7f (launch trace; only
+  the CHANGELOG conflicted). Commits 0da428d..86df56c.
 - **TUI DONE group, reopen, Today view, detail position (follow-up 2026-10-07, todo 33).**
   `Task::closed_at` (ADR 0020): a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`, read
   like `## Due`, `None` on open tasks whatever the file says). `Task::close(clock)` stamps it
