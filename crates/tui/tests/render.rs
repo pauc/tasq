@@ -830,6 +830,72 @@ fn paths_under_home_start_with_a_tilde() {
     );
 }
 
+const MR7: &str = "https://gitlab.example.com/g/p/-/merge_requests/7";
+
+/// The characters of the cells that link to `url`, in reading order,
+/// each checked to carry the whole OSC 8 link on its own.
+fn linked_text(terminal: &Terminal<TestBackend>, url: &str) -> String {
+    let open = format!("\x1b]8;;{url}\x1b\\");
+    let close = "\x1b]8;;\x1b\\";
+    let buffer = terminal.backend().buffer();
+    let mut text = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            let symbol = buffer[(x, y)].symbol();
+            if let Some(rest) = symbol.strip_prefix(&open) {
+                text.push_str(rest.strip_suffix(close).expect("closed in the cell"));
+            }
+        }
+    }
+    text
+}
+
+#[test]
+fn osc8_links_the_labels() {
+    let mut model = fixture(true).with_osc8(true);
+    update(&mut model, Msg::ShowDetail);
+    let terminal = render(&mut model, 120, 28);
+    assert_eq!(linked_text(&terminal, MR7), "Pin the cache key");
+    assert_eq!(
+        linked_text(&terminal, "https://example.com/issue/1"),
+        "example.com/issue/1"
+    );
+    // Off, no escape reaches the screen.
+    let mut model = fixture(true);
+    update(&mut model, Msg::ShowDetail);
+    assert_eq!(linked_text(&render(&mut model, 120, 28), MR7), "");
+}
+
+#[test]
+fn osc8_follows_wrapping_and_scrolling() {
+    let squeezed = |text: String| text.split_whitespace().collect::<String>();
+    let mut model = fixture(true).with_osc8(true);
+    update(&mut model, Msg::ShowDetail);
+    // 14 columns inside the border: "- Pin the" / "cache key".
+    let terminal = render(&mut model, 16, 40);
+    assert_eq!(squeezed(linked_text(&terminal, MR7)), "Pinthecachekey");
+    let buffer = terminal.backend().buffer();
+    let row = |y: u16| {
+        (0..16)
+            .map(|x| buffer[(x, y)].symbol().contains(MR7))
+            .collect::<Vec<_>>()
+    };
+    let first = (0..40).find(|&y| row(y).contains(&true)).unwrap();
+    assert_eq!(
+        row(first)[..4],
+        [false, false, false, true],
+        "the border and \"- \" are not linked"
+    );
+    // Scrolled so the link's first row is above the pane (the border is
+    // screen row 0): the rest of it still links.
+    update(&mut model, Msg::Resize(16, 12));
+    for _ in 0..first {
+        update(&mut model, Msg::DetailDown);
+    }
+    let terminal = render(&mut model, 16, 12);
+    assert_eq!(squeezed(linked_text(&terminal, MR7)), "cachekey");
+}
+
 #[test]
 fn styles_the_character_snapshots_cannot_see() {
     // Detail headings are bold; the tag chip has the CLI's colours.

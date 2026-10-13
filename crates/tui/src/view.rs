@@ -16,12 +16,15 @@ use std::ops::Range;
 
 use chrono::{Datelike, NaiveDate};
 
+use std::num::NonZeroU16;
+
 use ratatui::Frame;
+use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Block, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget,
 };
 use tasq_core::clock::format_timestamp;
 use tasq_core::config::{DueFormat, contract_tilde};
@@ -594,6 +597,24 @@ pub fn list_title(model: &Model, shown: usize, total: usize) -> String {
 
 /// The detail pane lines for `task`.
 pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
+    detail(model, task).0
+}
+
+/// An entry of a detail section: its text, and the URL it links to, if
+/// any.
+pub type Entry<'a> = (String, Option<&'a str>);
+
+/// A link label in the detail: its line, the label after `- ` and the
+/// target.
+struct DetailLink<'a> {
+    line: usize,
+    label: String,
+    url: &'a str,
+}
+
+/// The detail's lines, and where its links are.
+fn detail<'a>(model: &Model, task: &'a Task) -> (Vec<Line<'a>>, Vec<DetailLink<'a>>) {
+    let mut targets = Vec::new();
     let mut lines = vec![Line::styled(task.title.as_str(), header(model))];
     let mut head = vec![
         Span::styled(format!("[{}]", task.id.as_str()), dim(model)),
@@ -654,7 +675,16 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
         if !items.is_empty() {
             lines.push(Line::default());
             lines.push(Line::styled(heading, header(model)));
-            lines.extend(items.into_iter().map(|item| Line::raw(format!("- {item}"))));
+            for (item, url) in items {
+                if let Some(url) = url {
+                    targets.push(DetailLink {
+                        line: lines.len(),
+                        label: item.clone(),
+                        url,
+                    });
+                }
+                lines.push(Line::raw(format!("- {item}")));
+            }
         }
     }
     if !task.progress.is_empty() {
@@ -667,22 +697,20 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
             ]));
         }
     }
-    lines
+    (lines, targets)
 }
 
 /// The list sections of the detail pane: related links, merge requests,
 /// worktrees (only when worktrees are enabled, paths under home as `~`)
 /// and sessions, each as `(heading, entries)`.
-pub fn link_sections(model: &Model, task: &Task) -> Vec<(&'static str, Vec<String>)> {
+pub fn link_sections<'a>(model: &Model, task: &'a Task) -> Vec<(&'static str, Vec<Entry<'a>>)> {
     let home = model.home.as_deref();
+    let link = |l: &'a Link| (l.short_label(), Some(l.url.as_str()));
     vec![
-        (
-            "Related",
-            task.related.iter().map(Link::short_label).collect(),
-        ),
+        ("Related", task.related.iter().map(link).collect()),
         (
             "Merge requests",
-            task.merge_requests.iter().map(Link::short_label).collect(),
+            task.merge_requests.iter().map(link).collect(),
         ),
         (
             "Worktrees",
@@ -691,10 +719,11 @@ pub fn link_sections(model: &Model, task: &Task) -> Vec<(&'static str, Vec<Strin
                 .filter(|_| model.worktrees)
                 .map(|w| {
                     let path = contract_tilde(&w.path, home);
-                    match &w.branch {
+                    let text = match &w.branch {
                         Some(branch) => format!("{path} ({branch})"),
                         None => path,
-                    }
+                    };
+                    (text, None)
                 })
                 .collect(),
         ),
@@ -708,7 +737,7 @@ pub fn link_sections(model: &Model, task: &Task) -> Vec<(&'static str, Vec<Strin
                         text.push_str(" \u{2014} ");
                         text.push_str(description);
                     }
-                    text
+                    (text, None)
                 })
                 .collect(),
         ),
@@ -716,14 +745,14 @@ pub fn link_sections(model: &Model, task: &Task) -> Vec<(&'static str, Vec<Strin
 }
 
 fn render_detail(model: &Model, frame: &mut Frame, area: Rect) {
-    let (title, lines) = match model.selected_task() {
-        Some(task) => (
-            format!(" [{}] ", task.id.as_str()),
-            detail_lines(model, task),
-        ),
+    let (title, (lines, targets)) = match model.selected_task() {
+        Some(task) => (format!(" [{}] ", task.id.as_str()), detail(model, task)),
         None => (
             " Task ".to_owned(),
-            vec![Line::styled("No task selected.", dim(model))],
+            (
+                vec![Line::styled("No task selected.", dim(model))],
+                Vec::new(),
+            ),
         ),
     };
     let mut block = Block::bordered().title(title);
@@ -737,12 +766,41 @@ fn render_detail(model: &Model, frame: &mut Frame, area: Rect) {
     // A reload can shorten the task under the offset.
     let max = detail_max_scroll(model);
     let scroll = model.detail_scroll.min(max);
-    frame.render_widget(
+    // The whole detail is drawn on a page as tall as it, where links are
+    // found whole (wrapped or scrolled partly out of view), then the
+    // visible rows are copied.
+    let rows = |lines: &[Line<'_>]| {
+        let count = Paragraph::new(lines.to_vec())
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .line_count(inner.width);
+        u16::try_from(count).unwrap_or(u16::MAX)
+    };
+    let mut page = Buffer::empty(Rect::new(0, 0, inner.width, rows(&lines)));
+    if model.osc8 {
+        let spans: Vec<_> = targets
+            .iter()
+            .map(|link| {
+                let top = rows(&lines[..link.line]);
+                (top, top + rows(&lines[link.line..=link.line]))
+            })
+            .collect();
         Paragraph::new(lines)
             .wrap(ratatui::widgets::Wrap { trim: false })
-            .scroll((scroll, 0)),
-        inner,
-    );
+            .render(page.area, &mut page);
+        for (link, (top, bottom)) in targets.iter().zip(spans) {
+            link_cells(&mut page, top..bottom, &link.label, link.url);
+        }
+    } else {
+        Paragraph::new(lines)
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .render(page.area, &mut page);
+    }
+    let buffer = frame.buffer_mut();
+    for y in 0..inner.height.min(page.area.height.saturating_sub(scroll)) {
+        for x in 0..inner.width {
+            buffer[(inner.x + x, inner.y + y)] = page[(x, scroll + y)].clone();
+        }
+    }
     if max > 0 {
         // On the right border, between the corners.
         let mut state = ScrollbarState::new(usize::from(max) + 1)
@@ -756,6 +814,41 @@ fn render_detail(model: &Model, frame: &mut Frame, area: Rect) {
             area.inner(Margin::new(0, 1)),
             &mut state,
         );
+    }
+}
+
+/// Turns the cells of `label`, drawn from the third column of the first
+/// of `rows` (after `- `), into OSC 8 hyperlinks to `url`. Each cell
+/// carries the whole link, since a redraw writes only the cells that
+/// changed. The label is followed across wrapped rows: a cell that does
+/// not hold the next character moves to the next row, and a space the
+/// wrap dropped is skipped.
+fn link_cells(page: &mut Buffer, rows: Range<u16>, label: &str, url: &str) {
+    let (mut x, mut y) = (2, rows.start);
+    for c in label.chars() {
+        let mut symbol = [0; 4];
+        let symbol: &str = c.encode_utf8(&mut symbol);
+        loop {
+            if y >= rows.end {
+                return;
+            }
+            if x < page.area.width && page[(x, y)].symbol() == symbol {
+                let cell = &mut page[(x, y)];
+                // A wide character fills two cells.
+                let width = u16::try_from(Span::raw(symbol).width())
+                    .ok()
+                    .and_then(NonZeroU16::new)
+                    .unwrap_or(NonZeroU16::MIN);
+                cell.set_symbol(&format!("\x1b]8;;{url}\x1b\\{symbol}\x1b]8;;\x1b\\"))
+                    .set_diff_option(CellDiffOption::ForcedWidth(width));
+                x += width.get();
+                break;
+            }
+            if c.is_whitespace() {
+                break;
+            }
+            (x, y) = (0, y + 1);
+        }
     }
 }
 

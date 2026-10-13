@@ -37,6 +37,25 @@ fn interactive(stdout: bool, stdin: bool) -> bool {
     stdout && stdin
 }
 
+/// The UI's model for `app`'s configuration, with `keys` and `today`.
+fn model(app: &App, keys: KeyMap, today: chrono::NaiveDate) -> Model {
+    let ui = &app.config().ui;
+    Model::new(app.workflow(), Theme::from_config(ui), app.out.color())
+        .with_keys(keys)
+        .with_today(today)
+        .with_week_start(ui.week_start.weekday())
+        .with_due_format(ui.due_format)
+        .with_detail_position(ui.detail_position)
+        .with_worktrees(app.worktrees())
+        .with_home(app.opts.home.clone())
+        .with_osc8(!ui.no_osc8)
+        .with_default_status(app.config().workflow.default_status.clone())
+        .with_default_project(Some(
+            crate::commands::existing_dir(&app.opts.cwd).unwrap_or_else(|| app.opts.cwd.clone()),
+        ))
+        .with_sources(source_choices(app.config()))
+}
+
 /// Runs `ui`.
 pub fn run(app: &App) -> Result<()> {
     if app.out.json_mode() {
@@ -54,21 +73,8 @@ pub fn run(app: &App) -> Result<()> {
     ) {
         return Err(CliError::user("tasq ui needs a terminal"));
     }
-    let theme = Theme::from_config(&app.config().ui);
     let clock = app.clock()?;
-    let model = Model::new(app.workflow(), theme, app.out.color())
-        .with_keys(keys)
-        .with_today(clock.today())
-        .with_week_start(app.config().ui.week_start.weekday())
-        .with_due_format(app.config().ui.due_format)
-        .with_detail_position(app.config().ui.detail_position)
-        .with_worktrees(app.worktrees())
-        .with_home(app.opts.home.clone())
-        .with_default_status(app.config().workflow.default_status.clone())
-        .with_default_project(Some(
-            crate::commands::existing_dir(&app.opts.cwd).unwrap_or_else(|| app.opts.cwd.clone()),
-        ))
-        .with_sources(source_choices(app.config()));
+    let model = model(app, keys, clock.today());
     let mut store = app.open_store()?;
     let exe = std::env::current_exe()
         .map_err(|e| CliError::Internal(anyhow::anyhow!("locating the tasq binary: {e}")))?;
@@ -299,6 +305,18 @@ mod tests {
         let global = GlobalArgs::default();
         let out = Output::new(&global, &loaded.config.ui, &opts.env, false);
         App::new(global, opts, loaded, out)
+    }
+
+    #[test]
+    fn the_model_follows_the_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 14).unwrap();
+        let m = model(&app_in(dir.path(), ""), KeyMap::default(), today);
+        assert!(m.osc8, "links are on by default");
+        assert_eq!(m.home.as_deref(), Some(dir.path()));
+        assert_eq!(m.today, today);
+        let app = app_in(dir.path(), "[ui]\nno_osc8 = true\n");
+        assert!(!model(&app, KeyMap::default(), today).osc8);
     }
 
     fn host(app: &App) -> CliHost<'_> {

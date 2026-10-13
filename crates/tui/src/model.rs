@@ -202,6 +202,9 @@ pub struct Model {
     /// The user's home, shown as `~` in the detail's paths; `None` shows
     /// them in full.
     pub home: Option<PathBuf>,
+    /// Whether the detail's link labels are OSC 8 hyperlinks (off with
+    /// `ui.no_osc8`).
+    pub osc8: bool,
     /// Group colours (`[ui.colors]`).
     pub theme: Theme,
     /// Whether colours are used at all (`false` under `NO_COLOR`).
@@ -266,6 +269,7 @@ impl Model {
             default_status: Status::READY,
             default_project: None,
             home: None,
+            osc8: false,
             theme,
             color,
             keys: KeyMap::default(),
@@ -338,6 +342,13 @@ impl Model {
     #[must_use]
     pub fn with_home(mut self, home: Option<PathBuf>) -> Self {
         self.home = home;
+        self
+    }
+
+    /// Whether link labels are OSC 8 hyperlinks (`!ui.no_osc8`).
+    #[must_use]
+    pub fn with_osc8(mut self, osc8: bool) -> Self {
+        self.osc8 = osc8;
         self
     }
 
