@@ -400,6 +400,50 @@ mod store {
     }
 
     #[test]
+    fn reconcile_repairs_the_index_and_doctor_then_passes() {
+        // The fixture index names a file that does not exist.
+        let env = TestEnv::fixture();
+        std::fs::write(
+            env.notebook().join("20261001000000.todo.md"),
+            "# [ ] Unlisted\n",
+        )
+        .unwrap();
+        let out = env.tasq().args(["store", "reconcile"]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            "blanked  20260905130000.todo.md (file is gone; its id stays unused)\n\
+             appended 20261001000000.todo.md\n"
+        );
+        let index = std::fs::read_to_string(env.notebook().join(".index")).unwrap();
+        assert_eq!(
+            index,
+            "20260901090000.todo.md\nnotes.md\n20260902100000.todo.md\n20260903110000.todo.md\n\n\
+             20260904120000.todo.md\n20260906140000.todo.md\n20261001000000.todo.md\n"
+        );
+        let out = env.tasq().args(["view", "8"]).output().unwrap();
+        assert!(
+            stdout(&out).starts_with("# [ ] Unlisted"),
+            "{}",
+            stdout(&out)
+        );
+        let out = env.tasq().arg("doctor").output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
+        let out = env
+            .tasq()
+            .args(["--json", "store", "reconcile"])
+            .output()
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["schema"], 1);
+        assert_eq!(value["changed"], false);
+        assert_eq!(value["blanked"], serde_json::json!([]));
+        assert_eq!(value["appended"], serde_json::json!([]));
+        let out = env.tasq().args(["store", "reconcile"]).output().unwrap();
+        assert_eq!(stdout(&out), "index already matches the files\n");
+    }
+
+    #[test]
     fn verbose_prints_the_notebook_path() {
         let env = TestEnv::fixture();
         let out = env.tasq().args(["-v", "store", "info"]).output().unwrap();
@@ -1061,7 +1105,7 @@ mod worktree {
         env.git_repo(&wt);
         env.git(&wt, &["checkout", "-q", "-b", "feature/x"]);
         let out = env
-            .tasq()
+            .tasq_wt()
             .args(["worktree", "3", wt.to_str().unwrap()])
             .output()
             .unwrap();
@@ -1079,7 +1123,7 @@ mod worktree {
                 .contains("- [ROOT]/home/wt (`feature/x`)\n"),
         );
         let again = env
-            .tasq()
+            .tasq_wt()
             .args(["worktree", "3", wt.to_str().unwrap()])
             .output()
             .unwrap();
@@ -1091,7 +1135,7 @@ mod worktree {
         let plain = env.home.join("plain");
         std::fs::create_dir(&plain).unwrap();
         let out = env
-            .tasq()
+            .tasq_wt()
             .args(["worktree", "3", plain.to_str().unwrap()])
             .output()
             .unwrap();
@@ -1099,110 +1143,741 @@ mod worktree {
             env.normalize(&stdout(&out)),
             "[3] worktree: [ROOT]/home/plain\n"
         );
-        env.tasq()
+        env.tasq_wt()
             .args(["worktree", "3", "/definitely/not/here"])
             .assert()
             .code(1)
             .stderr("tasq: worktree path not found: /definitely/not/here\n");
-        env.tasq().args(["worktree", "3"]).assert().code(2);
+        env.tasq_wt()
+            .args(["worktree", "3"])
+            .assert()
+            .code(1)
+            .stderr("tasq: task 3 tracks no project and work.default_project is unset; set one with tasq project 3 <path>\n");
     }
 
-    #[test]
-    fn create_with_git_manager() {
-        let env = TestEnv::fixture();
+    /// A git repository at `<home>/proj` with an origin, tracked as task
+    /// 3's project.
+    fn project_repo(env: &TestEnv) -> std::path::PathBuf {
         let project = env.home.join("proj");
         env.git_repo(&project);
-        env.tasq()
+        env.git(
+            &project,
+            &["remote", "add", "origin", "git@host:group/app.git"],
+        );
+        env.tasq_wt()
             .args(["project", "3", project.to_str().unwrap()])
             .assert()
             .success();
+        project
+    }
+
+    #[test]
+    fn declare_writes_the_entry_and_runs_nothing() {
+        let env = TestEnv::fixture();
+        project_repo(&env);
+        let declare = |args: &[&str]| {
+            let out = env
+                .tasq_wt()
+                .env("PATH", "")
+                .args(["worktree", "3"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+            assert_eq!(stderr(&out), "", "{args:?}");
+            env.normalize(&stdout(&out))
+        };
+        assert_eq!(
+            declare(&["feature/x"]),
+            "[3] worktree declared: [ROOT]/home/proj-feature_x (feature/x)\n"
+        );
+        assert_eq!(
+            declare(&["feature/x"]),
+            "[3] worktree already declared: [ROOT]/home/proj-feature_x (feature/x)\n"
+        );
+        assert_eq!(
+            declare(&[]),
+            "[3] worktree declared: [ROOT]/home/proj-3_answer_the_support_ticket \
+             (3-answer-the-support-ticket)\n"
+        );
+        assert!(
+            env.normalize(&env.read_task("20260902100000.todo.md"))
+                .contains(
+                    "\n## Worktrees\n\n- [ROOT]/home/proj-feature_x (`feature/x`)\n\
+                 - [ROOT]/home/proj-3_answer_the_support_ticket (`3-answer-the-support-ticket`)\n"
+                ),
+            "{}",
+            env.read_task("20260902100000.todo.md")
+        );
+        assert!(!env.home.join("proj-feature_x").exists(), "nothing on disk");
+        env.tasq_wt()
+            .args(["worktree", "3", "a~b"])
+            .assert()
+            .code(1)
+            .stderr("tasq: worktree path not found: a~b\n");
+    }
+
+    #[test]
+    fn templates_see_the_main_checkout_and_the_repo() {
+        let env = TestEnv::fixture();
+        let project = project_repo(&env);
+        let linked = env.home.join("linked");
+        env.git(
+            &project,
+            &["worktree", "add", "-q", "-b", "l", linked.to_str().unwrap()],
+        );
+        env.tasq_wt()
+            .args(["project", "3", linked.join("sub").to_str().unwrap()])
+            .assert()
+            .code(1);
+        std::fs::create_dir(linked.join("sub")).unwrap();
+        env.tasq_wt()
+            .args(["project", "3", linked.join("sub").to_str().unwrap()])
+            .assert()
+            .success();
         let out = env
-            .tasq()
-            .env("TASQ_WORKTREE_MANAGER", "git")
+            .tasq_wt()
+            .env("PATH", "")
+            .env(
+                "TASQ_WORKTREE_PATH",
+                "{{project}}/../wt/{{repo}}/{{project_name}}-{{branch}}",
+            )
+            .args(["worktree", "3", "b"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "[3] worktree declared: [ROOT]/home/proj/../wt/app/proj-b (b)\n"
+        );
+        // A git directory kept elsewhere: the checkout is the project.
+        let separate = env.home.join("sep");
+        env.git(
+            &env.home,
+            &[
+                "init",
+                "-q",
+                "--separate-git-dir",
+                env.root.path().join("store").to_str().unwrap(),
+                separate.to_str().unwrap(),
+            ],
+        );
+        env.tasq_wt()
+            .args(["project", "3", separate.to_str().unwrap()])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .env("PATH", "")
+            .args(["worktree", "3", "c"])
+            .assert()
+            .success()
+            .stdout(predicate::str::ends_with("/home/sep-c (c)\n"));
+    }
+
+    #[test]
+    fn create_declares_on_flag_or_in_a_git_checkout() {
+        let env = TestEnv::fixture();
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        let plain = env.home.join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        let create = |args: &[&str]| {
+            let out = env
+                .tasq_wt()
+                .env("PATH", "")
+                .arg("create")
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+            assert_eq!(stderr(&out), "", "{args:?}");
+            env.normalize(&stdout(&out))
+        };
+        let p = project.to_str().unwrap();
+        assert_eq!(
+            create(&["Fix login", "--project", p, "--worktree"]),
+            "[8] created: Fix login (#ready #B)\n\
+             [8] worktree declared: [ROOT]/home/proj-8_fix_login (8-fix-login)\n"
+        );
+        assert_eq!(
+            create(&["Auto", "--project", p]),
+            "[9] created: Auto (#ready #B)\n\
+             [9] worktree declared: [ROOT]/home/proj-9_auto (9-auto)\n"
+        );
+        assert_eq!(
+            create(&["Named", "--project", p, "--worktree", "feat/n"]),
+            "[10] created: Named (#ready #B)\n\
+             [10] worktree declared: [ROOT]/home/proj-feat_n (feat/n)\n"
+        );
+        assert_eq!(
+            create(&["Plain", "--project", plain.to_str().unwrap()]),
+            "[11] created: Plain (#ready #B)\n"
+        );
+        assert_eq!(
+            create(&["Never", "--project", p, "--set", "worktree.on_create=never"]),
+            "[12] created: Never (#ready #B)\n"
+        );
+        let json = env
+            .tasq_wt()
+            .args(["create", "J", "--project", p, "--json"])
+            .output()
+            .unwrap();
+        assert!(
+            env.normalize(&stdout(&json))
+                .contains("\"path\": \"[ROOT]/home/proj-13_j\""),
+            "{}",
+            stdout(&json)
+        );
+    }
+
+    #[test]
+    fn create_checks_the_flag_before_writing() {
+        let env = TestEnv::fixture();
+        let index = env.read_task(".index");
+        env.tasq_wt()
+            .args(["create", "T", "--worktree", "a b"])
+            .assert()
+            .code(1)
+            .stderr("tasq: invalid branch name \"a b\"\n");
+        env.tasq()
+            .args(["create", "T", "--worktree"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
+        assert_eq!(env.read_task(".index"), index, "nothing created");
+        // Disabled, a git checkout gets no worktree.
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        env.tasq()
+            .args(["create", "Off", "--project", project.to_str().unwrap()])
+            .assert()
+            .success()
+            .stdout("[8] created: Off (#ready #B)\n");
+    }
+
+    #[test]
+    fn create_declares_and_creates_now() {
+        let env = TestEnv::fixture();
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        env.tasq_wt()
+            .args(["project", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        // Another worktree that exists does not stand in for the new one.
+        let other = env.home.join("other");
+        std::fs::create_dir(&other).unwrap();
+        env.tasq_wt()
+            .args(["worktree", "3", other.to_str().unwrap()])
+            .assert()
+            .success();
+        let out = env
+            .tasq_wt()
             .args(["worktree", "3", "--create", "feature/y"])
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(
             env.normalize(&stdout(&out)),
-            "[3] worktree: [ROOT]/home/proj-feature-y (feature/y)\n"
+            "[3] created worktree [ROOT]/home/proj-feature_y on feature/y (new from HEAD)\n"
         );
-        assert!(env.home.join("proj-feature-y").join("README").is_file());
+        assert!(env.home.join("proj-feature_y").join("README").is_file());
+        assert!(
+            env.normalize(&env.read_task("20260902100000.todo.md"))
+                .contains("- [ROOT]/home/proj-feature_y (`feature/y`)\n")
+        );
+        env.tasq_wt()
+            .args(["worktree", "3", "--create", "feature/y"])
+            .assert()
+            .success()
+            .stdout(predicate::str::ends_with(
+                "/home/proj-feature_y (feature/y)\n",
+            ));
     }
 
     #[test]
-    fn create_with_a_command_manager() {
+    fn up_tracks_a_branch_only_the_remote_has() {
         let env = TestEnv::fixture();
-        let project = env.home.join("ws").join("proj");
+        let seed = env.home.join("seed");
+        env.git_repo(&seed);
+        env.git(&env.home, &["clone", "-q", "--bare", "seed", "origin.git"]);
+        env.git(&env.home, &["clone", "-q", "origin.git", "proj"]);
+        env.git(&seed, &["push", "-q", "../origin.git", "main:feat/r"]);
+        let project = env.home.join("proj");
+        env.tasq_wt()
+            .args(["project", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(["worktree", "3", "feat/r"])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(["worktree", "up", "3", "--dry-run"])
+            .assert()
+            .success()
+            .stdout(predicate::str::ends_with(
+                "/home/proj-feat_r on feat/r (tracking origin/feat/r)\n",
+            ));
+        assert!(
+            !env.git(&project, &["branch", "-r"]).contains("feat/r"),
+            "a dry run fetches nothing"
+        );
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .success();
+        let wt = env.home.join("proj-feat_r");
+        assert_eq!(
+            env.git(&wt, &["rev-parse", "--abbrev-ref", "@{upstream}"])
+                .trim(),
+            "origin/feat/r"
+        );
+    }
+
+    /// Task 3 in a repository at `<home>/proj` whose own `.tasq.toml` (not
+    /// the one in the directory tasq runs from) sets the layout and the
+    /// provisioning; templates live next to that file.
+    fn provisioned_project(env: &TestEnv, template: &str) -> std::path::PathBuf {
+        let project = env.home.join("proj");
         env.git_repo(&project);
-        let log = env.home.join("mkwt.log");
-        let target = env.home.join("ws").join("wt-z");
+        std::fs::write(
+            project.join(".gitignore"),
+            "node_modules/\n.env\n.tasq.toml\ntpl/\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(project.join("node_modules/pkg")).unwrap();
+        std::fs::write(project.join(".env"), "SECRET=1\n").unwrap();
+        std::fs::create_dir(project.join("tpl")).unwrap();
+        std::fs::write(project.join("tpl/envrc"), template).unwrap();
+        std::fs::write(
+            project.join(".tasq.toml"),
+            "[worktree]\n\
+             path = \"{{project_parent}}/wt-{{branch_safe}}\"\n\
+             symlinks = [\"node_modules\", \"missing\"]\n\
+             copies = [\".env\"]\n\
+             templates = [{ source = \"tpl/envrc\", target = \".envrc\" }]\n",
+        )
+        .unwrap();
+        env.tasq_wt()
+            .args(["project", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(["worktree", "3", "b"])
+            .assert()
+            .success();
+        project
+    }
+
+    #[test]
+    fn up_provisions_from_the_repository_config() {
+        let env = TestEnv::fixture();
+        let project = provisioned_project(&env, "export BRANCH={{branch}} TASK={{id}}\n");
+        let wt = env.home.join("wt-b");
+        let dry = env
+            .tasq_wt()
+            .args(["worktree", "up", "3", "--dry-run"])
+            .output()
+            .unwrap();
+        assert!(dry.status.success(), "{}", stderr(&dry));
+        assert_eq!(
+            env.normalize(&stdout(&dry)),
+            "[3] would create worktree [ROOT]/home/wt-b on b (new from HEAD)\n  \
+             copy .env from [ROOT]/home/proj/.env\n  \
+             link node_modules -> [ROOT]/home/proj/node_modules\n  \
+             link missing -> [ROOT]/home/proj/missing\n  \
+             render .envrc from [ROOT]/home/proj/tpl/envrc\n"
+        );
+        assert!(!wt.exists());
+        let out = env
+            .tasq_wt()
+            .args(["worktree", "up", "3"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(
+            env.normalize(&stderr(&out))
+                .contains("tasq: warning: link: [ROOT]/home/proj/missing not found, skipped\n"),
+            "{}",
+            stderr(&out)
+        );
+        assert_eq!(
+            std::fs::read_link(wt.join("node_modules")).unwrap(),
+            project.join("node_modules")
+        );
+        assert_eq!(
+            std::fs::read_to_string(wt.join(".env")).unwrap(),
+            "SECRET=1\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(wt.join(".envrc")).unwrap(),
+            "export BRANCH=b TASK=3\n"
+        );
+    }
+
+    #[test]
+    fn a_broken_template_stops_before_git_runs() {
+        let env = TestEnv::fixture();
+        provisioned_project(&env, "{{nope}}\n");
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::ends_with(
+                "/home/proj/tpl/envrc: unknown placeholder {{nope}}\n",
+            ));
+        assert!(!env.home.join("wt-b").exists());
+        env.tasq_wt()
+            .args(["worktree", "up", "3", "--dry-run"])
+            .assert()
+            .code(1);
+    }
+
+    /// Task 3 in a repository at `<home>/proj` declaring `b`, with a `hook`
+    /// program that logs where it ran and what it got to `<home>/hooks.log`.
+    fn hooked_project(env: &TestEnv, repo_hooks: &str) -> std::path::PathBuf {
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        std::fs::write(project.join(".gitignore"), ".tasq.toml\n").unwrap();
+        std::fs::write(project.join(".tasq.toml"), repo_hooks).unwrap();
         env.fake_tool(
-            "mkwt",
-            &format!(
-                "[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\nprintf '%s\\n' \"$*\" > '{}'\n/bin/mkdir -p '{}'\necho 'Linked .envrc'\necho '{}'",
-                log.display(),
-                target.display(),
-                target.display()
+            "hook",
+            "echo \"$1|$TASQ_TASK_ID|$TASQ_BRANCH|$TASQ_WORKTREE|$TASQ_VAR_BRANCH_SAFE|$(pwd)|$2\" >> \"$HOME/hooks.log\"",
+        );
+        env.fake_tool("fail", "echo nope >&2; exit 3");
+        env.tasq_wt()
+            .args(["project", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(["worktree", "3", "b"])
+            .assert()
+            .success();
+        project
+    }
+
+    const REPO_HOOKS: &str = "[worktree.hooks]\n\
+        pre-create = [\"hook pre\"]\n\
+        post-create = [\"hook post '{{title}}'\", \"hook after\"]\n";
+
+    fn hook_log(env: &TestEnv) -> String {
+        env.normalize(&std::fs::read_to_string(env.home.join("hooks.log")).unwrap_or_default())
+    }
+
+    /// Removes the worktree `b` so the next `up` creates it again.
+    fn remove_b(env: &TestEnv, project: &std::path::Path) {
+        let wt = env.home.join("proj-b");
+        env.git(
+            project,
+            &["worktree", "remove", "--force", wt.to_str().unwrap()],
+        );
+        env.git(project, &["branch", "-D", "b"]);
+        let _ = std::fs::remove_file(env.home.join("hooks.log"));
+    }
+
+    #[test]
+    fn repository_hooks_run_only_once_approved() {
+        let env = TestEnv::fixture();
+        let project = hooked_project(&env, REPO_HOOKS);
+        // Not approved, no terminal: skipped with a warning; the worktree is made.
+        let out = env
+            .tasq_wt()
+            .args(["worktree", "up", "3"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(
+            env.normalize(&stderr(&out)).contains(
+                "tasq: warning: hooks from [ROOT]/home/proj/.tasq.toml are not approved and were \
+                 skipped: \"hook pre\", \"hook post '{{title}}'\", \"hook after\"; approve them with tasq worktree \
+                 trust [ROOT]/home/proj, or pass --yes\n"
             ),
+            "{}",
+            stderr(&out)
+        );
+        assert_eq!(hook_log(&env), "");
+        assert!(env.home.join("proj-b").is_dir());
+        // --yes runs them this once: pre-create in the main checkout,
+        // post-create in the worktree, both with the variables.
+        remove_b(&env, &project);
+        env.tasq_wt()
+            .args(["worktree", "up", "3", "--yes"])
+            .assert()
+            .success();
+        assert_eq!(
+            hook_log(&env),
+            "pre|3|b|[ROOT]/home/proj-b|b|[ROOT]/home/proj|\n\
+             post|3|b|[ROOT]/home/proj-b|b|[ROOT]/home/proj-b|Answer the support ticket\n\
+             after|3|b|[ROOT]/home/proj-b|b|[ROOT]/home/proj-b|\n"
+        );
+        remove_b(&env, &project);
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .success();
+        assert_eq!(hook_log(&env), "", "--yes stored nothing");
+        // `trust` approves ahead of time.
+        remove_b(&env, &project);
+        env.tasq_wt()
+            .current_dir(&project)
+            .args(["worktree", "trust"])
+            .assert()
+            .success()
+            .stdout(predicate::str::ends_with(
+                "/home/proj/.tasq.toml:\n  pre-create: hook pre\n  post-create: hook post '{{title}}'\n  post-create: hook after\n",
+            ));
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .success();
+        assert_eq!(hook_log(&env).lines().count(), 3);
+        // An edited line asks again; the unchanged one still runs.
+        remove_b(&env, &project);
+        std::fs::write(
+            project.join(".tasq.toml"),
+            REPO_HOOKS.replace("hook post", "hook changed"),
+        )
+        .unwrap();
+        let dry = env
+            .tasq_wt()
+            .args(["worktree", "up", "3", "--dry-run"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            env.normalize(&stdout(&dry)),
+            "[3] would create worktree [ROOT]/home/proj-b on b (new from HEAD)\n  \
+             run pre-create hook: hook pre\n  \
+             run post-create hook: hook after\n  \
+             skip post-create hook (not approved): hook changed '{{title}}'\n"
+        );
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .success();
+        let log = hook_log(&env);
+        let ran: Vec<&str> = log.lines().map(|l| l.split('|').next().unwrap()).collect();
+        assert_eq!(ran, ["pre", "after"], "only the edited line is skipped");
+        env.tasq_wt()
+            .args(["worktree", "trust", env.home.join("nope").to_str().unwrap()])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::ends_with("/home/nope\n"));
+    }
+
+    #[test]
+    fn hook_output_shows_with_verbose_and_a_broken_trust_file_is_an_error() {
+        let env = TestEnv::fixture();
+        let project = hooked_project(&env, "");
+        env.fake_tool("say", "echo hello");
+        env.write_global_config(
+            "[worktree.hooks]\npre-create = [\"hook pre\"]\npost-create = [\"say\"]\n",
         );
         let out = env
-            .tasq()
-            .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
-            .env("TASQ_WORKTREE_MANAGER", "command")
-            .env("TASQ_WORKTREE_COMMAND", "mkwt {new} {branch} --no-tmux -s")
-            .args(["worktree", "3", "--create", "feature/z"])
+            .tasq_wt()
+            .args(["worktree", "up", "3", "-v"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(
+            stderr(&out).contains("tasq: post-create hook \"say\": hello\n"),
+            "{}",
+            stderr(&out)
+        );
+        assert!(
+            !stderr(&out).contains("pre-create hook"),
+            "a silent hook says nothing"
+        );
+        remove_b(&env, &project);
+        std::fs::write(project.join(".tasq.toml"), REPO_HOOKS).unwrap();
+        let state = env.home.join(".local/state/tasq");
+        std::fs::create_dir_all(state.join("trust.toml")).unwrap();
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("/state/tasq/trust.toml: "));
+        std::fs::remove_dir(state.join("trust.toml")).unwrap();
+        std::fs::write(state.join("trust.toml"), "not toml [").unwrap();
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("/state/tasq/trust.toml: "));
+    }
+
+    #[test]
+    fn global_hooks_run_without_asking_and_pre_create_can_stop() {
+        let env = TestEnv::fixture();
+        let project = hooked_project(&env, "");
+        env.write_global_config(
+            "[worktree.hooks]\npre-create = [\"hook pre\"]\npost-create = [\"fail\"]\n",
+        );
+        let out = env
+            .tasq_wt()
+            .args(["worktree", "up", "3"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(
+            stderr(&out).ends_with(
+                "\ntasq: warning: post-create hook \"fail\" failed: exit status 3: nope\n"
+            ),
+            "{}",
+            stderr(&out)
+        );
+        assert!(hook_log(&env).starts_with("pre|3|b|"));
+        assert!(
+            env.home.join("proj-b").is_dir(),
+            "a post-create failure keeps the worktree"
+        );
+        remove_b(&env, &project);
+        env.write_global_config("[worktree.hooks]\npre-create = [\"fail\"]\n");
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::ends_with(
+                "\ntasq: pre-create hook \"fail\" failed: exit status 3: nope\n",
+            ));
+        assert!(
+            !env.home.join("proj-b").exists(),
+            "a pre-create failure creates nothing"
+        );
+        env.tasq_wt()
+            .args(["worktree", "trust", project.to_str().unwrap()])
+            .assert()
+            .success()
+            .stdout(predicate::str::ends_with("/home/proj/.tasq.toml\n"))
+            .stdout(predicate::str::starts_with("no hooks to approve in "));
+    }
+
+    #[test]
+    fn trust_json_lists_the_approved_lines() {
+        let env = TestEnv::fixture();
+        let project = hooked_project(&env, REPO_HOOKS);
+        let out = env
+            .tasq_wt()
+            .args(["worktree", "trust", project.to_str().unwrap(), "--json"])
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(
             env.normalize(&stdout(&out)),
-            "Linked .envrc\n[3] worktree: [ROOT]/home/ws/wt-z (feature/z)\n"
+            "{\n  \"approved\": [\n    {\n      \"kind\": \"pre-create\",\n      \
+             \"line\": \"hook pre\"\n    },\n    {\n      \"kind\": \"post-create\",\n      \
+             \"line\": \"hook post '{{title}}'\"\n    },\n    {\n      \
+             \"kind\": \"post-create\",\n      \"line\": \"hook after\"\n    }\n  ],\n  \
+             \"file\": \"[ROOT]/home/proj/.tasq.toml\",\n  \"schema\": 1\n}\n"
         );
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .success();
+        assert_eq!(hook_log(&env).lines().count(), 3, "--json approved them");
+        let other = env.home.join("other");
+        env.git_repo(&other);
+        let out = env
+            .tasq_wt()
+            .args(["--json", "worktree", "trust", other.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(
-            std::fs::read_to_string(&log).unwrap(),
-            "-b feature/z --no-tmux -s\n"
+            env.normalize(&stdout(&out)),
+            "{\n  \"approved\": [],\n  \"file\": \"[ROOT]/home/other\",\n  \"schema\": 1\n}\n"
         );
+    }
+
+    #[test]
+    fn up_creates_the_declared_worktree() {
+        let env = TestEnv::fixture();
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        env.git(&project, &["branch", "start"]);
+        env.git(&project, &["checkout", "-q", "-b", "elsewhere"]);
+        std::fs::write(project.join("later"), "x\n").unwrap();
+        env.git(&project, &["add", "later"]);
+        env.git(&project, &["commit", "-q", "-m", "later"]);
+        env.tasq_wt()
+            .args(["project", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .code(1)
+            .stderr(
+                "tasq: task 3 declares no worktree with a branch; declare one with tasq worktree 3 [BRANCH]\n",
+            );
+        env.tasq_wt()
+            .args(["worktree", "3", "b"])
+            .assert()
+            .success();
+        let up = |args: &[&str]| {
+            let out = env
+                .tasq_wt()
+                .args(["worktree", "up", "3"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+            env.normalize(&stdout(&out))
+        };
+        assert_eq!(
+            up(&["--from", "start", "--dry-run"]),
+            "[3] would create worktree [ROOT]/home/proj-b on b (new from start)\n"
+        );
+        assert!(!env.home.join("proj-b").exists());
+        assert_eq!(
+            up(&["--from", "start"]),
+            "[3] created worktree [ROOT]/home/proj-b on b (new from start)\n"
+        );
+        assert!(
+            !env.home.join("proj-b").join("later").exists(),
+            "from start"
+        );
+        assert_eq!(up(&[]), "[3] worktree exists: [ROOT]/home/proj-b (b)\n");
+        env.tasq()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
     }
 
     #[test]
     fn create_errors() {
         let env = TestEnv::fixture();
-        env.tasq()
+        env.tasq_wt()
             .args(["worktree", "3", "--create", "b"])
             .assert()
             .code(1)
             .stderr("tasq: task 3 tracks no project and work.default_project is unset; set one with tasq project 3 <path>\n");
         let project = env.home.join("proj");
         std::fs::create_dir(&project).unwrap();
-        // The command manager without a command is a config error.
-        env.tasq()
-            .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
-            .args(["worktree", "3", "--create", "b", "--set", "work.worktree_manager=command"])
+        // The removed command manager keys name their replacement.
+        env.tasq_wt()
+            .args([
+                "worktree",
+                "3",
+                "--create",
+                "b",
+                "--set",
+                "work.worktree_manager=command",
+            ])
             .assert()
             .code(1)
-            .stderr(predicate::str::starts_with(
-                "tasq: work.worktree_manager = \"command\" (set by --set) requires work.worktree_command",
-            ));
-        // A failing command surfaces its message.
-        env.fake_tool("mkwt", "echo 'boom' >&2\nexit 3");
-        env.tasq()
-            .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
-            .env("TASQ_WORKTREE_MANAGER", "command")
-            .env("TASQ_WORKTREE_COMMAND", "mkwt {branch}")
-            .args(["worktree", "3", "--create", "b"])
-            .assert()
-            .code(1)
-            .stderr("tasq: mkwt failed for branch 'b': boom\n");
-        // git is the default manager and needs a repository.
-        env.tasq()
+            .stderr("tasq: --set: unknown config key \"work.worktree_manager\"\n");
+        // git needs a repository; nothing is left at the path.
+        env.tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
             .args(["worktree", "3", "--create", "b"])
             .assert()
             .code(1)
-            .stderr(predicate::str::starts_with(
-                "tasq: git failed for branch 'b':",
+            .stderr(predicate::str::contains(
+                "tasq: git worktree add --no-track -b b ",
             ));
+        assert!(!env.home.join("proj-b").exists());
     }
 }
 
@@ -1377,7 +2052,7 @@ mod launch {
         let env = TestEnv::fixture();
         let before = env.read_task("20260902100000.todo.md");
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .args(["pick", "3", "--dry-run"])
             .output()
@@ -1442,12 +2117,10 @@ mod launch {
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
-        // Task 1 tracks a project and a worktree that do not exist here.
+        // Task 1 tracks a project that does not exist here.
         assert_eq!(
             env.normalize(&stderr(&out)),
-            "tasq: warning: tracked project not found: /home/pau/code/tasks; using work.default_project\n\
-             tasq: warning: tracked worktree is gone: /home/pau/code/tasks-wt/feature-a\n\
-             tasq: warning: dry run: would offer to recreate it on branch feature-a; starting in the project instead\n"
+            "tasq: warning: tracked project not found: /home/pau/code/tasks; using work.default_project\n"
         );
         assert_eq!(
             env.normalize(&stdout(&out)),
@@ -1465,31 +2138,137 @@ mod launch {
             .stderr("tasq: no in-progress or ready todos\n");
     }
 
+    /// Task 3 with a git repository at `<home>/proj` as its project and a
+    /// worktree declared on `branch`; a fake `$SHELL` that prints where it
+    /// runs.
+    fn declared(env: &TestEnv, branch: &str) -> std::path::PathBuf {
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        env.tasq_wt()
+            .args(["project", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(["worktree", "3", branch])
+            .assert()
+            .success();
+        env.fake_tool("fakesh", "pwd");
+        project
+    }
+
     #[test]
-    fn missing_worktree_is_not_asked_about_without_a_terminal() {
+    fn a_launch_creates_the_declared_worktree_and_starts_there() {
         let env = TestEnv::fixture();
-        let out = env
-            .tasq()
-            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
-            .args(["pick", "1", "--launcher", "shell", "--dry-run"])
+        declared(&env, "feat/x");
+        let wt = env.home.join("proj-feat_x");
+        let dry = env
+            .tasq_wt()
+            .args(["pick", "3", "--launcher", "shell", "--dry-run"])
             .output()
             .unwrap();
-        assert!(out.status.success());
-        // stdin is a pipe here, so even without --dry-run no prompt appears.
-        let out = env
-            .tasq()
-            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
-            .env("SHELL", "/nonexistent/shell")
-            .args(["pick", "1", "--launcher", "shell"])
-            .output()
-            .unwrap();
-        assert_eq!(out.status.code(), Some(1));
-        let err = stderr(&out);
-        assert!(
-            err.contains("no terminal to ask on, starting in the project instead"),
-            "{err}"
+        assert!(dry.status.success(), "{}", stderr(&dry));
+        assert_eq!(
+            env.normalize(&stdout(&dry)),
+            "[3] -> in-progress (skipped: dry run)\n\
+             Task: [3] Answer the support ticket\n\
+             Starting in tracked worktree: [ROOT]/home/proj-feat_x\n\
+             Launcher: shell (dry run)\n\
+             create worktree [ROOT]/home/proj-feat_x on feat/x (new from HEAD)\n\
+             cd [ROOT]/home/proj-feat_x\n\
+             TASQ_TASK_ID=3 TASQ_NOTEBOOK=home exec sh\n"
         );
-        assert!(err.contains("tasq: /nonexistent/shell failed:"), "{err}");
+        assert!(
+            stderr(&dry).contains("origin/HEAD is not set; feat/x starts from HEAD"),
+            "{}",
+            stderr(&dry)
+        );
+        assert!(
+            stderr(&dry).contains(
+                "tasq: warning: branch feat/x is gone or new: neither the repository nor \
+                 origin has it; it starts fresh from HEAD\n"
+            ),
+            "{}",
+            stderr(&dry)
+        );
+        assert!(!wt.exists(), "a dry run creates nothing");
+        let out = env
+            .tasq_wt()
+            .env("SHELL", env.bin.join("fakesh"))
+            .args(["pick", "3", "--launcher", "shell"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "[3] -> in-progress\n\
+             Task: [3] Answer the support ticket\n\
+             Created worktree: [ROOT]/home/proj-feat_x on feat/x (new from HEAD)\n\
+             Starting in tracked worktree: [ROOT]/home/proj-feat_x\n\
+             [ROOT]/home/proj-feat_x\n"
+        );
+        assert_eq!(env.git(&wt, &["branch", "--show-current"]).trim(), "feat/x");
+        // Next time it exists and is reused.
+        let again = env
+            .tasq_wt()
+            .env("SHELL", env.bin.join("fakesh"))
+            .args(["pick", "3", "--launcher", "shell"])
+            .output()
+            .unwrap();
+        assert!(!stdout(&again).contains("Created"), "{}", stdout(&again));
+        assert!(stdout(&again).ends_with("/home/proj-feat_x\n"));
+    }
+
+    #[test]
+    fn a_worktree_that_cannot_be_created_aborts_the_launch() {
+        let env = TestEnv::fixture();
+        // `main` is checked out in the project itself.
+        declared(&env, "main");
+        let before = env.read_task("20260902100000.todo.md");
+        env.tasq_wt()
+            .env("SHELL", env.bin.join("fakesh"))
+            .args(["pick", "3", "--launcher", "shell"])
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr(
+                predicate::str::starts_with("tasq: git worktree add ")
+                    .and(predicate::str::contains("'main'")),
+            );
+        assert_eq!(
+            env.read_task("20260902100000.todo.md"),
+            before,
+            "the task is not set in-progress"
+        );
+        assert!(!env.home.join("proj-main").exists());
+    }
+
+    #[test]
+    fn a_gone_worktree_without_a_branch_starts_in_the_project() {
+        let env = TestEnv::fixture();
+        let project = env.home.join("proj");
+        std::fs::create_dir(&project).unwrap();
+        let plain = env.home.join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        env.tasq_wt()
+            .args(["project", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(["worktree", "3", plain.to_str().unwrap()])
+            .assert()
+            .success();
+        std::fs::remove_dir(&plain).unwrap();
+        let out = env
+            .tasq_wt()
+            .args(["pick", "3", "--launcher", "shell", "--dry-run"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            "tasq: warning: tracked worktree is gone: [ROOT]/home/plain; it records no branch to create it on, starting in the project\n"
+        );
+        assert!(stdout(&out).contains("Starting in project: "));
     }
 
     #[test]
@@ -1652,7 +2431,7 @@ mod launch {
     fn auto_launcher_is_herdr_inside_herdr() {
         let env = TestEnv::fixture();
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .env("HERDR_ENV", "1")
             .env("TASQ_LAUNCHER", "auto")
@@ -1679,7 +2458,7 @@ mod launch {
                 .any(|s| s.as_str().unwrap().contains("herdr workspace rename"))
         );
         let outside = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .env("TASQ_LAUNCHER", "auto")
             .args(["pick", "3", "--dry-run", "--json"])
@@ -2810,7 +3589,7 @@ mod plugins {
         let read_log = || env.normalize(&std::fs::read_to_string(&log).unwrap_or_default());
 
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_NOW", "2026-10-07 09:30")
             .args(["create", "Hooked", "--tag", "x"])
             .output()
@@ -2826,7 +3605,7 @@ mod plugins {
         assert!(logged.contains("\"title\":\"Hooked\""), "{logged}");
 
         std::fs::remove_file(&log).unwrap();
-        env.tasq()
+        env.tasq_wt()
             .args(["done", "8", "shipped"])
             .assert()
             .success()
@@ -2839,7 +3618,7 @@ mod plugins {
         // A dry run lists the hook as a skipped step and runs nothing.
         std::fs::remove_file(&log).unwrap();
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .args(["pick", "3", "--dry-run", "--launcher", "shell"])
             .output()
@@ -2856,7 +3635,7 @@ mod plugins {
 
         // The real launch runs it with the resolved directory and launcher.
         let out = env
-            .tasq()
+            .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .env("TASQ_LAUNCH_ENV", "inherit")
             .args(["pick", "3"])
@@ -3011,5 +3790,889 @@ mod plugins {
             .output()
             .unwrap();
         assert!(stdout(&out).contains("  tlogs  "), "{}", stdout(&out));
+    }
+}
+
+/// ADR 0022: with the default configuration nothing mentions worktrees.
+mod worktrees_disabled {
+    use super::*;
+
+    fn mentions_worktrees(text: &str) -> bool {
+        text.to_lowercase().contains("worktree")
+    }
+
+    #[test]
+    fn help_completions_and_json_say_nothing_about_worktrees() {
+        let env = TestEnv::fixture();
+        for args in [
+            vec!["--help"],
+            vec!["create", "--help"],
+            vec!["help", "pick"],
+            vec!["view", "1", "--json"],
+            vec!["list", "--all", "--json"],
+            vec!["completions", "zsh"],
+            vec!["completions", "bash"],
+        ] {
+            let out = env.tasq().args(&args).output().unwrap();
+            assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+            assert!(
+                !mentions_worktrees(&stdout(&out)),
+                "{args:?}: {}",
+                stdout(&out)
+            );
+        }
+        // Disabled completions still complete the rest of the commands.
+        let zsh = env.tasq().args(["completions", "zsh"]).output().unwrap();
+        for expected in [
+            "#compdef tasq",
+            "'--version",
+            "(create)",
+            "'--project=",
+            "(list)",
+        ] {
+            assert!(stdout(&zsh).contains(expected), "{expected}");
+        }
+        // Enabled, the same commands show them.
+        let help = env.tasq_wt().arg("--help").output().unwrap();
+        assert!(stdout(&help).contains("  worktree "), "{}", stdout(&help));
+        let zsh = env.tasq_wt().args(["completions", "zsh"]).output().unwrap();
+        assert!(stdout(&zsh).contains("worktree"));
+        let view = env
+            .tasq_wt()
+            .args(["view", "1", "--json"])
+            .output()
+            .unwrap();
+        assert!(stdout(&view).contains("\"worktrees\""), "{}", stdout(&view));
+        // `--set` and `--config` before parsing decide too.
+        let set = env
+            .tasq()
+            .args(["--set", "worktree.enabled=true", "--help"])
+            .output()
+            .unwrap();
+        assert!(stdout(&set).contains("  worktree "), "{}", stdout(&set));
+    }
+
+    #[test]
+    fn the_worktree_command_is_refused() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["worktree", "3", "--create", "b"])
+            .assert()
+            .code(1)
+            .stderr("tasq: worktrees are disabled; set worktree.enabled = true (docs/config.md#worktrees)\n");
+    }
+
+    #[test]
+    fn apply_without_the_key_keeps_the_stored_worktrees() {
+        let env = TestEnv::fixture();
+        let before = env.read_task("20260901090000.todo.md");
+        let json = env.tasq().args(["view", "1", "--json"]).output().unwrap();
+        assert!(!mentions_worktrees(&stdout(&json)));
+        env.tasq()
+            .arg("apply")
+            .write_stdin(json.stdout)
+            .assert()
+            .success()
+            .stdout("[1] applied\n");
+        assert_eq!(env.read_task("20260901090000.todo.md"), before);
+        let on = env
+            .tasq_wt()
+            .args(["view", "1", "--json"])
+            .output()
+            .unwrap();
+        assert!(
+            stdout(&on).contains("tasks-wt/feature-a"),
+            "{}",
+            stdout(&on)
+        );
+    }
+
+    #[test]
+    fn launch_ignores_tracked_worktrees() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["pick", "1", "--dry-run", "--launcher", "claude"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let text = format!("{}{}", stdout(&out), stderr(&out));
+        // The task file is quoted verbatim in the prompt; outside it the
+        // launch says nothing about worktrees.
+        let without_file: String = text
+            .lines()
+            .filter(|l| !l.contains("tasks-wt") && *l != "## Worktrees")
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!mentions_worktrees(&without_file), "{text}");
+        let json = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["pick", "1", "--dry-run", "--launcher", "shell", "--json"])
+            .output()
+            .unwrap();
+        assert!(!mentions_worktrees(&stdout(&json)), "{}", stdout(&json));
+    }
+}
+
+/// Releasing worktrees at close (plan 4.2 step 3, WT-206): `tasq done`
+/// and `tasq worktree release`.
+mod worktree_release {
+    use super::*;
+
+    const TASK: &str = "20260902100000.todo.md";
+
+    /// Task 3 in a repository at `<home>/proj` (`.tasq.toml` from
+    /// `repo_config`, ignored), with worktree `b` declared and created at
+    /// `<home>/proj-b`.
+    fn released_project(
+        env: &TestEnv,
+        repo_config: &str,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        std::fs::write(project.join(".gitignore"), ".tasq.toml\n").unwrap();
+        env.git(&project, &["add", ".gitignore"]);
+        env.git(&project, &["commit", "-q", "-m", "ignore"]);
+        std::fs::write(project.join(".tasq.toml"), repo_config).unwrap();
+        env.tasq_wt()
+            .args(["project", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(["worktree", "3", "b"])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(["worktree", "up", "3", "--yes"])
+            .assert()
+            .success();
+        let wt = env.home.join("proj-b");
+        assert!(wt.is_dir());
+        (project, wt)
+    }
+
+    /// Commits a file in `dir`.
+    fn commit(env: &TestEnv, dir: &Path, file: &str) {
+        std::fs::write(dir.join(file), format!("{file}\n")).unwrap();
+        env.git(dir, &["add", file]);
+        env.git(dir, &["commit", "-q", "-m", file]);
+    }
+
+    fn worktrees_section(env: &TestEnv) -> String {
+        let text = env.read_task(TASK);
+        let start = text.find("## Worktrees").expect("a Worktrees section");
+        text[start..].to_owned()
+    }
+
+    fn branches(env: &TestEnv, project: &Path) -> String {
+        env.git(project, &["branch", "--format=%(refname:short)"])
+    }
+
+    fn run(env: &TestEnv, args: &[&str]) -> (String, String) {
+        let out = env.tasq_wt().args(args).output().unwrap();
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+        (env.normalize(&stdout(&out)), env.normalize(&stderr(&out)))
+    }
+
+    #[test]
+    fn done_removes_a_clean_merged_worktree_and_its_branch() {
+        let env = TestEnv::fixture();
+        let (project, wt) = released_project(&env, "[worktree]\ncopies = [\"local.env\"]\n");
+        commit(&env, &wt, "feature");
+        env.git(&project, &["merge", "-q", "--no-ff", "-m", "merge b", "b"]);
+        // Copied by provisioning, untracked in the worktree: not a change.
+        assert!(!wt.join("local.env").exists(), "nothing to copy yet");
+        std::fs::write(wt.join("local.env"), "X=1\n").unwrap();
+        let before = worktrees_section(&env);
+        let (out, err) = run(&env, &["done", "3"]);
+        assert_eq!(
+            out,
+            "[3] done: Answer the support ticket\n\
+             [3] removed worktree [ROOT]/home/proj-b\n\
+             [3] deleted branch b (merged into main)\n"
+        );
+        assert_eq!(err, "");
+        assert!(!wt.exists());
+        assert_eq!(branches(&env, &project), "main\n");
+        assert_eq!(
+            worktrees_section(&env),
+            before,
+            "the entry stays byte for byte"
+        );
+        // Reopened and launched again: the branch is gone, so it starts
+        // fresh from the base.
+        env.tasq_wt().args(["reopen", "3"]).assert().success();
+        let (out, _) = run(&env, &["worktree", "up", "3"]);
+        assert_eq!(
+            out,
+            "[3] created worktree [ROOT]/home/proj-b on b (new from HEAD)\n"
+        );
+    }
+
+    #[test]
+    fn dirty_and_unmerged_are_kept_with_one_warning_each() {
+        let env = TestEnv::fixture();
+        let (project, wt) = released_project(&env, "");
+        commit(&env, &wt, "unmerged");
+        std::fs::write(wt.join("README"), "edited\n").unwrap();
+        let (out, err) = run(&env, &["done", "3"]);
+        assert_eq!(out, "[3] done: Answer the support ticket\n");
+        assert_eq!(
+            err,
+            "tasq: warning: kept worktree [ROOT]/home/proj-b: it has uncommitted or untracked \
+             changes; tasq worktree release 3 --force removes it\n"
+        );
+        assert!(wt.is_dir());
+        // Clean again: the directory goes, the unmerged branch stays.
+        env.git(&wt, &["checkout", "--", "README"]);
+        let (out, err) = run(&env, &["worktree", "release", "3", "--dry-run"]);
+        assert_eq!(out, "[3] would remove worktree [ROOT]/home/proj-b\n");
+        assert_eq!(
+            err,
+            "tasq: warning: kept branch b: it is neither merged into the default branch nor \
+             pushed; tasq worktree release 3 --force deletes it\n"
+        );
+        assert!(wt.is_dir(), "a dry run changes nothing");
+        let (out, err) = run(&env, &["worktree", "release", "3"]);
+        assert_eq!(out, "[3] removed worktree [ROOT]/home/proj-b\n");
+        assert!(err.contains("kept branch b"), "{err}");
+        assert!(!wt.exists());
+        assert_eq!(branches(&env, &project), "b\nmain\n");
+        // Launching again checks the kept branch out.
+        let (out, _) = run(&env, &["worktree", "up", "3"]);
+        assert_eq!(
+            out,
+            "[3] created worktree [ROOT]/home/proj-b on b (the local branch)\n"
+        );
+        assert!(wt.join("unmerged").is_file());
+        // --force removes a dirty worktree and deletes the branch.
+        std::fs::write(wt.join("scratch"), "x\n").unwrap();
+        let (out, err) = run(&env, &["worktree", "release", "3", "--force"]);
+        assert_eq!(
+            out,
+            "[3] removed worktree [ROOT]/home/proj-b\n[3] deleted branch b (forced)\n"
+        );
+        assert_eq!(err, "");
+        assert_eq!(branches(&env, &project), "main\n");
+        let (out, _) = run(&env, &["worktree", "release", "3"]);
+        assert_eq!(out, "[3] nothing released\n");
+    }
+
+    #[test]
+    fn locked_in_use_and_main_are_kept() {
+        let env = TestEnv::fixture();
+        let (project, wt) = released_project(&env, "");
+        env.git(&project, &["worktree", "lock", wt.to_str().unwrap()]);
+        let (_, err) = run(&env, &["worktree", "release", "3"]);
+        assert_eq!(
+            err,
+            "tasq: warning: kept worktree [ROOT]/home/proj-b: it is locked; git worktree unlock \
+             [ROOT]/home/proj-b then tasq worktree release 3 removes it\n"
+        );
+        env.git(&project, &["worktree", "unlock", wt.to_str().unwrap()]);
+        let out = env
+            .tasq_wt()
+            .current_dir(wt.join("."))
+            .args(["worktree", "release", "3", "--force"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            "tasq: warning: kept worktree [ROOT]/home/proj-b: the current directory is inside it; \
+             tasq worktree release 3 from another directory removes it\n"
+        );
+        assert!(wt.is_dir());
+        // The main checkout, tracked by hand, is kept without a word; a
+        // directory git does not list is named.
+        env.tasq_wt()
+            .args(["worktree", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        let stray = env.home.join("stray");
+        std::fs::create_dir(&stray).unwrap();
+        env.tasq_wt()
+            .args(["worktree", "3", stray.to_str().unwrap()])
+            .assert()
+            .success();
+        let (out, err) = run(&env, &["worktree", "release", "3"]);
+        assert_eq!(
+            out,
+            "[3] removed worktree [ROOT]/home/proj-b\n[3] deleted branch b (same commit as main)\n"
+        );
+        assert_eq!(
+            err,
+            "tasq: warning: kept worktree [ROOT]/home/stray: git does not list it as a worktree \
+             of the repository; tasq does not remove it, delete it by hand if it is not needed\n"
+        );
+        assert!(project.is_dir() && stray.is_dir());
+    }
+
+    #[test]
+    fn remove_hooks_run_around_the_removal_and_pre_remove_can_keep_it() {
+        let env = TestEnv::fixture();
+        env.fake_tool(
+            "hook",
+            "echo \"$1|$TASQ_BRANCH|$TASQ_WORKTREE|$(pwd)\" >> \"$HOME/hooks.log\"",
+        );
+        env.fake_tool("fail", "echo nope >&2; exit 3");
+        let config = "[worktree.hooks]\n\
+            pre-remove = [\"hook pre\"]\n\
+            post-remove = [\"hook post\", \"fail\"]\n";
+        let (project, wt) = released_project(&env, config);
+        let log = || {
+            env.normalize(&std::fs::read_to_string(env.home.join("hooks.log")).unwrap_or_default())
+        };
+        // Not approved, no terminal: skipped, the worktree still goes.
+        let (out, err) = run(&env, &["worktree", "release", "3", "--dry-run"]);
+        assert_eq!(
+            out,
+            "[3] would remove worktree [ROOT]/home/proj-b\n  \
+             skip pre-remove hook (not approved): hook pre\n  \
+             skip post-remove hook (not approved): hook post\n  \
+             skip post-remove hook (not approved): fail\n\
+             [3] would delete branch b (same commit as main)\n"
+        );
+        assert_eq!(err, "");
+        let (_, err) = run(&env, &["done", "3", "--yes"]);
+        assert_eq!(
+            err,
+            "tasq: warning: post-remove hook \"fail\" failed: exit status 3: nope\n"
+        );
+        assert_eq!(
+            log(),
+            "pre|b|[ROOT]/home/proj-b|[ROOT]/home/proj-b\n\
+             post|b|[ROOT]/home/proj-b|[ROOT]/home/proj\n"
+        );
+        assert!(!wt.exists());
+        // A failing pre-remove keeps the worktree and its branch.
+        env.tasq_wt().args(["reopen", "3"]).assert().success();
+        env.tasq_wt()
+            .args(["worktree", "up", "3", "--yes"])
+            .assert()
+            .success();
+        std::fs::write(
+            project.join(".tasq.toml"),
+            "[worktree.hooks]\npre-remove = [\"fail\"]\n",
+        )
+        .unwrap();
+        let (out, err) = run(&env, &["worktree", "release", "3", "--yes"]);
+        assert_eq!(out, "[3] nothing released\n");
+        assert_eq!(
+            err,
+            "tasq: warning: kept worktree [ROOT]/home/proj-b: pre-remove hook \"fail\" failed: \
+             exit status 3: nope\n"
+        );
+        assert!(wt.is_dir());
+        assert_eq!(branches(&env, &project), "b\nmain\n");
+    }
+
+    /// `tasq worktree prune` (WT-301).
+    #[test]
+    fn prune_releases_what_closes_left_behind() {
+        let env = TestEnv::fixture();
+        // Task 1 of the fixture declares a worktree in a real project of
+        // the author's; prune must never reach it (see worktree_nav).
+        let full = "20260901090000.todo.md";
+        let text = env.read_task(full).replace(
+            "## Worktrees\n\n- /home/pau/code/tasks-wt/feature-a (`feature-a`)\n\n",
+            "",
+        );
+        assert!(!text.contains("Worktrees"), "the fixture changed: {text}");
+        env.write_task(full, &text);
+        // Task 3 closed with on_done = "keep": its clean worktree stays.
+        let (project, wt) = released_project(&env, "[worktree]\non_done = \"keep\"\n");
+        run(&env, &["done", "3"]);
+        assert!(wt.is_dir());
+        // Task 4 (done) with a dirty worktree, task 6 (open) with a clean one.
+        for (id, branch) in [("4", "e"), ("6", "d")] {
+            for args in [
+                vec!["project", id, project.to_str().unwrap()],
+                vec!["worktree", id, branch],
+                vec!["worktree", "up", id],
+            ] {
+                env.tasq_wt().args(args).assert().success();
+            }
+        }
+        let dirty = env.home.join("proj-e");
+        let open = env.home.join("proj-d");
+        std::fs::write(dirty.join("scratch"), "x\n").unwrap();
+        // A worktree deleted by hand: git still lists it.
+        let stray = env.home.join("proj-x");
+        env.git(
+            &project,
+            &["worktree", "add", "-q", "-b", "x", stray.to_str().unwrap()],
+        );
+        std::fs::remove_dir_all(&stray).unwrap();
+        let prune = |dir: &Path, args: &[&str]| {
+            let out = env
+                .tasq_wt()
+                .current_dir(dir)
+                .args(["worktree", "prune"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+            (env.normalize(&stdout(&out)), env.normalize(&stderr(&out)))
+        };
+        let kept = "tasq: warning: kept worktree [ROOT]/home/proj-e: it has uncommitted or \
+                    untracked changes; tasq worktree release 4 --force removes it\n";
+        let forgotten = "missing worktrees in [ROOT]/home/proj:\n  \
+                         Removing worktrees/proj-x: gitdir file points to non-existent location\n";
+        // Another repository is out of scope without --all.
+        let other = env.home.join("other");
+        env.git_repo(&other);
+        assert_eq!(
+            prune(&other, &["--dry-run"]),
+            ("nothing to prune\n".to_owned(), String::new())
+        );
+        let (out, err) = prune(&other, &["--dry-run", "--all"]);
+        assert_eq!(
+            out,
+            format!(
+                "would forget {forgotten}\
+                 [3] would remove worktree [ROOT]/home/proj-b\n\
+                 [3] would delete branch b (same commit as main)\n"
+            )
+        );
+        assert_eq!(err, kept);
+        assert!(wt.is_dir(), "a dry run changes nothing");
+        let (json, _) = prune(&project, &["--dry-run", "--json"]);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            serde_json::json!({
+                "schema": 1, "dry_run": true,
+                "released": [{"task": "3", "lines": [
+                    "would remove worktree [ROOT]/home/proj-b",
+                    "would delete branch b (same commit as main)",
+                ]}],
+                "forgotten": [{"repo": "[ROOT]/home/proj", "lines": [
+                    "Removing worktrees/proj-x: gitdir file points to non-existent location",
+                ]}],
+            })
+        );
+        let (out, err) = prune(&project, &[]);
+        assert_eq!(
+            out,
+            format!(
+                "forgot {forgotten}\
+                 [3] removed worktree [ROOT]/home/proj-b\n\
+                 [3] deleted branch b (same commit as main)\n"
+            )
+        );
+        assert_eq!(err, kept);
+        assert!(!wt.exists());
+        assert!(dirty.is_dir() && open.is_dir());
+        assert_eq!(branches(&env, &project), "d\ne\nmain\nx\n");
+        assert_eq!(
+            prune(&project, &[]),
+            ("nothing to prune\n".to_owned(), kept.to_owned())
+        );
+        env.tasq()
+            .args(["worktree", "prune"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
+    }
+
+    #[test]
+    fn on_done_keep_and_errors() {
+        let env = TestEnv::fixture();
+        let (_, wt) = released_project(&env, "[worktree]\non_done = \"keep\"\n");
+        let (out, err) = run(&env, &["done", "3"]);
+        assert_eq!(
+            (out.as_str(), err.as_str()),
+            ("[3] done: Answer the support ticket\n", "")
+        );
+        assert!(wt.is_dir());
+        env.tasq()
+            .args(["worktree", "release", "3"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
+        // A project that is not a repository: closed anyway, with a warning.
+        let plain = env.home.join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        env.tasq_wt()
+            .args(["project", "4", plain.to_str().unwrap()])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(["worktree", "4", wt.to_str().unwrap()])
+            .assert()
+            .success();
+        let out = env.tasq_wt().args(["done", "4"]).output().unwrap();
+        assert!(out.status.success());
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            "tasq: warning: worktrees not released: [ROOT]/home/plain is not in a git repository\n"
+        );
+    }
+}
+
+/// `tasq worktree ls`, `switch`, `path` and `shell-init` (WT-207).
+mod worktree_nav {
+    use super::*;
+
+    /// A repository at `<home>/proj` for tasks 3, 4 and 6 (4 is done):
+    /// task 3 has `b` created and `c` declared, task 6 `d` declared, task
+    /// 4 `e` declared and never created.
+    fn workspace(env: &TestEnv) -> std::path::PathBuf {
+        // Task 1 of the fixture declares a worktree under the author's real
+        // home; a test that lists or creates every task's worktrees must
+        // never see it.
+        let full = "20260901090000.todo.md";
+        let text = env.read_task(full).replace(
+            "## Worktrees\n\n- /home/pau/code/tasks-wt/feature-a (`feature-a`)\n\n",
+            "",
+        );
+        assert!(!text.contains("Worktrees"), "the fixture changed: {text}");
+        env.write_task(full, &text);
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        std::fs::write(
+            project.join(".tasq.toml"),
+            "[worktree]\ncopies = [\".tasq.toml\"]\n",
+        )
+        .unwrap();
+        std::fs::write(project.join(".gitignore"), "\n").unwrap();
+        for (id, branch) in [("3", "b"), ("3", "c"), ("6", "d"), ("4", "e")] {
+            env.tasq_wt()
+                .args(["project", id, project.to_str().unwrap()])
+                .assert()
+                .success();
+            env.tasq_wt()
+                .args(["worktree", id, branch])
+                .assert()
+                .success();
+        }
+        env.tasq_wt()
+            .args(["worktree", "up", "3"])
+            .assert()
+            .success();
+        project
+    }
+
+    fn run_in(env: &TestEnv, dir: &Path, args: &[&str]) -> (String, String) {
+        let out = env.tasq_wt().current_dir(dir).args(args).output().unwrap();
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+        (env.normalize(&stdout(&out)), env.normalize(&stderr(&out)))
+    }
+
+    fn fails_in(env: &TestEnv, dir: &Path, args: &[&str]) -> String {
+        let out = env.tasq_wt().current_dir(dir).args(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {}", stdout(&out));
+        env.normalize(&stderr(&out))
+    }
+
+    #[test]
+    fn ls_shows_every_declared_worktree_with_its_state() {
+        let env = TestEnv::fixture();
+        let project = workspace(&env);
+        let wt = env.home.join("proj-b");
+        // The copied .tasq.toml is provisioning's, not a change.
+        assert!(wt.join(".tasq.toml").is_file());
+        std::fs::write(wt.join("scratch"), "x\n").unwrap();
+        let (out, _) = run_in(&env, &env.home, &["worktree", "ls"]);
+        assert_eq!(
+            out,
+            "[3]  ready    b  1 changed    [ROOT]/home/proj-b\n\
+             [3]  ready    c  not created  [ROOT]/home/proj-c\n\
+             [6]  waiting  d  not created  [ROOT]/home/proj-d\n"
+        );
+        let (only, _) = run_in(&env, &env.home, &["worktree", "ls", "4"]);
+        assert_eq!(
+            only, "[4]  done  e  not created  [ROOT]/home/proj-e\n",
+            "a closed task's own list shows everything"
+        );
+        // Inside the repository, its tasks; in another, none (unless --all).
+        let (inside, _) = run_in(&env, &wt, &["worktree", "ls"]);
+        assert_eq!(inside, out);
+        let other = env.home.join("other");
+        env.git_repo(&other);
+        let (none, _) = run_in(&env, &other, &["worktree", "ls"]);
+        assert_eq!(none, "no declared worktrees\n");
+        let (all, _) = run_in(&env, &other, &["worktree", "ls", "--all"]);
+        assert_eq!(all, out);
+        let (json, _) = run_in(&env, &project, &["worktree", "ls", "3", "--json"]);
+        assert_eq!(
+            json,
+            "{\n  \"schema\": 1,\n  \"worktrees\": [\n    {\n      \"branch\": \"b\",\n      \
+             \"changes\": [\n        \"scratch\"\n      ],\n      \"done\": false,\n      \
+             \"exists\": true,\n      \"path\": \"[ROOT]/home/proj-b\",\n      \
+             \"status\": \"ready\",\n      \"task\": \"3\",\n      \
+             \"title\": \"Answer the support ticket\"\n    },\n    {\n      \
+             \"branch\": \"c\",\n      \"changes\": null,\n      \"done\": false,\n      \
+             \"exists\": false,\n      \"path\": \"[ROOT]/home/proj-c\",\n      \
+             \"status\": \"ready\",\n      \"task\": \"3\",\n      \
+             \"title\": \"Answer the support ticket\"\n    }\n  ]\n}\n"
+        );
+        env.tasq()
+            .args(["worktree", "ls"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
+    }
+
+    #[test]
+    fn path_resolves_targets_and_creates_nothing() {
+        let env = TestEnv::fixture();
+        let project = workspace(&env);
+        let wt = env.home.join("proj-b");
+        let path = |dir: &Path, target: &str| run_in(&env, dir, &["worktree", "path", target]).0;
+        assert_eq!(path(&env.home, "task:3"), "[ROOT]/home/proj-b\n");
+        assert_eq!(
+            path(&project, "b"),
+            "[ROOT]/home/proj-b\n",
+            "a branch git lists"
+        );
+        assert_eq!(
+            path(&env.home, "b"),
+            "[ROOT]/home/proj-b\n",
+            "a branch a task declares"
+        );
+        assert_eq!(path(&wt, "^"), "[ROOT]/home/proj\n");
+        assert_eq!(
+            path(&env.home, wt.to_str().unwrap()),
+            "[ROOT]/home/proj-b\n"
+        );
+        assert_eq!(path(&project, "main"), "[ROOT]/home/proj\n");
+        assert_eq!(
+            run_in(&env, &env.home, &["worktree", "path", "task:3", "--json"]).0,
+            "{\n  \"path\": \"[ROOT]/home/proj-b\",\n  \"schema\": 1\n}\n"
+        );
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "task:6"]),
+            "tasq: task 6 has no worktree yet; tasq worktree switch task:6 creates it\n"
+        );
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "d"]),
+            "tasq: task 6 has no worktree yet; tasq worktree switch task:6 creates it\n"
+        );
+        assert!(!env.home.join("proj-d").exists());
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "nope"]),
+            "tasq: no worktree on branch nope\n"
+        );
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "^"]),
+            "tasq: not in a git repository: [ROOT]/home\n"
+        );
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "-"]),
+            "tasq: no previous worktree: nothing was switched from yet\n"
+        );
+        // A state file that cannot be read is an error, not "nothing yet".
+        let state = env.home.join(".local/state/tasq/previous-worktree");
+        std::fs::create_dir_all(&state).unwrap();
+        assert!(
+            fails_in(&env, &env.home, &["worktree", "path", "-"]).starts_with(
+                "tasq: [ROOT]/home/.local/state/tasq/previous-worktree: Is a directory"
+            )
+        );
+        std::fs::remove_dir(&state).unwrap();
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "./gone"]),
+            "tasq: directory not found: ./gone\n"
+        );
+        assert_eq!(
+            fails_in(&env, &env.home, &["worktree", "path", "task:"]),
+            "tasq: task: needs an id (task:<id>)\n"
+        );
+    }
+
+    #[test]
+    fn switch_hands_the_directory_to_the_shell_and_remembers_the_previous() {
+        let env = TestEnv::fixture();
+        let project = workspace(&env);
+        let cd_file = env.home.join("cd");
+        // Without the shell function: the path, and how to get the function.
+        let (out, err) = run_in(&env, &project.join("."), &["worktree", "switch", "b"]);
+        assert_eq!(out, "[ROOT]/home/proj-b\n");
+        assert!(err.contains("shell-init"), "{err}");
+        // With it: the file gets the path, stdout stays quiet.
+        let out = env
+            .tasq_wt()
+            .current_dir(env.home.join("proj-b"))
+            .env("TASQ_CD_FILE", &cd_file)
+            .args(["worktree", "switch", "task:6"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "[6] created worktree [ROOT]/home/proj-d on d (new from HEAD)\n",
+            "a task's worktree is created first"
+        );
+        assert_eq!(
+            env.normalize(&std::fs::read_to_string(&cd_file).unwrap()),
+            "[ROOT]/home/proj-d"
+        );
+        // `-` is where the last switch came from.
+        let (back, _) = run_in(&env, &env.home, &["worktree", "path", "-"]);
+        assert_eq!(back, "[ROOT]/home/proj-b\n");
+        let (json, _) = run_in(&env, &env.home, &["worktree", "switch", "-", "--json"]);
+        assert_eq!(
+            json,
+            "{\n  \"path\": \"[ROOT]/home/proj-b\",\n  \"schema\": 1\n}\n"
+        );
+        let (back, _) = run_in(&env, &env.home, &["worktree", "path", "-"]);
+        assert_eq!(
+            back, "[ROOT]/home\n",
+            "home is not in a repository: the directory itself"
+        );
+    }
+
+    #[test]
+    fn switch_without_a_target_offers_a_list() {
+        let env = TestEnv::fixture();
+        let project = workspace(&env);
+        // No fzf: a numbered list on stderr, the number on stdin.
+        let out = env
+            .tasq_wt()
+            .current_dir(&project)
+            .args(["worktree", "switch"])
+            .write_stdin("2\n")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(env.normalize(&stdout(&out)), "[ROOT]/home/proj-b\n");
+        // Task 3's `c` is not offered: `b` exists, so `c` would not be made.
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            " 1  ^  main checkout  [ROOT]/home/proj\n \
+             2  [3]  ready  b  clean  [ROOT]/home/proj-b\n \
+             3  [6]  waiting  d  not created  [ROOT]/home/proj-d\n\
+             switch to [1-3]: tasq: warning: the shell function changes directory: add eval \
+             \"$(tasq worktree shell-init zsh)\" (or bash, fish) to the shell's rc file\n"
+        );
+        // fzf, when installed, picks instead (here: always the third line),
+        // and a task's missing worktree is created.
+        env.fake_tool(
+            "fzf",
+            "n=0\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n\
+             n=$((n+1)); printf '%s\\n' \"$line\" >> \"$HOME/fzf.in\"\n\
+             [ $n = 3 ] && picked=$line\ndone\nprintf '%s\\n' \"$picked\"",
+        );
+        let out = env
+            .tasq_wt()
+            .current_dir(&project)
+            .args(["worktree", "switch"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "[6] created worktree [ROOT]/home/proj-d on d (new from HEAD)\n\
+             [ROOT]/home/proj-d\n"
+        );
+        assert_eq!(
+            env.normalize(&std::fs::read_to_string(env.home.join("fzf.in")).unwrap()),
+            " 1  ^  main checkout  [ROOT]/home/proj\n \
+             2  [3]  ready  b  clean  [ROOT]/home/proj-b\n \
+             3  [6]  waiting  d  not created  [ROOT]/home/proj-d\n"
+        );
+        env.fake_tool("fzf", "exit 130");
+        assert_eq!(
+            fails_in(&env, &project, &["worktree", "switch"]),
+            "tasq: nothing chosen\n"
+        );
+        env.fake_tool("fzf", "echo 99");
+        assert_eq!(
+            fails_in(&env, &project, &["worktree", "switch"]),
+            "tasq: not a choice: \"99\"\n"
+        );
+    }
+
+    /// Runs `script` in `shell` with the function from `shell-init`, a fake
+    /// `tasq` that logs its arguments and, for a switch, writes `<home>/to`.
+    fn in_shell(env: &TestEnv, shell: &str, script: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let (init, _) = run_in(env, &env.home, &["worktree", "shell-init", shell]);
+        std::fs::write(env.home.join("init.sh"), init).unwrap();
+        let fake = env.home.join("fakebin");
+        std::fs::create_dir_all(&fake).unwrap();
+        let to = env.home.join("to");
+        std::fs::create_dir_all(&to).unwrap();
+        let tasq = fake.join("tasq");
+        std::fs::write(
+            &tasq,
+            format!(
+                "#!/bin/sh\necho \"args: $* cd=${{TASQ_CD_FILE:+set}}\"\n\
+                 [ -n \"$TASQ_CD_FILE\" ] && printf %s '{}' > \"$TASQ_CD_FILE\"\n\
+                 [ \"$1\" = fail ] && exit 7\nexit 0\n",
+                to.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&tasq, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = std::process::Command::new(shell)
+            .args([
+                "-c",
+                &format!(". '{}/init.sh'\n{script}", env.home.display()),
+            ])
+            .current_dir(&env.home)
+            .env_clear()
+            .env("PATH", format!("{}:/usr/bin:/bin", fake.display()))
+            .env("HOME", &env.home)
+            .env("TMPDIR", &env.home)
+            .output()
+            .unwrap();
+        env.normalize(&format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    }
+
+    #[test]
+    fn shell_init_changes_directory_on_switch_only() {
+        let env = TestEnv::fixture();
+        for shell in ["bash", "zsh"] {
+            if !Path::new("/usr/bin").join(shell).exists()
+                && !Path::new("/bin").join(shell).exists()
+            {
+                continue;
+            }
+            assert_eq!(
+                in_shell(
+                    &env,
+                    shell,
+                    "tasq ls; pwd; tasq --profile x worktree switch b; echo $?; pwd; \
+                                       tasq fail worktree switch; echo $?; ls \"$TMPDIR\" | grep -c tasq-cd"
+                ),
+                "args: ls cd=\n\
+                 [ROOT]/home\n\
+                 args: --profile x worktree switch b cd=set\n\
+                 0\n\
+                 [ROOT]/home/to\n\
+                 args: fail worktree switch cd=set\n\
+                 7\n\
+                 0\n",
+                "{shell}"
+            );
+        }
+        let (fish, _) = run_in(&env, &env.home, &["worktree", "shell-init", "fish"]);
+        assert!(fish.contains("function tasq --wraps tasq"), "{fish}");
+        assert!(
+            fish.contains("env TASQ_CD_FILE=$tasq_cd_file tasq $argv"),
+            "{fish}"
+        );
+        let (bash, _) = run_in(&env, &env.home, &["worktree", "shell-init", "bash"]);
+        let (zsh, _) = run_in(&env, &env.home, &["worktree", "shell-init", "zsh"]);
+        assert_eq!(bash, zsh);
+        let (json, _) = run_in(
+            &env,
+            &env.home,
+            &["worktree", "shell-init", "bash", "--json"],
+        );
+        let doc: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(doc["script"].as_str(), Some(bash.as_str()));
+        env.tasq()
+            .args(["worktree", "shell-init", "bash"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
     }
 }

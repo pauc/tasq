@@ -316,25 +316,19 @@ impl Hook {
     }
 }
 
-/// `{"schema": 1, "hook": <name>, "task": <task>, <extra>...}`.
-pub fn hook_document(hook: Hook, task: &Task, extra: &[(&str, Value)]) -> Value {
+/// `{"schema": 1, "hook": <name>, "task": <task>, <extra>...}`; the task
+/// has no `worktrees` when they are disabled (see [`json::task`]).
+pub fn hook_document(hook: Hook, task: &Task, worktrees: bool, extra: &[(&str, Value)]) -> Value {
     let mut fields = vec![
         ("hook", Value::from(hook.name())),
-        ("task", json::to_value(task)),
+        ("task", json::task(task, worktrees)),
     ];
     fields.extend(extra.iter().map(|(k, v)| (*k, v.clone())));
     json::document(fields)
 }
 
 /// What a hook command had to say while [`run_hooks_with`] ran it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HookEvent {
-    /// A command exited 0 with something on stdout (`-v` material).
-    Output(String),
-    /// A non-blocking command failed or could not start; the event it was
-    /// attached to already happened, so this is a warning, not an error.
-    Warning(String),
-}
+pub use tasq_core::worktree::hooks::HookEvent;
 
 /// Runs every command configured for `hook` with `document` on stdin,
 /// printing each command's output at `-v` and each failure as a warning.
@@ -363,7 +357,7 @@ pub fn run_hooks_with(
     if commands.is_empty() {
         return Ok(());
     }
-    let document = serde_json::to_string(&hook_document(hook, task, extra))
+    let document = serde_json::to_string(&hook_document(hook, task, app.worktrees(), extra))
         .map_err(|e| CliError::Internal(anyhow::anyhow!("serialising hook document: {e}")))?;
     let mut vars = passthrough_env(
         current_bin().as_deref(),
@@ -608,11 +602,19 @@ mod tests {
         assert!(Hook::PreLaunch.is_blocking());
         assert!(!Hook::PostCreate.is_blocking() && !Hook::PostDone.is_blocking());
         let task = Task::new(tasq_core::model::TaskId::from(7), "Seven");
-        let doc = hook_document(Hook::PreLaunch, &task, &[("workdir", Value::from("/w"))]);
+        let doc = hook_document(
+            Hook::PreLaunch,
+            &task,
+            true,
+            &[("workdir", Value::from("/w"))],
+        );
         assert_eq!(doc["schema"], 1);
         assert_eq!(doc["hook"], "pre-launch");
         assert_eq!(doc["task"]["id"], "7");
+        assert_eq!(doc["task"]["worktrees"], Value::Array(Vec::new()));
         assert_eq!(doc["workdir"], "/w");
+        let off = hook_document(Hook::PostDone, &task, false, &[]);
+        assert_eq!(off["task"].get("worktrees"), None);
     }
 
     #[test]

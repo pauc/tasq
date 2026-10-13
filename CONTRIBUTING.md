@@ -110,7 +110,9 @@ Conventional commits scoped by crate or area:
 | `feat(core):`, `feat(store-nb):`, `feat(sources):`, `feat(launch):`, `feat(cli):`, `feat(tui):` | New behaviour in that crate |
 | `fix(<crate>):` | Bug fix |
 | `test(<crate>):` | Tests only |
-| `docs(plan):`, `docs(adr):`, `docs:` | Plan and progress files, ADRs, other docs |
+| `docs(plan):` | Plan files (`PLAN.md`) |
+| `docs(progress):` | Progress files (`PROGRESS.md`) |
+| `docs(adr):`, `docs:` | ADRs, other docs |
 | `build:`, `ci:` | Workspace, cargo, guard and workflow changes |
 
 One logical change per commit. `CHANGELOG.md` is derived from these messages.

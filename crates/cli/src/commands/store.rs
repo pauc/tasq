@@ -1,7 +1,9 @@
-//! `tasq store info` and `tasq store sync`.
+//! `tasq store info`, `tasq store sync` and `tasq store reconcile`.
 
 use serde_json::Value;
 use tasq_core::store::{IdScheme, Store, StoreInfo};
+
+use tasq_store_nb::Verification;
 
 use crate::app::App;
 use crate::cli::StoreCommand;
@@ -10,7 +12,7 @@ use crate::json;
 
 /// Runs a `store` subcommand.
 pub fn run(app: &App, command: StoreCommand) -> Result<()> {
-    let store = app.open_store()?;
+    let mut store = app.open_store()?;
     match command {
         StoreCommand::Info => {
             let info = store.describe();
@@ -24,7 +26,11 @@ pub fn run(app: &App, command: StoreCommand) -> Result<()> {
                 .print(&render_info(&info, store.bookkeeper().name()))
         }
         StoreCommand::Sync => {
-            let outcome = store.bookkeeper().sync()?;
+            store.wait_for_bookkeeping()?;
+            for warning in store.take_warnings() {
+                app.out.warn(&warning.to_string());
+            }
+            let outcome = store.sync()?;
             if let Some(raw) = &outcome.raw_output {
                 app.out.verbose(raw);
             }
@@ -36,7 +42,38 @@ pub fn run(app: &App, command: StoreCommand) -> Result<()> {
             }
             app.out.print(&format!("{}\n", outcome.detail))
         }
+        StoreCommand::Reconcile => {
+            let found = store.reconcile()?;
+            for warning in store.take_warnings() {
+                app.out.warn(&warning.to_string());
+            }
+            if app.out.json_mode() {
+                return app.out.json(&json::document([
+                    ("changed", Value::from(!found.consistent)),
+                    ("blanked", Value::from(found.missing_files.clone())),
+                    ("appended", Value::from(found.unindexed_files.clone())),
+                ]));
+            }
+            app.out.print(&render_reconcile(&found))
+        }
     }
+}
+
+/// The `store reconcile` text: one line per change, or that there was
+/// nothing to do.
+pub fn render_reconcile(found: &Verification) -> String {
+    if found.consistent {
+        return "index already matches the files\n".to_owned();
+    }
+    let blanked = found
+        .missing_files
+        .iter()
+        .map(|name| format!("blanked  {name} (file is gone; its id stays unused)\n"));
+    let appended = found
+        .unindexed_files
+        .iter()
+        .map(|name| format!("appended {name}\n"));
+    blanked.chain(appended).collect()
 }
 
 /// The `store info` text.
@@ -46,7 +83,7 @@ pub fn render_info(info: &StoreInfo, bookkeeper: &str) -> String {
         IdScheme::Positional => format!(
             "positional (line numbers in .index){}",
             if info.ids_may_change_on_reconcile {
-                "; they can change after 'nb index reconcile' or deletions"
+                "; they can change when another tool rewrites .index (nb index reconcile)"
             } else {
                 ""
             }
@@ -75,7 +112,7 @@ mod tests {
         };
         assert_eq!(
             render_info(&info, "native"),
-            "store:       nb\nlocation:    /nb/home\ntasks:       6 (open and done)\nids:         positional (line numbers in .index); they can change after 'nb index reconcile' or deletions\nbookkeeper:  native\n"
+            "store:       nb\nlocation:    /nb/home\ntasks:       6 (open and done)\nids:         positional (line numbers in .index); they can change when another tool rewrites .index (nb index reconcile)\nbookkeeper:  native\n"
         );
         let stable = StoreInfo {
             id_scheme: IdScheme::Stable,
@@ -83,5 +120,21 @@ mod tests {
             ..info
         };
         assert!(render_info(&stable, "none").contains("ids:         stable\n"));
+    }
+
+    #[test]
+    fn reconcile_text() {
+        let mut found = Verification::consistent("fine");
+        assert_eq!(
+            render_reconcile(&found),
+            "index already matches the files\n"
+        );
+        found.consistent = false;
+        found.missing_files = vec!["gone.todo.md".into()];
+        found.unindexed_files = vec!["a.md".into(), "b.todo.md".into()];
+        assert_eq!(
+            render_reconcile(&found),
+            "blanked  gone.todo.md (file is gone; its id stays unused)\nappended a.md\nappended b.todo.md\n"
+        );
     }
 }

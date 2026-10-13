@@ -39,14 +39,13 @@
 //! [store]
 //! kind = "nb"
 //! notebook = "home"
-//! bookkeeper = "auto"
+//! sync_interval = 3600
 //!
 //! [workflow]
 //! statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
 //! default_status = "ready"
 //!
 //! [work]
-//! worktree_manager = "git"
 //!
 //! [launch]
 //! default = "claude"
@@ -85,6 +84,26 @@
 //! post-create = []
 //! post-done = []
 //! pre-launch = []
+//!
+//! [worktree]
+//! enabled = false
+//! path = "{{project_parent}}/{{project_name}}-{{branch_safe}}"
+//! branch = "{{id}}-{{slug}}"
+//! base = "origin/HEAD"
+//! on_create = "auto"
+//! on_done = "release"
+//! delete_branch = "safe"
+//! symlinks = []
+//! copies = []
+//! templates = []
+//!
+//! [worktree.variables]
+//!
+//! [worktree.hooks]
+//! pre-create = []
+//! post-create = []
+//! pre-remove = []
+//! post-remove = []
 //! ```
 
 mod error;
@@ -98,6 +117,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{Status, Workflow};
 use crate::theme::Preset;
+use crate::worktree::lifecycle::DeleteBranch;
 
 pub use self::error::ConfigError;
 pub use self::load::{
@@ -133,6 +153,8 @@ pub struct Config {
     pub report: ReportConfig,
     /// Commands run around CLI events (`[hooks]`).
     pub hooks: HooksConfig,
+    /// Worktrees per task, off unless `enabled` (`[worktree]`, ADR 0022).
+    pub worktree: WorktreeConfig,
 }
 
 /// `[store]`: where tasks live.
@@ -141,19 +163,25 @@ pub struct Config {
 pub struct StoreConfig {
     /// Store implementation. Default: `nb`.
     pub kind: StoreKind,
-    /// nb notebook name (resolved to `~/.nb/<notebook>` or asked of nb).
+    /// nb notebook: a name under `$NB_DIR` (default `~/.nb/<notebook>`), or
+    /// a directory path when it contains a `/` (`~/` expanded).
     /// Default: `home`, as in the original script.
     pub notebook: String,
-    /// Who maintains `.index` and git commits. Default: `auto`.
-    pub bookkeeper: Bookkeeper,
+    /// Minimum seconds between two automatic pulls and pushes after a
+    /// write; `0` never syncs automatically (ADR-0023). Default: `3600`.
+    pub sync_interval: u64,
 }
+
+/// Default `store.sync_interval`: an hour, the `NB_AUTO_SYNC_SECONDS` the
+/// author's nb was configured with.
+pub const DEFAULT_SYNC_INTERVAL: u64 = 3600;
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             kind: StoreKind::Nb,
             notebook: "home".to_owned(),
-            bookkeeper: Bookkeeper::Auto,
+            sync_interval: DEFAULT_SYNC_INTERVAL,
         }
     }
 }
@@ -165,19 +193,6 @@ pub enum StoreKind {
     /// An nb notebook: markdown todos plus a `.index` file.
     #[default]
     Nb,
-}
-
-/// Who maintains the notebook's `.index` and git history after a write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Bookkeeper {
-    /// Use nb when it is on `PATH`, otherwise the native fallback.
-    #[default]
-    Auto,
-    /// Always shell out to nb (`nb index add`, `nb git checkpoint`).
-    Nb,
-    /// Never spawn nb: append to `.index` and commit with git directly.
-    Native,
 }
 
 /// `[workflow]`: the ordered status list.
@@ -215,27 +230,159 @@ pub struct WorkConfig {
     /// worktree nor a project. `~` is expanded. Default: unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_project: Option<PathBuf>,
-    /// How `tasq worktree --create` makes a worktree. Default: `git`.
-    pub worktree_manager: WorktreeManager,
-    /// The command run by the `command` manager, a template with `{branch}`,
-    /// `{project}` and `{new}` (`-b` for a branch that does not exist yet;
-    /// `{new:<text>}` for another flag). It runs inside the project and must
-    /// print the worktree path as its last line. Required when
-    /// `worktree_manager = "command"`. Default: unset.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub worktree_command: Option<String>,
+    /// Removed with ADR 0022; setting it is an error naming `[worktree]`.
+    #[serde(skip_serializing, deserialize_with = "removed_for_worktree")]
+    worktree_manager: Removed,
+    /// Removed with ADR 0022; setting it is an error naming `[worktree]`.
+    #[serde(skip_serializing, deserialize_with = "removed_for_worktree")]
+    worktree_command: Removed,
 }
 
-/// How `tasq worktree --create` makes a worktree.
+/// A key that is not accepted (removed, or not implemented yet). It
+/// deserialises only from its absence, so a file that sets it fails with the
+/// file, line and column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct Removed;
+
+fn removed_for_worktree<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Removed, D::Error> {
+    Err(serde::de::Error::custom(
+        "work.worktree_manager and work.worktree_command were removed; \
+         worktrees are configured under [worktree] (docs/config.md, \"Worktrees\")",
+    ))
+}
+
+fn not_yet_copy_ignored<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Removed, D::Error> {
+    Err(serde::de::Error::custom(
+        "worktree.copy_ignored is not implemented yet; \
+         list the files under worktree.copies (docs/config.md, \"Worktrees\")",
+    ))
+}
+
+/// `[worktree]`: worktrees per task (ADR 0022, `docs/config.md`).
+///
+/// Templates use `{{name}}` placeholders; the variables are listed in
+/// `docs/config.md`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorktreeConfig {
+    /// Whether the feature exists at all. Off hides every worktree command,
+    /// field and section display. Default: `false`.
+    pub enabled: bool,
+    /// Where a declared worktree lives, rendered when it is declared.
+    /// Default: `{{project_parent}}/{{project_name}}-{{branch_safe}}`.
+    pub path: String,
+    /// The branch of a worktree declared without one. Default:
+    /// `{{id}}-{{slug}}`.
+    pub branch: String,
+    /// The ref a new branch starts from. Default: `origin/HEAD`.
+    pub base: String,
+    /// Whether `tasq create` declares a worktree without `--worktree`.
+    /// Default: `auto`.
+    pub on_create: OnCreate,
+    /// What closing a task does with its worktrees. Default: `release`.
+    pub on_done: OnDone,
+    /// Whether a release deletes branches. Default: `safe`.
+    pub delete_branch: DeleteBranch,
+    /// Paths in the project linked into a new worktree. Default: none.
+    pub symlinks: Vec<String>,
+    /// Paths in the project copied into a new worktree. Default: none.
+    pub copies: Vec<String>,
+    /// Not implemented yet (WT-303); setting it is an error.
+    #[serde(skip_serializing, deserialize_with = "not_yet_copy_ignored")]
+    pub(crate) copy_ignored: Removed,
+    /// Files rendered into a new worktree. Default: none.
+    pub templates: Vec<TemplateFile>,
+    /// Extra template variables. Default: none.
+    pub variables: BTreeMap<String, String>,
+    /// The `{{port}}` block. Default: unset (no `{{port}}`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ports: Option<PortsConfig>,
+    /// Commands run around creating and removing a worktree.
+    pub hooks: WorktreeHooks,
+}
+
+impl Default for WorktreeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: "{{project_parent}}/{{project_name}}-{{branch_safe}}".to_owned(),
+            branch: "{{id}}-{{slug}}".to_owned(),
+            base: "origin/HEAD".to_owned(),
+            on_create: OnCreate::default(),
+            on_done: OnDone::default(),
+            delete_branch: DeleteBranch::Safe,
+            symlinks: Vec::new(),
+            copies: Vec::new(),
+            copy_ignored: Removed,
+            templates: Vec::new(),
+            variables: BTreeMap::new(),
+            ports: None,
+            hooks: WorktreeHooks::default(),
+        }
+    }
+}
+
+/// `worktree.on_create`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum WorktreeManager {
-    /// `git worktree add` into `<project>-<branch>` next to the project.
+pub enum OnCreate {
+    /// Declare a worktree for every task whose project is a git checkout.
     #[default]
-    Git,
-    /// A user-supplied command (`work.worktree_command`), for tools such as
-    /// gwm that provision the new worktree (linked files, `.envrc`, hooks).
-    Command,
+    Auto,
+    /// Declare one only with `--worktree`.
+    Never,
+}
+
+/// `worktree.on_done`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OnDone {
+    /// Remove clean worktrees and delete their branches when nothing is lost.
+    #[default]
+    Release,
+    /// Leave worktrees alone.
+    Keep,
+}
+
+/// One `[[worktree.templates]]` entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TemplateFile {
+    /// The template, relative to the config file that declares it.
+    pub source: PathBuf,
+    /// Where the rendered file goes, relative to the worktree.
+    pub target: PathBuf,
+}
+
+/// `[worktree.ports]`: `{{port}}` is `base` plus a stable per-branch offset
+/// below `span`, a multiple of `block`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PortsConfig {
+    /// First port of the range.
+    pub base: u16,
+    /// Size of the range.
+    pub span: u16,
+    /// Ports reserved per worktree.
+    pub block: u16,
+}
+
+/// `[worktree.hooks]`: command lines run around creating and removing a
+/// worktree. `pre-create` and `post-remove` run in the main checkout,
+/// `post-create` and `pre-remove` in the worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct WorktreeHooks {
+    /// Before `git worktree add`; a failure aborts. Default: none.
+    pub pre_create: Vec<String>,
+    /// After the worktree is provisioned; a failure is a warning.
+    /// Default: none.
+    pub post_create: Vec<String>,
+    /// Before `git worktree remove`; a failure keeps the worktree.
+    /// Default: none.
+    pub pre_remove: Vec<String>,
+    /// After the worktree is removed; a failure is a warning. Default: none.
+    pub post_remove: Vec<String>,
 }
 
 /// `[launch]`: how `next` and `pick` open a task.

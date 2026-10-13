@@ -70,6 +70,7 @@ mod tests {
             markdown: "# [ ] T\n".into(),
             workdir: "/work".into(),
             in_worktree: false,
+            worktrees: true,
             env: vec![("TASQ_TASK_ID".into(), "3".into())],
             statuses: vec!["ready".into()],
             focus: true,

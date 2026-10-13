@@ -8,8 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use tasq_core::config::{
-    Bookkeeper, Config, ConfigError, DetailPosition, DueFormat, EnvStrategy, ForgeKind, KeySpec,
-    LoadOptions, Origin, SourceKind, Summarizer, WeekStart, WorktreeManager, expand_tilde,
+    Config, ConfigError, DetailPosition, DueFormat, EnvStrategy, ForgeKind, KeySpec, LoadOptions,
+    Origin, SourceKind, Summarizer, WeekStart, expand_tilde,
 };
 use tasq_core::model::Status;
 use tasq_core::theme::Preset;
@@ -103,7 +103,9 @@ fn empty_environment_yields_defaults() {
     assert_eq!(loaded.profiles, Vec::<String>::new());
     assert_eq!(loaded.explain("store.notebook"), Some(&Origin::Defaults));
     assert_eq!(loaded.file_for("store.notebook"), None);
-    assert_eq!(loaded.explain("work.default_project"), None);
+    // An unset optional key next to set ones is not explained. (`[work]` is
+    // an empty table by default, and an empty table explains its children.)
+    assert_eq!(loaded.explain("report.summary.model"), None);
     assert_eq!(loaded.explain("no.such.key"), None);
 }
 
@@ -111,13 +113,25 @@ fn empty_environment_yields_defaults() {
 fn defaults_match_the_script() {
     let c = Config::default();
     assert_eq!(c.store.notebook, "home");
-    assert_eq!(c.store.bookkeeper, Bookkeeper::Auto);
+    assert_eq!(c.store.sync_interval, 3600);
     assert_eq!(c.workflow.statuses, Status::DEFAULTS.to_vec());
     assert_eq!(c.workflow.default_status, Status::READY);
     assert_eq!(c.workflow.workflow(), tasq_core::model::Workflow::default());
     assert_eq!(c.work.default_project, None);
-    assert_eq!(c.work.worktree_manager, WorktreeManager::Git);
-    assert_eq!(c.work.worktree_command, None);
+    assert!(!c.worktree.enabled);
+    assert_eq!(
+        c.worktree.path,
+        "{{project_parent}}/{{project_name}}-{{branch_safe}}"
+    );
+    assert_eq!(c.worktree.branch, "{{id}}-{{slug}}");
+    assert_eq!(c.worktree.base, "origin/HEAD");
+    assert_eq!(c.worktree.on_create, tasq_core::config::OnCreate::Auto);
+    assert_eq!(c.worktree.on_done, tasq_core::config::OnDone::Release);
+    assert_eq!(
+        c.worktree.delete_branch,
+        tasq_core::worktree::lifecycle::DeleteBranch::Safe
+    );
+    assert_eq!(c.worktree.ports, None);
     assert_eq!(c.launch.default, "claude");
     assert_eq!(c.launch.detached, "auto");
     assert_eq!(c.launch.env, EnvStrategy::Direnv);
@@ -151,14 +165,13 @@ fn default_config_round_trips_through_toml_and_matches_the_module_docs() {
 [store]
 kind = \"nb\"
 notebook = \"home\"
-bookkeeper = \"auto\"
+sync_interval = 3600
 
 [workflow]
 statuses = [\"in-progress\", \"ready\", \"waiting\", \"blocked\", \"later\"]
 default_status = \"ready\"
 
 [work]
-worktree_manager = \"git\"
 
 [launch]
 default = \"claude\"
@@ -197,6 +210,26 @@ command = \"claude -p\"
 post-create = []
 post-done = []
 pre-launch = []
+
+[worktree]
+enabled = false
+path = \"{{project_parent}}/{{project_name}}-{{branch_safe}}\"
+branch = \"{{id}}-{{slug}}\"
+base = \"origin/HEAD\"
+on_create = \"auto\"
+on_done = \"release\"
+delete_branch = \"safe\"
+symlinks = []
+copies = []
+templates = []
+
+[worktree.variables]
+
+[worktree.hooks]
+pre-create = []
+post-create = []
+pre-remove = []
+post-remove = []
 ";
     assert_eq!(text, expected);
 }
@@ -538,7 +571,10 @@ fn global_file_alone() {
         Some(&Origin::File(path.clone()))
     );
     assert_eq!(loaded.file_for("store.notebook"), Some(path.as_path()));
-    assert_eq!(loaded.explain("store.bookkeeper"), Some(&Origin::Defaults));
+    assert_eq!(
+        loaded.explain("store.sync_interval"),
+        Some(&Origin::Defaults)
+    );
     assert_eq!(loaded.layers[1].keys, vec!["store.notebook", "ui.no_osc8"]);
 }
 
@@ -589,14 +625,13 @@ fn without_home_there_is_no_global_file_but_xdg_still_works() {
 fn project_file_overrides_global_field_wise() {
     let sb = Sandbox::new();
     let global = sb.write_global(
-        "[store]\nnotebook = \"global\"\nbookkeeper = \"nb\"\n[ui]\nglow_style = \"light\"\nweek_start = \"sunday\"\n",
+        "[store]\nnotebook = \"global\"\nsync_interval = 60\n[ui]\nglow_style = \"light\"\nweek_start = \"sunday\"\n",
     );
     let project = sb.write_project("[store]\nnotebook = \"project\"\n");
     let loaded = Config::load(&sb.opts()).unwrap();
     assert_eq!(loaded.config.store.notebook, "project");
     assert_eq!(
-        loaded.config.store.bookkeeper,
-        Bookkeeper::Nb,
+        loaded.config.store.sync_interval, 60,
         "sibling key survives"
     );
     assert_eq!(loaded.config.ui.glow_style, "light");
@@ -607,7 +642,7 @@ fn project_file_overrides_global_field_wise() {
         Some(&Origin::File(project.clone()))
     );
     assert_eq!(
-        loaded.explain("store.bookkeeper"),
+        loaded.explain("store.sync_interval"),
         Some(&Origin::File(global.clone()))
     );
     assert_eq!(loaded.explain("store"), Some(&Origin::File(project)));
@@ -876,10 +911,10 @@ fn invalid_status_spelling_is_an_error_with_position() {
 #[test]
 fn invalid_enum_value_lists_the_expected_ones() {
     let sb = Sandbox::new();
-    sb.write_global("[store]\nbookkeeper = \"manual\"\n");
+    sb.write_global("[launch]\nenv = \"manual\"\n");
     let err = Config::load(&sb.opts()).unwrap_err().to_string();
     assert!(err.contains("unknown variant `manual`"), "{err}");
-    assert!(err.contains("`auto`, `nb`, `native`"), "{err}");
+    assert!(err.contains("expected `inherit` or `direnv`"), "{err}");
 
     sb.write_global("[[source]]\nname = \"a\"\nkind = \"slack\"\n");
     let err = Config::load(&sb.opts()).unwrap_err().to_string();
@@ -957,10 +992,18 @@ fn env_overrides_files() {
     let mut opts = sb.opts();
     opts.env = env(&[
         ("TASQ_NOTEBOOK", "env"),
-        ("TASQ_BOOKKEEPER", "native"),
+        ("TASQ_SYNC_INTERVAL", "0"),
         ("TASQ_DEFAULT_PROJECT", "~/code/x"),
-        ("TASQ_WORKTREE_MANAGER", "git"),
-        ("TASQ_WORKTREE_COMMAND", "mkwt {branch}"),
+        ("TASQ_WORKTREE_ENABLED", "true"),
+        (
+            "TASQ_WORKTREE_PATH",
+            "{{project}}/.worktrees/{{branch_safe}}",
+        ),
+        ("TASQ_WORKTREE_BRANCH", "{{slug}}"),
+        ("TASQ_WORKTREE_BASE", "origin/main"),
+        ("TASQ_WORKTREE_ON_CREATE", "never"),
+        ("TASQ_WORKTREE_ON_DONE", "keep"),
+        ("TASQ_WORKTREE_DELETE_BRANCH", "never"),
         ("TASQ_LAUNCHER", "tmux"),
         ("TASQ_LAUNCH_DETACHED", "herdr"),
         ("TASQ_LAUNCH_ENV", "inherit"),
@@ -981,10 +1024,18 @@ fn env_overrides_files() {
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
     assert_eq!(c.store.notebook, "env");
-    assert_eq!(c.store.bookkeeper, Bookkeeper::Native);
+    assert_eq!(c.store.sync_interval, 0);
     assert_eq!(c.work.default_project, Some(sb.home.join("code/x")));
-    assert_eq!(c.work.worktree_manager, WorktreeManager::Git);
-    assert_eq!(c.work.worktree_command.as_deref(), Some("mkwt {branch}"));
+    assert!(c.worktree.enabled);
+    assert_eq!(c.worktree.path, "{{project}}/.worktrees/{{branch_safe}}");
+    assert_eq!(c.worktree.branch, "{{slug}}");
+    assert_eq!(c.worktree.base, "origin/main");
+    assert_eq!(c.worktree.on_create, tasq_core::config::OnCreate::Never);
+    assert_eq!(c.worktree.on_done, tasq_core::config::OnDone::Keep);
+    assert_eq!(
+        c.worktree.delete_branch,
+        tasq_core::worktree::lifecycle::DeleteBranch::Never
+    );
     assert_eq!(c.launch.default, "tmux");
     assert_eq!(c.launch.detached, "herdr");
     assert_eq!(c.launch.env, EnvStrategy::Inherit);
@@ -1011,8 +1062,18 @@ fn env_overrides_files() {
     assert_eq!(loaded.explain("ui.pager"), Some(&Origin::Env));
     let env_layer = loaded.layers.last().unwrap();
     assert_eq!(env_layer.origin, Origin::Env);
-    assert_eq!(env_layer.keys.len(), 20);
+    assert_eq!(env_layer.keys.len(), 25);
     assert_eq!(Origin::Env.to_string(), "env");
+}
+
+#[test]
+fn worktrees_env_var_is_not_an_alias_for_worktree_enabled() {
+    let sb = Sandbox::new();
+    let mut opts = sb.opts();
+    opts.env = env(&[("TASQ_WORKTREES", "true")]);
+    let loaded = Config::load(&opts).unwrap();
+    assert!(!loaded.config.worktree.enabled);
+    assert_ne!(loaded.explain("worktree.enabled"), Some(&Origin::Env));
 }
 
 #[test]
@@ -1023,10 +1084,12 @@ fn every_documented_env_key_is_a_real_key() {
         let mut opts = LoadOptions::new("/nonexistent");
         // Any value a string key accepts; enums get their first variant.
         let value = match *key {
-            "store.bookkeeper" | "launch.herdr.placement" => "auto",
-            "work.worktree_manager" => "git",
+            "launch.herdr.placement" => "auto",
+            "store.sync_interval" => "60",
+            "worktree.on_create" | "worktree.delete_branch" => "never",
+            "worktree.on_done" => "keep",
             "launch.env" => "direnv",
-            "ui.no_osc8" => "true",
+            "ui.no_osc8" | "worktree.enabled" => "true",
             "report.summary.summarizer" => "raw",
             "ui.week_start" => "sunday",
             "ui.due_format" => "iso",
@@ -1094,7 +1157,7 @@ fn boolean_env_values_are_parsed_leniently() {
 #[test]
 fn invalid_env_enum_value_is_reported_without_a_file() {
     let mut opts = LoadOptions::new("/nonexistent");
-    opts.env = env(&[("TASQ_BOOKKEEPER", "manual")]);
+    opts.env = env(&[("TASQ_LAUNCH_ENV", "manual")]);
     let err = Config::load(&opts).unwrap_err();
     match &err {
         ConfigError::Merge { message } => {
@@ -1486,6 +1549,31 @@ fn source_list_is_replaced_not_appended_by_a_later_layer() {
     assert!(!loaded.config.source[0].auto);
 }
 
+// --- the shipped examples ----------------------------------------------------
+
+/// `examples/config/*.toml` and `examples/sources/config.toml` are documented
+/// as complete files with real keys only; loading them keeps them honest.
+#[test]
+fn every_example_config_loads() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("config"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "toml"))
+        .collect();
+    files.sort();
+    files.push(root.join("sources/config.toml"));
+    assert_eq!(files.len(), 3, "{files:?}");
+    for file in files {
+        let mut opts = LoadOptions::new("/nonexistent");
+        opts.home = Some(PathBuf::from("/home/u"));
+        opts.explicit_file = Some(file.clone());
+        if let Err(e) = Config::load(&opts) {
+            panic!("{}: {e}", file.display());
+        }
+    }
+}
+
 // --- the plan's example ----------------------------------------------------
 
 #[test]
@@ -1495,16 +1583,11 @@ fn plan_section_4_6_example_loads_as_is() {
     let loaded = Config::load(&sb.opts()).unwrap();
     let c = &loaded.config;
     assert_eq!(c.store.notebook, "home");
-    assert_eq!(c.store.bookkeeper, Bookkeeper::Auto);
+    assert_eq!(c.store.sync_interval, 3600);
     assert_eq!(c.workflow.statuses.len(), 5);
     assert_eq!(
         c.work.default_project,
         Some(sb.home.join("code/SF/silverfin_worspace/silverfin"))
-    );
-    assert_eq!(c.work.worktree_manager, WorktreeManager::Command);
-    assert_eq!(
-        c.work.worktree_command.as_deref(),
-        Some("gwm create {new} {branch} --no-tmux -s")
     );
     assert_eq!(c.launch.default, "claude");
     assert_eq!(c.launch.env, EnvStrategy::Direnv);
@@ -1643,7 +1726,7 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     let sb = Sandbox::new();
     // Every layer sets `store.notebook`; each also owns one private key.
     let global = sb.write_global(
-        "[store]\nnotebook = \"global\"\nbookkeeper = \"nb\"\n\
+        "[store]\nnotebook = \"global\"\nsync_interval = 60\n\
          [profile.p.store]\nnotebook = \"profile\"\n[profile.p.ui]\nglow_style = \"light\"\n",
     );
     let project = sb.write_project("[store]\nnotebook = \"project\"\n[ui]\npager = \"more\"\n");
@@ -1657,7 +1740,7 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
     assert_eq!(c.store.notebook, "override");
-    assert_eq!(c.store.bookkeeper, Bookkeeper::Nb);
+    assert_eq!(c.store.sync_interval, 60);
     assert_eq!(c.ui.pager, "more");
     assert_eq!(c.ui.glow_style, "light");
     assert_eq!(c.launch.default, "shell");
@@ -1670,7 +1753,7 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     };
     assert_eq!(loaded.explain("store.notebook"), Some(&Origin::Overrides));
     assert_eq!(
-        loaded.explain("store.bookkeeper"),
+        loaded.explain("store.sync_interval"),
         Some(&Origin::File(global.clone()))
     );
     assert_eq!(
@@ -1714,30 +1797,105 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
 }
 
 #[test]
-fn command_worktree_manager_requires_a_command() {
+fn removed_worktree_manager_keys_name_the_replacement() {
+    for key in [
+        "worktree_manager = \"git\"",
+        "worktree_command = \"mk {branch}\"",
+    ] {
+        let sb = Sandbox::new();
+        let file = sb.write_project(&format!("[work]\ndefault_project = \"~\"\n{key}\n"));
+        let err = Config::load(&sb.opts()).unwrap_err().to_string();
+        let prefix = format!("{}:3:", file.display());
+        assert!(err.starts_with(&prefix), "{err}");
+        assert!(
+            err.ends_with(
+                ": work.worktree_manager and work.worktree_command were removed; worktrees are configured under [worktree] (docs/config.md, \"Worktrees\")"
+            ),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn copy_ignored_is_rejected_until_it_is_implemented() {
+    for value in ["true", "false"] {
+        let sb = Sandbox::new();
+        let file = sb.write_project(&format!(
+            "[worktree]\nenabled = true\ncopy_ignored = {value}\n"
+        ));
+        let err = Config::load(&sb.opts()).unwrap_err().to_string();
+        let prefix = format!("{}:3:", file.display());
+        assert!(err.starts_with(&prefix), "{err}");
+        assert!(
+            err.ends_with(
+                ": worktree.copy_ignored is not implemented yet; list the files under worktree.copies (docs/config.md, \"Worktrees\")"
+            ),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn worktree_table_from_a_file() {
     let sb = Sandbox::new();
-    let file = sb.write_project("[work]\nworktree_manager = \"command\"\n");
-    let err = Config::load(&sb.opts()).unwrap_err();
+    sb.write_project(
+        "[worktree]\nenabled = true\nsymlinks = [\"node_modules\"]\ncopies = [\".envrc\"]\n\
+         templates = [{ source = \"t/.envrc\", target = \".envrc\" }]\n\
+         [worktree.variables]\ndb = \"app\"\n[worktree.ports]\nbase = 4000\nspan = 1000\nblock = 10\n\
+         [worktree.hooks]\npost-create = [\"direnv allow .\"]\npre-remove = [\"x\"]\n",
+    );
+    let w = Config::load(&sb.opts()).unwrap().config.worktree;
+    assert!(w.enabled);
+    assert_eq!(w.symlinks, vec!["node_modules"]);
+    assert_eq!(w.copies, vec![".envrc"]);
     assert_eq!(
-        err.to_string(),
+        w.templates,
+        vec![tasq_core::config::TemplateFile {
+            source: "t/.envrc".into(),
+            target: ".envrc".into()
+        }]
+    );
+    assert_eq!(w.variables.get("db").map(String::as_str), Some("app"));
+    assert_eq!(
+        w.ports,
+        Some(tasq_core::config::PortsConfig {
+            base: 4000,
+            span: 1000,
+            block: 10
+        })
+    );
+    assert_eq!(w.hooks.post_create, vec!["direnv allow ."]);
+    assert_eq!(w.hooks.pre_remove, vec!["x"]);
+    assert_eq!(w.hooks.pre_create, Vec::<String>::new());
+    assert_eq!(w.hooks.post_remove, Vec::<String>::new());
+}
+
+#[test]
+fn worktree_ports_must_hold_a_block_below_65536() {
+    let load = |base: u32, span: u32, block: u32| {
+        let sb = Sandbox::new();
+        sb.write_project(&format!(
+            "[worktree.ports]\nbase = {base}\nspan = {span}\nblock = {block}\n"
+        ));
+        Config::load(&sb.opts())
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    };
+    assert_eq!(load(4000, 10, 10), Ok(()));
+    assert_eq!(load(65526, 10, 10), Ok(()));
+    assert_eq!(load(0, 65535, 1), Ok(()));
+    let sb = Sandbox::new();
+    let file = sb.write_project("[worktree.ports]\nbase = 4000\nspan = 10\nblock = 0\n");
+    assert_eq!(
+        Config::load(&sb.opts()).unwrap_err().to_string(),
         format!(
-            "work.worktree_manager = \"command\" (set by {}) requires work.worktree_command, e.g. \"gwm create {{new}} {{branch}} --no-tmux -s\"",
+            "worktree.ports (set by {}): base = 4000, span = 10, block = 0: block must be at least 1, span at least block, and base + span at most 65536",
             file.display()
         )
     );
-    sb.write_project("[work]\nworktree_manager = \"command\"\nworktree_command = \"  \"\n");
-    assert!(matches!(
-        Config::load(&sb.opts()).unwrap_err(),
-        ConfigError::WorktreeCommandRequired { .. }
-    ));
-    sb.write_project(
-        "[work]\nworktree_manager = \"command\"\nworktree_command = \"gwm create {new} {branch} --no-tmux -s\"\n",
-    );
-    let c = Config::load(&sb.opts()).unwrap().config;
-    assert_eq!(c.work.worktree_manager, WorktreeManager::Command);
-    // The git manager never needs the command.
-    sb.write_project("[work]\nworktree_manager = \"git\"\n");
-    assert!(Config::load(&sb.opts()).is_ok());
+    assert!(load(4000, 9, 10).is_err());
+    assert!(load(65527, 10, 10).is_err());
+    assert!(load(4000, 10, 11).is_err());
 }
 
 #[test]
@@ -1751,4 +1909,104 @@ fn an_empty_table_is_recorded_as_a_leaf_key() {
             .explain("ui.colors")
             .is_some_and(|o| o.path().is_some())
     );
+}
+
+#[test]
+fn worktree_templates_only_name_variables_of_their_scope() {
+    let load = |text: &str| {
+        let sb = Sandbox::new();
+        let file = sb.write_project(text);
+        (
+            Config::load(&sb.opts())
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+            file,
+        )
+    };
+    // The defaults and every scope's own names pass.
+    assert_eq!(load("[worktree]\n").0, Ok(()));
+    assert_eq!(
+        load(
+            "[worktree]\nbranch = \"{{repo}}-{{id}}-{{slug}}-{{title}}-{{project}}-{{project_name}}-{{project_parent}}-{{x}}\"\n\
+             path = \"{{branch}}{{branch_safe}}{{branch_db}}{{port}}\"\n\
+             [worktree.variables]\nx = \"1\"\n[worktree.ports]\nbase = 4000\nspan = 10\nblock = 10\n\
+             [worktree.hooks]\npost-create = [\"echo {{worktree}} {{worktree_name}} {{port}}\"]\n"
+        )
+        .0,
+        Ok(())
+    );
+    let (err, file) = load("[worktree]\nbranch = \"{{id}}-{{branch}}\"\n");
+    assert_eq!(
+        err.unwrap_err(),
+        format!(
+            "worktree.branch (set by {}): unknown variable {{{{branch}}}}; known: {{{{id}}}}, {{{{project}}}}, {{{{project_name}}}}, {{{{project_parent}}}}, {{{{repo}}}}, {{{{slug}}}}, {{{{title}}}}",
+            file.display()
+        )
+    );
+    for (text, key, name) in [
+        (
+            "[worktree]\npath = \"{{worktree}}\"\n",
+            "worktree.path",
+            "worktree",
+        ),
+        ("[worktree]\npath = \"{{port}}\"\n", "worktree.path", "port"),
+        (
+            "[worktree.hooks]\npre-create = [\"ok\", \"{{nope}}\"]\n",
+            "worktree.hooks.pre-create",
+            "nope",
+        ),
+        (
+            "[worktree.hooks]\npost-create = [\"{{nope}}\"]\n",
+            "worktree.hooks.post-create",
+            "nope",
+        ),
+        (
+            "[worktree.hooks]\npre-remove = [\"{{nope}}\"]\n",
+            "worktree.hooks.pre-remove",
+            "nope",
+        ),
+        (
+            "[worktree.hooks]\npost-remove = [\"{{nope}}\"]\n",
+            "worktree.hooks.post-remove",
+            "nope",
+        ),
+    ] {
+        let err = load(text).0.unwrap_err();
+        assert!(err.starts_with(&format!("{key} (set by ")), "{err}");
+        assert!(
+            err.contains(&format!("unknown variable {{{{{name}}}}};")),
+            "{err}"
+        );
+    }
+    // Checked even with worktrees disabled, so enabling never surfaces it.
+    assert!(
+        load("[worktree]\nenabled = false\nbranch = \"{{bad}}\"\n")
+            .0
+            .is_err()
+    );
+}
+
+#[test]
+fn worktree_variables_are_names_that_shadow_no_builtin() {
+    let sb = Sandbox::new();
+    let file = sb.write_project("[worktree.variables]\nport = \"1\"\n");
+    assert_eq!(
+        Config::load(&sb.opts()).unwrap_err().to_string(),
+        format!(
+            "worktree.variables.port (set by {}): a built-in variable has this name",
+            file.display()
+        )
+    );
+    sb.write_project("[worktree.variables]\n\"db-name\" = \"1\"\n");
+    assert_eq!(
+        Config::load(&sb.opts()).unwrap_err().to_string(),
+        format!(
+            "worktree.variables.db-name (set by {}): a variable name is letters, digits and underscores",
+            file.display()
+        )
+    );
+    sb.write_project("[worktree.variables]\n\"\" = \"1\"\n");
+    assert!(Config::load(&sb.opts()).is_err());
+    sb.write_project("[worktree.variables]\ndb_name2 = \"1\"\n");
+    assert!(Config::load(&sb.opts()).is_ok());
 }

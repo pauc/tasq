@@ -32,7 +32,7 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0004](0004-adapter-decides-sync-strategy.md) | Each Source adapter decides its sync strategy | Accepted |
 | [0005](0005-cli-first-tui-second.md) | CLI first, TUI second | Accepted |
 | [0006](0006-plugin-mechanism.md) | Plugin mechanism: external executables for users, in-process adapters built in | Accepted |
-| [0007](0007-nb-under-the-hood.md) | nb under the hood: hybrid native/nb bookkeeping | Accepted |
+| [0007](0007-nb-under-the-hood.md) | nb under the hood: hybrid native/nb bookkeeping | Superseded by ADR-0023 |
 | [0008](0008-license.md) | GPL-3.0-or-later license | Accepted |
 | [0009](0009-tui-host-actions-through-the-cli.md) | TUI edits through core, host actions through the CLI binary | Accepted |
 | [0010](0010-post-done-hook-from-the-tui.md) | The TUI's close reaches the `post-done` hooks through the `Host` | Accepted |
@@ -47,3 +47,5 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0019](0019-relative-due-dates.md) | Relative, coloured due dates: `dates::Due`, `ui.due_format` (relative/iso/both), `overdue` and `due-soon` theme roles; ISO in `--json` and the detail pane | Accepted |
 | [0020](0020-closed-section.md) | Recording when a task was closed: `Task::closed_at`, a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`), `Task::close`, `edit::done` in one write | Accepted |
 | [0021](0021-detail-at-the-bottom.md) | The TUI detail under the list: `ui.detail_position = "right" \| "bottom"`, `LayoutKind::Stacked` from 20 rows | Accepted |
+| [0022](0022-worktrees-opt-in-core-feature.md) | Worktrees as an opt-in core feature: `worktree.enabled` hides every surface when off; `[worktree]` provisioning replaces gwm; pure plans in `tasq-core::worktree`, executed by a new `tasq-worktree` crate; trust for repo hooks | Proposed |
+| [0023](0023-no-nb-at-runtime.md) | No nb at runtime: native bookkeeping, commits and sync in a background job behind `.git/tasq/lock`, `store.sync_interval`, `tasq store reconcile` | Accepted |

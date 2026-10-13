@@ -1,0 +1,6 @@
+development:
+  adapter: postgresql
+  database: {{db_prefix}}_{{branch_db}}_development
+test:
+  adapter: postgresql
+  database: {{db_prefix}}_{{branch_db}}_test

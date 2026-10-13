@@ -1,5 +1,7 @@
-//! Parity with the real `nb`: ids, `nb todo do`, index handling. Each test
-//! runs only when `nb` is installed (see `support::nb_or_skip`).
+//! Parity with the real `nb`: ids, `nb todo do`, index handling. The store
+//! never runs nb (ADR-0023); these tests run nb next to it to prove nb still
+//! reads what tasq writes. Each test runs only when `nb` is installed (see
+//! `support::nb_or_skip`).
 
 mod support;
 
@@ -67,36 +69,8 @@ fn nb_lists_the_same_ids_with_a_git_repository() {
     let store = nb.open();
     assert_eq!(sorted(nb_ids(&open)), store_ids(&store, &Filter::default()));
     // With git, nb also resolves the notebook by name.
-    let path = tasq_store_nb::sanitize::last_line(&nb.nb(&["notebooks", "show", "home", "--path"]));
+    let path = support::sanitize::last_line(&nb.nb(&["notebooks", "show", "home", "--path"]));
     assert_eq!(std::path::PathBuf::from(path), nb.notebook());
-}
-
-#[test]
-fn nb_welcome_on_a_fresh_nb_dir_is_a_config_error() {
-    if !nb_or_skip("nb_welcome_on_a_fresh_nb_dir_is_a_config_error") {
-        return;
-    }
-    // On a fresh NB_DIR nb's first command prints a welcome, exits 0 and
-    // swallows the command, so `notebooks show` yields no path. The store
-    // must report that as a configuration error, never as a notebook.
-    let nb = NbEnv::fixture();
-    let fresh = nb.root.path().join("fresh-nb");
-    std::fs::create_dir_all(&fresh).unwrap();
-    let mut options = nb.options();
-    options.config_file = Some(nb.root.path().join("tasq.toml"));
-    for pair in &mut options.env {
-        if pair.0 == "NB_DIR" {
-            pair.1 = fresh.display().to_string();
-        }
-    }
-    let err = NbStore::open(&tasq_core::config::StoreConfig::default(), &options).unwrap_err();
-    let text = err.to_string();
-    assert!(text.starts_with("store.notebook (set in "), "{text}");
-    assert!(text.contains("notebook \"home\""), "{text}");
-    assert!(
-        text.ends_with("which is not a directory") || text.contains("nb printed no path"),
-        "{text}"
-    );
 }
 
 #[test]
@@ -163,14 +137,15 @@ fn our_writes_keep_nb_index_consistent() {
     task.set_status(tasq_core::model::Status::READY);
     store.update(&task).unwrap();
     store.set_done(&TaskId::from(id::SUPPORT), true).unwrap();
+    store.wait_for_bookkeeping().unwrap();
     assert_eq!(nb.nb(&["index", "verify"]), verify_before);
     assert!(!nb.nb(&["index", "verify"]).contains("corrupted"));
     assert_eq!(nb.read(".index"), index);
 }
 
 #[test]
-fn missing_index_is_rebuilt_by_nb_with_a_warning() {
-    if !nb_or_skip("missing_index_is_rebuilt_by_nb_with_a_warning") {
+fn a_rebuilt_index_agrees_with_nb() {
+    if !nb_or_skip("a_rebuilt_index_agrees_with_nb") {
         return;
     }
     let nb = NbEnv::fixture();
@@ -178,11 +153,34 @@ fn missing_index_is_rebuilt_by_nb_with_a_warning() {
     std::fs::remove_file(&index).unwrap();
     let store = nb.open();
     assert!(store.rebuilt_index());
-    assert!(index.is_file());
     let rebuilt = nb.read(".index");
     assert!(!rebuilt.contains(file_name(id::MISSING)), "{rebuilt}");
     assert_eq!(rebuilt.lines().count(), 6);
-    // Ids are whatever nb decided; they agree with nb's own listing.
+    assert!(!nb.nb(&["index", "verify"]).contains("corrupted"));
     let open = nb.nb(&["todos", "open", "--no-color"]);
     assert_eq!(sorted(nb_ids(&open)), store_ids(&store, &Filter::default()));
+}
+
+#[test]
+fn a_reconciled_index_keeps_ids_and_satisfies_nb() {
+    if !nb_or_skip("a_reconciled_index_keeps_ids_and_satisfies_nb") {
+        return;
+    }
+    let nb = NbEnv::fixture();
+    nb.write("20261001000000.todo.md", "# [ ] Unlisted\n");
+    let (consistent, before) = nb.nb_status(&["index", "verify"]);
+    assert!(!consistent, "the fixture gap: {before}");
+    let mut store = nb.open();
+    let ids_before = store_ids(&store, &Filter::default());
+    let found = store.reconcile().unwrap();
+    assert!(!found.consistent);
+    assert_eq!(found.missing_files, vec![file_name(id::MISSING)]);
+    assert_eq!(found.unindexed_files, vec!["20261001000000.todo.md"]);
+    let (consistent, after) = nb.nb_status(&["index", "verify"]);
+    assert!(consistent && !after.contains("corrupted"), "{after}");
+    let mut ids_after = ids_before.clone();
+    ids_after.push(8);
+    assert_eq!(store_ids(&store, &Filter::default()), ids_after);
+    let open = nb.nb(&["todos", "open", "--no-color"]);
+    assert_eq!(sorted(nb_ids(&open)), ids_after, "nb agrees");
 }

@@ -7,6 +7,7 @@ use tasq_core::clock::{Clock, FixedClock, SystemClock, When, parse_timestamp};
 use tasq_core::config::{Config, LoadOptions, Loaded};
 use tasq_core::model::{TaskId, Workflow};
 use tasq_store_nb::{NbStore, NbStoreOptions};
+use tasq_worktree::Git;
 
 use crate::cli::{Cli, Command, GlobalArgs, ListArgs};
 use crate::commands;
@@ -45,7 +46,7 @@ pub fn run(cli: Cli) -> Result<()> {
     }
     let opts = load_options(&global)?;
     match command {
-        Some(Command::Completions { shell }) => commands::completions::run(shell),
+        Some(Command::Completions { shell }) => commands::completions::run(shell, &global),
         Some(Command::Doctor) => commands::doctor::run(global, opts),
         other => {
             let app = App::load(global, opts)?;
@@ -63,37 +64,21 @@ pub fn run(cli: Cli) -> Result<()> {
                     commands::edit::set(&app, &id, &value, note.as_deref())
                 }
                 Some(Command::Log { id, note }) => commands::edit::log(&app, &id, &note),
-                Some(Command::Done { id, note }) => {
-                    commands::edit::done(&app, &id, note.as_deref())
+                Some(Command::Done { id, note, yes }) => {
+                    commands::edit::done(&app, &id, note.as_deref(), yes)
                 }
                 Some(Command::Reopen { id, status, note }) => {
                     commands::edit::reopen(&app, &id, status.as_deref(), note.as_deref())
                 }
-                Some(Command::Next {
-                    launcher,
-                    detached,
-                    no_focus,
-                    dry_run,
-                }) => {
-                    let how = commands::launch::How::new(launcher.as_deref(), detached, no_focus);
-                    commands::launch::next(&app, &how, dry_run)
-                }
-                Some(Command::Pick {
-                    id,
-                    launcher,
-                    detached,
-                    no_focus,
-                    dry_run,
-                }) => {
-                    let how = commands::launch::How::new(launcher.as_deref(), detached, no_focus);
-                    commands::launch::pick(&app, &id, &how, dry_run)
+                Some(command @ (Command::Next { .. } | Command::Pick { .. })) => {
+                    commands::launch::dispatch(&app, &command)
                 }
                 Some(Command::View { id, raw }) => commands::view::run(&app, &id, raw),
                 Some(Command::Project { id, path }) => {
                     commands::project::run(&app, &id, path.as_deref())
                 }
-                Some(Command::Worktree { id, path, create }) => {
-                    commands::worktree::run(&app, &id, path.as_deref(), create.as_deref())
+                Some(command @ Command::Worktree { .. }) => {
+                    commands::worktree::dispatch(&app, &command)
                 }
                 Some(Command::Session {
                     id,
@@ -161,6 +146,16 @@ fn command_name(command: &Command) -> &'static str {
     }
 }
 
+/// Whether worktrees are enabled for these flags, for decisions taken
+/// before a command runs (`--help`, completions). A configuration that does
+/// not load counts as disabled here; the command then reports the error.
+pub fn worktrees_enabled(global: &GlobalArgs) -> bool {
+    load_options(global)
+        .ok()
+        .and_then(|opts| Config::load(&opts).ok())
+        .is_some_and(|loaded| loaded.config.worktree.enabled)
+}
+
 /// [`LoadOptions`] from the process (cwd, `$HOME`, environment) plus the
 /// `--config`, `--profile` and `--set` flags.
 pub fn load_options(global: &GlobalArgs) -> Result<LoadOptions> {
@@ -194,9 +189,30 @@ impl App {
         &self.loaded.config
     }
 
+    /// The configuration as loaded from `dir` instead of the current
+    /// directory, so the `.tasq.toml` next to a repository applies wherever
+    /// tasq runs (the worktree commands, plan 4.4). Everything else (the
+    /// global file, `--config`, `--profile`, `--set`, the environment) is as
+    /// for [`App::config`].
+    pub fn config_at(&self, dir: &std::path::Path) -> Result<Loaded> {
+        let mut opts = self.opts.clone();
+        opts.cwd = dir.to_path_buf();
+        Ok(Config::load(&opts)?)
+    }
+
     /// The configured status workflow.
     pub fn workflow(&self) -> Workflow {
         self.config().workflow.workflow()
+    }
+
+    /// Whether worktrees are enabled (`worktree.enabled`, ADR 0022).
+    pub fn worktrees(&self) -> bool {
+        self.config().worktree.enabled
+    }
+
+    /// A task as JSON, without `worktrees` when they are disabled.
+    pub fn task_json(&self, task: &tasq_core::model::Task) -> serde_json::Value {
+        crate::json::task(task, self.worktrees())
     }
 
     /// The environment as the store wants it.
@@ -204,13 +220,20 @@ impl App {
         env_vec(&self.opts.env)
     }
 
-    /// Store options from the config and the process environment: `nb` is
-    /// looked up on this environment's `PATH`, `NB_DIR` in it, and the
-    /// file that set `store.notebook` is recorded for error messages.
+    /// `git`, run with this environment.
+    pub fn git(&self) -> Git {
+        Git {
+            env: self.env_vec(),
+        }
+    }
+
+    /// Store options from the config and the process environment: `NB_DIR`
+    /// is looked up in this environment, `git` runs with it, and the file
+    /// that set `store.notebook` is recorded for error messages.
     pub fn store_options(&self) -> NbStoreOptions {
         let mut options = NbStoreOptions::new(self.workflow())
             .with_env(self.env_vec())
-            .with_bookkeeper(self.config().store.bookkeeper);
+            .with_sync_interval(self.config().store.sync_interval);
         if let Some(home) = &self.opts.home {
             options = options.with_home(home);
         }
@@ -240,7 +263,8 @@ impl App {
     }
 
     /// Opens the configured store. Warnings raised while opening (a
-    /// rebuilt index) go to stderr.
+    /// rebuilt index, the previous command's failed background commit) go
+    /// to stderr.
     pub fn open_store(&self) -> Result<NbStore> {
         let mut store =
             NbStore::open(&self.config().store, &self.store_options())?.with_clock(self.clock()?);

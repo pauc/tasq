@@ -1,0 +1,4 @@
+# {{title}} ({{branch}}), task {{id}}
+export APP_ENV={{app_env}}
+export WORKTREE_NAME={{worktree_name}}
+dotenv_if_exists ../{{project_name}}/.env.shared

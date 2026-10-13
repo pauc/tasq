@@ -1,5 +1,5 @@
-//! T-203: `create` on a temp copy of the fixture, with the native, a
-//! recording and (nb-gated) the nb bookkeeper.
+//! T-203: `create` on a temp copy of the fixture, with the native and a
+//! recording bookkeeper; nb-gated tests check that nb reads the result.
 
 mod support;
 
@@ -9,11 +9,10 @@ use std::path::Path;
 use std::rc::Rc;
 
 use chrono::NaiveDate;
-use tasq_core::clock::FixedClock;
-use tasq_core::config::Bookkeeper as Choice;
+use tasq_core::clock::{Clock, FixedClock};
 use tasq_core::model::{Link, Priority, Status, Tag, TaskDraft, TaskId};
 use tasq_store_nb::{
-    Bookkeeper, NbStore, Store, StoreError, StoreWarning, SyncOutcome, Verification,
+    Bookkeeper, NbStore, Store, StoreError, StoreWarning, SyncOutcome, Verification, WriteLock,
 };
 
 use support::{NbEnv, id, nb_ids, nb_or_skip};
@@ -21,9 +20,8 @@ use support::{NbEnv, id, nb_ids, nb_or_skip};
 const CLOCK: &str = "2026-10-04 12:34";
 const NEW_FILE: &str = "20261004123400.todo.md";
 
-fn store_at(nb: &NbEnv, choice: Choice, clock: &str) -> NbStore {
-    nb.open_with(choice)
-        .with_clock(Box::new(FixedClock::at(clock)))
+fn store_at(nb: &NbEnv, clock: &str) -> NbStore {
+    nb.open().with_clock(Box::new(FixedClock::at(clock)))
 }
 
 fn full_draft() -> TaskDraft {
@@ -44,7 +42,7 @@ fn full_draft() -> TaskDraft {
 #[test]
 fn create_writes_the_script_shaped_file_and_registers_it() {
     let nb = NbEnv::fixture();
-    let mut store = store_at(&nb, Choice::Native, CLOCK);
+    let mut store = store_at(&nb, CLOCK);
     let index_before = nb.read(".index");
     let before = nb.mtimes();
     let task = store.create(full_draft()).unwrap();
@@ -118,7 +116,7 @@ fn create_writes_the_script_shaped_file_and_registers_it() {
 #[test]
 fn create_defaults_the_note_and_writes_done_drafts_closed() {
     let nb = NbEnv::fixture();
-    let mut store = store_at(&nb, Choice::Native, CLOCK);
+    let mut store = store_at(&nb, CLOCK);
     let plain = store.create(TaskDraft::new("Plain")).unwrap();
     assert_eq!(
         nb.read(NEW_FILE),
@@ -154,7 +152,7 @@ fn create_defaults_the_note_and_writes_done_drafts_closed() {
 fn create_bumps_the_filename_by_one_second_when_taken() {
     let nb = NbEnv::fixture();
     nb.write(NEW_FILE, "# [ ] Squatter\n");
-    let mut store = store_at(&nb, Choice::Native, CLOCK);
+    let mut store = store_at(&nb, CLOCK);
     let task = store.create(TaskDraft::new("Bumped")).unwrap();
     assert_eq!(nb.read(NEW_FILE), "# [ ] Squatter\n", "untouched");
     assert!(
@@ -189,7 +187,7 @@ fn create_bumps_the_filename_by_one_second_when_taken() {
 #[test]
 fn create_refuses_merge_requests_without_a_title() {
     let nb = NbEnv::fixture();
-    let mut store = store_at(&nb, Choice::Native, CLOCK);
+    let mut store = store_at(&nb, CLOCK);
     let before = nb.mtimes();
     let err = store
         .create(TaskDraft::new("MR").with_merge_request(Link::new("https://x/mr/1")))
@@ -210,6 +208,10 @@ impl Bookkeeper for Scripted {
     fn name(&self) -> &'static str {
         "scripted"
     }
+    fn lock(&self, _clock: &dyn Clock) -> Result<WriteLock, StoreError> {
+        self.calls.borrow_mut().push("lock".to_owned());
+        Ok(WriteLock::none())
+    }
     fn register(&self, file: &Path) -> Result<(), StoreError> {
         self.calls.borrow_mut().push(format!(
             "register {}",
@@ -217,16 +219,24 @@ impl Bookkeeper for Scripted {
         ));
         (self.register)(file)
     }
-    fn checkpoint(&self, message: &str) -> Result<bool, StoreError> {
+    fn checkpoint(
+        &self,
+        _lock: WriteLock,
+        message: &str,
+        _clock: &dyn Clock,
+    ) -> Result<bool, StoreError> {
         self.calls
             .borrow_mut()
             .push(format!("checkpoint {message}"));
         Ok(true)
     }
+    fn take_failure(&self) -> Option<String> {
+        None
+    }
     fn verify(&self) -> Result<Verification, StoreError> {
         Ok(Verification::consistent("scripted"))
     }
-    fn sync(&self) -> Result<SyncOutcome, StoreError> {
+    fn sync(&self, _clock: &dyn Clock) -> Result<SyncOutcome, StoreError> {
         Ok(SyncOutcome::skipped("scripted"))
     }
 }
@@ -256,7 +266,7 @@ fn append_twice(file: &Path) -> Result<(), StoreError> {
 
 fn register_fails(_file: &Path) -> Result<(), StoreError> {
     Err(StoreError::Bookkeeping {
-        message: "nb index add exploded".into(),
+        message: "appending exploded".into(),
     })
 }
 
@@ -268,7 +278,7 @@ fn register_forgets(_file: &Path) -> Result<(), StoreError> {
 #[test]
 fn create_takes_the_last_index_line_naming_the_file_and_checkpoints_after() {
     let nb = NbEnv::fixture();
-    let (mut store, calls) = scripted(store_at(&nb, Choice::Native, CLOCK), append_twice);
+    let (mut store, calls) = scripted(store_at(&nb, CLOCK), append_twice);
     let task = store.create(TaskDraft::new("Twice")).unwrap();
     assert_eq!(
         task.id,
@@ -278,6 +288,7 @@ fn create_takes_the_last_index_line_naming_the_file_and_checkpoints_after() {
     assert_eq!(
         *calls.borrow(),
         vec![
+            "lock".to_owned(),
             format!("register {NEW_FILE}"),
             format!("checkpoint [tasq] Add: {NEW_FILE}"),
         ]
@@ -288,25 +299,25 @@ fn create_takes_the_last_index_line_naming_the_file_and_checkpoints_after() {
 #[test]
 fn create_reports_a_failed_registration_without_hiding_the_write() {
     let nb = NbEnv::fixture();
-    let (mut store, calls) = scripted(store_at(&nb, Choice::Native, CLOCK), register_fails);
+    let (mut store, calls) = scripted(store_at(&nb, CLOCK), register_fails);
     let err = store.create(TaskDraft::new("Kept")).unwrap_err();
     assert_eq!(
         err.to_string(),
         format!(
-            "bookkeeping failed after the write: {NEW_FILE} was written but not added to .index: bookkeeping failed after the write: nb index add exploded"
+            "bookkeeping failed after the write: {NEW_FILE} was written but not added to .index: bookkeeping failed after the write: appending exploded"
         )
     );
     assert!(
         nb.read(NEW_FILE).starts_with("# [ ] Kept\n"),
         "the file stays"
     );
-    assert_eq!(calls.borrow().len(), 1, "no checkpoint without an id");
+    assert_eq!(calls.borrow().len(), 2, "no checkpoint without an id");
 
-    let (mut store, _) = scripted(store_at(&nb, Choice::Native, CLOCK), register_forgets);
+    let (mut store, _) = scripted(store_at(&nb, CLOCK), register_forgets);
     let err = store.create(TaskDraft::new("Forgotten")).unwrap_err();
     assert_eq!(
         err.to_string(),
-        "bookkeeping failed after the write: 20261004123401.todo.md was written but .index does not list it; run 'nb index reconcile' in the notebook"
+        "bookkeeping failed after the write: 20261004123401.todo.md was written but .index does not list it; run 'tasq store reconcile'"
     );
 }
 
@@ -314,9 +325,10 @@ fn create_reports_a_failed_registration_without_hiding_the_write() {
 fn create_in_a_git_notebook_commits_as_nb_would() {
     let nb = NbEnv::fixture();
     nb.git_init();
-    let mut store = store_at(&nb, Choice::Native, CLOCK);
+    let mut store = store_at(&nb, CLOCK);
     let task = store.create(TaskDraft::new("Committed")).unwrap();
     assert_eq!(task.id, TaskId::from(8));
+    store.wait_for_bookkeeping().unwrap();
     assert_eq!(
         nb.git_subjects(),
         vec![
@@ -326,19 +338,28 @@ fn create_in_a_git_notebook_commits_as_nb_would() {
     );
     assert_eq!(nb.git_status(), "", "index and file both committed");
     assert_eq!(store.warnings(), []);
-    // Nothing changed since: the checkpoint is skipped.
-    assert!(!(store.bookkeeper().checkpoint("[tasq] noop").unwrap()));
+    // Nothing changed since: the job commits nothing.
+    let clock = FixedClock::at(CLOCK);
+    let lock = store.bookkeeper().lock(&clock).unwrap();
+    assert!(
+        store
+            .bookkeeper()
+            .checkpoint(lock, "[tasq] noop", &clock)
+            .unwrap()
+    );
+    store.wait_for_bookkeeping().unwrap();
     assert_eq!(nb.git_subjects().len(), 2);
+    assert_eq!(store.warnings(), []);
 }
 
 #[test]
-fn checkpoint_failure_after_create_is_a_warning() {
+fn commit_failure_after_create_is_a_warning() {
     let nb = NbEnv::fixture();
     nb.git_init();
     // Break committing: a HOME without an identity. `useConfigOnly` stops
     // git from guessing one from the user and hostname, which succeeds on
     // macOS runners.
-    let mut options = nb.options().with_bookkeeper(Choice::Native);
+    let mut options = nb.options();
     let bare_home = nb.root.path().join("bare-home");
     std::fs::create_dir_all(&bare_home).unwrap();
     std::fs::write(
@@ -356,13 +377,19 @@ fn checkpoint_failure_after_create_is_a_warning() {
         .with_clock(Box::new(FixedClock::at(CLOCK)));
     let task = store.create(TaskDraft::new("Unsigned")).unwrap();
     assert_eq!(task.id, TaskId::from(8), "the task exists");
+    assert_eq!(store.warnings(), [], "the commit runs in the background");
+    store.wait_for_bookkeeping().unwrap();
     let warnings = store.take_warnings();
     assert_eq!(warnings.len(), 1);
     match &warnings[0] {
         StoreWarning::Bookkeeping { message } => {
-            assert!(message.starts_with("bookkeeping failed after the write: committing: git commit -q -m [tasq] Add: 20261004123400.todo.md failed"), "{message}");
             assert!(
-                message.ends_with("; commit by hand with 'git add -A && git commit'"),
+                message.starts_with("the background commit failed: committing: "),
+                "{message}"
+            );
+            assert!(
+                message
+                    .ends_with("; check 'git status' in the notebook, then run 'tasq store sync'"),
                 "{message}"
             );
         }
@@ -379,10 +406,10 @@ fn nb_lists_the_created_task_with_the_same_id() {
     let nb = NbEnv::fixture();
     nb.restore_missing_file();
     nb.git_init();
-    let mut store = store_at(&nb, Choice::Nb, CLOCK);
-    assert_eq!(store.bookkeeper().name(), "nb");
+    let mut store = store_at(&nb, CLOCK);
     let task = store.create(full_draft()).unwrap();
     assert_eq!(task.id, TaskId::from(8));
+    store.wait_for_bookkeeping().unwrap();
     assert_eq!(store.warnings(), []);
     assert_eq!(
         nb.git_subjects(),
@@ -390,7 +417,7 @@ fn nb_lists_the_created_task_with_the_same_id() {
             format!("[tasq] Add: {NEW_FILE}"),
             "[nb] Initialize".to_owned()
         ],
-        "nb committed with our message, synchronously"
+        "committed with nb's message style"
     );
     assert_eq!(nb.git_status(), "");
     let listed = nb_ids(&nb.nb(&["home:todos", "open", "--no-color"]));
@@ -407,10 +434,11 @@ fn nb_lists_the_created_task_with_the_same_id() {
     let shown = nb.nb(&["home:show", "8", "--print", "--no-color"]);
     assert_eq!(shown.trim_end(), nb.read(NEW_FILE).trim_end());
     assert_eq!(store.get(&TaskId::from(8)).unwrap(), task);
-    // Create a done one through nb's bookkeeper too: id 9, closed.
+    // Create a done one too: id 9, closed.
     let done = store
         .create(TaskDraft::new("Closed").with_done(true))
         .unwrap();
+    store.wait_for_bookkeeping().unwrap();
     assert_eq!(done.id, TaskId::from(id::NO_TAGS + 2));
     let open_ids = nb_ids(&nb.nb(&["home:todos", "open", "--no-color"]));
     assert!(!open_ids.contains(&9));
@@ -435,7 +463,7 @@ fn native_index_line_matches_nb_index_add_byte_for_byte() {
         NEW_FILE,
         &with_nb.notebook().display().to_string(),
     ]);
-    let store = native.open_with(Choice::Native);
+    let store = native.open();
     store
         .bookkeeper()
         .register(&native.notebook().join(NEW_FILE))

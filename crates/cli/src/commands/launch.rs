@@ -1,8 +1,5 @@
 //! `tasq next` and `tasq pick`: open a work session (plan T-401 to T-405).
 
-use std::io::{BufRead, IsTerminal, Write};
-use std::path::Path;
-
 use serde_json::Value;
 use tasq_core::config::ENV_PROFILE;
 use tasq_core::launch::{ENV_NOTEBOOK, ENV_TASK_ID, LaunchContext, LaunchOutcome, resolve_workdir};
@@ -15,7 +12,8 @@ use tasq_launch::{LaunchSettings, launcher_for, resolve_detached};
 use tasq_store_nb::NbStore;
 
 use crate::app::App;
-use crate::commands::worktree::create_and_track;
+use crate::cli::Command;
+use crate::commands::worktree::{Created, materialize};
 use crate::error::{CliError, Result};
 use crate::json;
 use crate::plugins::{self, Hook};
@@ -31,21 +29,24 @@ pub struct How {
     pub detached: bool,
     /// `--no-focus`: leave the new window in the background.
     pub focus: bool,
+    /// `--yes`: run a repository's own worktree hooks without asking.
+    pub yes: bool,
 }
 
 impl How {
     /// From the flags as clap parsed them.
-    pub fn new(launcher: Option<&str>, detached: bool, no_focus: bool) -> Self {
+    pub fn new(launcher: Option<&str>, detached: bool, no_focus: bool, yes: bool) -> Self {
         Self {
             launcher: launcher.map(str::to_owned),
             detached,
             focus: !no_focus,
+            yes,
         }
     }
 
     /// `tasq pick <id>` in this terminal with the configured launcher.
     pub fn here() -> Self {
-        Self::new(None, false, false)
+        Self::new(None, false, false, false)
     }
 
     /// The launcher name to build, before `auto` is resolved: the flag,
@@ -64,6 +65,37 @@ impl How {
         } else {
             Ok(launch.default.clone())
         }
+    }
+}
+
+/// `tasq next` and `tasq pick`, from the parsed command.
+pub fn dispatch(app: &App, command: &Command) -> Result<()> {
+    match command {
+        Command::Next {
+            launcher,
+            detached,
+            no_focus,
+            dry_run,
+            yes,
+        } => next(
+            app,
+            &How::new(launcher.as_deref(), *detached, *no_focus, *yes),
+            *dry_run,
+        ),
+        Command::Pick {
+            id,
+            launcher,
+            detached,
+            no_focus,
+            dry_run,
+            yes,
+        } => pick(
+            app,
+            id,
+            &How::new(launcher.as_deref(), *detached, *no_focus, *yes),
+            *dry_run,
+        ),
+        _ => unreachable!("dispatch is only called for next and pick"),
     }
 }
 
@@ -131,6 +163,13 @@ fn open_session(
             "task {id} is done; reopen it first (tasq reopen {id})"
         )));
     }
+    // Before any write too: a worktree that cannot be created aborts the
+    // launch with the task untouched (plan 4.2, step 2).
+    let created = if app.worktrees() {
+        materialize(app, &task, None, how.yes, dry_run)?
+    } else {
+        None
+    };
     if task.status.as_ref() != Some(&Status::IN_PROGRESS) {
         if dry_run {
             say(app, &format!("[{id}] -> in-progress (skipped: dry run)\n"))?;
@@ -147,22 +186,27 @@ fn open_session(
         source,
     })?;
 
+    if !app.worktrees() {
+        // Disabled worktrees are ignored, never rewritten (ADR 0022): the
+        // in-memory task drops them, the file keeps them.
+        task.worktrees.clear();
+    }
     let default_project = app.config().work.default_project.as_deref();
-    let mut resolution = resolve_workdir(&task, default_project, Path::is_dir)
+    // A dry run starts in the worktree it would have created.
+    let planned = created.as_ref().map(|c| c.path.as_path());
+    let resolution = resolve_workdir(&task, default_project, |p| planned == Some(p) || p.is_dir())
         .map_err(|e| CliError::user(e.to_string()))?;
     for warning in &resolution.warnings {
         app.out.warn(warning);
     }
     if let Some(missing) = &resolution.missing_worktree {
         app.out.warn(&format!(
-            "tracked worktree is gone: {}",
+            "tracked worktree is gone: {}; it records no branch to create it on, starting in the project",
             missing.path.display()
         ));
-        if recreate(app, store, id, missing.branch.as_deref(), dry_run)? {
-            task = store.get(id)?;
-            resolution = resolve_workdir(&task, default_project, Path::is_dir)
-                .map_err(|e| CliError::user(e.to_string()))?;
-        }
+    }
+    if let Some(created) = created.as_ref().filter(|_| !dry_run) {
+        say(app, &format!("Created worktree: {}\n", created.line))?;
     }
     if resolution.in_worktree {
         say(
@@ -198,23 +242,32 @@ fn open_session(
         markdown,
         workdir: resolution.workdir,
         in_worktree: resolution.in_worktree,
+        worktrees: app.worktrees(),
         env,
         focus: how.focus,
     };
-    launch_or_describe(app, &ctx, &name, dry_run)
+    launch_or_describe(app, &ctx, &name, created.as_ref(), dry_run)
 }
 
 /// Builds the launcher called `name` and either describes (`--dry-run`,
 /// as text or JSON) or runs it.
-fn launch_or_describe(app: &App, ctx: &LaunchContext, name: &str, dry_run: bool) -> Result<()> {
+fn launch_or_describe(
+    app: &App,
+    ctx: &LaunchContext,
+    name: &str,
+    created: Option<&Created>,
+    dry_run: bool,
+) -> Result<()> {
     let settings = launch_settings(app)?;
     let resolved = resolve_name(name, &settings.env).to_owned();
     let launcher = launcher_for(name, &settings).map_err(|e| CliError::user(e.to_string()))?;
-    let hook_fields = [
+    let mut hook_fields = vec![
         ("workdir", json::to_value(&ctx.workdir)),
-        ("in_worktree", Value::from(ctx.in_worktree)),
         ("launcher", Value::from(resolved.as_str())),
     ];
+    if ctx.worktrees {
+        hook_fields.push(("in_worktree", Value::from(ctx.in_worktree)));
+    }
 
     if dry_run {
         let mut steps = launcher
@@ -223,15 +276,23 @@ fn launch_or_describe(app: &App, ctx: &LaunchContext, name: &str, dry_run: bool)
         for hook in &app.config().hooks.pre_launch {
             steps.insert(0, format!("pre-launch hook (skipped: dry run): {hook}"));
         }
+        if let Some(created) = created {
+            let worktree = std::iter::once(format!("create worktree {}", created.line))
+                .chain(created.steps.iter().cloned());
+            steps.splice(0..0, worktree);
+        }
         if app.out.json_mode() {
-            return app.out.json(&json::document([
-                ("task", json::to_value(&ctx.task)),
+            let mut fields = vec![
+                ("task", app.task_json(&ctx.task)),
                 ("workdir", json::to_value(&ctx.workdir)),
-                ("in_worktree", Value::from(ctx.in_worktree)),
                 ("launcher", Value::from(resolved)),
                 ("env", json::to_value(&ctx.env)),
                 ("steps", json::to_value(&steps)),
-            ]));
+            ];
+            if ctx.worktrees {
+                fields.push(("in_worktree", Value::from(ctx.in_worktree)));
+            }
+            return app.out.json(&json::document(fields));
         }
         let mut text = format!("Launcher: {resolved} (dry run)\n");
         for step in steps {
@@ -257,48 +318,5 @@ fn say(app: &App, text: &str) -> Result<()> {
         Ok(())
     } else {
         app.out.print(text)
-    }
-}
-
-/// Offers to recreate the newest tracked worktree on its recorded branch.
-/// Only asks on a terminal; returns whether a worktree was created.
-fn recreate(
-    app: &App,
-    store: &mut NbStore,
-    id: &TaskId,
-    branch: Option<&str>,
-    dry_run: bool,
-) -> Result<bool> {
-    let Some(branch) = branch else {
-        app.out
-            .warn("no branch recorded for it, starting in the project instead");
-        return Ok(false);
-    };
-    if dry_run {
-        app.out.warn(&format!(
-            "dry run: would offer to recreate it on branch {branch}; starting in the project instead"
-        ));
-        return Ok(false);
-    }
-    if !std::io::stdin().is_terminal() {
-        app.out
-            .warn("no terminal to ask on, starting in the project instead");
-        return Ok(false);
-    }
-    eprint!("Recreate it on branch {branch}? [y/N] ");
-    std::io::stderr().flush()?;
-    let mut reply = String::new();
-    std::io::stdin().lock().read_line(&mut reply)?;
-    if !reply.trim_start().starts_with(['y', 'Y']) {
-        return Ok(false);
-    }
-    match create_and_track(app, store, id, branch) {
-        Ok(()) => Ok(true),
-        Err(e) => {
-            // The session can still start in the project directory.
-            app.out
-                .warn(&format!("could not recreate the worktree: {e}"));
-            Ok(false)
-        }
     }
 }

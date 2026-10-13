@@ -22,14 +22,20 @@ pub fn run(app: &App, file: Option<&Path>) -> Result<()> {
         std::io::stdin().read_to_string(&mut text)?;
         text
     };
-    let task = parse_document(&text)?;
+    let (mut task, has_worktrees) = parse_document(&text)?;
     let mut store = app.open_store()?;
+    if !has_worktrees {
+        // Documents written with worktrees disabled leave the key out; that
+        // means "unchanged", never "drop them" (ADR 0022).
+        task.worktrees = store.get(&task.id)?.worktrees;
+    }
     store.update(&task)?;
     finish(app, &store, &task.id, &format!("[{}] applied\n", task.id))
 }
 
-/// The task inside a schema-1 document. Errors name the offending field.
-pub fn parse_document(text: &str) -> Result<Task> {
+/// The task inside a schema-1 document, and whether it carries a
+/// `worktrees` key. Errors name the offending field.
+pub fn parse_document(text: &str) -> Result<(Task, bool)> {
     let value: Value = serde_json::from_str(text)
         .map_err(|e| CliError::user(format!("apply: invalid JSON: {e}")))?;
     let Value::Object(fields) = value else {
@@ -50,7 +56,9 @@ pub fn parse_document(text: &str) -> Result<Task> {
     let task = fields
         .get("task")
         .ok_or_else(|| CliError::user("apply: missing field `task`"))?;
+    let has_worktrees = task.get("worktrees").is_some();
     serde_json::from_value::<Task>(task.clone())
+        .map(|t| (t, has_worktrees))
         .map_err(|e| CliError::user(format!("apply: invalid task: {e}")))
 }
 
@@ -88,12 +96,19 @@ mod tests {
 
     #[test]
     fn a_valid_document_parses() {
-        let task = parse_document(
+        let (task, has_worktrees) = parse_document(
             "{\"schema\":1,\"task\":{\"id\":\"3\",\"title\":\"T\",\"done\":false,\"status\":\"ready\",\"priority\":\"A\",\"due\":\"2026-10-10\",\"description\":null,\"project\":null,\"tags\":[\"x\"],\"related\":[],\"merge_requests\":[],\"worktrees\":[],\"sessions\":[],\"progress\":[{\"at\":\"2026-10-04 10:15\",\"note\":\"n\"}],\"origin\":null}}",
         )
         .unwrap();
         assert_eq!(task.title, "T");
         assert_eq!(task.priority, tasq_core::model::Priority::A);
         assert_eq!(task.progress.len(), 1);
+        assert!(has_worktrees);
+        let (task, has_worktrees) = parse_document(
+            "{\"schema\":1,\"task\":{\"id\":\"3\",\"title\":\"T\",\"done\":false,\"status\":\"ready\",\"priority\":\"B\",\"due\":null,\"description\":null,\"project\":null,\"tags\":[],\"related\":[],\"merge_requests\":[],\"sessions\":[],\"progress\":[],\"origin\":null}}",
+        )
+        .unwrap();
+        assert!(!has_worktrees);
+        assert_eq!(task.worktrees, Vec::new());
     }
 }

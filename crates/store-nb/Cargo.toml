@@ -13,8 +13,9 @@ authors.workspace = true
 
 [dependencies]
 tasq-core = { path = "../core", version = "0.1.0" }
-# Filenames are the creation timestamp (`YYYYMMDDHHMMSS.todo.md`).
-chrono = { version = "0.4", default-features = false }
+# Filenames are the creation timestamp (`YYYYMMDDHHMMSS.todo.md`); `clock`
+# reads the store's local-time `Clock` as an instant for the background job.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # `#[mutants::skip]` for the functions that only spawn processes; a regular
 # dependency because the attribute sits on non-test code (see tasq-core).
 mutants = "0.0.4"

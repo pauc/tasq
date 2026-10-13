@@ -5,5 +5,5 @@ expression: env.normalize(&stdout(&out))
 store:       nb
 location:    [ROOT]/nb/home
 tasks:       5 (open and done)
-ids:         positional (line numbers in .index); they can change after 'nb index reconcile' or deletions
+ids:         positional (line numbers in .index); they can change when another tool rewrites .index (nb index reconcile)
 bookkeeper:  native

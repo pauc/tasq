@@ -25,11 +25,13 @@ Then read the task as it is now:
 
 ```sh
 tasq view --json <id>
-tasq config show --json   # .config.workflow.statuses: the statuses you may set
+tasq config show --json   # .config.workflow.statuses: the statuses you may set;
+                          # .config.worktree.enabled: whether worktrees are tracked
 ```
 
 Look at `task.progress` so you do not repeat notes that are already there, and at
-`task.merge_requests`, `task.worktrees` and `task.sessions` to see what is already tracked.
+`task.merge_requests`, `task.sessions` and, when present, `task.worktrees` to see what is
+already tracked.
 
 ## 2. Write the progress notes
 
@@ -54,7 +56,8 @@ Only what is not tracked yet (compare with the JSON from step 1):
 
 ```sh
 tasq mr <id> <merge-request-url> [title]      # every MR opened or worked on
-tasq worktree <id> <path>                     # the git worktree the session worked in
+tasq worktree <id> <path>                     # only when worktrees are enabled: the git
+                                              # worktree the session worked in
 tasq session <id> <session-id> "<what for>"   # only when the session id is known
 tasq project <id> <dir>                       # when the task had no project yet
 ```

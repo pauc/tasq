@@ -15,21 +15,23 @@ the procedure is at the end of this document.
   (`YYYYMMDDHHMMSS.todo.md`). `tasq` never copies, converts or indexes the
   notebook anywhere else.
 - **Same ids.** Both read `.index` and use the line number as the task id.
-  `tasq` only ever appends to `.index` (through `nb index add`, or natively
-  with the same bytes) and never rebuilds or reorders it. `nb index reconcile`
-  renumbers ids for both tools alike, which is why `tasq doctor` points at it
-  instead of running it.
+  `tasq` appends to `.index` with the same bytes `nb index add` writes and
+  never reorders it. `nb index reconcile` renumbers ids for both tools alike;
+  `tasq store reconcile` repairs an out-of-date index without renumbering
+  (lines of deleted files become empty, as nb leaves them), and is what
+  `tasq doctor` suggests.
 - **Lossless format.** `tasq` parses a file into a document that keeps unknown
   sections, unknown lines, ordering, blank lines and line endings byte for
   byte, and rewrites only the section an edit touched. For every file the
   script produced, `write(parse(x)) == x` (see
   [`docs/file-format.md`](file-format.md), "Lossless editing").
-- **Same bookkeeping.** With `nb` on `PATH` (`store.bookkeeper = "auto"`,
-  the default), every `tasq` write is followed by `nb index add` for new
-  files and `nb git checkpoint --wait "[tasq] Update: <file>"`, so `nb
-  history`, `nb sync` and nb's `auto_sync` behave as before
-  ([ADR-0007](adr/0007-nb-under-the-hood.md)). Without nb, `tasq` appends
-  to `.index` and commits with `git` itself.
+- **Same history.** `tasq` never runs nb
+  ([ADR-0023](adr/0023-no-nb-at-runtime.md)). Every write is committed as
+  `[tasq] Update: <file>` (`Add`, `Done`, `Undone`) by a background `git`
+  job, so `nb history` reads as before, and the same job pulls and pushes at
+  most every `store.sync_interval` seconds (default 3600, like an hourly
+  `NB_AUTO_SYNC_SECONDS`). The command itself returns before the commit
+  lands.
 - **Conflicts are detected, not merged.** `tasq` captures mtime, length and
   hash of a file when it reads it and refuses to write (`Conflict`) if the
   file changed in between. Alternating the two tools is fine; editing the
@@ -56,7 +58,7 @@ of the file) and its `tasq` counterpart.
 | `tasks view <id> <nb args>` (nb passthrough) | none; `tasq view <ID> --raw`, or `nb show <notebook>:<ID> <args>` | Decided in T-305. |
 | `tasks project <id> [path]` | `tasq project <ID> [PATH]` | |
 | `tasks worktree <id> <path>` | `tasq worktree <ID> <PATH>` | |
-| `tasks worktree <id> --create <branch>` (gwm) | `tasq worktree <ID> --create <BRANCH>` | Default manager is `git` (`git worktree add` into `<project>-<branch>`); for gwm set `work.worktree_manager`/`work.worktree_command` (below). |
+| `tasks worktree <id> --create <branch>` | `tasq worktree <ID> --create <BRANCH>` (hidden), or `tasq worktree <ID> <BRANCH>` then `tasq worktree up <ID>` | Declares the worktree at `worktree.path` and runs `git worktree add`. The script called gwm; tasq provisions worktrees itself under `[worktree]` (`docs/config.md`, "Worktrees"). |
 | `tasks session <id> <session-id> [desc]` | `tasq session <ID> <SESSION_ID> [DESC] [--launcher L]` | |
 | `tasks mr <id> <mr-url> [title]` | `tasq mr <ID> <URL> [TITLE]` | Title resolved through the configured `[forge.*]`; without one it records the short reference (`group/project!123`). The script used `glab api` from `TASKS_DEFAULT_WORKTREE`. |
 | `tasks update [args]` (Claude `/update-tasks` session) | `tasq sync --interactive` (the same session, running `/tasq:sync` in `work.default_project`); `tasq sync [--source NAME] [--dry-run] [--json]` headless | Sources are `[[source]]` blocks: GitLab/GitHub review requests and work items, plus an LLM bridge for Slack/Gmail-style inboxes ([`docs/sources.md`](sources.md)). The bridge was verified headless on 2026-10-05 (same connectors, ~90 s and ~$2 per run), so Slack/Gmail triage no longer needs an interactive session. |
@@ -83,7 +85,7 @@ names below are from `crates/core/src/config/mod.rs`.
 | Script | Default in the script | `tasq` key | `tasq` env |
 |---|---|---|---|
 | `TASKS_NB_NOTEBOOK` | `home` | `store.notebook` | `TASQ_NOTEBOOK` |
-| `NB_DIR` | `~/.nb` | honoured as is (notebook dir is `$NB_DIR/<name>`, else `nb notebooks show <name> --path`) | `NB_DIR` |
+| `NB_DIR` | `~/.nb` | honoured as is (notebook dir is `$NB_DIR/<name>`; `store.notebook` may also be a path) | `NB_DIR` |
 | `TASKS_DEFAULT_WORKTREE` | `~/code/SF/silverfin_worspace/silverfin` | `work.default_project` (no default: unset means "no fallback directory") | `TASQ_DEFAULT_PROJECT` |
 | `TASKS_PAGER` | `less -RFX` | `ui.pager` | `TASQ_PAGER` |
 | `TASKS_GLOW_STYLE` | `dark` | `ui.glow_style` | `TASQ_GLOW_STYLE` |
@@ -94,11 +96,10 @@ names below are from `crates/core/src/config/mod.rs`.
 | `direnv exec <dir>` when `.envrc` is allowed | hard-coded | `launch.env` (`direnv`, the default, or `inherit`) | `TASQ_LAUNCH_ENV` |
 | session prompt text in `open_session` | hard-coded | `launch.claude.prompt_file` | |
 | `STATUSES=(in-progress ready waiting blocked later)` | hard-coded | `workflow.statuses`, `workflow.default_status` (`ready`) | |
-| `gwm create <new> <branch> --no-tmux -s` | hard-coded | `work.worktree_manager = "command"`, `work.worktree_command` | `TASQ_WORKTREE_MANAGER`, `TASQ_WORKTREE_COMMAND` |
 | `glab api` for MR titles, `gitlab.silverfin.com` | hard-coded | `[forge.gitlab] host`, `token_cmd = "glab auth token"` (or `GITLAB_TOKEN`) | |
 | `/update-tasks` skill (GitLab, Slack, Gmail) | Claude session | `[[source]]` blocks (`gitlab-review-requests`, `gitlab-work-items`, `github-*`, `llm-bridge`) | |
 | `FRESHDESK_API_KEY`, `bin/freshdesk` | | none (Non-Goal) | |
-| `nb` bookkeeping | always through nb | `store.bookkeeper` (`auto`, `nb`, `native`) | `TASQ_BOOKKEEPER` |
+| `nb` bookkeeping, `NB_AUTO_SYNC_SECONDS` | always through nb, sync on every checkpoint | native; `store.sync_interval` (seconds, `0` never) | `TASQ_SYNC_INTERVAL` |
 
 A global config that reproduces the script's defaults:
 
@@ -109,8 +110,6 @@ notebook = "home"
 
 [work]
 default_project = "~/code/SF/silverfin_worspace/silverfin"
-worktree_manager = "command"
-worktree_command = "gwm create {new} {branch} --no-tmux -s"
 
 [launch]
 default = "auto"        # herdr inside herdr, claude otherwise
@@ -164,8 +163,11 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
 - Usage errors exit 2 (clap convention); domain errors exit 1 with
   `tasq: ...`. The script exited 1 for both.
 - `tasq view` has no nb passthrough; `--raw` prints the file verbatim.
-- `tasq worktree --create` defaults to plain `git worktree add`; gwm is one
-  line of config (see above), not built in.
+- A launch creates the task's declared worktree when it is gone, without
+  asking (the script offered to recreate it); `tasq worktree --create` runs
+  plain `git worktree add`, and worktree provisioning (links, copies,
+  templates, hooks) is configured under `[worktree]` instead of an external
+  tool.
 - `tasq next`/`pick` default to the `claude` launcher regardless of
   `HERDR_ENV`; set `launch.default = "auto"` to get the script's "herdr when
   inside herdr" behaviour.
@@ -227,7 +229,7 @@ notebook for one week. Each day:
 ```sh
 nb index verify                              # "Index corrupted" on stderr is the signal, not the exit code
 tasq doctor                                  # every line OK or WARN with a hint; exit 0
-git -C ~/.nb/home log --oneline -5           # one commit per write, [tasq] and [nb] interleaved
+git -C ~/.nb/home log --oneline -5           # one commit per write (a moment after it), [tasq] and [nb] interleaved
 ```
 
 After every `tasq` write (`set`, `log`, `done`, `project`, `worktree`,

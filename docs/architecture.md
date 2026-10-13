@@ -18,7 +18,8 @@ flowchart TB
     subgraph adapters["Adapters (the only crates that do I/O)"]
         store["<b>tasq-store-nb</b><br/>Store over an nb notebook"]
         sources["<b>tasq-sources</b><br/>Source: GitLab, GitHub, LLM bridge"]
-        launch["<b>tasq-launch</b><br/>Launcher, WorktreeManager, Summarizer"]
+        launch["<b>tasq-launch</b><br/>Launcher, Summarizer"]
+        worktree["<b>tasq-worktree</b><br/>git worktree add"]
     end
 
     core["<b>tasq-core</b> (crates/core)<br/>model · format · query · config · clock<br/>Store / Source / Launcher traits"]
@@ -26,6 +27,7 @@ flowchart TB
     cli --> store
     cli --> sources
     cli --> launch
+    cli --> worktree
     cli --> tui
     cli --> core
     tui --> core
@@ -39,10 +41,11 @@ TUI depends on core only; the CLI is the single place where everything meets.
 
 | Crate | Package | Role | Talks to the world through |
 |---|---|---|---|
-| `crates/core` | `tasq-core` | Domain model, lossless markdown format, queries, config, clock, reconciliation, reports, and the `Store`, `Source`, `Launcher`, `WorktreeManager`, `Summarizer` traits. | Nothing. No filesystem, no processes, no terminal, no network. |
+| `crates/core` | `tasq-core` | Domain model, lossless markdown format, queries, config, clock, reconciliation, reports, and the `Store`, `Source`, `Launcher`, `Summarizer` traits; the worktree lifecycle decisions (`worktree`). | Nothing. No filesystem, no processes, no terminal, no network. |
 | `crates/store-nb` | `tasq-store-nb` | The `Store` implementation: `*.todo.md` files in an nb notebook, `.index` ids, atomic writes, conflict detection, bookkeeping (`nb` or `git`), `tasq doctor` checks. | Files; `nb` and `git` child processes (only for bookkeeping, never for reads). |
 | `crates/sources` | `tasq-sources` | `Source` implementations: GitLab and GitHub review requests and work items over a shared forge client, and the LLM bridge that turns a command's JSON into items. | HTTPS (`ureq`); a child process for the LLM bridge and `token_cmd`. |
-| `crates/launch` | `tasq-launch` | `Launcher` implementations (shell, tmux, Claude Code, herdr), `WorktreeManager` implementations (`git`, user command), the command `Summarizer` behind `tasq summary`. | Child processes, with an explicitly injected environment. |
+| `crates/launch` | `tasq-launch` | `Launcher` implementations (shell, tmux, Claude Code, herdr), the command `Summarizer` behind `tasq summary`. | Child processes, with an explicitly injected environment. |
+| `crates/worktree` | `tasq-worktree` | Carries out the worktree lifecycle (ADR 0022): where a branch lives, `git worktree add` at the declared path, provisioning and the `pre-create`/`post-create` hooks around it, the release at close (removal, branch deletion, `pre-remove`/`post-remove` hooks), the declared worktrees `worktree ls` lists and their changes, hook approvals in the trust file. | `git` child processes, with an explicitly injected environment. |
 | `crates/tui` | `tasq-tui` | Full-screen terminal UI. Elm architecture over `tasq-core`; everything that needs the outside world goes through a `Host` the CLI provides. | The terminal (ratatui / crossterm). |
 | `crates/cli` | `tasq` (lib `tasq_cli`) | The binary. Argument parsing, config loading, opening the store, building sources and launchers, rendering human and `--json` output, hooks and out-of-process plugins. | Everything above, plus stdout, the pager and `PATH` for plugins. |
 
@@ -79,7 +82,6 @@ flowchart LR
         Store["Store"]
         Source["Source"]
         Launcher["Launcher"]
-        WM["WorktreeManager"]
         Summ["Summarizer"]
         Clock["Clock"]
     end
@@ -104,7 +106,8 @@ flowchart LR
 | `edit` | The script's `set`, `log` and `done` as operations on a `Store`. Both front ends call these, so they cannot drift. |
 | `source` | `Source` trait, `SourceItem`, `reconcile` (items vs tasks, producing `Change`s) and `apply` (writes the changes through a `Store`). |
 | `launch` | `Launcher` trait, `LaunchContext`, `resolve_workdir` (first existing worktree, else `## Project`, else `work.default_project`). |
-| `work` | `WorktreeManager` trait and the pure worktree/project helpers. |
+| `work` | `project_dir`: the task's project, else `work.default_project`. |
+| `worktree` | The worktree feature's pure parts: `lifecycle` (declare, `on_launch`, `on_close`), `declaration` (templates rendered into an entry), `vars`, `git` (reading `.git` files). |
 | `report` | `DaySummary` from progress notes, `Summarizer` trait, `RawSummarizer`. |
 | `config` | `Config` and its sub-structs, `LoadOptions`, the six layers, `Loaded::file_for` provenance. Reference: [`docs/config.md`](config.md). |
 | `clock` | `Clock`, `SystemClock`, `FixedClock`, `When`, timestamp helpers. Local wall-clock time, no zone, as the script wrote it. |
@@ -128,9 +131,11 @@ ops, re-parses, and compares with the requested task; anything it could not expr
 
 ## tasq-store-nb
 
-The only crate that runs `nb` or `git`. Reads never spawn a process: `NbStore::open` resolves
-the notebook (`$NB_DIR/<name>`, else `nb notebooks show <name> --path`), reads `.index` (line
-number = task id) and parses the files directly.
+The crate that runs `git` for the notebook; nothing runs `nb` (ADR-0023). Reads never spawn a
+process: `NbStore::open` resolves the notebook (`$NB_DIR/<name>`, or a path), reads `.index`
+(line number = task id) and parses the files directly. A write takes `.git/tasq/lock` (waiting
+for the previous background job), writes the file, and hands the lock to a detached job that
+commits and, every `store.sync_interval` seconds, pulls and pushes.
 
 ```mermaid
 sequenceDiagram
@@ -145,6 +150,7 @@ sequenceDiagram
     S-->>C: Task (+ Revision: mtime, length, hash)
     Note over C: change fields on the Task
     C->>S: update(task)
+    S->>B: lock() (waits for the previous job)
     S->>F: re-read, compare Revision
     alt file changed since read
         S-->>C: StoreError::Conflict
@@ -156,31 +162,31 @@ sequenceDiagram
             S-->>C: StoreError::Unsupported
         else matches
             S->>F: NamedTempFile::persist (atomic)
-            S->>B: checkpoint("…")
-            B-->>S: ok / warning (never data loss)
-            S-->>C: Ok
+            S->>B: checkpoint(lock, "…")
+            B-->>S: job started (commit, maybe pull + push) / warning
+            S-->>C: Ok, before the commit exists
         end
     end
 ```
 
 | Module | What it holds |
 |---|---|
-| `store` | `NbStore`, `NbStoreOptions` (notebook name, environment for `nb`, bookkeeper choice), `StoreWarning`. |
-| `resolve` | Notebook name → directory, as the script's `NB_HOME` block did. |
-| `index` | nb's `.index`: one filename per line, id = 1-based line number. Only ever appended to. |
+| `store` | `NbStore`, `NbStoreOptions` (environment for `git`, home, sync interval), `StoreWarning`, `reconcile`. |
+| `resolve` | Notebook name or path → directory, as the script's `NB_HOME` block did. |
+| `index` | nb's `.index`: one filename per line, id = 1-based line number. Appended to; `reconcile` only blanks lines of missing files, never renumbers. |
 | `revision` | `Revision`: mtime plus content hash, the basis of `Conflict` detection. |
 | `diff` | Whole-task write → `format::ops` calls on the stored document. |
 | `create` | New `YYYYMMDDHHMMSS.todo.md` file, registered through the bookkeeper, id read back from `.index`. |
-| `bookkeeper` | The `Bookkeeper` trait (`register`, `checkpoint`, `verify`, `sync`), `select_bookkeeper`, `NoopBookkeeper` for tests. |
-| `nb_cli` | `NbCliBookkeeper`: delegates to `nb index add`, `nb git checkpoint`, `nb index verify`, `nb sync`. Used when `nb` is on `PATH`. |
-| `native` | `NativeBookkeeper`: appends to `.index` and runs `git` itself, for people without nb. |
-| `nb` | Running `nb` with an injected environment only (`NB_DIR`, `NBRC_PATH`, `HOME`, `PATH`). Tests never touch a real `~/.nb`. |
-| `git` | Running `git` inside the notebook with an injected environment, for the native bookkeeper and the diagnostics. |
-| `sanitize` | Cleans `nb` output of ANSI escapes and carriage returns, as the script's `sed` did. |
-| `doctor` | The store's checks for `tasq doctor`: notebook, index, nb, git identity, bookkeeper. |
+| `bookkeeper` | The `Bookkeeper` trait (`lock`, `register`, `checkpoint`, `take_failure`, `verify`, `sync`), `WriteLock`, `NoopBookkeeper` for tests. |
+| `native` | `NativeBookkeeper`: appends to `.index` byte-identically to `nb index add`, starts the background job, verifies the index, syncs on demand. |
+| `job` | The detached `sh` job (`git add -A`, `git commit`, throttled `git pull --rebase` + `git push`) and its files in `.git/tasq/`: `lock`, `failed`, `last-sync`. |
+| `git` | Running `git` inside the notebook with an injected environment, for the bookkeeper and the diagnostics. |
+| `which` | Finding executables on an injected `PATH`, for `doctor`'s tool checks. |
+| `doctor` | The store's checks for `tasq doctor`: notebook, index, ids, bookkeeper, git identity. |
 
-Bookkeeping failure after a successful write is a warning carrying the manual fix
-(`nb index reconcile`); the file is already on disk. ADR-0007 explains the hybrid.
+Bookkeeping failure after a successful write is a warning carrying the manual fix; the file is
+already on disk. A failed background job leaves its message in `.git/tasq/failed` for the next
+`NbStore::open` to report. ADR-0023 explains why nb is not run and the job design.
 
 ## tasq-sources
 
@@ -231,7 +237,6 @@ Process-running adapters. Every process gets an explicitly injected environment,
 | `shell`, `tmux`, `claude`, `herdr` | The four `Launcher`s. `herdr` is behind the default-on `herdr` feature; `launch.herdr.placement` says whether it opens a workspace or a tab. `tmux` and `herdr` honour `LaunchContext::focus` (ADR-0012). |
 | `prompt` | The tiny template engine (`{{name}}`, `{{#name}}…{{/name}}`) behind the Claude prompt. Templates are data, in `templates/`. |
 | `env` | Environment strategy: run through `direnv exec` so the session gets the target directory's `.envrc`, or inherit. |
-| `worktree` | `WorktreeManager`s: `git worktree add`, or a user command (`work.worktree_command`) such as gwm. |
 | `summarizer` | `CommandSummarizer`: the configured command (default `claude -p`) that distils a day's notes for `tasq summary`. |
 | `process` | Running external programs with an injected environment. |
 
@@ -265,9 +270,11 @@ flowchart LR
 | `keys` | Key bindings. |
 | `runtime` | `dispatch` (runs one `Cmd` against store, clock and host; touches no terminal) and `run` (owns raw mode and the alternate screen). |
 
-Every edit the UI makes is one of the `tasq_core::edit` functions the CLI uses, and `c` creates
-a task from a title through `Store::create` with the configured default status and the
-directory `tasq ui` runs in as its project (both handed over by the CLI). The three actions
+Every edit the UI makes is one of the `tasq_core::edit` functions the CLI uses, and `c` opens
+the edit view empty and creates the task through `Store::create`, starting from the configured
+default status and the directory `tasq ui` runs in as its project (both handed over by the
+CLI); the worktree it declares comes from the host (`Host::worktree`, the same rules as
+`tasq create`). The three actions
 that need the outside world (open an editor, start a work session, run a sync) are `Host`
 methods; the CLI implements them by running itself (`tasq pick <id>`, `tasq sync`) while the
 UI has released the terminal (ADR-0009). A work session in a new window (`Ctrl+Enter`,
@@ -292,7 +299,8 @@ flowchart TB
     app --> cmd["commands/&lt;name&gt;.rs"]
     cmd -->|"list, view, set, log, done,<br/>create, apply, project, worktree,<br/>session, mr"| core["tasq-core<br/>query / edit / model"]
     cmd -->|"sync"| src["tasq-sources<br/>build_sources"]
-    cmd -->|"next, pick, session,<br/>worktree, summary"| lnch["tasq-launch<br/>launcher_for, manager_for,<br/>summarizer_for"]
+    cmd -->|"next, pick, session,<br/>worktree, summary"| lnch["tasq-launch<br/>launcher_for, summarizer_for"]
+    cmd -->|"next, pick, worktree"| wt["tasq-worktree<br/>Git"]
     cmd -->|"ui"| tui["tasq-tui::run<br/>+ CliHost"]
     cmd -->|"doctor, store"| store_doc["tasq-store-nb<br/>doctor::checks, describe"]
     core -->|"through the Store trait"| open
@@ -343,7 +351,7 @@ sequenceDiagram
     E->>S: get(id)
     E->>E: log the note, flip to done
     E->>S: update(task) / set_done(id, true)
-    S-->>E: Ok (file written, bookkeeper ran)
+    S-->>E: Ok (file written, commit started in the background)
     E-->>FE: Task as stored
     FE->>H: run post-done hooks with the Task as JSON
     FE-->>U: rendered task, or --json
@@ -358,9 +366,10 @@ The dependency direction is what makes the test strategy work:
 | Crate | How it is tested |
 |---|---|
 | `tasq-core` | Unit and integration tests, property tests (`proptest`) for format round trips, byte-identical fixtures in `tests/fixtures/*.md`. Mutation-tested with zero missed mutants as the acceptance bar. |
-| `tasq-store-nb` | Tests against a temp copy of the fixture notebook (`tests/support/mod.rs` builds an `NbEnv`). Tests that need the real `nb` skip when it is absent, or fail with `TASQ_REQUIRE_NB=1`. Mutation-tested. |
+| `tasq-store-nb` | Tests against a temp copy of the fixture notebook (`tests/support/mod.rs` builds an `NbEnv`), real `git` on temporary repositories and bare remotes, a slow fake `git` to prove writes do not wait. The nb parity tests run the real `nb` next to the store; they skip when it is absent, or fail with `TASQ_REQUIRE_NB=1`. Mutation-tested. |
 | `tasq-sources` | Unit tests with a scripted `Transport`; no network in `cargo test`. |
 | `tasq-launch` | Fake executables on an injected `PATH`; `insta` snapshots of the commands that would run. |
+| `tasq-worktree` | Real `git` against temporary repositories: a bare `origin`, a clone to work in, a second clone that pushes branches. Mutation-tested. |
 | `tasq-tui` | `dispatch` against `MemoryStore` and `RecordingHost`; `insta` snapshots of rendered frames. |
 | `tasq` (CLI) | Integration tests run the binary against the fixture notebook and snapshot its output with `insta`. Not mutation-tested; the logic lives in core. |
 

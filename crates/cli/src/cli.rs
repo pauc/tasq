@@ -14,12 +14,15 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 
+pub use crate::commands::worktree_nav::InitShell;
+
 const LONG_ABOUT: &str = "\
 Terminal task manager over nb markdown todos.
 
 Tasks are the `*.todo.md` files of an nb notebook; `tasq` reads and writes
-them directly, in the same format the original `tasks` script used, and
-leaves index registration and git commits to nb when it is installed.
+them directly, in the same format the original `tasks` script used, without
+running nb. Writes are committed with git in the background, and pulled and
+pushed at most every store.sync_interval seconds.
 
 Every command accepts --json for machine-readable output. Exit codes: 0 on
 success, 1 for an error you can fix (`tasq: <message>` on stderr), 2 for a
@@ -42,7 +45,7 @@ Examples:
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
   tasq store info            where the tasks live
-  tasq doctor                check config, notebook, nb and optional tools
+  tasq doctor                check config, notebook, git and optional tools
   tasq plugins list          tasq-<name> executables on PATH and the hooks
   tasq <name> [args]         run the plugin tasq-<name> (see docs/plugins.md)";
 
@@ -164,6 +167,9 @@ pub enum Command {
         /// Final progress note, appended before closing.
         #[arg(value_name = "NOTE")]
         note: Option<String>,
+        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Reopen a done task (`# [ ]`), with a status, logging a note.
@@ -197,6 +203,9 @@ pub enum Command {
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Open a work session on a specific task.
@@ -217,6 +226,9 @@ pub enum Command {
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Show a task: rendered with glow on a terminal, plain markdown otherwise.
@@ -237,8 +249,7 @@ pub enum Command {
 
     /// Show or set the task's project directory.
     ///
-    /// Sessions start there when the task tracks no existing worktree.
-    /// Without PATH the tracked directory is printed, or
+    /// Sessions start there. Without PATH the tracked directory is printed, or
     /// `no project tracked (default: ...)` with work.default_project.
     Project {
         /// Task id.
@@ -249,27 +260,30 @@ pub enum Command {
         path: Option<PathBuf>,
     },
 
-    /// Track a git worktree used for the task, or create one.
+    /// Declare a git worktree for the task, track an existing one, or
+    /// create the declared one now (`up`).
     ///
-    /// `tasq worktree <ID> <PATH>` records an existing directory and its
-    /// current branch (idempotent). `tasq worktree <ID> --create <BRANCH>`
-    /// makes the worktree with work.worktree_manager (git: `git worktree add`
-    /// into `<project>-<branch>` next to the project; command: your own tool,
-    /// e.g. work.worktree_command = "gwm create {new} {branch} --no-tmux -s",
-    /// run in the project, printing the worktree path last) and tracks it.
+    /// `tasq worktree <ID> [BRANCH]` declares a worktree on BRANCH
+    /// (default: worktree.branch rendered for the task) at worktree.path:
+    /// it writes the `## Worktrees` entry and creates nothing; the worktree
+    /// is created when the task is launched, or by `tasq worktree up`.
+    /// `tasq worktree <ID> <PATH>` tracks an existing directory and its
+    /// current branch (idempotent). An argument that is an existing
+    /// directory, starts with `/` or `.`, or contains `~` is a path;
+    /// anything else is a branch.
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Worktree {
+        /// `up`.
+        #[command(subcommand)]
+        action: Option<WorktreeAction>,
         /// Task id.
-        #[arg(value_name = "ID")]
-        id: String,
-        /// Existing worktree directory to track.
-        #[arg(
-            value_name = "PATH",
-            required_unless_present = "create",
-            conflicts_with = "create"
-        )]
-        path: Option<PathBuf>,
-        /// Create a worktree for BRANCH (new or existing) and track it.
-        #[arg(long, value_name = "BRANCH")]
+        #[arg(value_name = "ID", required = true)]
+        id: Option<String>,
+        /// Branch to declare, or existing worktree directory to track.
+        #[arg(value_name = "BRANCH|PATH", conflicts_with = "create")]
+        target: Option<String>,
+        /// Declare a worktree on BRANCH and create it now.
+        #[arg(long, value_name = "BRANCH", hide = true)]
         create: Option<String>,
     },
 
@@ -326,9 +340,10 @@ pub enum Command {
     /// Update a task from JSON (`tasq view --json` shape) on stdin or in FILE.
     ///
     /// The document is `{"schema": 1, "task": {...}}`; see docs/json.md.
-    /// The store applies the differences it can express (status, priority,
-    /// project, done, appended progress, worktrees, sessions, links) and
-    /// refuses anything else without writing.
+    /// The store applies the differences it can express (title, description,
+    /// status, priority, due, project, topic tags, done, closed_at, and
+    /// appended progress, worktrees, sessions and links) and refuses anything
+    /// else without writing.
     Apply {
         /// File to read instead of stdin.
         #[arg(value_name = "FILE")]
@@ -362,7 +377,7 @@ pub enum Command {
     #[command(subcommand)]
     Store(StoreCommand),
 
-    /// Check the configuration, the notebook, nb and optional tools.
+    /// Check the configuration, the notebook, git and optional tools.
     ///
     /// Prints one line per check (OK, WARN or FAIL) with a hint for anything
     /// that is not OK, and exits 1 when any check failed.
@@ -420,10 +435,8 @@ need a title; until a forge lookup exists the title falls back to
 Prints `[id] created: Title (#status #prio)`.";
 
 const LAUNCH_HELP: &str = "\
-The task is set to in-progress, then a session starts in the first tracked
-worktree that exists, else the task's project, else work.default_project.
-When every tracked worktree is gone, the newest one is named and, on a
-terminal, you are offered to recreate it on its recorded branch.
+The task is set to in-progress, then a session starts in the task's
+project, else work.default_project.
 
 Launchers (--launcher, or launch.default): claude runs Claude Code with the
 task prompt (template: launch.claude.prompt_file), through `direnv exec`
@@ -435,6 +448,15 @@ or auto for whichever the terminal runs in) and --no-focus leaves the new
 window in the background; launch.herdr.placement says whether a herdr
 window is a workspace or a tab. The session gets TASQ_TASK_ID,
 TASQ_NOTEBOOK and, when selected, TASQ_PROFILE.";
+
+/// [`LAUNCH_HELP`] when worktrees are enabled.
+const LAUNCH_HELP_WORKTREES: &str = "\
+When none of the task's declared worktrees exists, the first one with a
+branch is created first (local branch, else tracking origin/<branch>, else
+new from worktree.base); a failure stops the launch. The task is set to
+in-progress, then a session starts in the first declared worktree that
+exists, else the task's project, else work.default_project.
+";
 
 const SYNC_HELP: &str = "\
 Every enabled [[source]] with `auto = true` (the default) runs in config
@@ -527,6 +549,130 @@ Hooks are command lines under [hooks] in the config: post-create (after
 gets {\"schema\": 1, \"hook\": ..., \"task\": {...}} on stdin and TASQ_HOOK,
 TASQ_TASK_ID and TASQ_BIN in its environment. See docs/plugins.md.";
 
+/// `tasq worktree` subcommands.
+#[derive(Debug, Clone, Subcommand)]
+pub enum WorktreeAction {
+    /// Create the task's declared worktree now, as launching it would.
+    ///
+    /// When none of the declared worktrees exists, the first one with a
+    /// branch is created at its declared path: on the local branch, else
+    /// tracking `origin/<branch>`, else a new branch from worktree.base.
+    Up {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Start a new branch from REF instead of worktree.base.
+        #[arg(long, value_name = "REF")]
+        from: Option<String>,
+        /// Say what would be created; fetch and create nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Do what closing the task does to its worktrees, without closing it.
+    ///
+    /// Each declared worktree that exists and is clean is removed (with the
+    /// pre-remove and post-remove hooks); its branch is deleted when that
+    /// loses nothing: merged into the default branch (squash and rebase
+    /// merges count) or pushed. A dirty worktree, or a branch neither
+    /// merged nor pushed, is kept with a warning; --force removes and
+    /// deletes those too. The main checkout, a locked worktree and one the
+    /// current directory is in are always kept. The `## Worktrees` entries
+    /// stay: launching the task creates the worktree again.
+    Release {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Remove dirty worktrees and delete branches that are neither merged nor pushed.
+        #[arg(long)]
+        force: bool,
+        /// Say what would be removed and deleted; change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Forget missing worktrees, then release what closing tasks left behind.
+    ///
+    /// Runs `git worktree prune` in the current directory's repository, so
+    /// git forgets worktrees whose directory was deleted by hand. Then, for
+    /// every done task working in it, does what `tasq worktree release`
+    /// does: clean worktrees are removed and their branches deleted when
+    /// that loses nothing; dirty ones are always kept. --all (or running
+    /// outside a repository) covers every repository a task declares
+    /// worktrees in.
+    Prune {
+        /// Every done task, whatever the repository.
+        #[arg(long)]
+        all: bool,
+        /// Say what would be removed, deleted and forgotten; change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// List declared worktrees: task, status, branch, state, path.
+    ///
+    /// Without ID, the worktrees of the tasks working in the current
+    /// directory's repository (every task's with --all, or outside a
+    /// repository); a closed task's worktree shows only while it exists.
+    /// The state is `clean`, `<n> changed` (files provisioning wrote do not
+    /// count), `not created` or `unknown`.
+    Ls {
+        /// Only this task's worktrees.
+        #[arg(value_name = "ID")]
+        id: Option<String>,
+        /// Every task's worktrees, whatever the repository.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Change the shell's directory to a worktree, creating a task's first.
+    ///
+    /// TARGET is task:<ID> (its worktree, created when it does not exist),
+    /// ^ (the main checkout), - (where the last switch came from), a
+    /// directory, or a branch (a worktree git lists for this repository,
+    /// else one a task declares). Without TARGET, pick one with fzf, or
+    /// from a numbered list when fzf is not installed. The shell function
+    /// from `tasq worktree shell-init` changes directory; without it the
+    /// path is printed.
+    Switch {
+        /// Where to go.
+        #[arg(value_name = "TARGET")]
+        target: Option<String>,
+        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Print the directory TARGET names (as for switch), creating nothing.
+    Path {
+        /// task:<ID>, ^, -, a directory or a branch.
+        #[arg(value_name = "TARGET")]
+        target: String,
+    },
+    /// Print the shell function that lets switch change directory.
+    ///
+    /// bash/zsh: eval "$(tasq worktree shell-init zsh)" in the rc file;
+    /// fish: tasq worktree shell-init fish | source.
+    ShellInit {
+        /// The shell.
+        #[arg(value_enum, value_name = "SHELL")]
+        shell: InitShell,
+    },
+    /// Approve the hooks of a repository's own .tasq.toml ahead of time.
+    ///
+    /// Hooks a repository's .tasq.toml sets run only once approved; this
+    /// approves every hook line it sets now. Editing a line asks again.
+    Trust {
+        /// A directory in the repository [default: the current directory].
+        #[arg(value_name = "DIR")]
+        dir: Option<PathBuf>,
+    },
+}
+
 /// `tasq create` arguments.
 #[derive(Debug, Clone, Args, Default)]
 pub struct CreateArgs {
@@ -569,6 +715,12 @@ pub struct CreateArgs {
     /// First progress note [default: "created via tasq create"].
     #[arg(long, value_name = "TEXT")]
     pub note: Option<String>,
+
+    /// Declare a worktree on BRANCH [default: worktree.branch]; with
+    /// worktree.on_create = "auto" one is declared without this flag when
+    /// the project is a git checkout.
+    #[arg(long, value_name = "BRANCH", num_args = 0..=1)]
+    pub worktree: Option<Option<String>>,
 }
 
 /// `tasq list` arguments.
@@ -608,9 +760,12 @@ pub struct ListArgs {
 pub enum StoreCommand {
     /// Print the notebook path, task count and how ids behave.
     Info,
-    /// Exchange commits with the notebook's remote (`nb sync`, or
-    /// `git pull --rebase && git push` without nb).
+    /// Exchange commits with the notebook's remote now
+    /// (`git pull --rebase && git push`), after any background commit.
     Sync,
+    /// Repair `.index` without renumbering: lines naming a missing file
+    /// become empty, unlisted markdown files are appended.
+    Reconcile,
 }
 
 /// `tasq config ...`.
@@ -627,6 +782,136 @@ pub enum PluginsCommand {
     /// List the `tasq-<name>` executables on PATH (first match per name)
     /// and the hooks configured under `[hooks]`.
     List,
+}
+
+/// The clap command, with what the configuration turns off hidden from
+/// `--help` and completions: the `worktree` command unless worktrees are
+/// enabled (ADR 0022). Hidden commands still parse; running one is refused
+/// by the command itself.
+pub fn command(worktrees: bool) -> clap::Command {
+    let command = <Cli as clap::CommandFactory>::command();
+    if !worktrees {
+        return command
+            .mut_subcommand("worktree", |c| c.hide(true))
+            .mut_subcommand("create", |c| c.mut_arg("worktree", |a| a.hide(true)))
+            .mut_subcommand("done", |c| c.mut_arg("yes", |a| a.hide(true)))
+            .mut_subcommand("next", |c| c.mut_arg("yes", |a| a.hide(true)))
+            .mut_subcommand("pick", |c| c.mut_arg("yes", |a| a.hide(true)));
+    }
+    command
+        .mut_subcommand("done", |c| {
+            add_long_about(
+                c,
+                "With worktrees enabled (and worktree.on_done = \"release\"), the task's \
+                 worktrees are released: see `tasq worktree release --help`.",
+            )
+        })
+        .mut_subcommand("next", launch_help_with_worktrees)
+        .mut_subcommand("pick", launch_help_with_worktrees)
+        .mut_subcommand("project", |c| {
+            add_long_about(
+                c,
+                "With worktrees enabled, a tracked worktree that exists comes first.",
+            )
+        })
+        .mut_subcommand("apply", |c| {
+            add_long_about(
+                c,
+                "With worktrees enabled, added worktrees are applied too; a document without \
+                 `worktrees` leaves them unchanged.",
+            )
+        })
+}
+
+/// The command completions are generated from: [`command`], minus the
+/// `worktree` subcommand, `create --worktree` and `done`/`next`/`pick --yes` unless worktrees are
+/// enabled. Hiding is not enough there, as the zsh generator still lists
+/// hidden subcommands and arguments.
+pub fn completion_command(worktrees: bool) -> clap::Command {
+    let full = command(true);
+    if worktrees {
+        return full;
+    }
+    let mut pruned = rebuilt("tasq", &full, |_| true).version(env!("CARGO_PKG_VERSION"));
+    for sub in full
+        .get_subcommands()
+        .filter(|s| s.get_name() != "worktree")
+    {
+        let worktree_only = |a: &clap::Arg| a.get_id() != "worktree" && a.get_id() != "yes";
+        let sub = match sub.get_name() {
+            "create" => rebuilt("create", sub, worktree_only),
+            "done" => rebuilt("done", sub, worktree_only),
+            "next" => rebuilt("next", sub, worktree_only),
+            "pick" => rebuilt("pick", sub, worktree_only),
+            _ => sub.clone(),
+        };
+        pruned = pruned.subcommand(sub);
+    }
+    pruned
+}
+
+/// `command` as `name`, with its description and the arguments `keep`
+/// accepts, without its subcommands.
+fn rebuilt(
+    name: &'static str,
+    command: &clap::Command,
+    keep: impl Fn(&clap::Arg) -> bool,
+) -> clap::Command {
+    let mut copy = clap::Command::new(name);
+    if let Some(about) = command.get_about() {
+        copy = copy.about(about.clone());
+    }
+    for arg in command.get_arguments().filter(|a| keep(a)) {
+        copy = copy.arg(arg.clone());
+    }
+    copy
+}
+
+/// Appends a paragraph to a command's long description.
+fn add_long_about(command: clap::Command, paragraph: &str) -> clap::Command {
+    let about = command
+        .get_long_about()
+        .or_else(|| command.get_about())
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    command.long_about(format!("{about}\n\n{paragraph}"))
+}
+
+/// `next`/`pick` help with the worktree paragraph in place of the first one.
+fn launch_help_with_worktrees(command: clap::Command) -> clap::Command {
+    let launchers = LAUNCH_HELP
+        .split_once("\n\n")
+        .map_or(LAUNCH_HELP, |(_, rest)| rest);
+    command.after_help(format!("{LAUNCH_HELP_WORKTREES}\n{launchers}"))
+}
+
+/// `--config`, `--profile` and `--set` wherever they appear in `argv`
+/// (program name first, up to a `--`), so the configuration can be loaded
+/// before clap parses. Malformed values are skipped; clap reports them.
+pub fn early_globals(argv: &[std::ffi::OsString]) -> GlobalArgs {
+    let mut global = GlobalArgs::default();
+    let mut rest = argv.iter().skip(1).map(|a| a.to_string_lossy());
+    while let Some(arg) = rest.next() {
+        if arg == "--" {
+            break;
+        }
+        let (flag, inline) = match arg.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f.to_owned(), Some(v.to_owned())),
+            _ => (arg.clone().into_owned(), None),
+        };
+        if !matches!(flag.as_str(), "--config" | "--profile" | "--set") {
+            continue;
+        }
+        let Some(value) = inline.or_else(|| rest.next().map(std::borrow::Cow::into_owned)) else {
+            break;
+        };
+        match flag.as_str() {
+            "--config" => global.config = Some(PathBuf::from(value)),
+            "--profile" => global.profile = Some(value),
+            _ => global.set.extend(parse_key_value(&value).ok()),
+        }
+    }
+    global
 }
 
 /// Parses `KEY=VALUE` for `--set`.

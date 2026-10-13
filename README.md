@@ -8,8 +8,8 @@
 Terminal task manager over [nb](https://github.com/xwmx/nb) markdown todos.
 
 Tasks are the `*.todo.md` files of an nb notebook. `tasq` reads and writes them directly,
-keeps every byte it does not understand, and leaves index registration and git commits to nb
-when nb is installed. On top of the files it adds a status workflow, priorities, due dates,
+keeps every byte it does not understand, and commits every write with git in the background,
+without ever running nb. On top of the files it adds a status workflow, priorities, due dates,
 progress notes, a standup summary, work sessions (Claude Code, tmux, herdr, a shell) started
 in the task's worktree, external sources (GitLab and GitHub review requests and issues, an LLM
 inbox) that create and close tasks, a full-screen terminal UI, `--json` on every command, and
@@ -101,11 +101,12 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    tasq pick 12 --launcher shell    # a specific task, in a plain shell
    ```
 
-   The task is set to in-progress and a session opens in the first tracked worktree that
-   exists, else the task's project, else `work.default_project`. The default launcher is
-   Claude Code with a prompt built from the task; `shell`, `tmux`, `herdr` and `auto` are the
-   others (`launch.default`). `tasq worktree 12 --create my-branch` makes and tracks a git
-   worktree first.
+   The task is set to in-progress and a session opens in the task's project, else
+   `work.default_project`. The default launcher is Claude Code with a prompt built from the
+   task; `shell`, `tmux`, `herdr` and `auto` are the others (`launch.default`). With
+   worktrees enabled (`[worktree] enabled = true`), the session opens in the task's worktree
+   instead, creating it first when it does not exist; `tasq create ... --worktree [BRANCH]` and
+   `tasq worktree 12 [BRANCH]` declare one, `tasq worktree up 12` creates it without launching.
 
 5. Pull in work from outside: declare `[forge.<name>]` and `[[source]]` blocks (see
    [`docs/sources.md`](docs/sources.md) and [`examples/sources/`](examples/sources/)), then
@@ -130,7 +131,7 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    tasq ui
    ```
 
-   `j`/`k` move, `z` or `Space` folds the group to its header and back, `/` filters, `c` creates a task from a title, `t`/`p` set status and
+   `j`/`k` move, `z` or `Space` folds the group to its header and back, `/` filters, `c` creates a task in the edit view, `t`/`p` set status and
    priority, `e` opens the edit view (every field and the description, `Enter` on the due
    date opens a calendar, `Ctrl+S` saves), `l`
    logs a note, `d` marks done, `E` opens the file in `$EDITOR`, `Enter` starts
@@ -156,17 +157,17 @@ default; configurable with `[workflow]`) or none, `priority` is always set. The 
 maps between the two; nothing else asks whether a tag is a status.
 
 **Ids are nb's.** A task's id is the line number of its file in the notebook's `.index`, so
-`tasq` and `nb` show the same numbers. Ids are positional: deleting a file or running
-`nb index reconcile` can renumber them. `tasq store info` says so for the store in use, and
-`tasq doctor` warns when the index is inconsistent.
+`tasq` and `nb` show the same numbers. Ids are positional: `nb index reconcile` can renumber
+them. `tasq store info` says so for the store in use, `tasq doctor` warns when the index is
+inconsistent, and `tasq store reconcile` repairs it without renumbering.
 
-**Hybrid nb bookkeeping.** Reads never spawn a process: `.index` and the markdown files are
-parsed directly. Writes are atomic rewrites of one file. Afterwards a bookkeeper registers new
-files in `.index` and commits: nb itself (`nb index add`, `nb git checkpoint`) when it is on
-`PATH`, so the index and git semantics are nb's; a native fallback (append to `.index`, run
-`git`) otherwise, which is what makes `tasq` usable without nb. `store.bookkeeper` chooses
-(`auto`, `nb`, `native`). The index is only ever appended to, never rebuilt. A bookkeeping
-failure after a successful write is a warning with the manual fix, never data loss.
+**nb's format, no nb at runtime.** Reads never spawn a process: `.index` and the markdown
+files are parsed directly. Writes are atomic rewrites of one file; new files are appended to
+`.index` with the bytes `nb index add` would write. The commit (`[tasq] Update: <file>`, nb's
+message style) runs in a detached git job, so no command waits for git, commit signing or the
+network; the same job pulls and pushes at most every `store.sync_interval` seconds (default an
+hour). A failed job is reported as a warning by the next command, never as data loss
+([ADR-0023](docs/adr/0023-no-nb-at-runtime.md)).
 
 **Layered configuration.** TOML, later layers winning key by key: built-in defaults,
 `~/.config/tasq/config.toml`, the nearest `.tasq.toml` walking up from the current directory,
@@ -215,7 +216,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq pick ID [--launcher NAME] [--dry-run]` | Open a session on a specific task |
 | `tasq view ID [--raw]` | Show a task (glow on a terminal, plain markdown otherwise; `--raw` is verbatim) |
 | `tasq project ID [PATH]` | Show or set the task's project directory |
-| `tasq worktree ID PATH` / `tasq worktree ID --create BRANCH` | Track an existing git worktree, or create one and track it |
+| `tasq worktree ID [BRANCH]` / `tasq worktree ID PATH` | Declare a worktree for the task (no git, nothing on disk), or track an existing one (with `worktree.enabled`) |
 | `tasq session ID SESSION_ID [DESC] [--launcher NAME]` | Track an agent session |
 | `tasq mr ID URL [TITLE]` | Track a merge request |
 | `tasq sync [--source NAME] [--dry-run] [ID]...` | Refresh tasks from the configured sources, or re-check the given tasks |
@@ -225,8 +226,9 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq dates [SPEC]...` | Resolve `today`, `last week`, `last 7 days`, ... to `FROM TO` |
 | `tasq ui` | Full-screen terminal UI |
 | `tasq store info` | Notebook path, task count, how ids behave |
-| `tasq store sync` | `nb sync`, or `git pull --rebase && git push` without nb |
-| `tasq doctor` | Check config, notebook, nb and optional tools |
+| `tasq store sync` | `git pull --rebase && git push` now, after any background commit |
+| `tasq store reconcile` | Repair `.index` without renumbering |
+| `tasq doctor` | Check config, notebook, git and optional tools |
 | `tasq config show` | Effective configuration with the layer that set each key |
 | `tasq plugins list` | Discovered `tasq-*` plugins and configured hooks |
 | `tasq completions SHELL` | Completion script for bash, zsh, fish and others |

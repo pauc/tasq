@@ -34,6 +34,9 @@ pub struct LaunchContext {
     pub workdir: PathBuf,
     /// Whether `workdir` is a tracked worktree (as opposed to the project).
     pub in_worktree: bool,
+    /// Whether worktrees are enabled (`worktree.enabled`). Off, the prompt
+    /// says nothing about them.
+    pub worktrees: bool,
     /// Variables to set in the session on top of its environment
     /// ([`ENV_TASK_ID`], [`ENV_NOTEBOOK`], the profile when selected).
     pub env: Vec<(String, String)>,

@@ -92,6 +92,7 @@ impl Sandbox {
             markdown: "# [ ] Fix the login form validation\n\n## Tags\n\n#B #ready\n".into(),
             workdir: self.work.clone(),
             in_worktree: false,
+            worktrees: true,
             env: vec![
                 ("TASQ_TASK_ID".to_owned(), "3".to_owned()),
                 ("TASQ_NOTEBOOK".to_owned(), "home".to_owned()),
@@ -181,6 +182,29 @@ fn claude_prompt_snapshot() {
             .contains("herdr workspace rename $HERDR_WORKSPACE_ID")
     );
     assert!(!prompt.contains("herdr workspace rename"));
+}
+
+#[test]
+fn claude_prompt_without_worktrees_says_nothing_about_them() {
+    let sb = Sandbox::new();
+    let launcher = claude(&sb, EnvStrategy::Inherit);
+    let ctx = LaunchContext {
+        worktrees: false,
+        ..sb.ctx()
+    };
+    let prompt = launcher.prompt(&ctx).unwrap();
+    assert!(!prompt.to_lowercase().contains("worktree"), "{prompt}");
+    assert!(
+        prompt.contains("tasq project 3 <path>. Track Claude sessions with:"),
+        "{prompt}"
+    );
+    let on = launcher.prompt(&sb.ctx()).unwrap();
+    assert!(on.contains("/wt/feature-a (`feature-a`)"), "{on}");
+    assert!(
+        on.contains("tasq worktree 3 <branch>, then create it with: tasq worktree up 3, which runs git worktree add. Track Claude sessions"),
+        "{on}"
+    );
+    assert!(!on.contains("--create"), "{on}");
 }
 
 #[test]

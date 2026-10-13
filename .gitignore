@@ -9,3 +9,6 @@ mutants.out*/
 
 # The plan directory is tracked even though a global ignore may exclude `ruli`.
 !/ruli/
+
+# Expected provisioning output is tracked even though a global ignore may exclude `.envrc`.
+!/crates/worktree/tests/fixtures/*/expected/.envrc

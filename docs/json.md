@@ -7,10 +7,16 @@ refuse anything else; a future shape change bumps the number.
 | Command | Payload next to `"schema": 1` |
 |---|---|
 | `tasq [list ...]` | `"tasks": [Task, ...]` in display order (group order, then priority, due, id); done tasks only with `--all` (after the open ones) or `--done` |
-| `tasq create`, `set`, `log`, `done`, `view`, `project`, `worktree`, `session`, `mr`, `apply` | `"task": Task` as stored after the command |
+| `tasq create`, `set`, `log`, `done`, `view`, `project`, `worktree`, `worktree up`, `worktree release`, `session`, `mr`, `apply` | `"task": Task` as stored after the command |
+| `tasq worktree ls` | `"worktrees": [{task, title, status, done, path, branch, exists, changes}]`: `task` is the id, `status` the task's (`"done"` for a closed task, `null` without one), `branch` `null` for a directory tracked without one, `exists` whether the directory is there, `changes` the changed paths git reports (files provisioning wrote left out; `[]` when clean), `null` when it does not exist or git cannot say |
+| `tasq worktree prune` | `"dry_run": bool`, `"forgotten": [{repo, lines}]` (per repository, the lines `git worktree prune --verbose` printed), `"released": [{task, lines}]` (per done task, what was removed and deleted, or would be); repositories and tasks with nothing to report are left out, and what was kept goes to stderr as warnings |
+| `tasq worktree switch`, `tasq worktree path` | `"path"`: the directory (`switch` with `--json` neither prints a hint nor writes `$TASQ_CD_FILE`) |
+| `tasq worktree shell-init` | `"script"`: the shell function |
+| `tasq worktree trust` | `"file"`: the repository's `.tasq.toml` (its main checkout when it has none), `"approved": [{kind, line}]`: each hook line now approved, `kind` one of `"pre-create"`, `"post-create"`, `"pre-remove"`, `"post-remove"` (in that order, then the lines in file order); `[]` when the file sets no hooks |
 | `tasq project <id>` (show) | `"task": Task`, `"default_project": path or null` |
-| `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool`, `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
-| `tasq store info` | `"store": {name, location, task_count, id_scheme, ids_may_change_on_reconcile}`, `"bookkeeper": "nb" \| "native" \| "none"` |
+| `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool` (only with worktrees enabled), `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
+| `tasq store info` | `"store": {name, location, task_count, id_scheme, ids_may_change_on_reconcile}`, `"bookkeeper": "native" \| "none"` |
+| `tasq store reconcile` | `"changed"` (bool), `"blanked"` (index lines emptied because the file is gone), `"appended"` (files added to the index) |
 | `tasq store sync` | `"synced": bool`, `"detail": string` |
 | `tasq doctor` | `"checks": [{name, status: "ok" \| "warn" \| "fail", detail, fix}]`, `"ok": bool` |
 | `tasq sync` | `"dry_run": bool`, `"ok": bool`, `"sources": [{name, changes: [string], applied: [{id, description}], error}]` |
@@ -59,13 +65,16 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
 - `origin` is `{"source", "external_id", "url"}` for tasks created by `tasq sync`.
 - `closed_at` is when a done task was closed (`YYYY-MM-DD HH:MM`), `null` on open tasks and
   on tasks closed outside tasq (ADR 0020). It may be left out on input.
+- `worktrees` is present only when worktrees are enabled (`worktree.enabled`, ADR 0022), in
+  every document that carries a task, hook documents included. It may be left out on input,
+  which leaves the stored worktrees unchanged.
 
 ## `tasq apply`
 
 `tasq apply` reads `{"schema": 1, "task": Task}` from stdin (or a file) and writes the task
 through the store, which applies the differences it can express: title, description, status,
 priority, due, project, topic tags, done, `closed_at`, and appended progress entries, worktrees, sessions,
-related links and merge requests. Anything else (a dropped progress entry, a removed link) is
+related links and merge requests. A task without a `worktrees` key keeps its stored worktrees. Anything else (a dropped progress entry, a removed link) is
 refused with an error naming the fields, and nothing is written. Piping `tasq view --json <id>` straight back into
 `tasq apply` changes nothing.
 

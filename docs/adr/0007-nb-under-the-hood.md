@@ -1,6 +1,6 @@
 # ADR-0007: nb under the hood: hybrid native/nb bookkeeping
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0023 (the format and the read path stand; nb is no longer run)
 - **Date:** 2026-10-04
 
 ## Context

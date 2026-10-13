@@ -1,0 +1,17 @@
+# `<project>-<branch>` checkouts, each with its own databases: the .envrc
+# and database.yml templates name them after the branch.
+[worktree]
+enabled = true
+path = "{{project_parent}}/{{project_name}}-{{branch_safe}}"
+symlinks = ["CLAUDE.local.md"]
+templates = [
+    { source = "templates/.envrc.template", target = ".envrc" },
+    { source = "templates/database.yml.template", target = "config/database.yml" },
+]
+
+[worktree.variables]
+db_prefix = "shop"
+
+[worktree.hooks]
+post-create = ["direnv allow .", "bin/rails db:prepare"]
+post-remove = ["dropdb {{db_prefix}}_{{branch_db}}_development"]

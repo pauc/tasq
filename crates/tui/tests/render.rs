@@ -64,8 +64,9 @@ fn tasks() -> Vec<Task> {
 
 /// Today is 2026-10-06 unless a test says otherwise.
 fn fixture(color: bool) -> Model {
-    let mut model =
-        Model::new(Workflow::default(), Theme::default(), color).with_today(date("2026-10-06"));
+    let mut model = Model::new(Workflow::default(), Theme::default(), color)
+        .with_today(date("2026-10-06"))
+        .with_worktrees(true);
     update(&mut model, Msg::Loaded(tasks()));
     model
 }
@@ -89,6 +90,26 @@ fn two_pane_layout() {
     assert_snapshot!("two_pane_detail", screen(&mut model, 120, 28));
     update(&mut model, Msg::HideDetail);
     assert_snapshot!("two_pane_list", screen(&mut model, 120, 28));
+}
+
+#[test]
+fn the_detail_shows_worktrees_only_when_enabled() {
+    let mut model = fixture(false);
+    update(&mut model, Msg::ShowDetail);
+    let on = screen(&mut model, 120, 40);
+    assert_snapshot!("detail_with_worktrees", on);
+    assert!(on.contains("Worktrees"), "{on}");
+    assert!(
+        on.contains("/home/me/code/app-fix-cache (fix-cache)"),
+        "{on}"
+    );
+    let mut model = fixture(false).with_worktrees(false);
+    update(&mut model, Msg::ShowDetail);
+    let off = screen(&mut model, 120, 40);
+    assert_snapshot!("detail_without_worktrees", off);
+    assert!(!off.contains("Worktrees"), "{off}");
+    assert!(!off.contains("app-fix-cache"), "{off}");
+    assert!(off.contains("Sessions"), "{off}");
 }
 
 #[test]
@@ -277,12 +298,26 @@ fn overlays() {
     update(&mut model, Msg::Escape);
     update(&mut model, Msg::BeginDone);
     assert_snapshot!("done_prompt", screen(&mut model, 120, 20));
-    update(&mut model, Msg::Escape);
+}
+
+#[test]
+fn create_view() {
+    let mut model = fixture(true).with_worktrees(true);
     update(&mut model, Msg::BeginCreate);
     for c in "Call the bank".chars() {
         update(&mut model, Msg::Char(c));
     }
-    assert_snapshot!("typing_a_title", screen(&mut model, 120, 20));
+    for _ in 0..5 {
+        update(&mut model, Msg::NextField);
+    }
+    for c in "feat/bank".chars() {
+        update(&mut model, Msg::Char(c));
+    }
+    assert_snapshot!("create_view_with_worktrees", screen(&mut model, 120, 20));
+    assert_snapshot!("create_view_compact", screen(&mut model, 70, 20));
+    let mut plain = fixture(true);
+    update(&mut plain, Msg::BeginCreate);
+    assert_snapshot!("create_view", screen(&mut plain, 120, 20));
 }
 
 #[test]
@@ -587,7 +622,7 @@ fn creating_from_an_empty_list() {
     for c in "First one".chars() {
         update(&mut model, Msg::Char(c));
     }
-    assert_snapshot!("typing_a_title_with_no_tasks", screen(&mut model, 80, 10));
+    assert_snapshot!("create_view_with_no_tasks", screen(&mut model, 100, 16));
 }
 
 #[test]
@@ -623,13 +658,6 @@ fn long_prompts_scroll_under_the_cursor() {
     update(&mut model, Msg::Left);
     let mut terminal = render(&mut model, 80, 10);
     assert_eq!(terminal.get_cursor_position().unwrap(), (2, 9).into());
-    update(&mut model, Msg::Escape);
-    update(&mut model, Msg::BeginCreate);
-    let mut terminal = render(&mut model, 80, 10);
-    assert_eq!(
-        terminal.get_cursor_position().unwrap(),
-        (u16::try_from("new task (ready): ".len()).unwrap(), 9).into()
-    );
 }
 
 #[test]
@@ -795,7 +823,8 @@ fn colours_follow_the_theme_and_no_color() {
     let mut ui = UiConfig::default();
     ui.colors.insert("in-progress".into(), "208".into());
     let mut themed = Model::new(Workflow::default(), Theme::from_config(&ui), true)
-        .with_today(date("2026-10-06"));
+        .with_today(date("2026-10-06"))
+        .with_worktrees(true);
     update(&mut themed, Msg::Loaded(tasks()));
     let terminal = render(&mut themed, 120, 28);
     assert_eq!(terminal.backend().buffer()[(1, 1)].fg, Color::Indexed(208));
@@ -824,7 +853,8 @@ fn presets_restyle_every_role() {
     let mut ui = UiConfig::default();
     ui.theme.preset = Preset::Light;
     let mut light = Model::new(Workflow::default(), Theme::from_config(&ui), true)
-        .with_today(date("2026-10-06"));
+        .with_today(date("2026-10-06"))
+        .with_worktrees(true);
     update(&mut light, Msg::Loaded(tasks()));
     update(&mut light, Msg::ShowDetail);
     let terminal = render(&mut light, 120, 28);
@@ -854,7 +884,8 @@ fn presets_restyle_every_role() {
     ui.theme.preset = Preset::Mono;
     ui.theme.colors.insert("selection".into(), "236".into());
     let mut mono = Model::new(Workflow::default(), Theme::from_config(&ui), true)
-        .with_today(date("2026-10-06"));
+        .with_today(date("2026-10-06"))
+        .with_worktrees(true);
     update(&mut mono, Msg::Loaded(tasks()));
     update(&mut mono, Msg::ShowDetail);
     let terminal = render(&mut mono, 120, 28);

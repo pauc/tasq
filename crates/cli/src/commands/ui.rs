@@ -21,14 +21,22 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tasq_core::config::Config;
-use tasq_core::model::{Task, TaskId};
+use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::theme::Theme;
 use tasq_tui::{Host, HostResult, KeyMap, LaunchTarget, Model, SourceChoice};
 
 use crate::app::App;
 use crate::cli::GlobalArgs;
+use crate::commands::create::{Asked, new_task_worktree};
+use crate::commands::worktree::{self, Releasing};
+use crate::commands::worktree_hooks::Approval;
 use crate::error::{CliError, Result};
 use crate::plugins::{self, Hook, HookEvent};
+
+/// The UI draws on stdout and reads keys from stdin: both must be terminals.
+fn interactive(stdout: bool, stdin: bool) -> bool {
+    stdout && stdin
+}
 
 /// Runs `ui`.
 pub fn run(app: &App) -> Result<()> {
@@ -41,7 +49,10 @@ pub fn run(app: &App) -> Result<()> {
             None => CliError::user(e.to_string()),
         }
     })?;
-    if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
+    if !interactive(
+        std::io::stdout().is_terminal(),
+        std::io::stdin().is_terminal(),
+    ) {
         return Err(CliError::user("tasq ui needs a terminal"));
     }
     let theme = Theme::from_config(&app.config().ui);
@@ -52,6 +63,7 @@ pub fn run(app: &App) -> Result<()> {
         .with_week_start(app.config().ui.week_start.weekday())
         .with_due_format(app.config().ui.due_format)
         .with_detail_position(app.config().ui.detail_position)
+        .with_worktrees(app.worktrees())
         .with_default_status(app.config().workflow.default_status.clone())
         .with_default_project(Some(
             crate::commands::existing_dir(&app.opts.cwd).unwrap_or_else(|| app.opts.cwd.clone()),
@@ -137,9 +149,40 @@ impl Host for CliHost<'_> {
             .map(|()| "sync finished".to_owned())
     }
 
-    /// The same `post-done` hooks as `tasq done`, with the same document.
+    /// The same `post-done` hooks as `tasq done`, with the same document,
+    /// then the same release of its worktrees, never asking about hooks
+    /// (the UI owns the terminal): unapproved ones are skipped.
     fn after_done(&mut self, task: &Task) -> std::result::Result<(), String> {
-        self.hooks(Hook::PostDone, task)
+        let hooks = self.hooks(Hook::PostDone, task);
+        if !self.app.worktrees() {
+            return hooks;
+        }
+        let mut warnings: Vec<String> = hooks.err().into_iter().collect();
+        let mut collect = |event| {
+            if let HookEvent::Warning(text) = event {
+                warnings.push(text);
+            }
+        };
+        let how = Releasing::closing();
+        if let Err(e) = worktree::release(self.app, task, how, Approval::Skip, &mut collect) {
+            warnings.push(format!("worktrees not released: {e}"));
+        }
+        if warnings.is_empty() {
+            Ok(())
+        } else {
+            Err(warnings.join("; "))
+        }
+    }
+
+    /// The worktree `tasq create` would declare: on `branch` when one was
+    /// typed, else as `worktree.on_create` decides.
+    fn worktree(
+        &mut self,
+        task: &Task,
+        branch: Option<&str>,
+    ) -> std::result::Result<Option<Worktree>, String> {
+        let asked = branch.map_or(Asked::OnCreate, Asked::Branch);
+        new_task_worktree(self.app, task, asked).map_err(|e| format!("no worktree: {e}"))
     }
 
     /// The same `post-create` hooks as `tasq create`, with the same document.
@@ -242,6 +285,14 @@ mod tests {
     use tasq_core::config::{Config, LoadOptions};
 
     use super::*;
+
+    #[test]
+    fn the_ui_needs_both_stdout_and_stdin_on_a_terminal() {
+        assert!(interactive(true, true));
+        assert!(!interactive(true, false));
+        assert!(!interactive(false, true));
+        assert!(!interactive(false, false));
+    }
     use crate::output::Output;
 
     /// An app whose only configuration is `.tasq.toml` in `dir` with `text`.
@@ -321,6 +372,77 @@ mod tests {
         );
     }
 
+    /// A repository at `<dir>/proj` with worktree `b` at `<dir>/proj-b`,
+    /// an app with worktrees on (`git` from this process's `PATH`), and
+    /// task 8 closed with that worktree declared.
+    fn released(dir: &Path) -> (App, Task, PathBuf) {
+        let project = dir.join("proj");
+        let wt = dir.join("proj-b");
+        std::fs::create_dir(&project).unwrap();
+        let git = |cwd: &Path, args: &[&str]| {
+            let out = Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+                .args(args)
+                .current_dir(cwd)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}");
+        };
+        git(&project, &["init", "-q", "-b", "main"]);
+        git(&project, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        git(
+            &project,
+            &["worktree", "add", "-q", "-b", "b", wt.to_str().unwrap()],
+        );
+        let mut app = app_in(dir, "[worktree]\nenabled = true\n");
+        for key in ["PATH", "HOME"] {
+            if let Ok(value) = std::env::var(key) {
+                app.opts.env.insert(key.to_owned(), value);
+            }
+        }
+        let mut task = closed_task();
+        task.project = Some(project);
+        task.add_worktree(Worktree::on_branch(&wt, "b"));
+        (app, task, wt)
+    }
+
+    #[test]
+    fn after_done_releases_the_worktrees_without_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path().canonicalize().unwrap();
+        let (app, task, wt) = released(&dir);
+        std::fs::write(wt.join("scratch"), "x").unwrap();
+        assert_eq!(
+            host(&app).after_done(&task),
+            Err(format!(
+                "kept worktree {}: it has uncommitted or untracked changes; \
+                 tasq worktree release 8 --force removes it",
+                wt.display()
+            ))
+        );
+        std::fs::remove_file(wt.join("scratch")).unwrap();
+        // Hooks of the repository's own file are never asked about here.
+        std::fs::write(
+            dir.join("proj").join(".git").join("info").join("exclude"),
+            ".tasq.toml\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("proj").join(".tasq.toml"),
+            "[worktree.hooks]\npre-remove = [\"/bin/false\"]\n",
+        )
+        .unwrap();
+        let warning = host(&app).after_done(&task).unwrap_err();
+        assert!(
+            warning.starts_with("hooks from ") && warning.contains("were skipped"),
+            "{warning}"
+        );
+        assert!(!wt.exists(), "removed");
+        assert_eq!(host(&app).after_done(&task), Ok(()), "nothing left");
+        let off = app_in(&dir, "");
+        assert_eq!(host(&off).after_done(&task), Ok(()), "disabled: untouched");
+    }
+
     fn closed_task() -> Task {
         let mut task = Task::new(TaskId::from(8), "Hooked");
         task.done = true;
@@ -381,6 +503,51 @@ post-done = [
             HookEvent::Output("post-done hook \"/bin/sh -c 'echo chatter'\": chatter".into())
         );
         assert!(matches!(&events[2], HookEvent::Warning(w) if w.contains("/nonexistent/hook")));
+    }
+
+    #[test]
+    fn worktree_declares_as_tasq_create_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let repo = root.join("app");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let plain = root.join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        let app = app_in(&root, "[worktree]\nenabled = true\n");
+        let mut task = Task::new(TaskId::from(9), "Fresh start");
+        task.project = Some(repo.clone());
+        let at = |name: &str| root.join(name);
+        assert_eq!(
+            host(&app).worktree(&task, None),
+            Ok(Some(Worktree::on_branch(
+                at("app-9_fresh_start"),
+                "9-fresh-start"
+            )))
+        );
+        assert_eq!(
+            host(&app).worktree(&task, Some("feat/x")),
+            Ok(Some(Worktree::on_branch(at("app-feat_x"), "feat/x")))
+        );
+        task.project = Some(plain);
+        assert_eq!(host(&app).worktree(&task, None), Ok(None), "not a checkout");
+        assert_eq!(
+            host(&app).worktree(&task, Some("b")),
+            Ok(Some(Worktree::on_branch(at("plain-b"), "b"))),
+            "a typed branch always declares"
+        );
+        task.project = None;
+        assert_eq!(host(&app).worktree(&task, None), Ok(None));
+        assert_eq!(
+            host(&app).worktree(&task, Some("b")),
+            Err(
+                "no worktree: task 9 tracks no project and work.default_project is unset; \
+                 set one with tasq project 9 <path>"
+                    .into()
+            )
+        );
+        let off = app_in(&root, "");
+        task.project = Some(repo);
+        assert_eq!(host(&off).worktree(&task, Some("b")), Ok(None), "disabled");
     }
 
     #[test]

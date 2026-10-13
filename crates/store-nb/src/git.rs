@@ -50,6 +50,11 @@ impl Git {
         &self.dir
     }
 
+    /// The environment commands run with (and nothing else).
+    pub fn env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
     /// Whether `dir` is the top of a git repository (has a `.git` entry).
     /// Nested notebooks inside a bigger repository are deliberately not
     /// detected: nb only commits notebooks that are repositories themselves.
@@ -173,8 +178,10 @@ mod tests {
 
     #[test]
     fn new_keeps_the_directory() {
-        let g = Git::new("/repo", Vec::new());
+        let env = vec![("HOME".to_owned(), "/h".to_owned())];
+        let g = Git::new("/repo", env.clone());
         assert_eq!(g.dir(), Path::new("/repo"));
+        assert_eq!(g.env(), env.as_slice());
     }
 
     #[test]

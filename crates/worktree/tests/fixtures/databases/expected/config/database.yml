@@ -1,0 +1,6 @@
+development:
+  adapter: postgresql
+  database: shop_feature_login_2_development
+test:
+  adapter: postgresql
+  database: shop_feature_login_2_test

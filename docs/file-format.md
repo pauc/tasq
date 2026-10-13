@@ -16,7 +16,8 @@ not understand (see "Lossless editing").
   (`YYYYMMDDHHMMSS`). When that name is taken the stamp is bumped one second at
   a time, as nb does; after 60 attempts `create` fails with nothing written.
 - Id: the 1-based line number of the filename in the notebook's `.index` file.
-  Ids are positional and can change after deletions or `nb index reconcile`.
+  Ids are positional and can change after `nb index reconcile`; `tasq store
+  reconcile` keeps them (a deleted file's line becomes empty).
 - Index lines that are not `*.todo.md`, or whose file no longer exists, are
   skipped when listing.
 - Encoding UTF-8. New files use LF. In an existing file every line keeps its
@@ -150,14 +151,19 @@ a single line.
 
 Entries `- /abs/path` or ``- /abs/path (`branch`)`` with the branch in backticks
 inside parentheses. The path contains no whitespace (the script reads it as the
-second whitespace-separated field). A worktree is already tracked when a line
-equals `- <path>` or starts with `- <path> `.
+second whitespace-separated field). A worktree is already tracked when an entry
+of a `## Worktrees` section has the same path. (The script matched `- <path>`
+on every line of the file, so a description bullet starting with the path hid
+the worktree; tasq looks only where it reads worktrees from.)
 
 ### Sessions
 
 Entries ``- YYYY-MM-DD HH:MM: `session-id` `` optionally followed by
 ` — description` (space, U+2014 EM DASH, space). A session is already tracked
-when `` `session-id` `` occurs anywhere in the file.
+when an entry of a `## Sessions` section has the same id. (The script skipped a
+session whenever `` `session-id` `` occurred anywhere in the file, so a worktree
+on branch `x`, written ``(`x`)``, or a note mentioning `` `x` `` swallowed
+session `x`; tasq looks only where it reads sessions from.)
 
 ### Source (new, optional)
 

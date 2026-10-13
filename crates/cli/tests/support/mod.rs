@@ -81,6 +81,19 @@ impl TestEnv {
             .env("NB_DIR", &self.nb_dir)
             .env("PATH", &self.bin)
             .current_dir(&self.home);
+        // Under `cargo llvm-cov` the binary is instrumented: without this it
+        // drops `default_*.profraw` in its working directory, which a test
+        // worktree then counts as a change.
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            cmd.env("LLVM_PROFILE_FILE", profile);
+        }
+        cmd
+    }
+
+    /// [`Self::tasq`] with worktrees enabled (`TASQ_WORKTREE_ENABLED=1`, ADR 0022).
+    pub fn tasq_wt(&self) -> assert_cmd::Command {
+        let mut cmd = self.tasq();
+        cmd.env("TASQ_WORKTREE_ENABLED", "1");
         cmd
     }
 

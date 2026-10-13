@@ -12,9 +12,9 @@ expression: env.normalize(&stdout(&out))
 #   5. --set
 
 [store]
-bookkeeper = "auto"                          # defaults
 kind = "nb"                                  # defaults
 notebook = "home"                            # defaults
+sync_interval = 3600                         # defaults
 
 [workflow]
 default_status = "ready"                     # defaults
@@ -22,7 +22,6 @@ statuses = ["in-progress", "ready", "waiting", "blocked", "later"] # defaults
 
 [work]
 default_project = "[ROOT]/home/code/x" # [ROOT]/home/.tasq.toml
-worktree_manager = "git"                     # defaults
 
 [launch]
 default = "claude"                           # defaults
@@ -61,3 +60,23 @@ summarizer = "llm"                           # defaults
 post-create = []                             # defaults
 post-done = []                               # defaults
 pre-launch = []                              # defaults
+
+[worktree]
+base = "origin/HEAD"                         # defaults
+branch = "{{id}}-{{slug}}"                   # defaults
+copies = []                                  # defaults
+delete_branch = "safe"                       # defaults
+enabled = false                              # defaults
+on_create = "auto"                           # defaults
+on_done = "release"                          # defaults
+path = "{{project_parent}}/{{project_name}}-{{branch_safe}}" # defaults
+symlinks = []                                # defaults
+templates = []                               # defaults
+
+[worktree.hooks]
+post-create = []                             # defaults
+post-remove = []                             # defaults
+pre-create = []                              # defaults
+pre-remove = []                              # defaults
+
+[worktree.variables]

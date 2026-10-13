@@ -27,10 +27,8 @@ pub const ENV_SET: &str = "TASQ_SET";
 /// | Variable | Key |
 /// |----------|-----|
 /// | `TASQ_NOTEBOOK` | `store.notebook` |
-/// | `TASQ_BOOKKEEPER` | `store.bookkeeper` |
+/// | `TASQ_SYNC_INTERVAL` | `store.sync_interval` |
 /// | `TASQ_DEFAULT_PROJECT` | `work.default_project` |
-/// | `TASQ_WORKTREE_MANAGER` | `work.worktree_manager` |
-/// | `TASQ_WORKTREE_COMMAND` | `work.worktree_command` |
 /// | `TASQ_LAUNCHER` | `launch.default` |
 /// | `TASQ_LAUNCH_DETACHED` | `launch.detached` |
 /// | `TASQ_LAUNCH_ENV` | `launch.env` |
@@ -46,6 +44,13 @@ pub const ENV_SET: &str = "TASQ_SET";
 /// | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
 /// | `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
 /// | `TASQ_SUMMARY_PROMPT_FILE` | `report.summary.prompt_file` |
+/// | `TASQ_WORKTREE_ENABLED` | `worktree.enabled` |
+/// | `TASQ_WORKTREE_PATH` | `worktree.path` |
+/// | `TASQ_WORKTREE_BRANCH` | `worktree.branch` |
+/// | `TASQ_WORKTREE_BASE` | `worktree.base` |
+/// | `TASQ_WORKTREE_ON_CREATE` | `worktree.on_create` |
+/// | `TASQ_WORKTREE_ON_DONE` | `worktree.on_done` |
+/// | `TASQ_WORKTREE_DELETE_BRANCH` | `worktree.delete_branch` |
 ///
 /// Values are converted like `--set` values (see [`LoadOptions::overrides`]).
 /// A variable set to the empty string is treated as unset. [`ENV_CONFIG`],
@@ -54,10 +59,8 @@ pub const ENV_SET: &str = "TASQ_SET";
 /// over them for the same key.
 pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_NOTEBOOK", "store.notebook"),
-    ("TASQ_BOOKKEEPER", "store.bookkeeper"),
+    ("TASQ_SYNC_INTERVAL", "store.sync_interval"),
     ("TASQ_DEFAULT_PROJECT", "work.default_project"),
-    ("TASQ_WORKTREE_MANAGER", "work.worktree_manager"),
-    ("TASQ_WORKTREE_COMMAND", "work.worktree_command"),
     ("TASQ_LAUNCHER", "launch.default"),
     ("TASQ_LAUNCH_DETACHED", "launch.detached"),
     ("TASQ_LAUNCH_ENV", "launch.env"),
@@ -73,6 +76,13 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_SUMMARY_MODEL", "report.summary.model"),
     ("TASQ_SUMMARY_COMMAND", "report.summary.command"),
     ("TASQ_SUMMARY_PROMPT_FILE", "report.summary.prompt_file"),
+    ("TASQ_WORKTREE_ENABLED", "worktree.enabled"),
+    ("TASQ_WORKTREE_PATH", "worktree.path"),
+    ("TASQ_WORKTREE_BRANCH", "worktree.branch"),
+    ("TASQ_WORKTREE_BASE", "worktree.base"),
+    ("TASQ_WORKTREE_ON_CREATE", "worktree.on_create"),
+    ("TASQ_WORKTREE_ON_DONE", "worktree.on_done"),
+    ("TASQ_WORKTREE_DELETE_BRANCH", "worktree.delete_branch"),
 ];
 
 /// Everything [`Config::load`] needs, injected so loading is pure.
@@ -277,6 +287,7 @@ struct FileSchema {
     source: Vec<super::SourceConfig>,
     report: super::ReportConfig,
     hooks: super::HooksConfig,
+    worktree: super::WorktreeConfig,
     profile: BTreeMap<String, Config>,
 }
 
@@ -292,6 +303,7 @@ impl Default for FileSchema {
             source,
             report,
             hooks,
+            worktree,
         } = Config::default();
         Self {
             store,
@@ -303,6 +315,7 @@ impl Default for FileSchema {
             source,
             report,
             hooks,
+            worktree,
             profile: BTreeMap::new(),
         }
     }
@@ -422,7 +435,15 @@ fn leaf_keys(table: &Table) -> Vec<String> {
 fn template() -> Table {
     let mut config = Config::default();
     config.work.default_project = Some(PathBuf::from("~"));
-    config.work.worktree_command = Some(String::new());
+    config.worktree.ports = Some(super::PortsConfig {
+        base: 0,
+        span: 0,
+        block: 0,
+    });
+    config
+        .worktree
+        .variables
+        .insert("<name>".to_owned(), String::new());
     config.launch.claude.prompt_file = Some(PathBuf::from("~"));
     config.report.summary.model = Some(String::new());
     config.report.summary.prompt_file = Some(PathBuf::from("~"));
@@ -685,6 +706,63 @@ impl Config {
     }
 }
 
+/// Checks `[worktree]`: user variables are template names that do not
+/// shadow a built-in, and every template only names variables its scope
+/// has (ADR 0022). Checked whether or not worktrees are enabled, so turning
+/// them on never surfaces an old mistake.
+fn check_worktree_templates(loaded: &Loaded) -> Result<(), ConfigError> {
+    use crate::worktree::hooks::Kind;
+    use crate::worktree::vars::{Scope, check, is_builtin};
+    let origin_of = |key: &str| loaded.explain(key).cloned().unwrap_or(Origin::Defaults);
+    let worktree = &loaded.config.worktree;
+    for name in worktree.variables.keys() {
+        let reason = if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            "a variable name is letters, digits and underscores"
+        } else if is_builtin(name) {
+            "a built-in variable has this name"
+        } else {
+            continue;
+        };
+        return Err(ConfigError::BadWorktreeVariable {
+            name: name.clone(),
+            reason,
+            origin: origin_of(&format!("worktree.variables.{name}")),
+        });
+    }
+    let ports = worktree.ports.is_some();
+    let hooks = Kind::ALL.map(|kind| {
+        (
+            format!("worktree.hooks.{}", kind.key()),
+            Scope::Worktree,
+            kind.lines(&worktree.hooks),
+        )
+    });
+    let templates = [
+        (
+            "worktree.branch".to_owned(),
+            Scope::Branch,
+            std::slice::from_ref(&worktree.branch),
+        ),
+        (
+            "worktree.path".to_owned(),
+            Scope::Path,
+            std::slice::from_ref(&worktree.path),
+        ),
+    ];
+    for (key, scope, texts) in templates.into_iter().chain(hooks) {
+        for text in texts {
+            check(text, scope, ports, &worktree.variables).map_err(|source| {
+                ConfigError::UnknownTemplateVariable {
+                    origin: origin_of(&key),
+                    key: key.clone(),
+                    source,
+                }
+            })?;
+        }
+    }
+    Ok(())
+}
+
 /// Expands `~`, fills in forge defaults and checks cross-key rules.
 fn finalize(loaded: &mut Loaded, home: Option<&Path>) -> Result<(), ConfigError> {
     let origin_of =
@@ -705,15 +783,16 @@ fn finalize(loaded: &mut Loaded, home: Option<&Path>) -> Result<(), ConfigError>
         }
     }
 
-    if config.work.worktree_manager == super::WorktreeManager::Command
-        && config
-            .work
-            .worktree_command
-            .as_deref()
-            .is_none_or(|c| c.trim().is_empty())
+    if let Some(ports) = config.worktree.ports
+        && (ports.block == 0
+            || ports.span < ports.block
+            || u32::from(ports.base) + u32::from(ports.span) > u32::from(u16::MAX) + 1)
     {
-        return Err(ConfigError::WorktreeCommandRequired {
-            origin: origin_of(loaded, "work.worktree_manager"),
+        return Err(ConfigError::BadPorts {
+            base: ports.base,
+            span: ports.span,
+            block: ports.block,
+            origin: origin_of(loaded, "worktree.ports.base"),
         });
     }
 
@@ -781,7 +860,7 @@ fn finalize(loaded: &mut Loaded, home: Option<&Path>) -> Result<(), ConfigError>
             }
         }
     }
-    Ok(())
+    check_worktree_templates(loaded)
 }
 
 #[cfg(test)]

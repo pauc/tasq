@@ -22,7 +22,7 @@ use std::sync::LazyLock;
 use regex::{Captures, Regex};
 use tasq_core::store::{Store, StoreError};
 use tasq_core::theme::{Color, Role, Theme};
-use tasq_store_nb::nb::find_in_path;
+use tasq_store_nb::which::find_in_path;
 
 use crate::app::App;
 use crate::error::Result;
@@ -67,7 +67,7 @@ pub fn run(app: &App, id: &str, raw: bool) -> Result<()> {
         let task = store.get(&id)?;
         return app
             .out
-            .json(&json::document([("task", json::to_value(&task))]));
+            .json(&json::document([("task", app.task_json(&task))]));
     }
     if raw {
         return app.out.print(&text);

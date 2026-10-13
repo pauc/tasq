@@ -5,6 +5,7 @@ members = [
     "crates/store-nb",
     "crates/sources",
     "crates/launch",
+    "crates/worktree",
     "crates/cli",
     "crates/tui",
 ]

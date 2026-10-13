@@ -41,7 +41,7 @@ pub enum ConfigError {
         /// 1-based column.
         column: usize,
         /// Parser message, for example
-        /// ``unknown field `notbook`, expected one of `kind`, `notebook`, `bookkeeper` ``.
+        /// ``unknown field `notbook`, expected one of `kind`, `notebook`, `sync_interval` ``.
         message: String,
     },
     /// A value set by the environment or `--set` could not be used.
@@ -96,12 +96,38 @@ pub enum ConfigError {
         /// Which layer set `workflow.default_status`.
         origin: Origin,
     },
-    /// `work.worktree_manager = "command"` without a `work.worktree_command`.
+    /// A worktree template names a variable it does not have.
+    #[error("{key} (set by {origin}): {source}")]
+    UnknownTemplateVariable {
+        /// The key holding the template (`worktree.path`, ...).
+        key: String,
+        /// The name and what was available.
+        source: crate::worktree::vars::UnknownVariable,
+        /// Where the key was set.
+        origin: Origin,
+    },
+    /// A `[worktree.variables]` name that cannot be used in a template.
+    #[error("worktree.variables.{name} (set by {origin}): {reason}")]
+    BadWorktreeVariable {
+        /// The name as written.
+        name: String,
+        /// What is wrong with it.
+        reason: &'static str,
+        /// Where it was set.
+        origin: Origin,
+    },
+    /// `[worktree.ports]` that cannot hold one block, or runs past 65535.
     #[error(
-        "work.worktree_manager = \"command\" (set by {origin}) requires work.worktree_command, e.g. \"gwm create {{new}} {{branch}} --no-tmux -s\""
+        "worktree.ports (set by {origin}): base = {base}, span = {span}, block = {block}: block must be at least 1, span at least block, and base + span at most 65536"
     )]
-    WorktreeCommandRequired {
-        /// Which layer selected the command manager.
+    BadPorts {
+        /// `worktree.ports.base`.
+        base: u16,
+        /// `worktree.ports.span`.
+        span: u16,
+        /// `worktree.ports.block`.
+        block: u16,
+        /// Where the table was set.
         origin: Origin,
     },
     /// A `[[source]]` lacks a key its `kind` needs.

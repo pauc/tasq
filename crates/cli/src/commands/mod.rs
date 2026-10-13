@@ -30,15 +30,21 @@ pub mod sync;
 pub mod ui;
 pub mod view;
 pub mod worktree;
+pub mod worktree_hooks;
+pub mod worktree_nav;
 
-/// Ends an editing command: prints `line`, or with `--json` the task as it
-/// is now, as `{"schema": 1, "task": {...}}`.
+/// Ends an editing command: reports the store's warnings (a commit that
+/// could not start) on stderr, then prints `line`, or with `--json` the
+/// task as it is now, as `{"schema": 1, "task": {...}}`.
 pub fn finish(app: &App, store: &NbStore, id: &TaskId, line: &str) -> Result<()> {
+    for warning in store.warnings() {
+        app.out.warn(&warning.to_string());
+    }
     if app.out.json_mode() {
         let task = store.get(id)?;
         return app
             .out
-            .json(&json::document([("task", json::to_value(&task))]));
+            .json(&json::document([("task", app.task_json(&task))]));
     }
     app.out.print(line)
 }

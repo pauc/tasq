@@ -101,6 +101,7 @@ mod tests {
             markdown: String::new(),
             workdir: "/work".into(),
             in_worktree: false,
+            worktrees: true,
             env: vec![("TASQ_TASK_ID".into(), "3".into())],
             statuses: Vec::new(),
             focus: true,

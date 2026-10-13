@@ -86,13 +86,25 @@ pub fn append_progress(doc: &mut Document, entry: &ProgressEntry) {
     append_to_section(doc, section::PROGRESS, &entry::format_progress(entry));
 }
 
-/// `cmd_worktree`: tracks a worktree unless a line already equals `- <path>`
-/// or starts with `- <path> `. Returns whether a line was added.
+/// Whether any `## name` section has a body line for which `found` holds.
+/// The duplicate checks below look only where [`super::read`] reads the
+/// entries from, so a check never refuses an entry the reader would not see.
+fn section_has(doc: &Document, name: &str, found: impl Fn(&str) -> bool) -> bool {
+    doc.sections_named(name)
+        .iter()
+        .any(|s| s.body.iter().any(|line| found(line)))
+}
+
+/// `cmd_worktree`: tracks a worktree unless `## Worktrees` already lists its
+/// path. Returns whether a line was added.
+///
+/// The script matched `- <path>` against every line of the file; a list
+/// item elsewhere (a description bullet starting with the path) then hid
+/// the worktree from the task, so the check is scoped to the section.
 pub fn append_worktree(doc: &mut Document, worktree: &Worktree) -> bool {
-    let prefix = format!("- {}", worktree.path.display());
-    let tracked = doc
-        .lines()
-        .any(|l| l == prefix || l.starts_with(&format!("{prefix} ")));
+    let tracked = section_has(doc, section::WORKTREES, |line| {
+        entry::parse_worktree(line).is_some_and(|w| w.path == worktree.path)
+    });
     if tracked {
         return false;
     }
@@ -100,11 +112,18 @@ pub fn append_worktree(doc: &mut Document, worktree: &Worktree) -> bool {
     true
 }
 
-/// `cmd_session`: tracks a session unless `` `id` `` occurs anywhere in the
-/// file. Returns whether a line was added.
+/// `cmd_session`: tracks a session unless `## Sessions` already lists its
+/// id. Returns whether a line was added.
+///
+/// The script skipped a session whenever `` `id` `` occurred anywhere in
+/// the file, so a worktree on branch `x` (``- /path (`x`)``) or a note
+/// mentioning `` `x` `` silently swallowed session `x`; the check is scoped
+/// to the section.
 pub fn append_session(doc: &mut Document, session: &Session) -> bool {
-    let needle = format!("`{}`", session.id);
-    if doc.lines().any(|l| l.contains(&needle)) {
+    let tracked = section_has(doc, section::SESSIONS, |line| {
+        entry::parse_session(line).is_some_and(|s| s.id == session.id)
+    });
+    if tracked {
         return false;
     }
     append_to_section(doc, section::SESSIONS, &entry::format_session(session));

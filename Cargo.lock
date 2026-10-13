@@ -2035,6 +2035,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "insta",
+ "mutants",
  "predicates",
  "regex",
  "rustix",
@@ -2046,6 +2047,7 @@ dependencies = [
  "tasq-sources",
  "tasq-store-nb",
  "tasq-tui",
+ "tasq-worktree",
  "tempfile",
  "toml",
  "unicode-width",
@@ -2060,6 +2062,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "shell-words",
  "tempfile",
  "thiserror 2.0.21",
  "toml",
@@ -2071,7 +2074,6 @@ version = "0.1.0"
 dependencies = [
  "insta",
  "mutants",
- "regex",
  "serde_json",
  "shell-words",
  "tasq-core",
@@ -2114,6 +2116,17 @@ dependencies = [
  "mutants",
  "ratatui",
  "tasq-core",
+]
+
+[[package]]
+name = "tasq-worktree"
+version = "0.1.0"
+dependencies = [
+ "mutants",
+ "tasq-core",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]

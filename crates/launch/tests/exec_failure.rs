@@ -25,6 +25,7 @@ fn failed_exec_is_reported_and_restores_the_directory() {
         markdown: "# [ ] T\n".into(),
         workdir: root.path().to_path_buf(),
         in_worktree: false,
+        worktrees: true,
         env: vec![("TASQ_TASK_ID".into(), "3".into())],
         statuses: vec!["ready".into()],
         focus: true,

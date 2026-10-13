@@ -24,7 +24,7 @@ pub mod plugins;
 use std::ffi::OsString;
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::FromArgMatches;
 
 use crate::cli::Cli;
 
@@ -45,7 +45,11 @@ pub fn main() -> ExitCode {
         error.report();
         return ExitCode::from(error.exit_code());
     }
-    let cli = match Cli::try_parse() {
+    let worktrees = app::worktrees_enabled(&cli::early_globals(&argv));
+    let parsed = cli::command(worktrees)
+        .try_get_matches_from(&argv)
+        .and_then(|matches| Cli::from_arg_matches(&matches));
+    let cli = match parsed {
         Ok(cli) => cli,
         Err(e) => {
             let code = if e.use_stderr() { 2 } else { 0 };

@@ -56,10 +56,7 @@ pub const HELP: &[(&[Action], &str)] = &[
         &[Action::Cancel],
         "clear the filter, close the detail or a dialog",
     ),
-    (
-        &[Action::Create],
-        "create a task from a title (then t, p to refine)",
-    ),
+    (&[Action::Create], "create a task in the edit view"),
     (
         &[Action::Status],
         "set the status (workflow statuses, pick by number); reopens a done task",
@@ -262,7 +259,7 @@ pub fn view(model: &Model, frame: &mut Frame) {
             *cursor,
         ),
         Mode::Form(_) | Mode::Calendar { .. } => unreachable!("drawn above"),
-        Mode::Normal | Mode::Filter { .. } | Mode::Note { .. } | Mode::Create { .. } => {}
+        Mode::Normal | Mode::Filter { .. } | Mode::Note { .. } => {}
     }
 }
 
@@ -609,7 +606,7 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
         lines.push(Line::styled("Description", header(model)));
         lines.extend(description.lines().map(Line::raw));
     }
-    for (heading, items) in link_sections(task) {
+    for (heading, items) in link_sections(task, model.worktrees) {
         if !items.is_empty() {
             lines.push(Line::default());
             lines.push(Line::styled(heading, header(model)));
@@ -639,8 +636,9 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
 }
 
 /// The list sections of the detail pane: related links, merge requests,
-/// worktrees and sessions, each as `(heading, entries)`.
-pub fn link_sections(task: &Task) -> Vec<(&'static str, Vec<String>)> {
+/// worktrees (only when `worktrees` are enabled) and sessions, each as
+/// `(heading, entries)`.
+pub fn link_sections(task: &Task, worktrees: bool) -> Vec<(&'static str, Vec<String>)> {
     let as_text = |l: &tasq_core::model::Link| match &l.label {
         Some(label) => format!("{label} <{}>", l.url),
         None => l.url.clone(),
@@ -655,6 +653,7 @@ pub fn link_sections(task: &Task) -> Vec<(&'static str, Vec<String>)> {
             "Worktrees",
             task.worktrees
                 .iter()
+                .filter(|_| worktrees)
                 .map(|w| match &w.branch {
                     Some(branch) => format!("{} ({branch})", w.path.display()),
                     None => w.path.display().to_string(),
@@ -751,7 +750,7 @@ pub struct Prompt {
     pub cursor: u16,
 }
 
-/// The prompt being typed (the filter, a note, a new title) laid out in
+/// The prompt being typed (the filter or a note) laid out in
 /// `width` columns, or `None` in the other modes. The input scrolls like
 /// a single-line box of the edit view (see [`window`]).
 pub fn prompt(model: &Model, width: u16) -> Option<Prompt> {
@@ -764,10 +763,6 @@ pub fn prompt(model: &Model, width: u16) -> Option<Prompt> {
             };
             (label.to_owned(), input)
         }
-        Mode::Create { input } => (
-            format!("new task ({}): ", model.default_status.as_str()),
-            input,
-        ),
         _ => return None,
     };
     // The label takes at most all but the last column, which is where
@@ -912,16 +907,18 @@ fn render_form(model: &Model, frame: &mut Frame, area: Rect, form: &Form) -> Opt
             .areas(choices);
     choice_box(model, frame, status, form, Field::Status);
     choice_box(model, frame, priority, form, Field::Priority);
-    let [due, project, tags] = Layout::horizontal([
-        Constraint::Length(16),
-        Constraint::Fill(3),
-        Constraint::Fill(2),
-    ])
-    .spacing(1)
-    .areas(details);
-    text_box(model, frame, due, form, Field::Due, &mut cursor);
-    text_box(model, frame, project, form, Field::Project, &mut cursor);
-    text_box(model, frame, tags, form, Field::Tags, &mut cursor);
+    let mut widths = vec![Constraint::Length(16), Constraint::Fill(3)];
+    let mut fields = vec![Field::Due, Field::Project];
+    if form.worktree.is_some() {
+        widths.push(Constraint::Fill(2));
+        fields.push(Field::Worktree);
+    }
+    widths.push(Constraint::Fill(2));
+    fields.push(Field::Tags);
+    let boxes = Layout::horizontal(widths).spacing(1).split(details);
+    for (area, field) in boxes.iter().zip(fields) {
+        text_box(model, frame, *area, form, field, &mut cursor);
+    }
     let block = field_block(model, form, Field::Description);
     let inner = block.inner(description);
     frame.render_widget(block, description);
@@ -930,18 +927,30 @@ fn render_form(model: &Model, frame: &mut Frame, area: Rect, form: &Form) -> Opt
 }
 
 /// `Edit [id]` and the task's title as it is on disk, so the user knows
-/// what they are editing while they retype the title.
+/// what they are editing while they retype the title; `New task` in the
+/// create view, with what an empty Worktree row means.
 fn form_header(model: &Model, form: &Form) -> Line<'static> {
-    let stored = model
-        .tasks
-        .iter()
-        .find(|t| t.id == form.id)
-        .map(|t| t.title.clone())
-        .unwrap_or_default();
+    let note = match &form.id {
+        Some(id) => model
+            .tasks
+            .iter()
+            .find(|t| t.id == *id)
+            .map(|t| t.title.clone())
+            .unwrap_or_default(),
+        None if form.worktree.is_some() => "empty Worktree: worktree.on_create decides".to_owned(),
+        None => String::new(),
+    };
     Line::from(vec![
-        Span::styled(format!(" Edit [{}]", form.id), header(model)),
-        Span::styled(format!("  {stored}"), dim(model)),
+        Span::styled(format!(" {}", form_name(form)), header(model)),
+        Span::styled(format!("  {note}"), dim(model)),
     ])
+}
+
+/// `Edit [id]`, or `New task` in the create view.
+fn form_name(form: &Form) -> String {
+    form.id
+        .as_ref()
+        .map_or_else(|| "New task".to_owned(), |id| format!("Edit [{id}]"))
 }
 
 /// The box around a field: its label as the title, the border coloured
@@ -1052,11 +1061,17 @@ fn render_form_compact(
     area: Rect,
     form: &Form,
 ) -> Option<(u16, u16)> {
-    let block = Block::bordered().title(format!(" Edit [{}] ", form.id));
+    let block = Block::bordered().title(format!(" {} ", form_name(form)));
     let inner = block.inner(area).inner(Margin::new(1, 0));
     frame.render_widget(block, area);
+    // The rows above the description, top to bottom.
+    let single_rows: Vec<Field> = form
+        .rows()
+        .into_iter()
+        .filter(|f| *f != Field::Description)
+        .collect();
     let [rows_area, _gap, rule, body] = Layout::vertical([
-        Constraint::Length(SINGLE_ROWS.len().try_into().unwrap_or(u16::MAX)),
+        Constraint::Length(single_rows.len().try_into().unwrap_or(u16::MAX)),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(1),
@@ -1067,7 +1082,7 @@ fn render_form_compact(
         .saturating_sub(LABEL_WIDTH)
         .max(1);
     let mut cursor = None;
-    let rows: Vec<Line<'_>> = SINGLE_ROWS
+    let rows: Vec<Line<'_>> = single_rows
         .iter()
         .enumerate()
         .map(|(i, &field)| {
@@ -1174,16 +1189,6 @@ fn day_style(model: &Model, date: NaiveDate, cursor: NaiveDate, today: NaiveDate
     }
     style
 }
-
-/// The rows above the description, top to bottom.
-const SINGLE_ROWS: [Field; 6] = [
-    Field::Title,
-    Field::Status,
-    Field::Priority,
-    Field::Due,
-    Field::Project,
-    Field::Tags,
-];
 
 /// Columns a row label takes, value column included.
 const LABEL_WIDTH: usize = 11;
@@ -1424,13 +1429,16 @@ mod tests {
         let mut input = Text::single("héllo wörld");
         input.left();
         input.left();
-        model.mode = Mode::Create { input };
+        model.mode = Mode::Note {
+            input,
+            target: NoteTarget::Log,
+        };
         assert_eq!(
-            prompt(&model, 24),
+            prompt(&model, 11),
             Some(Prompt {
-                label: "new task (ready): ".into(),
+                label: "log: ".into(),
                 shown: "o wörl".into(),
-                cursor: 23,
+                cursor: 10,
             }),
             "six columns left; the cursor on the second `l`, in the last one"
         );

@@ -20,7 +20,7 @@ use crate::output::{Color, Output, Style};
 pub const TOOLS: &[(&str, &str)] = &[
     (
         "git",
-        "install git; the native bookkeeper needs it to commit the notebook",
+        "install git; tasq needs it to commit and sync the notebook",
     ),
     (
         "glow",

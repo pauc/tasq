@@ -5,11 +5,9 @@ expression: env.normalize(&stdout(&out))
 OK    config       loaded from defaults
 OK    notebook     notebook at [ROOT]/nb/home, not a git repository (no commits or sync)
 OK    index        [ROOT]/nb/home/.index: index matches the files
-WARN  ids          ids are positions in .index (6 tasks) and can change after 'nb index reconcile' or deletions
+WARN  ids          ids are positions in .index (6 tasks) and can change when another tool rewrites it (nb index reconcile)
                    fix: refer to tasks by title in notes you keep outside tasq
-WARN  nb           nb is not on PATH; the native bookkeeper keeps .index and commits
-                   fix: install nb (https://github.com/xwmx/nb) to share the notebook with nb
-OK    bookkeeper   bookkeeper: native
+OK    bookkeeper   bookkeeper: native, syncing at most every 3600 s after a write
 OK    git          git found at [ROOT]/bin/git
 WARN  glow         glow is not on PATH
                    fix: install glow (https://github.com/charmbracelet/glow) for rendered `tasq view`

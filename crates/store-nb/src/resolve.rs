@@ -1,13 +1,12 @@
-//! Turning the configured notebook name into a directory, as the script's
-//! `NB_HOME` block did: `$NB_DIR/<name>` (default `~/.nb/<name>`) when that
-//! is a directory, otherwise `nb notebooks show <name> --path`.
+//! Turning the configured notebook into a directory: a name is
+//! `$NB_DIR/<name>` (default `~/.nb/<name>`), as the script's `NB_HOME`
+//! block found it; a value containing `/` (`~/...` included) is the
+//! directory itself (ADR-0023). `nb` is never asked.
 
 use std::path::{Path, PathBuf};
 
 use tasq_core::store::StoreError;
 
-use crate::nb::Nb;
-use crate::sanitize::last_line;
 use crate::store::NbStoreOptions;
 
 /// The config key every resolution error names.
@@ -24,13 +23,13 @@ pub fn nb_dir(options: &NbStoreOptions) -> Option<PathBuf> {
         .or_else(|| options.home.as_deref().map(|home| home.join(".nb")))
 }
 
-/// Resolves `notebook` to its directory. Never runs `nb` when the local
-/// candidate exists; `nb` is `None` when it is not installed.
-pub fn resolve_notebook(
-    notebook: &str,
-    options: &NbStoreOptions,
-    nb: Option<&Nb>,
-) -> Result<PathBuf, StoreError> {
+/// Whether `notebook` is a path rather than a name under `NB_DIR`.
+pub fn is_path(notebook: &str) -> bool {
+    notebook.contains('/') || notebook == "~"
+}
+
+/// Resolves `notebook` to its directory, which must exist.
+pub fn resolve_notebook(notebook: &str, options: &NbStoreOptions) -> Result<PathBuf, StoreError> {
     let config_error = |message: String| StoreError::Config {
         setting: SETTING,
         file: options.config_file.clone(),
@@ -39,42 +38,41 @@ pub fn resolve_notebook(
     if notebook.is_empty() {
         return Err(config_error("notebook name must not be empty".to_owned()));
     }
-    let candidate = nb_dir(options).map(|dir| dir.join(notebook));
-    if let Some(candidate) = &candidate
-        && candidate.is_dir()
-    {
-        return Ok(candidate.clone());
-    }
-    let looked_in = candidate.as_deref().map_or_else(
-        || "no NB_DIR or home directory to look in".to_owned(),
-        |c| format!("{} is not a directory", c.display()),
-    );
-    let Some(nb) = nb else {
-        return Err(config_error(format!(
-            "notebook {notebook:?} not found: {looked_in}, and nb is not on PATH to ask"
-        )));
-    };
-    let path = match nb.run(&["notebooks", "show", notebook, "--path"]) {
-        Ok(out) => last_line(&out),
-        Err(e) => {
+    let candidate = if is_path(notebook) {
+        let tilde = (notebook == "~")
+            .then_some("")
+            .or_else(|| notebook.strip_prefix("~/"));
+        let expanded = match (tilde, options.home.as_deref()) {
+            (Some(rest), Some(home)) => home.join(rest),
+            (Some(_), None) => {
+                return Err(config_error(format!(
+                    "notebook path {notebook:?} starts with ~ but there is no home directory"
+                )));
+            }
+            (None, _) => PathBuf::from(notebook),
+        };
+        if !expanded.is_absolute() {
             return Err(config_error(format!(
-                "notebook {notebook:?} not found: {looked_in}, and {e}"
+                "notebook path {notebook:?} must be absolute or start with ~"
             )));
         }
+        expanded
+    } else {
+        let Some(dir) = nb_dir(options) else {
+            return Err(config_error(format!(
+                "notebook {notebook:?} not found: no NB_DIR or home directory to look in"
+            )));
+        };
+        dir.join(notebook)
     };
-    if path.is_empty() {
-        return Err(config_error(format!(
-            "notebook {notebook:?} not found: {looked_in}, and nb printed no path"
-        )));
+    if candidate.is_dir() {
+        Ok(candidate)
+    } else {
+        Err(config_error(format!(
+            "notebook {notebook:?} not found: {} is not a directory",
+            candidate.display()
+        )))
     }
-    let path = PathBuf::from(path);
-    if !path.is_dir() {
-        return Err(config_error(format!(
-            "notebook {notebook:?} resolved by nb to {}, which is not a directory",
-            path.display()
-        )));
-    }
-    Ok(path)
 }
 
 /// `<dir>/.index`.
@@ -96,7 +94,7 @@ mod tests {
             home: home.map(PathBuf::from),
             config_file: None,
             workflow: Workflow::default(),
-            bookkeeper: tasq_core::config::Bookkeeper::Auto,
+            sync_interval: 0,
         }
     }
 
@@ -130,7 +128,7 @@ mod tests {
     fn empty_name_is_a_config_error() {
         let mut opts = options(&[], Some("/h"));
         opts.config_file = Some("/c.toml".into());
-        let err = resolve_notebook("", &opts, None).unwrap_err();
+        let err = resolve_notebook("", &opts).unwrap_err();
         assert_eq!(
             err.to_string(),
             "store.notebook (set in /c.toml): notebook name must not be empty"
@@ -138,11 +136,74 @@ mod tests {
     }
 
     #[test]
-    fn without_nb_dir_or_home_and_no_nb() {
-        let err = resolve_notebook("home", &options(&[], None), None).unwrap_err();
+    fn without_nb_dir_or_home() {
+        let err = resolve_notebook("home", &options(&[], None)).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "store.notebook: notebook \"home\" not found: no NB_DIR or home directory to look in, and nb is not on PATH to ask"
+            "store.notebook: notebook \"home\" not found: no NB_DIR or home directory to look in"
         );
+    }
+
+    #[test]
+    fn names_resolve_under_nb_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("work")).unwrap();
+        let dir = tmp.path().display().to_string();
+        let opts = options(&[("NB_DIR", &dir)], None);
+        assert_eq!(
+            resolve_notebook("work", &opts).unwrap(),
+            tmp.path().join("work")
+        );
+        let err = resolve_notebook("play", &opts).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "store.notebook: notebook \"play\" not found: {} is not a directory",
+                tmp.path().join("play").display()
+            )
+        );
+    }
+
+    #[test]
+    fn paths_are_used_as_they_are() {
+        let tmp = tempfile::tempdir().unwrap();
+        let notebook = tmp.path().join("notes");
+        std::fs::create_dir_all(&notebook).unwrap();
+        let no_nb_dir = options(&[], None);
+        let given = notebook.display().to_string();
+        assert_eq!(resolve_notebook(&given, &no_nb_dir).unwrap(), notebook);
+        let home = tmp.path().display().to_string();
+        let opts = options(&[], Some(&home));
+        assert_eq!(resolve_notebook("~/notes", &opts).unwrap(), notebook);
+        assert_eq!(resolve_notebook("~", &opts).unwrap(), tmp.path());
+        let err = resolve_notebook("~/notes", &no_nb_dir).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "store.notebook: notebook path \"~/notes\" starts with ~ but there is no home directory"
+        );
+        let err = resolve_notebook("rel/notes", &opts).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "store.notebook: notebook path \"rel/notes\" must be absolute or start with ~"
+        );
+        let err = resolve_notebook("~/gone", &opts).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "store.notebook: notebook \"~/gone\" not found: {} is not a directory",
+                tmp.path().join("gone").display()
+            )
+        );
+    }
+
+    #[test]
+    fn what_counts_as_a_path() {
+        assert!(is_path("/abs"));
+        assert!(is_path("rel/x"));
+        assert!(is_path("~"));
+        assert!(is_path("~/x"));
+        assert!(!is_path("home"));
+        assert!(!is_path("my~notes"));
+        assert!(!is_path("~notes"), "~user is not expanded");
     }
 }

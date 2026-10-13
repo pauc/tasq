@@ -228,7 +228,7 @@ jobs:
             echo "$crate@$VERSION is in the index"
           }
 
-          for crate in tasq-core tasq-store-nb tasq-sources tasq-launch tasq-tui tasq; do
+          for crate in tasq-core tasq-store-nb tasq-sources tasq-launch tasq-worktree tasq-tui tasq; do
             echo "::group::$crate@$VERSION"
             if published "$crate" "$VERSION"; then
               echo "$crate@$VERSION is already on crates.io, skipping"

@@ -67,8 +67,8 @@ pub fn dispatch(
             .map(|_| format!("[{id}] logged: {note}"))
             .map_err(|e| e.to_string()),
         Cmd::Done(id, note) => close(store, clock, host, id, note.as_deref()),
-        Cmd::Create(draft) => {
-            let (id, result) = create(store, host, (**draft).clone());
+        Cmd::Create(draft, branch) => {
+            let (id, result) = create(store, host, (**draft).clone(), branch.as_deref());
             created = id;
             result
         }
@@ -86,23 +86,44 @@ pub fn dispatch(
     msgs
 }
 
-/// `Store::create`, then the host's turn (the CLI's `post-create` hooks).
-/// Returns the new id when the write succeeded, whatever the host said,
-/// so the UI can select the task; a host warning is reported like a
-/// failure but the task exists.
+/// `Store::create`, the worktree the host declares (stored on the task),
+/// then the host's turn (the CLI's `post-create` hooks). Returns the new
+/// id when the write succeeded, whatever followed, so the UI can select
+/// the task; a worktree or host warning is reported like a failure but
+/// the task exists.
 fn create(
     store: &mut dyn Store,
     host: &mut dyn Host,
     draft: TaskDraft,
+    branch: Option<&str>,
 ) -> (Option<TaskId>, Result<String, String>) {
-    let task = match store.create(draft) {
+    let mut task = match store.create(draft) {
         Ok(task) => task,
         Err(e) => return (None, Err(e.to_string())),
     };
-    let line = format!("[{}] created: {}", task.id, task.title);
-    let result = match host.after_create(&task) {
-        Ok(()) => Ok(line),
-        Err(warning) => Err(format!("{line} ({warning})")),
+    let mut line = format!("[{}] created: {}", task.id, task.title);
+    let mut warnings = Vec::new();
+    match host.worktree(&task, branch) {
+        Ok(Some(worktree)) => {
+            task.add_worktree(worktree.clone());
+            match store.update(&task).and_then(|()| store.get(&task.id)) {
+                Ok(stored) => {
+                    task = stored;
+                    line = format!("{line}, worktree {}", worktree.path.display());
+                }
+                Err(e) => warnings.push(e.to_string()),
+            }
+        }
+        Ok(None) => {}
+        Err(warning) => warnings.push(warning),
+    }
+    if let Err(warning) = host.after_create(&task) {
+        warnings.push(warning);
+    }
+    let result = if warnings.is_empty() {
+        Ok(line)
+    } else {
+        Err(format!("{line} ({})", warnings.join("; ")))
     };
     (Some(task.id), result)
 }
@@ -295,7 +316,7 @@ fn restore_terminal() -> io::Result<()> {
 mod tests {
     use super::*;
     use tasq_core::clock::FixedClock;
-    use tasq_core::model::{Priority, Status, Task};
+    use tasq_core::model::{Priority, Status, Task, Worktree};
     use tasq_core::store::MemoryStore;
 
     use crate::msg::{LaunchTarget, RecordingHost};
@@ -482,7 +503,7 @@ mod tests {
         let mut host = RecordingHost::default();
         let draft = TaskDraft::new("C").with_status(Some(Status::LATER));
         let msgs = dispatch(
-            &Cmd::Create(Box::new(draft)),
+            &Cmd::Create(Box::new(draft), None),
             &mut store,
             &clock(),
             &mut host,
@@ -501,7 +522,29 @@ mod tests {
         assert_eq!(task.priority, Priority::B);
         assert_eq!(task.progress, Vec::new());
         assert_eq!(loaded_ids(&msgs[..2]), ["1", "2", "3"]);
-        assert_eq!(host.calls, vec!["after_create 3"]);
+        assert_eq!(host.calls, vec!["worktree 3", "after_create 3"]);
+    }
+
+    #[test]
+    fn a_declared_worktree_is_stored_before_the_hooks() {
+        let mut store = store();
+        let worktree = Worktree::on_branch("/wt", "b");
+        let mut host = RecordingHost {
+            worktree: Some(worktree.clone()),
+            ..RecordingHost::default()
+        };
+        let msgs = dispatch(
+            &Cmd::Create(Box::new(TaskDraft::new("C")), Some("b".into())),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(msgs[0], Msg::Info("[3] created: C, worktree /wt".into()));
+        assert_eq!(
+            store.get(&TaskId::from(3)).unwrap().worktrees,
+            vec![worktree]
+        );
+        assert_eq!(host.calls, vec!["worktree 3 b", "after_create 3"]);
     }
 
     #[test]
@@ -512,7 +555,7 @@ mod tests {
             ..RecordingHost::default()
         };
         let msgs = dispatch(
-            &Cmd::Create(Box::new(TaskDraft::new("C"))),
+            &Cmd::Create(Box::new(TaskDraft::new("C")), None),
             &mut store,
             &clock(),
             &mut host,
@@ -523,7 +566,7 @@ mod tests {
         );
         assert_eq!(msgs[2], Msg::Select(TaskId::from(3)));
         assert_eq!(store.get(&TaskId::from(3)).unwrap().title, "C");
-        assert_eq!(host.calls, vec!["after_create 3"]);
+        assert_eq!(host.calls, vec!["worktree 3", "after_create 3"]);
     }
 
     #[test]
@@ -557,7 +600,7 @@ mod tests {
         }
         let mut host = RecordingHost::default();
         let msgs = dispatch(
-            &Cmd::Create(Box::new(TaskDraft::new("C"))),
+            &Cmd::Create(Box::new(TaskDraft::new("C")), None),
             &mut Full,
             &clock(),
             &mut host,

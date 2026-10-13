@@ -46,9 +46,10 @@ pub fn run(app: &App, args: &ListArgs) -> Result<()> {
             .flat_map(|g| g.tasks.iter().copied())
             .chain(done.iter().copied())
             .collect();
-        return app
-            .out
-            .json(&json::document([("tasks", json::to_value(&tasks))]));
+        return app.out.json(&json::document([(
+            "tasks",
+            json::tasks(tasks, app.worktrees()),
+        )]));
     }
     if tasks.is_empty() {
         return app.out.print(&format!("{}.\n", criteria.scope.nothing()));

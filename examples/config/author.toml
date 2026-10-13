@@ -1,4 +1,4 @@
-# The author's setup: nb for bookkeeping, a self-hosted GitLab, gwm worktrees,
+# The author's setup: an nb notebook synced to GitHub, a self-hosted GitLab, worktrees per task,
 # Claude Code sessions (herdr when inside herdr), an LLM-summarised standup
 # and a time-log plugin fed by hooks. Plan section 4.6, with the key names
 # the tool actually has. Full reference: docs/config.md.
@@ -8,7 +8,7 @@
 [store]
 kind = "nb"
 notebook = "home"
-bookkeeper = "auto"          # nb is installed, so nb maintains .index and git commits
+sync_interval = 3600         # commits after every write; pulls and pushes at most hourly
 
 [workflow]
 statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
@@ -16,9 +16,6 @@ default_status = "ready"
 
 [work]
 default_project = "~/code/silverfin"       # sessions start here when a task tracks nothing
-worktree_manager = "command"               # gwm provisions worktrees (linked files, .envrc)
-worktree_command = "gwm create {new} {branch} --no-tmux -s"
-# {new} becomes -b when the branch does not exist yet; gwm prints the worktree path last.
 
 [launch]
 default = "auto"             # herdr workspace when HERDR_ENV is set, else Claude Code
@@ -27,10 +24,14 @@ env = "direnv"               # `direnv exec <dir>` so the session gets the proje
 [launch.claude]
 # prompt_file = "~/.config/tasq/prompts/claude.md"   # built-in template when unset
 
+[launch.herdr]
+placement = "workspace"      # Ctrl+Enter / Shift+Enter in `tasq ui` always open a new herdr workspace
+
 [ui]
 pager = "less -RFX"
 no_osc8 = false
 glow_style = "dark"
+detail_position = "bottom"   # the task detail under the list in `tasq ui`
 
 [ui.theme]
 # preset = "light"           # dark (default), light, solarized, gruvbox, mono; see docs/config.md "Colours"
@@ -71,6 +72,7 @@ kind = "llm-bridge"
 command = "claude -p --output-format json"
 prompt_file = "~/.config/tasq/prompts/inbox.md"   # see examples/sources/inbox.md
 tags = ["inbox"]
+auto = false                 # ~90 s and ~$2 a run: only with `tasq sync --source inbox` or the TUI's `S`
 
 [report.summary]
 summarizer = "llm"
@@ -86,3 +88,12 @@ model = "sonnet"             # passed as --model sonnet
 post-create = []
 post-done = ["~/code/tasq/examples/plugins/hooks/log-event.sh"]
 pre-launch = []
+
+[worktree]
+# Every task in a git project gets a declared worktree, created when the task is
+# launched and released when it is closed (docs/config.md, "Worktrees").
+# Per-repository links, copies, templates and hooks go in a .tasq.toml next to
+# the repository; these are the personal defaults.
+enabled = true
+path = "{{project_parent}}/{{branch_safe}}"   # siblings of the main checkout
+branch = "{{id}}-{{slug}}"

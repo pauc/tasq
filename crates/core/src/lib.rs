@@ -38,5 +38,7 @@ pub mod query;
 pub mod report;
 pub mod source;
 pub mod store;
+pub mod template;
 pub mod theme;
 pub mod work;
+pub mod worktree;

@@ -351,7 +351,7 @@ proptest! {
 /// and the file keeps its bytes.
 #[test]
 fn duplicate_session_without_final_newline_is_untouched() {
-    let text = "# [ ] T\n- `s`";
+    let text = "# [ ] T\n\n## Sessions\n\n- 2026-10-04 00:00: `s`";
     let mut doc = Document::parse(text).unwrap();
     let at = NaiveDate::from_ymd_opt(2026, 10, 4)
         .unwrap()
