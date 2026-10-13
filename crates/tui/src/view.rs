@@ -24,7 +24,7 @@ use ratatui::widgets::{
     Block, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 use tasq_core::clock::format_timestamp;
-use tasq_core::config::DueFormat;
+use tasq_core::config::{DueFormat, contract_tilde};
 use tasq_core::dates::{Due, due_label};
 use tasq_core::model::{Link, Priority, Status, Task};
 use tasq_core::theme::{self, DONE_LABEL, Role, group_label};
@@ -639,7 +639,7 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
         lines.push(Line::default());
         lines.push(Line::from(vec![
             Span::styled("Project: ", header(model)),
-            Span::raw(project.display().to_string()),
+            Span::raw(contract_tilde(project, model.home.as_deref())),
         ]));
     }
     if let Some(description) = &task.description {
@@ -647,7 +647,7 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
         lines.push(Line::styled("Description", header(model)));
         lines.extend(description.lines().map(Line::raw));
     }
-    for (heading, items) in link_sections(task, model.worktrees) {
+    for (heading, items) in link_sections(model, task) {
         if !items.is_empty() {
             lines.push(Line::default());
             lines.push(Line::styled(heading, header(model)));
@@ -668,9 +668,10 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
 }
 
 /// The list sections of the detail pane: related links, merge requests,
-/// worktrees (only when `worktrees` are enabled) and sessions, each as
-/// `(heading, entries)`.
-pub fn link_sections(task: &Task, worktrees: bool) -> Vec<(&'static str, Vec<String>)> {
+/// worktrees (only when worktrees are enabled, paths under home as `~`)
+/// and sessions, each as `(heading, entries)`.
+pub fn link_sections(model: &Model, task: &Task) -> Vec<(&'static str, Vec<String>)> {
+    let home = model.home.as_deref();
     vec![
         (
             "Related",
@@ -684,10 +685,13 @@ pub fn link_sections(task: &Task, worktrees: bool) -> Vec<(&'static str, Vec<Str
             "Worktrees",
             task.worktrees
                 .iter()
-                .filter(|_| worktrees)
-                .map(|w| match &w.branch {
-                    Some(branch) => format!("{} ({branch})", w.path.display()),
-                    None => w.path.display().to_string(),
+                .filter(|_| model.worktrees)
+                .map(|w| {
+                    let path = contract_tilde(&w.path, home);
+                    match &w.branch {
+                        Some(branch) => format!("{path} ({branch})"),
+                        None => path,
+                    }
                 })
                 .collect(),
         ),

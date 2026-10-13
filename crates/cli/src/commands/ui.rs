@@ -63,6 +63,7 @@ pub fn run(app: &App) -> Result<()> {
         .with_due_format(app.config().ui.due_format)
         .with_detail_position(app.config().ui.detail_position)
         .with_worktrees(app.worktrees())
+        .with_home(app.opts.home.clone())
         .with_default_status(app.config().workflow.default_status.clone())
         .with_default_project(Some(
             crate::commands::existing_dir(&app.opts.cwd).unwrap_or_else(|| app.opts.cwd.clone()),

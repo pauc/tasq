@@ -811,6 +811,26 @@ fn links_show_their_label_or_a_short_reference() {
 }
 
 #[test]
+fn paths_under_home_start_with_a_tilde() {
+    let model = fixture(true).with_home(Some("/home/me".into()));
+    let lines = detail_text(&model, &tasks()[0]);
+    assert!(
+        lines.contains(&"Project: ~/code/app".to_owned()),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&"- ~/code/app-fix-cache (fix-cache)".to_owned()),
+        "{lines:?}"
+    );
+    // Without a home, the full path.
+    let lines = detail_text(&fixture(true), &tasks()[0]);
+    assert!(
+        lines.contains(&"Project: /home/me/code/app".to_owned()),
+        "{lines:?}"
+    );
+}
+
+#[test]
 fn styles_the_character_snapshots_cannot_see() {
     // Detail headings are bold; the tag chip has the CLI's colours.
     let mut model = fixture(true);

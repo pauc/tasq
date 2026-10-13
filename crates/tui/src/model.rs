@@ -199,6 +199,9 @@ pub struct Model {
     /// The project a task created with `c` tracks (the CLI passes the
     /// directory `tasq ui` runs in); `None` leaves the draft without one.
     pub default_project: Option<PathBuf>,
+    /// The user's home, shown as `~` in the detail's paths; `None` shows
+    /// them in full.
+    pub home: Option<PathBuf>,
     /// Group colours (`[ui.colors]`).
     pub theme: Theme,
     /// Whether colours are used at all (`false` under `NO_COLOR`).
@@ -262,6 +265,7 @@ impl Model {
             workflow,
             default_status: Status::READY,
             default_project: None,
+            home: None,
             theme,
             color,
             keys: KeyMap::default(),
@@ -327,6 +331,13 @@ impl Model {
     #[must_use]
     pub fn with_default_project(mut self, project: Option<PathBuf>) -> Self {
         self.default_project = project;
+        self
+    }
+
+    /// The user's home (from the CLI), shown as `~` in paths.
+    #[must_use]
+    pub fn with_home(mut self, home: Option<PathBuf>) -> Self {
+        self.home = home;
         self
     }
 
