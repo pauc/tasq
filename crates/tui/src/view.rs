@@ -67,7 +67,10 @@ pub const HELP: &[(&[Action], &str)] = &[
         &[Action::Edit],
         "edit the task in a form (title, status, priority, due, project, tags)",
     ),
-    (&[Action::Editor], "open the task file in $EDITOR"),
+    (
+        &[Action::Editor, Action::View],
+        "open the task file in $EDITOR; read it rendered (tasq view)",
+    ),
     (&[Action::Launch], "open a work session here (tasq pick)"),
     (
         &[Action::LaunchDetached],
@@ -1684,7 +1687,13 @@ mod tests {
                 "edit the task in a form (title, status, priority, due, project, tags)"
             )
         );
-        assert_eq!(rows[13], ("E".to_owned(), "open the task file in $EDITOR"));
+        assert_eq!(
+            rows[13],
+            (
+                "E, v".to_owned(),
+                "open the task file in $EDITOR; read it rendered (tasq view)"
+            )
+        );
         assert_eq!(rows[15].0, "C-Enter");
         assert_eq!(rows[16].0, "S-Enter");
         assert_eq!(

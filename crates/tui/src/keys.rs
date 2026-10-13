@@ -55,6 +55,8 @@ pub enum Action {
     Edit,
     /// Open the task's file in the editor.
     Editor,
+    /// Show the task with `tasq view`.
+    View,
     /// Open a work session in this terminal.
     Launch,
     /// Open a work session in a new window and switch to it.
@@ -106,6 +108,7 @@ pub const NORMAL: &[Action] = &[
     Action::Create,
     Action::Edit,
     Action::Editor,
+    Action::View,
     Action::Launch,
     Action::LaunchDetached,
     Action::LaunchDetachedStay,
@@ -151,6 +154,7 @@ impl Action {
         Action::Create,
         Action::Edit,
         Action::Editor,
+        Action::View,
         Action::Launch,
         Action::LaunchDetached,
         Action::LaunchDetachedStay,
@@ -188,6 +192,7 @@ impl Action {
             Self::Create => "create",
             Self::Edit => "edit",
             Self::Editor => "editor",
+            Self::View => "view",
             Self::Launch => "launch",
             Self::LaunchDetached => "launch-detached",
             Self::LaunchDetachedStay => "launch-detached-stay",
@@ -231,6 +236,7 @@ impl Action {
             Self::Create => &["c"],
             Self::Edit => &["e"],
             Self::Editor => &["E"],
+            Self::View => &["v"],
             Self::Launch | Self::Confirm => &["enter"],
             Self::LaunchDetached => &["ctrl+enter"],
             Self::LaunchDetachedStay => &["shift+enter"],
@@ -268,6 +274,7 @@ impl Action {
             Self::Create => Msg::BeginCreate,
             Self::Edit => Msg::Edit,
             Self::Editor => Msg::Editor,
+            Self::View => Msg::View,
             Self::Launch => Msg::Launch,
             Self::LaunchDetached => Msg::LaunchDetached { focus: true },
             Self::LaunchDetachedStay => Msg::LaunchDetached { focus: false },
@@ -822,6 +829,7 @@ mod tests {
             (ch('c'), Msg::BeginCreate),
             (ch('e'), Msg::Edit),
             (ch('E'), Msg::Editor),
+            (ch('v'), Msg::View),
             (key(KeyCode::Enter), Msg::Launch),
             (
                 KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
@@ -1088,8 +1096,8 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), Action::ALL.len(), "names are unique");
-        assert_eq!(Action::ALL.len(), 32);
-        assert_eq!(NORMAL.len(), 31);
+        assert_eq!(Action::ALL.len(), 33);
+        assert_eq!(NORMAL.len(), 32);
         assert!(!NORMAL.contains(&Action::Confirm));
         assert_eq!(
             PICKER,

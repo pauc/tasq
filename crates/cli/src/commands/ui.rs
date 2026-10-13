@@ -139,6 +139,13 @@ impl Host for CliHost<'_> {
         }
     }
 
+    fn view(&mut self, id: &TaskId) -> HostResult {
+        let mut args = self.global_args.clone();
+        args.extend(["view".to_owned(), id.to_string()]);
+        wait_for(Command::new(&self.exe).args(&args), "tasq view")
+            .map(|()| format!("[{id}] viewed"))
+    }
+
     fn sync(&mut self, sources: &[String]) -> HostResult {
         let mut args = self.global_args.clone();
         args.push("sync".to_owned());

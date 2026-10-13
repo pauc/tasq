@@ -134,6 +134,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
             }
         }
         Msg::Editor => return with_selection(model, Cmd::Editor),
+        Msg::View => return with_selection(model, Cmd::View),
         Msg::Launch | Msg::Enter => {
             return with_selection(model, |id| Cmd::Launch(id, LaunchTarget::Here));
         }
@@ -669,6 +670,7 @@ mod tests {
             update(&mut m, Msg::Editor),
             vec![Cmd::Editor(TaskId::from(9))]
         );
+        assert_eq!(update(&mut m, Msg::View), vec![Cmd::View(TaskId::from(9))]);
         // An open task is not refused.
         update(&mut m, Msg::Top);
         update(&mut m, Msg::BeginStatus);
@@ -1759,6 +1761,7 @@ mod tests {
             update(&mut m, Msg::Editor),
             vec![Cmd::Editor(TaskId::from(1))]
         );
+        assert_eq!(update(&mut m, Msg::View), vec![Cmd::View(TaskId::from(1))]);
         assert_eq!(
             update(&mut m, Msg::Launch),
             vec![Cmd::Launch(TaskId::from(1), LaunchTarget::Here)]
@@ -1781,6 +1784,7 @@ mod tests {
         update(&mut m, Msg::Loaded(Vec::new()));
         for msg in [
             Msg::Editor,
+            Msg::View,
             Msg::Launch,
             Msg::LaunchDetached { focus: true },
             Msg::LaunchDetached { focus: false },
