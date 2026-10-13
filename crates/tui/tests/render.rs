@@ -768,6 +768,48 @@ fn detail_head_and_progress_heading() {
     );
 }
 
+/// The detail lines of `task` as plain text.
+fn detail_text(model: &Model, task: &Task) -> Vec<String> {
+    tasq_tui::view::detail_lines(model, task)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+#[test]
+fn links_show_their_label_or_a_short_reference() {
+    let model = fixture(true);
+    let mut task = Task::new(TaskId::from(6), "Links");
+    task.add_related(Link::new("https://gitlab.example.com/g/p/-/issues/42"));
+    task.add_related(Link::new("https://www.example.com/doc"));
+    task.add_merge_request(Link::labelled(
+        "https://gitlab.example.com/g/p/-/merge_requests/7",
+        "Pin the cache key",
+    ));
+    task.add_merge_request(Link::new(
+        "https://gitlab.example.com/g/p/-/merge_requests/8",
+    ));
+    let lines = detail_text(&model, &task);
+    let related = lines.iter().position(|l| l == "Related").unwrap();
+    assert_eq!(
+        lines[related..related + 7],
+        [
+            "Related",
+            "- #42",
+            "- example.com/doc",
+            "",
+            "Merge requests",
+            "- Pin the cache key",
+            "- !8",
+        ]
+    );
+}
+
 #[test]
 fn styles_the_character_snapshots_cannot_see() {
     // Detail headings are bold; the tag chip has the CLI's colours.

@@ -26,7 +26,7 @@ use ratatui::widgets::{
 use tasq_core::clock::format_timestamp;
 use tasq_core::config::DueFormat;
 use tasq_core::dates::{Due, due_label};
-use tasq_core::model::{Priority, Status, Task};
+use tasq_core::model::{Link, Priority, Status, Task};
 use tasq_core::theme::{self, DONE_LABEL, Role, group_label};
 
 use crate::calendar::{self, Calendar, DAYS_PER_WEEK};
@@ -671,15 +671,14 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
 /// worktrees (only when `worktrees` are enabled) and sessions, each as
 /// `(heading, entries)`.
 pub fn link_sections(task: &Task, worktrees: bool) -> Vec<(&'static str, Vec<String>)> {
-    let as_text = |l: &tasq_core::model::Link| match &l.label {
-        Some(label) => format!("{label} <{}>", l.url),
-        None => l.url.clone(),
-    };
     vec![
-        ("Related", task.related.iter().map(as_text).collect()),
+        (
+            "Related",
+            task.related.iter().map(Link::short_label).collect(),
+        ),
         (
             "Merge requests",
-            task.merge_requests.iter().map(as_text).collect(),
+            task.merge_requests.iter().map(Link::short_label).collect(),
         ),
         (
             "Worktrees",
