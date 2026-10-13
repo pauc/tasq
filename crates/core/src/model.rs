@@ -27,5 +27,5 @@ pub use self::id::TaskId;
 pub use self::priority::Priority;
 pub use self::status::{Status, Workflow};
 pub use self::tag::Tag;
-pub use self::task::{Link, Origin, ProgressEntry, Session, Task, TaskDraft, Worktree};
+pub use self::task::{Link, Origin, ProgressEntry, Session, Task, TaskDraft, Worktree, shortref};
 pub use crate::clock::When;
