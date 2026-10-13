@@ -926,6 +926,7 @@ mod fields {
         let value = json(&out);
         assert_eq!(value["task"]["id"], "3");
         assert_eq!(value["task"]["title"], "Reply");
+        assert_eq!(value["changed"], serde_json::json!(["title"]));
         assert!(
             support(&env).ends_with("- 2026-10-07 09:30: shorter\n"),
             "{}",
@@ -962,6 +963,7 @@ mod fields {
         let value = json(&out);
         assert_eq!(value["task"]["id"], "3");
         assert_eq!(value["task"]["due"], "2026-10-08");
+        assert_eq!(value["changed"], serde_json::json!(["due"]));
         assert!(
             support(&env).ends_with("- 2026-10-07 09:30: promised\n"),
             "{}",
@@ -1036,6 +1038,7 @@ mod fields {
             .unwrap();
         let value = json(&out);
         assert_eq!(value["task"]["tags"], serde_json::json!([]));
+        assert_eq!(value["changed"], serde_json::json!(["tags"]));
         assert!(support(&env).ends_with("- 2026-10-07 09:30: triaged\n"));
         env.tasq()
             .env("TASQ_NOW", NOW)
@@ -1292,6 +1295,7 @@ mod fields {
             .unwrap();
         let value = json(&out);
         assert_eq!(value["task"]["description"], "Pasted.");
+        assert_eq!(value["changed"], serde_json::json!(["description"]));
         assert!(support(&env).ends_with("- 2026-10-07 09:30: from the ticket\n"));
     }
 
@@ -1371,6 +1375,7 @@ mod fields {
             .unwrap();
         let value = json(&out);
         assert_eq!(value["task"]["description"], "Via EDITOR");
+        assert_eq!(value["changed"], serde_json::json!(["description"]));
         assert!(support(&env).ends_with("- 2026-10-07 09:30: rewritten\n"));
     }
 
@@ -1460,6 +1465,39 @@ mod fields {
                 ));
         }
         assert_eq!(support(&env), before);
+    }
+
+    #[test]
+    fn json_names_the_fields_written_and_is_empty_for_a_no_op() {
+        let env = TestEnv::fixture();
+        let before = support(&env);
+        for args in [
+            &["set", "3", "ready"][..],
+            &["set", "3", "#B"],
+            &["rename", "3", "Answer the support ticket"],
+            &["due", "3", "none"],
+            &["tag", "3", "+support"],
+            &["desc", "3", "Customer asks about the export format."],
+        ] {
+            let value = json(&env.tasq().args(args).arg("--json").output().unwrap());
+            assert_eq!(value["changed"], serde_json::json!([]), "{args:?}");
+            assert_eq!(value["task"]["id"], "3", "{args:?}");
+        }
+        assert_eq!(support(&env), before);
+        for (args, changed) in [
+            (&["set", "3", "waiting"][..], "status"),
+            (&["set", "3", "A"], "priority"),
+            (&["rename", "3", "Reply"], "title"),
+            (&["due", "3", "2026-10-17"], "due"),
+            (&["tag", "3", "+export"], "tags"),
+            (&["desc", "3", ""], "description"),
+        ] {
+            let value = json(&env.tasq().args(args).arg("--json").output().unwrap());
+            assert_eq!(value["changed"], serde_json::json!([changed]), "{args:?}");
+        }
+        // Commands that are not one-field edits keep the plain document.
+        let value = json(&env.tasq().args(["desc", "3", "--json"]).output().unwrap());
+        assert_eq!(value.get("changed"), None);
     }
 
     #[test]

@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tasq rename`, `tasq due`, `tasq tag` and `tasq desc` (TEXT, `-` for stdin, no TEXT prints,
   `""` clears, `--edit` opens `$VISUAL`/`$EDITOR`), each with `--note` and `--json`; `--note`
   on `set`, `done` and `reopen` as an alias of the positional note. An edit that changes
-  nothing writes nothing and prints `[id] <field> unchanged` (also in the TUI's status line);
+  nothing writes nothing and prints `[id] <field> unchanged` (also in the TUI's status line;
+  with `--json`, `"changed": []` next to the task, which otherwise names the fields written);
   with a note it fails (exit 1), since the note is not logged either. `desc -` and `--edit`
   drop blank lines at either end and CRLF; an editor that exits non-zero aborts `--edit`.
   `tasq done` refuses a task that is already done (exit 1), so it no longer retries a failed

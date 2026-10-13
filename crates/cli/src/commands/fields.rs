@@ -3,7 +3,7 @@
 //!
 //! Like [`crate::commands::edit`], every command is the argument parsing,
 //! one [`tasq_core::edit`] call and the printed line (or, with `--json`,
-//! the task as stored). A task that changed on disk since it was read
+//! the task as stored and the fields written). A task that changed on disk since it was read
 //! fails with the store's conflict error; nothing retries.
 
 use std::io::{Read, Write};
@@ -18,7 +18,7 @@ use tasq_core::store::Store;
 use tasq_store_nb::NbStore;
 
 use crate::app::App;
-use crate::commands::finish;
+use crate::commands::{finish, finish_edit};
 use crate::editor::configured_editor;
 use crate::error::{CliError, Result};
 
@@ -33,7 +33,7 @@ pub fn rename(app: &App, id: &str, title: &str, note: Option<&str>) -> Result<()
     } else {
         format!("[{id}] renamed\n")
     };
-    finish(app, &store, &id, &line)
+    finish_edit(app, &store, &id, &line, &revised.changed)
 }
 
 /// `tasq due <id> <date|none> [--note TEXT]`.
@@ -48,7 +48,7 @@ pub fn due(app: &App, id: &str, date: &str, note: Option<&str>) -> Result<()> {
         None => format!("[{id}] due cleared\n"),
         Some(day) => format!("[{id}] due {day}\n"),
     };
-    finish(app, &store, &id, &line)
+    finish_edit(app, &store, &id, &line, &revised.changed)
 }
 
 /// `tasq tag <id> <tag>... [--note TEXT]`. Every word is checked before
@@ -63,13 +63,13 @@ pub fn tag(app: &App, id: &str, words: &[String], note: Option<&str>) -> Result<
     let mut store = app.open_store()?;
     let clock = app.clock()?;
     let done = edit::retag(&mut store, &id, &changes, note, clock.as_ref())?;
-    let line = if done.applied.is_empty() {
-        format!("[{id}] tags unchanged\n")
+    let (line, written): (String, &[&str]) = if done.applied.is_empty() {
+        (format!("[{id}] tags unchanged\n"), &[])
     } else {
         let labels: Vec<String> = done.applied.iter().map(TagChange::label).collect();
-        format!("[{id}] tags: {}\n", labels.join(" "))
+        (format!("[{id}] tags: {}\n", labels.join(" ")), &["tags"])
     };
-    finish(app, &store, &id, &line)
+    finish_edit(app, &store, &id, &line, written)
 }
 
 /// `tasq desc <id> [text|-] [--note TEXT]`: prints the description
@@ -91,7 +91,13 @@ pub fn desc(app: &App, id: &str, text: Option<&str>, note: Option<&str>) -> Resu
     }
     let clock = app.clock()?;
     let revised = edit::describe(&mut store, &id, text, note, clock.as_ref())?;
-    finish(app, &store, &id, &described(&id, &revised))
+    finish_edit(
+        app,
+        &store,
+        &id,
+        &described(&id, &revised),
+        &revised.changed,
+    )
 }
 
 /// `tasq desc <id> --edit [--note TEXT]`: the description in `$VISUAL`
@@ -144,7 +150,7 @@ fn save_read(
     let id = task.id.clone();
     let clock = app.clock()?;
     let revised = edit::describe_read(store, task, after, note, clock.as_ref())?;
-    finish(app, store, &id, &described(&id, &revised))
+    finish_edit(app, store, &id, &described(&id, &revised), &revised.changed)
 }
 
 /// `error` with where the edited text was kept, so a failed save never

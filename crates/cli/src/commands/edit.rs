@@ -10,9 +10,9 @@ use tasq_core::model::{Status, Workflow};
 use tasq_core::store::Store;
 
 use crate::app::App;
-use crate::commands::finish;
 use crate::commands::worktree::{self, Releasing};
 use crate::commands::worktree_hooks::{self, Approval};
+use crate::commands::{finish, finish_edit};
 use crate::error::{CliError, Result};
 use crate::plugins::{self, Hook};
 
@@ -41,7 +41,7 @@ pub fn set(app: &App, id: &str, value: &str, note: Option<&str>) -> Result<()> {
         let suffix = note.map_or_else(String::new, |n| format!(" ({n})"));
         format!("[{id}] -> {}{suffix}\n", value.label())
     };
-    finish(app, &store, &id, &line)
+    finish_edit(app, &store, &id, &line, &revised.changed)
 }
 
 /// `tasq log <id> <note>`.

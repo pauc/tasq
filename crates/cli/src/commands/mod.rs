@@ -38,14 +38,39 @@ pub mod worktree_nav;
 /// could not start) on stderr, then prints `line`, or with `--json` the
 /// task as it is now, as `{"schema": 1, "task": {...}}`.
 pub fn finish(app: &App, store: &NbStore, id: &TaskId, line: &str) -> Result<()> {
+    report(app, store, id, line, None)
+}
+
+/// [`finish`] for a one-field edit (`set`, `rename`, `due`, `tag`, `desc`
+/// with a value): `--json` also carries `"changed"`, the names of the
+/// fields written, `[]` when the edit changed nothing and wrote nothing.
+pub fn finish_edit(
+    app: &App,
+    store: &NbStore,
+    id: &TaskId,
+    line: &str,
+    changed: &[&str],
+) -> Result<()> {
+    report(app, store, id, line, Some(changed))
+}
+
+fn report(
+    app: &App,
+    store: &NbStore,
+    id: &TaskId,
+    line: &str,
+    changed: Option<&[&str]>,
+) -> Result<()> {
     for warning in store.warnings() {
         app.out.warn(&warning.to_string());
     }
     if app.out.json_mode() {
         let task = store.get(id)?;
-        return app
-            .out
-            .json(&json::document([("task", app.task_json(&task))]));
+        let mut fields = vec![("task", app.task_json(&task))];
+        if let Some(changed) = changed {
+            fields.push(("changed", changed.into()));
+        }
+        return app.out.json(&json::document(fields));
     }
     app.out.print(line)
 }
