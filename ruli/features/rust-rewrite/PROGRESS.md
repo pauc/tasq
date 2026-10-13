@@ -250,7 +250,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   `edit::describe` is `describe_read` on a fresh read. Decided 2026-10-13, extended to every
   one-field edit: `set`, `rename`, `due` and `tag` that change nothing write nothing, print
   `[id] <field> unchanged`, and with a note fail with `NoteNotLogged(field)`; `edit::change`
-  compares `Fields` before and after and returns `Revised`. `done` on a done task is refused
+  goes through `edited`, which compares `Fields` before and after and returns `Revised`. `done` on a done task is refused
   (`EditError::AlreadyDone`, exit 1) instead of logging the note and running `post_done` hooks
   again; the TUI shows the same error. The edit subcommands are `cli::EditCommand`,
   flattened into `Command` (`#[command(flatten)]`, same command line), so `app::run` sends
@@ -260,7 +260,10 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   e9712df (the worktrees merge): `cli::parse_from` takes the worktrees flag and parses with
   `cli::command(worktrees)`; `done` refuses a done task before releasing worktrees, so a
   failed release is retried with `tasq worktree release`, and the release test closes an open
-  task. Commits 2c8c00c..014d874.
+  task. Second review follow-up: the TUI's status and priority pickers say `[id] <field>
+  unchanged` for a no-op `set`, as the CLI does (35f7e99); a test pins the refusal before the
+  release (a kept worktree, cleaned and merged, survives a second `done`, 2810c76). Commits
+  2c8c00c..2810c76.
 - **TUI DONE group, reopen, Today view, detail position (follow-up 2026-10-07, todo 33).**
   `Task::closed_at` (ADR 0020): a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`, read
   like `## Due`, `None` on open tasks whatever the file says). `Task::close(clock)` stamps it
