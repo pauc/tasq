@@ -16,15 +16,20 @@ use std::ops::Range;
 
 use chrono::{Datelike, NaiveDate};
 
+use std::num::NonZeroU16;
+
 use ratatui::Frame;
+use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Padding, Paragraph};
+use ratatui::widgets::{
+    Block, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget,
+};
 use tasq_core::clock::format_timestamp;
-use tasq_core::config::DueFormat;
+use tasq_core::config::{DueFormat, contract_tilde};
 use tasq_core::dates::{Due, due_label};
-use tasq_core::model::{Priority, Status, Task};
+use tasq_core::model::{Link, Priority, Status, Task};
 use tasq_core::theme::{self, DONE_LABEL, Role, group_label};
 
 use crate::calendar::{self, Calendar, DAYS_PER_WEEK};
@@ -33,9 +38,6 @@ use crate::keys::{Action, KeyMap};
 use crate::model::{
     Cursor, GroupKey, LayoutKind, Mode, Model, NoteTarget, Row, TWO_PANE_MIN_WIDTH,
 };
-
-/// How many progress notes the detail pane shows (the most recent ones).
-pub const PROGRESS_SHOWN: usize = 8;
 
 /// The help overlay, one `(actions, what they do)` per line; the keys
 /// come from the model's [`KeyMap`] (see [`help_rows`]).
@@ -68,7 +70,10 @@ pub const HELP: &[(&[Action], &str)] = &[
         &[Action::Edit],
         "edit the task in a form (title, status, priority, due, project, tags)",
     ),
-    (&[Action::Editor], "open the task file in $EDITOR"),
+    (
+        &[Action::Editor, Action::View],
+        "open the task file in $EDITOR; read it rendered (tasq view)",
+    ),
     (&[Action::Launch], "open a work session here (tasq pick)"),
     (
         &[Action::LaunchDetached],
@@ -91,7 +96,10 @@ pub const HELP: &[(&[Action], &str)] = &[
         &[Action::ShowDetail, Action::HideDetail],
         "show / hide the selected task's detail",
     ),
-    (&[Action::ToggleDetail], "switch between list and detail"),
+    (
+        &[Action::ToggleDetail, Action::DetailUp, Action::DetailDown],
+        "switch between list and detail; scroll the detail",
+    ),
     (&[Action::Confirm], "in a picker: apply the choice"),
     (&[Action::Help], "this help"),
     (&[Action::Quit], "quit"),
@@ -177,10 +185,62 @@ fn join(parts: impl Iterator<Item = Option<String>>) -> String {
     parts.flatten().collect::<Vec<_>>().join("  ")
 }
 
+/// The main area and the status bar of a terminal of `area`.
+fn screen(area: Rect) -> [Rect; 2] {
+    Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area)
+}
+
+/// Where the list and the detail go in `main`, each `None` when hidden.
+fn panes(model: &Model, main: Rect) -> (Option<Rect>, Option<Rect>) {
+    match model.layout() {
+        LayoutKind::TwoPane if model.show_detail => {
+            let [left, right] =
+                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .areas(main);
+            (Some(left), Some(right))
+        }
+        LayoutKind::Stacked if model.show_detail => {
+            let [top, bottom] =
+                Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .areas(main);
+            (Some(top), Some(bottom))
+        }
+        LayoutKind::OnePane if model.show_detail => (None, Some(main)),
+        LayoutKind::TwoPane | LayoutKind::Stacked | LayoutKind::OnePane => (Some(main), None),
+    }
+}
+
+/// The rows of text the detail pane shows at once; 0 when it is hidden.
+pub fn detail_rows(model: &Model) -> u16 {
+    detail_inner(model).map_or(0, |inner| inner.height)
+}
+
+/// Inside the detail pane's border, when the detail is shown.
+fn detail_inner(model: &Model) -> Option<Rect> {
+    let [main, _] = screen(Rect::new(0, 0, model.width, model.height));
+    panes(model, main)
+        .1
+        .map(|area| Block::bordered().inner(area))
+}
+
+/// How many lines the detail of the selected task scrolls down until
+/// its last line sits on the pane's bottom row; 0 when it fits or is
+/// not shown.
+pub fn detail_max_scroll(model: &Model) -> u16 {
+    let (Some(inner), Some(task)) = (detail_inner(model), model.selected_task()) else {
+        return 0;
+    };
+    let rows = Paragraph::new(detail_lines(model, task))
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .line_count(inner.width);
+    u16::try_from(rows)
+        .unwrap_or(u16::MAX)
+        .saturating_sub(inner.height)
+}
+
 /// Draws `model` onto `frame`.
 pub fn view(model: &Model, frame: &mut Frame) {
-    let [main, bar] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
+    let [main, bar] = screen(frame.area());
     match &model.mode {
         Mode::Form(form) => {
             if let Some(position) = render_form(model, frame, main, form) {
@@ -199,25 +259,12 @@ pub fn view(model: &Model, frame: &mut Frame) {
         }
         _ => {}
     }
-    match model.layout() {
-        LayoutKind::TwoPane if model.show_detail => {
-            let [left, right] =
-                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .areas(main);
-            render_list(model, frame, left);
-            render_detail(model, frame, right);
-        }
-        LayoutKind::Stacked if model.show_detail => {
-            let [top, bottom] =
-                Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .areas(main);
-            render_list(model, frame, top);
-            render_detail(model, frame, bottom);
-        }
-        LayoutKind::OnePane if model.show_detail => render_detail(model, frame, main),
-        LayoutKind::TwoPane | LayoutKind::Stacked | LayoutKind::OnePane => {
-            render_list(model, frame, main);
-        }
+    let (list, detail) = panes(model, main);
+    if let Some(area) = list {
+        render_list(model, frame, area);
+    }
+    if let Some(area) = detail {
+        render_detail(model, frame, area);
     }
     render_status_bar(model, frame, bar);
     match &model.mode {
@@ -550,6 +597,24 @@ pub fn list_title(model: &Model, shown: usize, total: usize) -> String {
 
 /// The detail pane lines for `task`.
 pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
+    detail(model, task).0
+}
+
+/// An entry of a detail section: its text, and the URL it links to, if
+/// any.
+pub type Entry<'a> = (String, Option<&'a str>);
+
+/// A link label in the detail: its line, the label after `- ` and the
+/// target.
+struct DetailLink<'a> {
+    line: usize,
+    label: String,
+    url: &'a str,
+}
+
+/// The detail's lines, and where its links are.
+fn detail<'a>(model: &Model, task: &'a Task) -> (Vec<Line<'a>>, Vec<DetailLink<'a>>) {
+    let mut targets = Vec::new();
     let mut lines = vec![Line::styled(task.title.as_str(), header(model))];
     let mut head = vec![
         Span::styled(format!("[{}]", task.id.as_str()), dim(model)),
@@ -598,7 +663,7 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
         lines.push(Line::default());
         lines.push(Line::from(vec![
             Span::styled("Project: ", header(model)),
-            Span::raw(project.display().to_string()),
+            Span::raw(contract_tilde(project, model.home.as_deref())),
         ]));
     }
     if let Some(description) = &task.description {
@@ -606,57 +671,59 @@ pub fn detail_lines<'a>(model: &Model, task: &'a Task) -> Vec<Line<'a>> {
         lines.push(Line::styled("Description", header(model)));
         lines.extend(description.lines().map(Line::raw));
     }
-    for (heading, items) in link_sections(task, model.worktrees) {
+    for (heading, items) in link_sections(model, task) {
         if !items.is_empty() {
             lines.push(Line::default());
             lines.push(Line::styled(heading, header(model)));
-            lines.extend(items.into_iter().map(|item| Line::raw(format!("- {item}"))));
+            for (item, url) in items {
+                if let Some(url) = url {
+                    targets.push(DetailLink {
+                        line: lines.len(),
+                        label: item.clone(),
+                        url,
+                    });
+                }
+                lines.push(Line::raw(format!("- {item}")));
+            }
         }
     }
     if !task.progress.is_empty() {
         lines.push(Line::default());
-        let skipped = task.progress.len().saturating_sub(PROGRESS_SHOWN);
-        let heading = if skipped > 0 {
-            format!(
-                "Progress (last {PROGRESS_SHOWN} of {})",
-                task.progress.len()
-            )
-        } else {
-            "Progress".to_owned()
-        };
-        lines.push(Line::styled(heading, header(model)));
-        for entry in task.progress.iter().skip(skipped) {
+        lines.push(Line::styled("Progress", header(model)));
+        for entry in &task.progress {
             lines.push(Line::from(vec![
                 Span::styled(format!("- {}: ", entry.at), dim(model)),
                 Span::raw(entry.note.as_str()),
             ]));
         }
     }
-    lines
+    (lines, targets)
 }
 
 /// The list sections of the detail pane: related links, merge requests,
-/// worktrees (only when `worktrees` are enabled) and sessions, each as
-/// `(heading, entries)`.
-pub fn link_sections(task: &Task, worktrees: bool) -> Vec<(&'static str, Vec<String>)> {
-    let as_text = |l: &tasq_core::model::Link| match &l.label {
-        Some(label) => format!("{label} <{}>", l.url),
-        None => l.url.clone(),
-    };
+/// worktrees (only when worktrees are enabled, paths under home as `~`)
+/// and sessions, each as `(heading, entries)`.
+pub fn link_sections<'a>(model: &Model, task: &'a Task) -> Vec<(&'static str, Vec<Entry<'a>>)> {
+    let home = model.home.as_deref();
+    let link = |l: &'a Link| (l.short_label(), Some(l.url.as_str()));
     vec![
-        ("Related", task.related.iter().map(as_text).collect()),
+        ("Related", task.related.iter().map(link).collect()),
         (
             "Merge requests",
-            task.merge_requests.iter().map(as_text).collect(),
+            task.merge_requests.iter().map(link).collect(),
         ),
         (
             "Worktrees",
             task.worktrees
                 .iter()
-                .filter(|_| worktrees)
-                .map(|w| match &w.branch {
-                    Some(branch) => format!("{} ({branch})", w.path.display()),
-                    None => w.path.display().to_string(),
+                .filter(|_| model.worktrees)
+                .map(|w| {
+                    let path = contract_tilde(&w.path, home);
+                    let text = match &w.branch {
+                        Some(branch) => format!("{path} ({branch})"),
+                        None => path,
+                    };
+                    (text, None)
                 })
                 .collect(),
         ),
@@ -670,7 +737,7 @@ pub fn link_sections(task: &Task, worktrees: bool) -> Vec<(&'static str, Vec<Str
                         text.push_str(" \u{2014} ");
                         text.push_str(description);
                     }
-                    text
+                    (text, None)
                 })
                 .collect(),
         ),
@@ -678,14 +745,14 @@ pub fn link_sections(task: &Task, worktrees: bool) -> Vec<(&'static str, Vec<Str
 }
 
 fn render_detail(model: &Model, frame: &mut Frame, area: Rect) {
-    let (title, lines) = match model.selected_task() {
-        Some(task) => (
-            format!(" [{}] ", task.id.as_str()),
-            detail_lines(model, task),
-        ),
+    let (title, (lines, targets)) = match model.selected_task() {
+        Some(task) => (format!(" [{}] ", task.id.as_str()), detail(model, task)),
         None => (
             " Task ".to_owned(),
-            vec![Line::styled("No task selected.", dim(model))],
+            (
+                vec![Line::styled("No task selected.", dim(model))],
+                Vec::new(),
+            ),
         ),
     };
     let mut block = Block::bordered().title(title);
@@ -696,10 +763,93 @@ fn render_detail(model: &Model, frame: &mut Frame, area: Rect) {
     }
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    frame.render_widget(
-        Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }),
-        inner,
-    );
+    // A reload can shorten the task under the offset.
+    let max = detail_max_scroll(model);
+    let scroll = model.detail_scroll.min(max);
+    // The whole detail is drawn on a page as tall as it, where links are
+    // found whole (wrapped or scrolled partly out of view), then the
+    // visible rows are copied.
+    let rows = |lines: &[Line<'_>]| {
+        let count = Paragraph::new(lines.to_vec())
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .line_count(inner.width);
+        u16::try_from(count).unwrap_or(u16::MAX)
+    };
+    let mut page = Buffer::empty(Rect::new(0, 0, inner.width, rows(&lines)));
+    if model.osc8 {
+        let spans: Vec<_> = targets
+            .iter()
+            .map(|link| {
+                let top = rows(&lines[..link.line]);
+                (top, top + rows(&lines[link.line..=link.line]))
+            })
+            .collect();
+        Paragraph::new(lines)
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .render(page.area, &mut page);
+        for (link, (top, bottom)) in targets.iter().zip(spans) {
+            link_cells(&mut page, top..bottom, &link.label, link.url);
+        }
+    } else {
+        Paragraph::new(lines)
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .render(page.area, &mut page);
+    }
+    let buffer = frame.buffer_mut();
+    for y in 0..inner.height.min(page.area.height.saturating_sub(scroll)) {
+        for x in 0..inner.width {
+            buffer[(inner.x + x, inner.y + y)] = page[(x, scroll + y)].clone();
+        }
+    }
+    if max > 0 {
+        // On the right border, between the corners.
+        let mut state = ScrollbarState::new(usize::from(max) + 1)
+            .viewport_content_length(usize::from(inner.height))
+            .position(usize::from(scroll));
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(Some(ratatui::symbols::line::VERTICAL)),
+            area.inner(Margin::new(0, 1)),
+            &mut state,
+        );
+    }
+}
+
+/// Turns the cells of `label`, drawn from the third column of the first
+/// of `rows` (after `- `), into OSC 8 hyperlinks to `url`. Each cell
+/// carries the whole link, since a redraw writes only the cells that
+/// changed. The label is followed across wrapped rows: a cell that does
+/// not hold the next character moves to the next row, and a space the
+/// wrap dropped is skipped.
+fn link_cells(page: &mut Buffer, rows: Range<u16>, label: &str, url: &str) {
+    let (mut x, mut y) = (2, rows.start);
+    for c in label.chars() {
+        let mut symbol = [0; 4];
+        let symbol: &str = c.encode_utf8(&mut symbol);
+        loop {
+            if y >= rows.end {
+                return;
+            }
+            if x < page.area.width && page[(x, y)].symbol() == symbol {
+                let cell = &mut page[(x, y)];
+                // A wide character fills two cells.
+                let width = u16::try_from(Span::raw(symbol).width())
+                    .ok()
+                    .and_then(NonZeroU16::new)
+                    .unwrap_or(NonZeroU16::MIN);
+                cell.set_symbol(&format!("\x1b]8;;{url}\x1b\\{symbol}\x1b]8;;\x1b\\"))
+                    .set_diff_option(CellDiffOption::ForcedWidth(width));
+                x += width.get();
+                break;
+            }
+            if c.is_whitespace() {
+                break;
+            }
+            (x, y) = (0, y + 1);
+        }
+    }
 }
 
 /// The bottom line: the input being typed, else the last message, else
@@ -1630,7 +1780,13 @@ mod tests {
                 "edit the task in a form (title, status, priority, due, project, tags)"
             )
         );
-        assert_eq!(rows[13], ("E".to_owned(), "open the task file in $EDITOR"));
+        assert_eq!(
+            rows[13],
+            (
+                "E, v".to_owned(),
+                "open the task file in $EDITOR; read it rendered (tasq view)"
+            )
+        );
         assert_eq!(rows[15].0, "C-Enter");
         assert_eq!(rows[16].0, "S-Enter");
         assert_eq!(
@@ -1652,6 +1808,13 @@ mod tests {
             (
                 "Right, Left".to_owned(),
                 "show / hide the selected task's detail"
+            )
+        );
+        assert_eq!(
+            rows[21],
+            (
+                "Tab, K/C-y, J/C-e".to_owned(),
+                "switch between list and detail; scroll the detail"
             )
         );
         assert_eq!(

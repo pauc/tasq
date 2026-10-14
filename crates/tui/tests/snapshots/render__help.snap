@@ -1,5 +1,6 @@
 ---
 source: crates/tui/tests/render.rs
+assertion_line: 288
 expression: "screen(&mut model, 120, 28)"
 ---
 "┌ Tasks (5/5┌ Keys ───────────────────────────────────────────────────────────────────────────────────────┐────────────┐"
@@ -16,7 +17,7 @@ expression: "screen(&mut model, 120, 28)"
 "│NO STATUS (│l                   log a progress note                                                      │            │"
 "│  [ 5] #B C│d                   mark done, with an optional final note                                   │            │"
 "│           │e                   edit the task in a form (title, status, priority, due, project, tags)    │            │"
-"│           │E                   open the task file in $EDITOR                                            │            │"
+"│           │E, v                open the task file in $EDITOR; read it rendered (tasq view)              │            │"
 "│           │Enter               open a work session here (tasq pick)                                     │            │"
 "│           │C-Enter             open it in a new window (tasq pick --detached)                           │            │"
 "│           │S-Enter             open it in a new window without switching to it                          │            │"
@@ -24,7 +25,7 @@ expression: "screen(&mut model, 120, 28)"
 "│           │S                   pick the sources to run: Space toggles, Enter runs                       │            │"
 "│           │r                   reload                                                                   │            │"
 "│           │Right, Left         show / hide the selected task's detail                                   │            │"
-"│           │Tab                 switch between list and detail                                           │            │"
+"│           │Tab, K/C-y, J/C-e   switch between list and detail; scroll the detail                        │            │"
 "│           │Enter               in a picker: apply the choice                                            │            │"
 "│           │?                   this help                                                                │            │"
 "│           │q, C-c              quit                                                                     │            │"

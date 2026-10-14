@@ -20,6 +20,7 @@ use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
+use tasq_core::model::shortref;
 use tasq_core::store::{Store, StoreError};
 use tasq_core::theme::{Color, Role, Theme};
 use tasq_store_nb::which::find_in_path;
@@ -44,10 +45,6 @@ static MD_LINK: LazyLock<Regex> = LazyLock::new(|| {
 });
 static BARE_URL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"<?https?://[^ \t<>)]+>?").expect("valid regex"));
-static MR_REF: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"/merge_requests/(\d+)").expect("valid regex"));
-static ISSUE_REF: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"/(?:work_items|issues)/(\d+)").expect("valid regex"));
 static REOPEN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(&format!("{M0}([0-9]+){M1}")).expect("valid regex"));
 static BULLET_PREFIX: LazyLock<Regex> =
@@ -181,31 +178,6 @@ pub fn render_with_glow(
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-/// The label a URL gets when it has none: `!123` for a merge request,
-/// `#123` for an issue or work item, otherwise the URL without scheme and
-/// `www.`, shortened in the middle past 60 characters.
-pub fn shortref(url: &str) -> String {
-    if let Some(c) = MR_REF.captures(url) {
-        return format!("!{}", &c[1]);
-    }
-    if let Some(c) = ISSUE_REF.captures(url) {
-        return format!("#{}", &c[1]);
-    }
-    let u = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-        .unwrap_or(url);
-    let u = u.strip_prefix("www.").unwrap_or(u);
-    let chars: Vec<char> = u.chars().collect();
-    if chars.len() > 60 {
-        let head: String = chars[..45].iter().collect();
-        let tail: String = chars[chars.len() - 10..].iter().collect();
-        format!("{head}...{tail}")
-    } else {
-        u.to_owned()
-    }
 }
 
 /// A markdown link's `(label, url)`.
@@ -383,24 +355,6 @@ mod tests {
 
     const GL: &str = "https://gitlab.example.com/group/project/-/merge_requests/123";
     const ISSUE: &str = "https://gitlab.example.com/group/project/-/issues/42";
-
-    #[test]
-    fn shortrefs() {
-        assert_eq!(shortref(GL), "!123");
-        assert_eq!(shortref(&format!("{GL}/diffs")), "!123");
-        assert_eq!(shortref(ISSUE), "#42");
-        assert_eq!(
-            shortref("https://gitlab.example.com/groups/g/-/work_items/7"),
-            "#7"
-        );
-        assert_eq!(shortref("https://www.example.com/x"), "example.com/x");
-        assert_eq!(shortref("http://example.com"), "example.com");
-        let long = format!("https://example.com/{}", "a".repeat(70));
-        let short = shortref(&long);
-        assert_eq!(short.chars().count(), 45 + 3 + 10);
-        assert!(short.starts_with("example.com/aaaa"));
-        assert!(short.ends_with("...aaaaaaaaaa"));
-    }
 
     #[test]
     fn linkify_pre_marks_markdown_links_and_bare_urls() {

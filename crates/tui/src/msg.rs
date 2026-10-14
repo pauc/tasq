@@ -74,6 +74,8 @@ pub enum Msg {
     Edit,
     /// `E`: open the task's file in the editor.
     Editor,
+    /// `v`: show the task with `tasq view` (glow, the pager).
+    View,
     /// `Enter` in normal mode: open a work session in this terminal.
     Launch,
     /// `Ctrl+Enter` / `Shift+Enter` in normal mode: open a work session in
@@ -102,6 +104,10 @@ pub enum Msg {
     ShowDetail,
     /// `Left`: hide the detail.
     HideDetail,
+    /// `J`/`Ctrl+E`: scroll the detail one line down.
+    DetailDown,
+    /// `K`/`Ctrl+Y`: scroll the detail one line up.
+    DetailUp,
     /// `q`: leave.
     Quit,
     /// The terminal is now this size.
@@ -140,6 +146,11 @@ pub enum Cmd {
     Revise(TaskId, Box<Fields>),
     /// Open the task's file in the editor (terminal released meanwhile).
     Editor(TaskId),
+    /// `tasq view <id>` (terminal released meanwhile), then a pause for a
+    /// key when the pager may quit at once (see [`Model::view_pauses`]).
+    ///
+    /// [`Model::view_pauses`]: crate::model::Model::view_pauses
+    View(TaskId, bool),
     /// Open a work session on the task: in this terminal (released
     /// meanwhile) or in a new window (the UI keeps the screen).
     Launch(TaskId, LaunchTarget),
@@ -166,14 +177,18 @@ impl Cmd {
     pub fn releases_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Editor(_) | Self::Launch(_, LaunchTarget::Here) | Self::Sync(_)
+            Self::Editor(_) | Self::View(..) | Self::Launch(_, LaunchTarget::Here) | Self::Sync(_)
         )
     }
 
     /// Whether the runtime should wait for a key before redrawing, so the
-    /// command's output can be read (an editor needs no such pause).
+    /// command's output can be read (an editor needs no such pause; a
+    /// view only when its pager may quit at once).
     pub fn pauses_after(&self) -> bool {
-        matches!(self, Self::Launch(_, LaunchTarget::Here) | Self::Sync(_))
+        match self {
+            Self::View(_, pause) => *pause,
+            _ => matches!(self, Self::Launch(_, LaunchTarget::Here) | Self::Sync(_)),
+        }
     }
 }
 
@@ -194,6 +209,9 @@ pub trait Host {
     /// output captured so the screen is untouched and its last line is
     /// the result.
     fn launch(&mut self, id: &TaskId, target: LaunchTarget) -> HostResult;
+
+    /// Shows the task: `tasq view <id>` in this terminal, waiting for it.
+    fn view(&mut self, id: &TaskId) -> HostResult;
 
     /// Runs the sources: `tasq sync` for an empty `sources`, else
     /// `tasq sync --source <name>` for each name.
@@ -233,6 +251,10 @@ impl Host for NoHost {
         Err("launching is not available here".to_owned())
     }
 
+    fn view(&mut self, _id: &TaskId) -> HostResult {
+        Err("viewing is not available here".to_owned())
+    }
+
     fn sync(&mut self, _sources: &[String]) -> HostResult {
         Err("sync is not available here".to_owned())
     }
@@ -259,7 +281,8 @@ impl Host for NoHost {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecordingHost {
     /// Every call, as `edit <id> <file>`, `launch <id>`, `launch <id>
-    /// detached` / `launch <id> detached no-focus`, `sync` / `sync <name>...`,
+    /// detached` / `launch <id> detached no-focus`, `view <id>`, `sync` /
+    /// `sync <name>...`,
     /// `worktree <id> [branch]`, `after_done <id>` or `after_create <id>`.
     pub calls: Vec<String>,
     /// The answer to every call (`Ok` by default: `"ok"`).
@@ -288,6 +311,10 @@ impl Host for RecordingHost {
             LaunchTarget::Detached { focus: false } => " detached no-focus",
         };
         self.reply(format!("launch {id}{suffix}"))
+    }
+
+    fn view(&mut self, id: &TaskId) -> HostResult {
+        self.reply(format!("view {id}"))
     }
 
     fn sync(&mut self, sources: &[String]) -> HostResult {
@@ -322,6 +349,12 @@ mod tests {
     fn commands_that_need_the_terminal() {
         let id = TaskId::from(1);
         assert!(Cmd::Editor(id.clone()).releases_terminal());
+        // `tasq view`'s pager may quit at once (`less -F` on a short task).
+        for pause in [true, false] {
+            let view = Cmd::View(id.clone(), pause);
+            assert!(view.releases_terminal(), "{view:?}");
+            assert_eq!(view.pauses_after(), pause, "{view:?}");
+        }
         assert!(Cmd::Launch(id.clone(), LaunchTarget::Here).releases_terminal());
         assert!(Cmd::Sync(Vec::new()).releases_terminal());
         for focus in [true, false] {
@@ -360,6 +393,7 @@ mod tests {
             "launching is not available here"
         );
         assert_eq!(none.sync(&[]).unwrap_err(), "sync is not available here");
+        assert_eq!(none.view(&id).unwrap_err(), "viewing is not available here");
         // Nothing follows a close or a create for a host that only browses.
         assert_eq!(none.after_done(&Task::new(id.clone(), "T")), Ok(()));
         assert_eq!(none.after_create(&Task::new(id.clone(), "T")), Ok(()));
@@ -367,6 +401,7 @@ mod tests {
         let mut rec = RecordingHost::default();
         assert_eq!(rec.edit(&id, std::path::Path::new("/f")).unwrap(), "ok");
         assert_eq!(rec.launch(&id, LaunchTarget::Here).unwrap(), "ok");
+        assert_eq!(rec.view(&id).unwrap(), "ok");
         assert_eq!(rec.after_done(&Task::new(id.clone(), "T")), Ok(()));
         assert_eq!(rec.after_create(&Task::new(id.clone(), "T")), Ok(()));
         rec.answer = Some(Err("boom".into()));
@@ -384,6 +419,7 @@ mod tests {
             vec![
                 "edit 4 /f",
                 "launch 4",
+                "view 4",
                 "after_done 4",
                 "after_create 4",
                 "sync",
