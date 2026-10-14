@@ -1,6 +1,8 @@
 //! T-203: `create` on a temp copy of the fixture, with the native and a
 //! recording bookkeeper; nb-gated tests check that nb reads the result.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 mod support;
 
 use std::cell::RefCell;
@@ -253,7 +255,10 @@ fn scripted(
     (store, calls)
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "matches the `Bookkeeper::register` hook signature"
+)]
 fn append_twice(file: &Path) -> Result<(), StoreError> {
     let name = file.file_name().unwrap().to_string_lossy().into_owned();
     let mut index = std::fs::OpenOptions::new()
@@ -270,7 +275,10 @@ fn register_fails(_file: &Path) -> Result<(), StoreError> {
     })
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "matches the `Bookkeeper::register` hook signature"
+)]
 fn register_forgets(_file: &Path) -> Result<(), StoreError> {
     Ok(())
 }

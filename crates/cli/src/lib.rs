@@ -12,6 +12,10 @@
 //! message) or an internal error.
 
 #![warn(missing_docs)]
+#![allow(
+    clippy::print_stderr,
+    reason = "the CLI renders warnings and errors on stderr"
+)]
 
 pub mod app;
 pub mod cli;

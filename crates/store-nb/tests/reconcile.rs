@@ -1,5 +1,7 @@
 //! ADR-0023: `NbStore::reconcile` repairs `.index` without renumbering.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 mod support;
 
 use tasq_core::model::TaskId;

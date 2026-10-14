@@ -2,6 +2,8 @@
 //! of `tasq-core` (`tests/fixtures/worktree/*.toml`): the tree that results
 //! is checked against the files under `tests/fixtures/<workspace>/expected`.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

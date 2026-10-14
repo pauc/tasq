@@ -1,6 +1,8 @@
 //! T-201: notebook resolution (`$NB_DIR/<name>`, or a path; never nb) and
 //! the native rebuild of a missing `.index` (ADR-0023).
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 mod support;
 
 use std::path::PathBuf;

@@ -2,6 +2,8 @@
 //! on disk: a checkout's `.git` directory, a linked worktree's `.git` file
 //! and its `commondir`, the shared `config`.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

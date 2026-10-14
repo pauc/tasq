@@ -2,6 +2,8 @@
 //! notebook. Output is snapshotted with `insta` (`cargo insta review`, or
 //! `INSTA_UPDATE=always cargo test -p tasq` to accept everything).
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 mod support;
 
 use std::path::Path;

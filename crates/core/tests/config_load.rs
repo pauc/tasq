@@ -3,6 +3,12 @@
 //! Every test builds its own home and working directory under a `tempfile`
 //! directory, so nothing depends on the machine running the tests.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests build fixtures on disk; the no-I/O rule is for the library"
+)]
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};

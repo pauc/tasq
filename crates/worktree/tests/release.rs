@@ -2,6 +2,8 @@
 //! what it keeps and says, what a dry run leaves alone, and the hooks
 //! around a removal.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

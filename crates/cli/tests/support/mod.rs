@@ -4,7 +4,10 @@
 //! real `nb` (which keeps the output identical whether or not nb is
 //! installed).
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each integration test crate uses a different subset of the helpers"
+)]
 
 use std::path::{Path, PathBuf};
 use std::process::Output;

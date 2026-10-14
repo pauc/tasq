@@ -2,6 +2,12 @@
 //! unchanged, operations never panic, and tasks written with
 //! `Document::from_task` read back equal.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests build fixtures on disk; the no-I/O rule is for the library"
+)]
+
 use std::path::{Path, PathBuf};
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};

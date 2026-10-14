@@ -1,5 +1,7 @@
 //! T-202: `update` and `set_done` on a temp copy of the fixture.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 mod support;
 
 use std::cell::RefCell;

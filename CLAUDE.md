@@ -44,6 +44,8 @@ Rules that are easy to get wrong:
 - `cargo mutants -f` does **not** narrow scope while `.cargo/mutants.toml` is loaded; use `--no-config` plus the `-E` excludes above (the `just mutants-in` recipe). Survivors land in `mutants.out/missed.txt`.
 - The per-task acceptance bar is **zero missed mutants** in the module touched. Prefer fixing the code shape or adding an exact-string assertion over arguing a mutant is equivalent. Only functions that purely wrap I/O or `exec` get `#[mutants::skip]` (plain form, never `cfg_attr`) with a one-line reason comment above it.
 - Clippy runs `all` + `pedantic` with warnings denied. Clippy 1.99: write `assert_eq!(v, Vec::new())`, not `assert!(v.is_empty())`.
+- Restriction lints on top (`[workspace.lints.clippy]`): no `unwrap()` outside tests (use `expect("<invariant>")`), no `print!`/`eprint!` outside `tasq` (the CLI) and the launchers, no `dbg!`/`todo!`/`unimplemented!`, and every `#[allow]` carries `reason = "..."`. Integration test crates allow `unwrap_used` at their root.
+- `crates/core/clippy.toml` bans filesystem, env, clock and process APIs in `tasq-core` (`disallowed-methods`/`disallowed-types`). The sanctioned exceptions (`SystemClock`, config file loading in `config/load.rs`) carry `#[expect(clippy::disallowed_methods, reason = "...")]`; do not add more without a reason. Clippy reads only the nearest `clippy.toml`, so keys shared with the root `clippy.toml` are duplicated there; keep them in sync. Clippy caches results: after changing a `clippy.toml`, `touch` the crate roots or the change looks like it had no effect.
 - Commit messages are conventional commits scoped by crate: `feat(store-nb): ...`, `test(core): ...`, `docs(plan): ...`, `build: ...`, `ci: ...`.
 
 ## Architecture

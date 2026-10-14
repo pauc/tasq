@@ -2,6 +2,8 @@
 //! worktrees left out, and the changes git reports with the provisioned
 //! files left out.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::process::Command;

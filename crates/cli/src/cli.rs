@@ -5,9 +5,10 @@
 //! exactly as the original script did. Global flags are accepted before or
 //! after the subcommand.
 
-// Help text is read on a terminal, where backticks around NO_COLOR or
-// TASQ_PROFILE are noise rather than markup.
-#![allow(clippy::doc_markdown)]
+#![allow(
+    clippy::doc_markdown,
+    reason = "help text is read on a terminal, where backticks around NO_COLOR or TASQ_PROFILE are noise"
+)]
 
 use std::ffi::OsString;
 use std::path::PathBuf;

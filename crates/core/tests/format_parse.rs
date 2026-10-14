@@ -1,5 +1,11 @@
 //! Grammar edge cases of the typed projection, on hand-written documents.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests build fixtures on disk; the no-I/O rule is for the library"
+)]
+
 use std::path::PathBuf;
 
 use chrono::NaiveDate;

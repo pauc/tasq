@@ -39,20 +39,23 @@ pub const M2: char = '\u{E002}';
 /// Width assumed when the terminal does not say.
 pub const DEFAULT_WIDTH: usize = 100;
 
-static MD_LINK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[(?:[^\[\]]|\[[^\[\]]*\])*\]\(https?://[^)]*\)").unwrap());
+static MD_LINK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[(?:[^\[\]]|\[[^\[\]]*\])*\]\(https?://[^)]*\)").expect("valid regex")
+});
 static BARE_URL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<?https?://[^ \t<>)]+>?").unwrap());
-static MR_REF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/merge_requests/(\d+)").unwrap());
+    LazyLock::new(|| Regex::new(r"<?https?://[^ \t<>)]+>?").expect("valid regex"));
+static MR_REF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"/merge_requests/(\d+)").expect("valid regex"));
 static ISSUE_REF: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"/(?:work_items|issues)/(\d+)").unwrap());
+    LazyLock::new(|| Regex::new(r"/(?:work_items|issues)/(\d+)").expect("valid regex"));
 static REOPEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&format!("{M0}([0-9]+){M1}")).unwrap());
+    LazyLock::new(|| Regex::new(&format!("{M0}([0-9]+){M1}")).expect("valid regex"));
 static BULLET_PREFIX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[ \t]*(?:[-*][ \t])?[ \t]*$").unwrap());
-static BULLET_ONLY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[ \t]*[-*]?[ \t]*$").unwrap());
+    LazyLock::new(|| Regex::new(r"^[ \t]*(?:[-*][ \t])?[ \t]*$").expect("valid regex"));
+static BULLET_ONLY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[ \t]*[-*]?[ \t]*$").expect("valid regex"));
 static SPACE_BEFORE_PUNCT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[ \t]+([.,;])").unwrap());
+    LazyLock::new(|| Regex::new(r"[ \t]+([.,;])").expect("valid regex"));
 
 /// Runs `view`.
 pub fn run(app: &App, id: &str, raw: bool) -> Result<()> {

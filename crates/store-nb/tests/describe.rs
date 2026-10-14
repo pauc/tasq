@@ -1,5 +1,7 @@
 //! T-204: `describe()`.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 mod support;
 
 use tasq_core::model::TaskId;

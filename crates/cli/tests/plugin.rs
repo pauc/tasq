@@ -4,6 +4,8 @@
 //! ship. `claude plugin validate --strict plugins/claude` is the external
 //! check; this one runs without Claude Code installed.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 

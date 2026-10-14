@@ -1,6 +1,12 @@
 //! The provisioning plans of three workspace layouts: the declared path
 //! and the steps, from a configuration file, with no git and no disk.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests build fixtures on disk; the no-I/O rule is for the library"
+)]
+
 use std::path::{Path, PathBuf};
 
 use tasq_core::config::Config;

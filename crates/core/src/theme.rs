@@ -238,9 +238,10 @@ impl Preset {
     }
 
     /// The colour of `role` in this preset.
-    // One row per preset and role: the table reads by preset, merging arms
-    // across presets would hide which preset a colour belongs to.
-    #[allow(clippy::match_same_arms)]
+    #[allow(
+        clippy::match_same_arms,
+        reason = "one row per preset and role: merging arms across presets would hide which preset a colour belongs to"
+    )]
     pub fn color(self, role: Role) -> Color {
         use Color::{Blue, Cyan, Dim, Fixed, Green, Magenta, Plain, Red, Reversed, Yellow};
         match (self, role) {

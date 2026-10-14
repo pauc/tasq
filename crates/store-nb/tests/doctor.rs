@@ -1,6 +1,8 @@
 //! T-205 (library side): `doctor::checks` on a healthy and on a broken
 //! notebook.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 mod support;
 
 use tasq_core::model::Workflow;

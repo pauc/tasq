@@ -5,6 +5,12 @@
 //! on the before file, with the clock fixed at 2026-10-04 10:15. The table in
 //! [`SCENARIOS`] applies the equivalent operation and expects the exact bytes.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests build fixtures on disk; the no-I/O rule is for the library"
+)]
+
 use std::path::Path;
 
 use tasq_core::clock::FixedClock;

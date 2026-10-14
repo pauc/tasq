@@ -1,0 +1,9 @@
+# Clippy configuration for every crate except tasq-core, which has its own
+# clippy.toml (clippy reads only the nearest file; keep the shared keys in sync).
+#
+# Tests may unwrap, print and `dbg!`; production code may not (see
+# [workspace.lints.clippy] in Cargo.toml).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-print-in-tests = true
+allow-dbg-in-tests = true

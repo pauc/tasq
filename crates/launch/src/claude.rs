@@ -83,6 +83,10 @@ impl Launcher for ClaudeLauncher {
         Ok(lines)
     }
 
+    #[expect(
+        clippy::print_stderr,
+        reason = "the warning must reach the terminal before `exec` replaces the process"
+    )]
     fn launch(&self, ctx: &LaunchContext) -> Result<LaunchOutcome, LaunchError> {
         let (argv, warning) = self.command(ctx)?;
         if let Some(warning) = warning {

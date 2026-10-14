@@ -1,6 +1,8 @@
 //! `materialize` against a temporary repository: what it creates,
 //! provisions and runs, what a dry run leaves alone, and where it stops.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 use std::path::PathBuf;
 use std::process::Command;
 

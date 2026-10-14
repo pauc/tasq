@@ -1,5 +1,7 @@
 //! T-201/T-202: index reading, `list` and `get` on a temp copy of the fixture.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 mod support;
 
 use std::path::PathBuf;

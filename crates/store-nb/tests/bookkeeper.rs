@@ -2,6 +2,8 @@
 //! run in a background job behind `.git/tasq/lock`, sync every
 //! `sync_interval` seconds, and `nb` is never run.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 mod support;
 
 use std::time::{Duration, Instant};

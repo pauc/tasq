@@ -678,10 +678,10 @@ impl ForgeKind {
 ///
 /// Which fields apply depends on `kind`; [`Config::load`] checks that the
 /// required ones are present (see [`SourceKind`]).
-// Four independent switches (`enabled`, `auto`, `create_new`,
-// `close_when_done`) that a TOML table spells as booleans; an enum would
-// not read better in the config file.
-#[allow(clippy::struct_excessive_bools)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "four independent switches that a TOML table spells as booleans; an enum would not read better in the config file"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceConfig {

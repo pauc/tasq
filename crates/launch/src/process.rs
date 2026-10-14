@@ -58,6 +58,10 @@ impl Trace {
 
     /// Prints `tasq: warning: <message>` on stderr, always, and appends it
     /// to the log file.
+    #[expect(
+        clippy::print_stderr,
+        reason = "warnings always reach the terminal, even without `-v`"
+    )]
     pub fn warn(&self, message: &str) {
         eprintln!("tasq: warning: {message}");
         self.write(&format!("warning: {message}\n"), false);
@@ -69,6 +73,7 @@ impl Trace {
     ///
     /// Reason: wraps stderr and a file append; [`command_record`] holds the logic.
     #[mutants::skip]
+    #[expect(clippy::print_stderr, reason = "`-v` traces go to the terminal")]
     fn write(&self, text: &str, echo: bool) {
         use std::io::Write;
         if echo && self.stderr {

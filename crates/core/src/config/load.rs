@@ -125,6 +125,10 @@ impl LoadOptions {
     ///
     /// Reason: reads process state, nothing to assert in a unit test.
     #[mutants::skip]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one place that reads the real process state"
+    )]
     pub fn from_process() -> std::io::Result<Self> {
         let env: BTreeMap<String, String> = std::env::vars().collect();
         Ok(Self {
@@ -249,6 +253,10 @@ fn covers(set: &str, asked: &str) -> bool {
 /// `home` is `cwd` or one of its ancestors the walk stops after checking
 /// `home` itself: a `~/.tasq.toml` is a legitimate per-user default, but
 /// nothing above the home directory is this user's project.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
+)]
 pub fn project_file(cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
     for dir in cwd.ancestors() {
         let candidate = dir.join(PROJECT_FILE);
@@ -573,6 +581,10 @@ fn set_leaf(table: &mut Table, key: &str, value: Value) {
 }
 
 /// Reads a file into a string, naming the file on failure.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
+)]
 fn read_file(path: &Path) -> Result<String, ConfigError> {
     std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
         file: path.to_path_buf(),
@@ -581,6 +593,10 @@ fn read_file(path: &Path) -> Result<String, ConfigError> {
 }
 
 /// Which files take part, in order.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
+)]
 fn file_paths(opts: &LoadOptions) -> Result<Vec<PathBuf>, ConfigError> {
     let explicit = opts
         .explicit_file

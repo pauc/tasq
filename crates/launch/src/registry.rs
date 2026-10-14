@@ -113,8 +113,10 @@ pub fn launcher_for(
     }
 }
 
-// The `Result` is shared with the feature-off variant below, which fails.
-#[allow(clippy::unnecessary_wraps)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the `Result` is shared with the feature-off variant below, which fails"
+)]
 #[cfg(feature = "herdr")]
 fn herdr(
     settings: &LaunchSettings,

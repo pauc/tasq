@@ -2,6 +2,12 @@
 //! to the expected task, renders back byte for byte and re-parses to the same
 //! task. The fixtures were produced by the original script's own functions.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests build fixtures on disk; the no-I/O rule is for the library"
+)]
+
 use std::path::PathBuf;
 
 use chrono::NaiveDate;

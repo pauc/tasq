@@ -1,6 +1,8 @@
 //! Preparing, approving and running worktree hooks against a temporary
 //! trust file, with the question answered by a stub.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io;

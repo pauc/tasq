@@ -51,6 +51,7 @@ pub struct SystemClock;
 impl Clock for SystemClock {
     /// Reason: reads the wall clock; nothing deterministic to assert.
     #[mutants::skip]
+    #[expect(clippy::disallowed_methods, reason = "the one real `Clock`")]
     fn now(&self) -> NaiveDateTime {
         Local::now().naive_local()
     }
@@ -298,6 +299,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::disallowed_methods, reason = "compares against the wall clock")]
     fn system_clock_is_close_to_chrono_local() {
         let before = Local::now().naive_local();
         let now = SystemClock.now();

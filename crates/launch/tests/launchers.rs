@@ -3,6 +3,8 @@
 //! which a test cannot observe, so they are checked through `command()` and
 //! `describe()`; a failed exec is tested alone in `exec_failure.rs`.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;

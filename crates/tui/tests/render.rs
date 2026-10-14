@@ -2,6 +2,8 @@
 //! `TestBackend` at the two layouts, with every overlay and mode. Accept
 //! changes with `INSTA_UPDATE=always cargo test -p tasq-tui`.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 use chrono::{NaiveDate, Weekday};
 use insta::assert_snapshot;
 use ratatui::Terminal;

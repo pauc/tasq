@@ -11,7 +11,10 @@
 //! print a notice and pass, unless `TASQ_REQUIRE_NB=1` is set (CI), in which
 //! case they fail.
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each integration test crate uses a different subset of the helpers"
+)]
 
 pub mod sanitize;
 
@@ -354,6 +357,10 @@ pub fn nb_available() -> bool {
 /// `true` when the test may run. Without `nb`, prints a notice and returns
 /// `false` so the test passes vacuously, unless `TASQ_REQUIRE_NB=1`, which
 /// makes the test fail instead.
+#[allow(
+    clippy::print_stderr,
+    reason = "the skip notice is the visible trace of a vacuous pass"
+)]
 pub fn nb_or_skip(test: &str) -> bool {
     if nb_available() {
         return true;

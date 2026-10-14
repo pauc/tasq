@@ -183,9 +183,10 @@ pub struct Toggles {
 }
 
 /// The whole state of the UI.
-// Independent switches (`color`, `worktrees`, `quit`, ...) set from
-// configuration and events; an enum per switch would not read better.
-#[allow(clippy::struct_excessive_bools)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent switches set from configuration and events; an enum per switch would not read better"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
     /// Open and done tasks as last loaded from the store; the list shows

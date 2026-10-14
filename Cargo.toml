@@ -41,6 +41,18 @@ missing_errors_doc = "allow"
 # Same reasoning as `missing_errors_doc`: panics are rare and documented
 # where they are part of the contract.
 missing_panics_doc = "allow"
+# Restriction lints, opted into one by one. Tests may unwrap, print and
+# `dbg!` (clippy.toml). `expect` stays allowed: its message names the
+# invariant, which is the point.
+unwrap_used = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+# Libraries return data; only the CLI and the launchers talk to the terminal.
+print_stdout = "warn"
+print_stderr = "warn"
+# Every `#[allow]` says why, like every `#[mutants::skip]` does.
+allow_attributes_without_reason = "warn"
 
 # Less debuginfo keeps rustc and the linker well under a gigabyte per crate
 # during dev builds and tests; backtraces still carry line numbers.

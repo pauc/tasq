@@ -1,0 +1,50 @@
+# tasq-core does no I/O (CLAUDE.md, src/lib.rs): time comes from `Clock`,
+# config inputs from `LoadOptions`, processes and files from the other crates.
+# The few sanctioned exceptions carry `#[expect(clippy::disallowed_*, reason)]`.
+#
+# Clippy reads only the nearest clippy.toml, so the test allowances of the
+# workspace file are repeated here.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-print-in-tests = true
+allow-dbg-in-tests = true
+
+disallowed-methods = [
+    { path = "std::fs::read", reason = "tasq-core does no I/O; read in a store crate and pass the bytes in" },
+    { path = "std::fs::read_to_string", reason = "tasq-core does no I/O; read in a store crate and pass the text in" },
+    { path = "std::fs::write", reason = "tasq-core does no I/O; return the bytes and let a store crate write them" },
+    { path = "std::fs::read_dir", reason = "tasq-core does no I/O" },
+    { path = "std::fs::metadata", reason = "tasq-core does no I/O" },
+    { path = "std::fs::create_dir_all", reason = "tasq-core does no I/O" },
+    { path = "std::fs::remove_file", reason = "tasq-core does no I/O" },
+    { path = "std::fs::rename", reason = "tasq-core does no I/O" },
+    { path = "std::fs::copy", reason = "tasq-core does no I/O" },
+    { path = "std::fs::canonicalize", reason = "tasq-core does no I/O" },
+    { path = "std::path::Path::exists", reason = "tasq-core does no I/O" },
+    { path = "std::path::Path::try_exists", reason = "tasq-core does no I/O" },
+    { path = "std::path::Path::is_file", reason = "tasq-core does no I/O" },
+    { path = "std::path::Path::is_dir", reason = "tasq-core does no I/O" },
+    { path = "std::path::Path::metadata", reason = "tasq-core does no I/O" },
+    { path = "std::path::Path::canonicalize", reason = "tasq-core does no I/O" },
+    { path = "std::path::Path::read_dir", reason = "tasq-core does no I/O" },
+    { path = "std::env::var", reason = "the environment comes in through `LoadOptions`" },
+    { path = "std::env::var_os", reason = "the environment comes in through `LoadOptions`" },
+    { path = "std::env::vars", reason = "the environment comes in through `LoadOptions`" },
+    { path = "std::env::vars_os", reason = "the environment comes in through `LoadOptions`" },
+    { path = "std::env::current_dir", reason = "the cwd comes in through `LoadOptions`" },
+    { path = "std::env::home_dir", reason = "home comes in through `LoadOptions`" },
+    { path = "std::time::SystemTime::now", reason = "time comes from a `Clock`" },
+    { path = "std::time::Instant::now", reason = "time comes from a `Clock`" },
+    { path = "chrono::Local::now", reason = "time comes from a `Clock`" },
+    { path = "chrono::Utc::now", reason = "time comes from a `Clock`" },
+    { path = "std::thread::sleep", reason = "tasq-core never blocks" },
+    { path = "std::thread::spawn", reason = "tasq-core never spawns" },
+]
+
+disallowed-types = [
+    { path = "std::fs::File", reason = "tasq-core does no I/O" },
+    { path = "std::fs::OpenOptions", reason = "tasq-core does no I/O" },
+    { path = "std::process::Command", reason = "tasq-core runs no processes; see store-nb, worktree, launch" },
+    { path = "std::process::Child", reason = "tasq-core runs no processes" },
+    { path = "std::net::TcpStream", reason = "tasq-core has no network access" },
+]

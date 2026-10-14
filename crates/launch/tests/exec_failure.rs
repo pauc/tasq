@@ -10,6 +10,8 @@
 //! the process's directory before `execvp`. Cargo runs test binaries one at
 //! a time, so here nothing else runs in the process.
 
+#![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
+
 use tasq_core::config::EnvStrategy;
 use tasq_core::launch::{LaunchContext, LaunchError, Launcher};
 use tasq_core::model::{Task, TaskId};
