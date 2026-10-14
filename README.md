@@ -1,8 +1,7 @@
 # tasq
 
-<!-- TODO: replace OWNER/tasq with the real GitHub repository once it exists. -->
-[![CI](https://github.com/OWNER/tasq/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/OWNER/tasq/actions/workflows/ci.yml)
-[![Mutants (nightly)](https://github.com/OWNER/tasq/actions/workflows/mutants-nightly.yml/badge.svg)](https://github.com/OWNER/tasq/actions/workflows/mutants-nightly.yml)
+[![CI](https://github.com/pauc/tasq/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pauc/tasq/actions/workflows/ci.yml)
+[![Mutants (nightly)](https://github.com/pauc/tasq/actions/workflows/mutants-nightly.yml/badge.svg)](https://github.com/pauc/tasq/actions/workflows/mutants-nightly.yml)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
 Terminal task manager over [nb](https://github.com/xwmx/nb) markdown todos.
@@ -25,9 +24,9 @@ The recording is [`docs/demo/demo.tape`](docs/demo/demo.tape) against a throwawa
 | Method | Command |
 |---|---|
 | crates.io (once published) | `cargo install tasq` |
-| Prebuilt binary | Download `tasq-vX.Y.Z-<target>.tar.gz` for your platform from the [GitHub releases](https://github.com/OWNER/tasq/releases) (Linux x86_64 and aarch64, macOS x86_64 and arm64; a `.sha256` sits next to each tarball), unpack it and put `tasq` on your `PATH` |
-| Homebrew | `brew install OWNER/tasq/tasq` (the tap is `OWNER/homebrew-tasq`) <!-- TODO: OWNER --> |
-| From source | `git clone https://github.com/OWNER/tasq && cd tasq && cargo install --path crates/cli` |
+| Prebuilt binary | Download `tasq-vX.Y.Z-<target>.tar.gz` for your platform from the [GitHub releases](https://github.com/pauc/tasq/releases) (Linux x86_64 and aarch64, macOS x86_64 and arm64; a `.sha256` sits next to each tarball), unpack it and put `tasq` on your `PATH` |
+| Homebrew | `brew install pauc/tasq/tasq` (the tap is `pauc/homebrew-tasq`) <!-- TODO: the tap repository does not exist yet; the first release with HOMEBREW_TAP_TOKEN set creates the formula --> |
+| From source | `git clone https://github.com/pauc/tasq && cd tasq && cargo install --path crates/cli` |
 
 The binary is called `tasq`. Rust 1.90 or newer builds it from source. Nothing else is
 required: nb, git, glow, claude, direnv, tmux, herdr, glab and gh are all optional and

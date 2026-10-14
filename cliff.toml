@@ -18,9 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 """
 # One release. Groups carry a hidden `<!-- N -->` prefix so they sort in Keep a
 # Changelog order; `striptags` removes it before printing.
-# TODO: replace OWNER with the real GitHub owner once the repository exists.
 body = """
-{%- set repo = "https://github.com/OWNER/tasq" -%}
+{%- set repo = "https://github.com/pauc/tasq" -%}
 {% if version %}
 ## [{{ version | trim_start_matches(pat="v") }}]({{ repo }}/releases/tag/{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
 {% else %}

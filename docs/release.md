@@ -1,8 +1,8 @@
 # Releasing tasq
 
-**Status: the pipeline has not run yet.** The GitHub repository does not exist;
-`OWNER` is a placeholder in `Cargo.toml`, `cliff.toml`, `README.md` and the
-workflow comments. The first tag will be the first real run.
+**Status: the pipeline has not run yet.** The repository is
+[`pauc/tasq`](https://github.com/pauc/tasq); the Homebrew tap
+`pauc/homebrew-tasq` does not exist yet. The first tag will be the first real run.
 
 The release pipeline is a hand-written GitHub Actions workflow,
 [`.github/workflows/release.yml`](../.github/workflows/release.yml).

@@ -17,8 +17,8 @@ edition = "2024"
 # stable (1.98) so distro toolchains can still build the workspace.
 rust-version = "1.90"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/OWNER/tasq" # TODO: replace OWNER with the real GitHub owner
-homepage = "https://github.com/OWNER/tasq" # TODO: same as repository
+repository = "https://github.com/pauc/tasq"
+homepage = "https://github.com/pauc/tasq"
 keywords = ["todo", "tasks", "markdown", "nb", "cli"]
 categories = ["command-line-utilities"]
 authors = ["Pau Compte"]
