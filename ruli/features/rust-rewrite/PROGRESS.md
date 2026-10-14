@@ -220,6 +220,23 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
 
 ### Plugin and release decisions (T-901 to T-904)
 
+- **TUI detail pane (follow-up 2026-10-14, todo 30).** Scrolling: `Model::detail_scroll`,
+  clamped by the pure `view::detail_max_scroll`, which counts rows with ratatui's own
+  wrapping (`Paragraph::line_count`, feature `unstable-rendered-line-info`) over the same
+  `view::panes` layout the frame uses; `update` resets it whenever the selection changes
+  (compared before and after every message). `PgUp`/`PgDn` page the detail only in the
+  one-pane layout. The help overlay was exactly full at 28 rows, so new keys share existing
+  rows (scroll keys on `Tab`, `v` on `E`). `shortref` moved to `tasq_core::model` without
+  regex, `Link::short_label`; `config::contract_tilde` is the inverse of `expand_tilde`
+  (whole components, a home of `/` ignored). OSC 8: ratatui-core 0.1.2 has
+  `CellDiffOption::ForcedWidth`; each label cell carries a whole
+  `ESC]8;;url ESC\ c ESC]8;;ESC\` symbol, because a redraw writes only the cells that
+  changed. The detail is drawn on a page buffer as tall as itself, links are found there
+  (following wrapped rows), and the visible rows are copied. `v`: `Cmd::View(id, pause)`;
+  less's command line is read after `$LESS`, so `tasq ui` appends `-+F -+X` to the pager
+  (`--set ui.pager=...` for the child) to keep less open on the alternate screen; another
+  pager keeps the key pause. `tasq ui`'s model builder is now a tested `commands::ui::model`.
+  Mutants: 0 missed on each slice's diff (TUI with `--no-config --in-diff`).
 - **CLI field commands (follow-up 2026-10-12, todo 31).** `tasq rename`, `due`, `tag`,
   `desc` (TEXT, `-` for stdin, no TEXT prints, `""` clears, `--edit`), each with `--note` and
   `--json`; `--note` added to `set`/`done`/`reopen` as an alias of the positional note (both is
