@@ -575,7 +575,7 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `create` | `c` | list | open the create view (the edit view's fields, empty; a Worktree box with worktrees enabled) |
 | `edit` | `e` | list | open the edit view (title, status, priority, due, project, tags, description) |
 | `editor` | `E` | list | open the file in the editor |
-| `view` | `v` | list | `tasq view <id>`: the task rendered by glow, in the pager; a key returns to the list |
+| `view` | `v` | list | `tasq view <id>`: the task rendered by glow, in the pager. With less (`ui.pager`), it runs with `-+F -+X` so it stays open full screen and `q` returns; with another pager, a key returns after it |
 | `launch` | `enter` | list | `tasq pick <id>` here |
 | `launch-detached` | `ctrl+enter` | list | `tasq pick <id> --detached` |
 | `launch-detached-stay` | `shift+enter` | list | `tasq pick <id> --detached --no-focus` |

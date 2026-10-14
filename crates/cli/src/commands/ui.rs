@@ -49,11 +49,23 @@ fn model(app: &App, keys: KeyMap, today: chrono::NaiveDate) -> Model {
         .with_worktrees(app.worktrees())
         .with_home(app.opts.home.clone())
         .with_osc8(!ui.no_osc8)
+        .with_view_pause(view_pager(&ui.pager).is_none())
         .with_default_status(app.config().workflow.default_status.clone())
         .with_default_project(Some(
             crate::commands::existing_dir(&app.opts.cwd).unwrap_or_else(|| app.opts.cwd.clone()),
         ))
         .with_sources(source_choices(app.config()))
+}
+
+/// The pager `v` runs `tasq view` with when `pager` is less: the same
+/// command with `-+F -+X` last, so less stays open on a short task and
+/// uses the alternate screen (cleared on `q`) whatever `pager` and `$LESS`
+/// say, read before the command line. `None` for any other pager, which
+/// is left alone (the UI then waits for a key after it).
+fn view_pager(pager: &str) -> Option<String> {
+    let argv = shell_words::split(pager).ok()?;
+    let program = Path::new(argv.first()?).file_name()?;
+    (program == "less").then(|| format!("{pager} -+F -+X"))
 }
 
 /// Runs `ui`.
@@ -147,6 +159,9 @@ impl Host for CliHost<'_> {
 
     fn view(&mut self, id: &TaskId) -> HostResult {
         let mut args = self.global_args.clone();
+        if let Some(pager) = view_pager(&self.app.config().ui.pager) {
+            args.extend(["--set".to_owned(), format!("ui.pager={pager}")]);
+        }
         args.extend(["view".to_owned(), id.to_string()]);
         wait_for(Command::new(&self.exe).args(&args), "tasq view")
             .map(|()| format!("[{id}] viewed"))
@@ -313,10 +328,35 @@ mod tests {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 14).unwrap();
         let m = model(&app_in(dir.path(), ""), KeyMap::default(), today);
         assert!(m.osc8, "links are on by default");
+        assert!(!m.view_pauses, "less is kept open, q returns");
         assert_eq!(m.home.as_deref(), Some(dir.path()));
         assert_eq!(m.today, today);
-        let app = app_in(dir.path(), "[ui]\nno_osc8 = true\n");
-        assert!(!model(&app, KeyMap::default(), today).osc8);
+        let app = app_in(dir.path(), "[ui]\nno_osc8 = true\npager = \"bat -p\"\n");
+        let m = model(&app, KeyMap::default(), today);
+        assert!(!m.osc8);
+        assert!(m.view_pauses, "another pager may quit at once");
+    }
+
+    #[test]
+    fn view_keeps_less_open_on_the_alternate_screen() {
+        assert_eq!(
+            view_pager("less -RFX").as_deref(),
+            Some("less -RFX -+F -+X")
+        );
+        assert_eq!(view_pager("less").as_deref(), Some("less -+F -+X"));
+        assert_eq!(
+            view_pager("/usr/bin/less -R").as_deref(),
+            Some("/usr/bin/less -R -+F -+X")
+        );
+        for other in [
+            "bat -p --paging=always",
+            "lesspipe",
+            "cat",
+            "",
+            "'unbalanced",
+        ] {
+            assert_eq!(view_pager(other), None, "{other}");
+        }
     }
 
     fn host(app: &App) -> CliHost<'_> {

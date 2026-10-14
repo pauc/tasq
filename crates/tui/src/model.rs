@@ -205,6 +205,10 @@ pub struct Model {
     /// Whether the detail's link labels are OSC 8 hyperlinks (off with
     /// `ui.no_osc8`).
     pub osc8: bool,
+    /// Whether `v` waits for a key after `tasq view`: its pager may quit
+    /// at once on a short task (`less -F`), unless the front end keeps it
+    /// open. On by default.
+    pub view_pauses: bool,
     /// Group colours (`[ui.colors]`).
     pub theme: Theme,
     /// Whether colours are used at all (`false` under `NO_COLOR`).
@@ -270,6 +274,7 @@ impl Model {
             default_project: None,
             home: None,
             osc8: false,
+            view_pauses: true,
             theme,
             color,
             keys: KeyMap::default(),
@@ -349,6 +354,13 @@ impl Model {
     #[must_use]
     pub fn with_osc8(mut self, osc8: bool) -> Self {
         self.osc8 = osc8;
+        self
+    }
+
+    /// Whether `v` waits for a key after `tasq view`.
+    #[must_use]
+    pub fn with_view_pause(mut self, pause: bool) -> Self {
+        self.view_pauses = pause;
         self
     }
 

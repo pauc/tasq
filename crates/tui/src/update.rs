@@ -134,7 +134,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
             }
         }
         Msg::Editor => return with_selection(model, Cmd::Editor),
-        Msg::View => return with_selection(model, Cmd::View),
+        Msg::View => return view_task(model),
         Msg::Launch | Msg::Enter => {
             return with_selection(model, |id| Cmd::Launch(id, LaunchTarget::Here));
         }
@@ -171,6 +171,13 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         }
     }
     Vec::new()
+}
+
+/// `v`: `tasq view` on the selected task, pausing after it as the
+/// front end said.
+fn view_task(model: &mut Model) -> Vec<Cmd> {
+    let pause = model.view_pauses;
+    with_selection(model, |id| Cmd::View(id, pause))
 }
 
 /// The page keys move the selection, or page the detail when it
@@ -670,7 +677,10 @@ mod tests {
             update(&mut m, Msg::Editor),
             vec![Cmd::Editor(TaskId::from(9))]
         );
-        assert_eq!(update(&mut m, Msg::View), vec![Cmd::View(TaskId::from(9))]);
+        assert_eq!(
+            update(&mut m, Msg::View),
+            vec![Cmd::View(TaskId::from(9), true)]
+        );
         // An open task is not refused.
         update(&mut m, Msg::Top);
         update(&mut m, Msg::BeginStatus);
@@ -1761,7 +1771,16 @@ mod tests {
             update(&mut m, Msg::Editor),
             vec![Cmd::Editor(TaskId::from(1))]
         );
-        assert_eq!(update(&mut m, Msg::View), vec![Cmd::View(TaskId::from(1))]);
+        assert_eq!(
+            update(&mut m, Msg::View),
+            vec![Cmd::View(TaskId::from(1), true)],
+            "a pager that may quit at once"
+        );
+        m.view_pauses = false;
+        assert_eq!(
+            update(&mut m, Msg::View),
+            vec![Cmd::View(TaskId::from(1), false)]
+        );
         assert_eq!(
             update(&mut m, Msg::Launch),
             vec![Cmd::Launch(TaskId::from(1), LaunchTarget::Here)]

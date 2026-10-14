@@ -146,8 +146,11 @@ pub enum Cmd {
     Revise(TaskId, Box<Fields>),
     /// Open the task's file in the editor (terminal released meanwhile).
     Editor(TaskId),
-    /// `tasq view <id>` (terminal released meanwhile).
-    View(TaskId),
+    /// `tasq view <id>` (terminal released meanwhile), then a pause for a
+    /// key when the pager may quit at once (see [`Model::view_pauses`]).
+    ///
+    /// [`Model::view_pauses`]: crate::model::Model::view_pauses
+    View(TaskId, bool),
     /// Open a work session on the task: in this terminal (released
     /// meanwhile) or in a new window (the UI keeps the screen).
     Launch(TaskId, LaunchTarget),
@@ -174,18 +177,18 @@ impl Cmd {
     pub fn releases_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Editor(_) | Self::View(_) | Self::Launch(_, LaunchTarget::Here) | Self::Sync(_)
+            Self::Editor(_) | Self::View(..) | Self::Launch(_, LaunchTarget::Here) | Self::Sync(_)
         )
     }
 
     /// Whether the runtime should wait for a key before redrawing, so the
     /// command's output can be read (an editor needs no such pause; a
-    /// pager may quit at once on a short task).
+    /// view only when its pager may quit at once).
     pub fn pauses_after(&self) -> bool {
-        matches!(
-            self,
-            Self::View(_) | Self::Launch(_, LaunchTarget::Here) | Self::Sync(_)
-        )
+        match self {
+            Self::View(_, pause) => *pause,
+            _ => matches!(self, Self::Launch(_, LaunchTarget::Here) | Self::Sync(_)),
+        }
     }
 }
 
@@ -347,8 +350,11 @@ mod tests {
         let id = TaskId::from(1);
         assert!(Cmd::Editor(id.clone()).releases_terminal());
         // `tasq view`'s pager may quit at once (`less -F` on a short task).
-        assert!(Cmd::View(id.clone()).releases_terminal());
-        assert!(Cmd::View(id.clone()).pauses_after());
+        for pause in [true, false] {
+            let view = Cmd::View(id.clone(), pause);
+            assert!(view.releases_terminal(), "{view:?}");
+            assert_eq!(view.pauses_after(), pause, "{view:?}");
+        }
         assert!(Cmd::Launch(id.clone(), LaunchTarget::Here).releases_terminal());
         assert!(Cmd::Sync(Vec::new()).releases_terminal());
         for focus in [true, false] {
