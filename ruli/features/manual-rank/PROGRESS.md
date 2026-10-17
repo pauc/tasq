@@ -8,7 +8,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
 |---|---|---|---|
 | RK-001 | `Store::update_many` (prefactor) | done | 2026-10-17; `cargo mutants --in-diff`: 11 mutants, 10 caught, 1 unviable, 0 missed; commit: ec39107 |
 | RK-002 | Rank in the file orders lists and `next` | done | 2026-10-17; `cargo mutants --in-diff`: 20 mutants, 16 caught, 4 unviable, 0 missed; commits: b0573c9, 7155e25 (review fix: done list ignores a kept rank) |
-| RK-003 | `tasq move --top` / `--unrank` | done | 2026-10-17; `cargo mutants --in-diff`: 11 mutants, 10 caught, 1 unviable, 0 missed (core); `--no-config -f crates/cli/src/commands/rank.rs -f crates/cli/src/commands/mod.rs`: 10 mutants, 9 caught, 1 unviable, 0 missed (the config excludes `crates/cli/**`, so the CLI bar needs this one-off run); commit: 3710eac |
+| RK-003 | `tasq move --top` / `--unrank` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 82 mutants, 63 caught, 19 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs -f crates/cli/src/commands/mod.rs`: 10 mutants, 9 caught, 1 unviable, 0 missed (the config excludes `crates/cli/**`, so the CLI bar needs this one-off run); commits: 3710eac, review fix (see Learnings) |
 | RK-004 | `tasq move --before` / `--after` | ready | blocked by: none (RK-001, RK-003 done) |
 | RK-005 | Renumber a group when the gap runs out | blocked | blocked by: RK-004 |
 | RK-006 | `ctrl+k` / `ctrl+j` in the TUI | blocked | blocked by: RK-004 |
@@ -41,7 +41,13 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
   one task per status group, so every CLI move test adds a second in-progress task first
   (`store reconcile` gives it id 8). `tasq move` has no `--note`: a rank is a sort hint, not
   something worth a progress line. `BatchError` became an `EditError` variant now rather than
-  in RK-004, since `move_task` already writes through `update_many`.
+  in RK-004, since `move_task` already writes through `update_many`. Review follow-up: the
+  clap errors (no target, two targets) are insta snapshots, and a `--top` on a hand-written,
+  invalid `## Rank` is covered: the move replaces the section's body (RK-002's `set_rank`), so
+  "the next move overwrites them" (ADR 0025) holds for `--top`. `--unrank` on such a task is a
+  no-op that keeps the bytes: the model reads it as unranked (`None`), the diff sees no change,
+  and removing the section would need the store to know a section exists for a value the model
+  does not have. That is US36's "kept as written"; a fix belongs with the format, not here.
 
 ## Blockers
 

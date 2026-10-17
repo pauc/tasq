@@ -1,7 +1,8 @@
 //! The small edits of the original script, `set`, `log` and `done`, as
 //! operations on a [`Store`], plus [`reopen`], the inverse of `done`,
-//! [`revise`], the TUI form's save, and the one-field edits of the CLI
-//! ([`rename`], [`due`], [`retag`], [`describe`]).
+//! [`revise`], the TUI form's save, the one-field edits of the CLI
+//! ([`rename`], [`due`], [`retag`], [`describe`]) and [`move_task`], the
+//! rank within a status group (`tasq move`, ADR 0025).
 //!
 //! The CLI (`tasq set/log/done`) and the TUI (`t`, `p`, `l`, `d`) both call
 //! these, so the two front ends cannot drift (FR-10): a status change is

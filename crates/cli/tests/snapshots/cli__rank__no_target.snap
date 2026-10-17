@@ -1,0 +1,10 @@
+---
+source: crates/cli/tests/cli.rs
+expression: stderr(&out)
+---
+error: the following required arguments were not provided:
+  <--top|--unrank>
+
+Usage: tasq move <--top|--unrank> <ID>
+
+For more information, try '--help'.
