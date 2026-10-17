@@ -4,6 +4,6 @@ expression: stderr(&out)
 ---
 error: the argument '--top' cannot be used with '--unrank'
 
-Usage: tasq move <--top|--unrank> <ID>
+Usage: tasq move <--before <ID>|--after <ID>|--top|--unrank> <ID>
 
 For more information, try '--help'.

@@ -26,7 +26,7 @@ Commands:
   due          Set or clear the due date of a task, optionally logging a note
   tag          Add or remove topic tags of a task, optionally logging a note
   desc         Print, set or clear the description of a task
-  move         Move a task within its status group: to the top, or back to the natural order
+  move         Move a task within its status group: before or after another task, to the top, or back to the natural order
   next         Open a work session on the next task: the first in-progress one, else the first ready one
   pick         Open a work session on a specific task
   view         Show a task: rendered with glow on a terminal, plain markdown otherwise

@@ -518,23 +518,35 @@ pub enum EditCommand {
         note: Option<String>,
     },
 
-    /// Move a task within its status group: to the top, or back to the natural order.
+    /// Move a task within its status group: before or after another task, to the top, or back to the natural order.
     ///
     /// A task's rank is its manually set place among the tasks of its
     /// status group; ranked tasks come before unranked ones, smallest rank
-    /// first, and unranked tasks keep the priority, due, id order. --top
-    /// puts the task first in its group, above every priority; --unrank
-    /// drops its rank. Lists, the UI and `tasq next` follow. Only the
-    /// task's own file is written, and the rank is never displayed. Prints
-    /// `[id] moved to the top` or `[id] unranked`, or `[id] already at the
-    /// top` / `[id] already unranked` when the task stays where it is
+    /// first, and unranked tasks keep the priority, due, id order. --before
+    /// and --after put the task next to another task of the same group (an
+    /// anchor in another group, or the task itself, is refused); --top
+    /// puts it first in its group, above every priority; --unrank drops its
+    /// rank. Lists, the UI and `tasq next` follow. Usually only the task's
+    /// own file is written; the first move into the unranked part of a
+    /// group also ranks the tasks above the destination, in one commit, and
+    /// names them (`(also ranked: 1, 8)`). The rank is never displayed.
+    /// Prints `[id] moved before task N` / `after task N` / `to the top` or
+    /// `[id] unranked`, or `[id] already ...` when the task stays where it is
     /// (then nothing is written). A done task is refused.
-    #[command(after_help = "Example:\n  tasq move 31 --top")]
-    #[command(group(clap::ArgGroup::new("target").required(true).args(["top", "unrank"])))]
+    #[command(
+        after_help = "Examples:\n  tasq move 31 --before 12\n  tasq move 31 --after 12\n  tasq move 31 --top"
+    )]
+    #[command(group(clap::ArgGroup::new("target").required(true).args(["before", "after", "top", "unrank"])))]
     Move {
         /// Task id.
         #[arg(value_name = "ID")]
         id: String,
+        /// Put the task directly before this task of the same status group.
+        #[arg(long, value_name = "ID")]
+        before: Option<String>,
+        /// Put the task directly after this task of the same status group.
+        #[arg(long, value_name = "ID")]
+        after: Option<String>,
         /// Put the task first in its status group.
         #[arg(long)]
         top: bool,

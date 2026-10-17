@@ -1130,6 +1130,155 @@ mod rank {
             .stderr("tasq: no task with id 99\n");
     }
 
+    /// Task 9, a second `#C` in-progress task, below task 8 by id.
+    const THIRD: &str = "20260908160000.todo.md";
+
+    /// The fixture plus tasks 8 and 9, two `#C` in-progress tasks below
+    /// task 1, with `rank_8` / `rank_9` (`## Rank` and its body, or
+    /// nothing) in their files.
+    fn env_with_three_in_progress_tasks(rank_8: &str, rank_9: &str) -> TestEnv {
+        let env = TestEnv::fixture();
+        env.write_task(
+            SECOND,
+            &format!(
+                "# [ ] Second\n\n{rank_8}## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n"
+            ),
+        );
+        env.write_task(
+            THIRD,
+            &format!(
+                "# [ ] Third\n\n{rank_9}## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-08 16:00: created\n"
+            ),
+        );
+        env.tasq().args(["store", "reconcile"]).assert().success();
+        env
+    }
+
+    #[test]
+    fn before_and_after_place_the_task_next_to_the_anchor() {
+        let env = env_with_three_in_progress_tasks("", "");
+        env.tasq()
+            .args(["move", "9", "--before", "1"])
+            .assert()
+            .success()
+            .stdout("[9] moved before task 1\n");
+        assert_eq!(
+            env.read_task(THIRD),
+            "# [ ] Third\n\n## Rank\n\n1024\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-08 16:00: created\n"
+        );
+        assert_eq!(next_task(&env), "Task: [9] Third");
+        // Into the unranked part: tasks 1 and 8 get ranks first.
+        env.tasq()
+            .args(["move", "9", "--after", "8"])
+            .assert()
+            .success()
+            .stdout("[9] moved after task 8 (also ranked: 1, 8)\n");
+        assert!(env.read_task(FIRST).contains("## Rank\n\n1024\n"));
+        assert!(env.read_task(SECOND).contains("## Rank\n\n2048\n"));
+        assert!(env.read_task(THIRD).contains("## Rank\n\n3072\n"));
+        assert_eq!(
+            next_task(&env),
+            "Task: [1] Rewrite the tasks script in Rust"
+        );
+        // Between two ranked neighbours: the midpoint, one file written.
+        let first = env.read_task(FIRST);
+        let second = env.read_task(SECOND);
+        env.tasq()
+            .args(["move", "9", "--before", "8"])
+            .assert()
+            .success()
+            .stdout("[9] moved before task 8\n");
+        assert!(env.read_task(THIRD).contains("## Rank\n\n1536\n"));
+        assert_eq!(env.read_task(FIRST), first);
+        assert_eq!(env.read_task(SECOND), second);
+    }
+
+    #[test]
+    fn after_json_lists_the_other_tasks_ranked() {
+        let env = env_with_three_in_progress_tasks("", "");
+        let out = env
+            .tasq()
+            .args(["move", "1", "--after", "9", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_snapshot!(stdout(&out));
+    }
+
+    #[test]
+    fn a_task_already_beside_its_anchor_is_left_alone() {
+        let env = env_with_three_in_progress_tasks("", "");
+        let first = env.read_task(FIRST);
+        let second = env.read_task(SECOND);
+        env.tasq()
+            .args(["move", "8", "--after", "1"])
+            .assert()
+            .success()
+            .stdout("[8] already after task 1\n");
+        env.tasq()
+            .args(["move", "1", "--before", "8"])
+            .assert()
+            .success()
+            .stdout("[1] already before task 8\n");
+        let out = env
+            .tasq()
+            .args(["move", "8", "--before", "9", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["changed"], serde_json::json!([]));
+        assert_eq!(value["ranked"], serde_json::json!([]));
+        assert_eq!(value["task"].get("rank"), None);
+        assert_eq!(env.read_task(FIRST), first);
+        assert_eq!(env.read_task(SECOND), second);
+    }
+
+    #[test]
+    fn an_anchor_outside_the_group_is_refused() {
+        let env = env_with_a_second_in_progress_task("");
+        let before = env.read_task(SECOND);
+        env.tasq()
+            .args(["move", "8", "--before", "8"])
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr("tasq: task 8 cannot be moved relative to itself\n");
+        env.tasq()
+            .args(["move", "8", "--after", "3"])
+            .assert()
+            .code(1)
+            .stderr("tasq: task 3 is ready but task 8 is in-progress; a move stays within one status group\n");
+        env.tasq()
+            .args(["move", "8", "--before", "4"])
+            .assert()
+            .code(1)
+            .stderr("tasq: task 4 is done but task 8 is in-progress; a move stays within one status group\n");
+        env.tasq()
+            .args(["move", "7", "--after", "8"])
+            .assert()
+            .code(1)
+            .stderr("tasq: task 8 is in-progress but task 7 is no-status; a move stays within one status group\n");
+        env.tasq()
+            .args(["move", "8", "--before", "99"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+        assert_eq!(env.read_task(SECOND), before);
+    }
+
+    #[test]
+    fn a_slot_with_no_rank_left_is_refused() {
+        let env = env_with_three_in_progress_tasks("## Rank\n\n1024\n\n", "## Rank\n\n1025\n\n");
+        let before = env.read_task(FIRST);
+        env.tasq()
+            .args(["move", "1", "--after", "8"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no rank left between 1024 and 1025: the group's ranks need renumbering, which tasq does not do yet\n");
+        assert_eq!(env.read_task(FIRST), before);
+    }
+
     #[test]
     fn exactly_one_target_is_required() {
         let env = TestEnv::fixture();
@@ -1143,6 +1292,16 @@ mod rank {
             .unwrap();
         assert_eq!(out.status.code(), Some(2));
         assert_snapshot!("two_targets", stderr(&out));
+        env.tasq()
+            .args(["move", "3", "--before", "1", "--after", "2"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("cannot be used with"));
+        env.tasq()
+            .args(["move", "3", "--before"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("a value is required"));
         env.tasq().args(["move"]).assert().code(2);
     }
 }

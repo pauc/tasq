@@ -3,8 +3,8 @@ source: crates/cli/tests/cli.rs
 expression: stderr(&out)
 ---
 error: the following required arguments were not provided:
-  <--top|--unrank>
+  <--before <ID>|--after <ID>|--top|--unrank>
 
-Usage: tasq move <--top|--unrank> <ID>
+Usage: tasq move <--before <ID>|--after <ID>|--top|--unrank> <ID>
 
 For more information, try '--help'.
