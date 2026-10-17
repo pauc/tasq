@@ -376,3 +376,27 @@ fn double_hash_tokens_are_neither_statuses_nor_priorities() {
     assert_eq!(t.status, None);
     assert_eq!(t.priority, Priority::B);
 }
+
+#[test]
+fn rank_takes_the_first_integer_line_and_keeps_anything_else() {
+    assert_eq!(
+        task("# [ ] T\n\n## Rank\n\n\n  1024  \nignored\n").rank,
+        Some(1024)
+    );
+    assert_eq!(task("# [ ] T\n\n## Rank\n\n-2048\n").rank, Some(-2048));
+    assert_eq!(
+        task("# [ ] T\n\n## Rank\n\n1024\n\n## Rank\n\n2048\n").rank,
+        Some(1024)
+    );
+    // A done task keeps its rank for when it comes back (ADR 0025).
+    assert_eq!(task("# [x] T\n\n## Rank\n\n1024\n").rank, Some(1024));
+    // Anything that is not an integer is no rank, and stays in the file.
+    let text = "# [ ] T\n\n## Rank\n\nfirst\n";
+    let parsed = format::parse(text, TaskId::from(1), &Workflow::default()).unwrap();
+    assert_eq!(parsed.task.rank, None);
+    assert_eq!(format::render(&parsed.document), text);
+    assert_eq!(task("# [ ] T\n\n## Rank\n\n1.5\n").rank, None);
+    assert_eq!(task("# [ ] T\n\n## Rank\n\n## Tags\n\n#B\n").rank, None);
+    assert_eq!(task("# [ ] T\n\n## Tags\n\n#B\n").rank, None);
+    assert_eq!(section::RANK, "Rank");
+}

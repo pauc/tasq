@@ -170,6 +170,49 @@ mod list {
         assert_eq!(stdout(&explicit), stdout(&out));
     }
 
+    /// A hand-written `## Rank` puts a `#C` task above the `#A` one of its
+    /// status group, in text and JSON alike; the rank itself is not shown.
+    #[test]
+    fn ranked_tasks_come_first_in_their_group() {
+        let env = TestEnv::fixture();
+        env.write_task(
+            "20260907150000.todo.md",
+            "# [ ] Ranked\n\n## Rank\n\n1024\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
+        );
+        env.write_task(
+            "20260908160000.todo.md",
+            "# [ ] Ranked first\n\n## Rank\n\n-1024\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-08 16:00: created\n",
+        );
+        env.write_task(
+            "20260909170000.todo.md",
+            "# [ ] Rank by hand\n\n## Rank\n\nsoon\n\n## Tags\n\n#A #in-progress\n\n## Progress\n\n- 2026-10-09 17:00: created\n",
+        );
+        env.tasq().args(["store", "reconcile"]).assert().success();
+        let out = env.tasq().arg("in-progress").output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            "in-progress\n  \
+             [ 9] #C Ranked first\n  \
+             [ 8] #C Ranked\n  \
+             [ 1] #A Rewrite the tasks script in Rust (due in 4d)  #gitlab \n  \
+             [10] #A Rank by hand\n\n"
+        );
+        assert!(!stdout(&out).contains("1024"), "{}", stdout(&out));
+        let json = env.tasq().args(["in-progress", "--json"]).output().unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        let ids: Vec<&str> = value["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["9", "8", "1", "10"]);
+        assert_eq!(value["tasks"][0]["rank"], -1024);
+        assert_eq!(value["tasks"][2].get("rank"), None);
+        assert_eq!(value["tasks"][3].get("rank"), None);
+    }
+
     #[test]
     fn by_tag() {
         let env = TestEnv::fixture();
@@ -2789,6 +2832,68 @@ mod apply {
         assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), mtime);
     }
 
+    /// Task 3 (`ready`, `#B`) with a hand-written rank.
+    const RANKED: &str = "# [ ] Answer the support ticket\n\n## Description\n\nCustomer asks about the export format.\n\n## Rank\n\n1024\n\n## Tags\n\n#support #B #ready\n\n## Progress\n\n- 2026-10-02 10:00: created via tasks create\n";
+
+    #[test]
+    fn rank_is_a_number_in_json_kept_without_the_key_and_cleared_by_null() {
+        let env = TestEnv::fixture();
+        env.write_task("20260902100000.todo.md", RANKED);
+        let json = env.tasq().args(["view", "3", "--json"]).output().unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(value["task"]["rank"], 1024);
+        // The round trip is a no-op on a ranked task.
+        env.tasq()
+            .arg("apply")
+            .write_stdin(json.stdout.clone())
+            .assert()
+            .success()
+            .stdout("[3] applied\n");
+        assert_eq!(env.read_task("20260902100000.todo.md"), RANKED);
+        // A document without the key (older or hand-written) keeps the rank.
+        value["task"].as_object_mut().unwrap().remove("rank");
+        value["task"]["priority"] = "A".into();
+        env.tasq()
+            .arg("apply")
+            .write_stdin(value.to_string())
+            .assert()
+            .success();
+        assert_eq!(
+            env.read_task("20260902100000.todo.md"),
+            RANKED.replace("#support #B #ready", "#support #ready #A")
+        );
+        // An unranked task has no `rank` key, and `null` clears the rank.
+        let unranked = env.tasq().args(["view", "1", "--json"]).output().unwrap();
+        let unranked: serde_json::Value = serde_json::from_slice(&unranked.stdout).unwrap();
+        assert_eq!(unranked["task"].get("rank"), None);
+        value["task"]["rank"] = serde_json::Value::Null;
+        value["task"]["priority"] = "B".into();
+        env.tasq()
+            .arg("apply")
+            .write_stdin(value.to_string())
+            .assert()
+            .success();
+        assert_eq!(
+            env.read_task("20260902100000.todo.md"),
+            RANKED
+                .replace("## Rank\n\n1024\n\n", "")
+                .replace("#support #B #ready", "#support #ready #B")
+        );
+        // And a number sets it, at the same place in the file.
+        value["task"]["rank"] = 2048.into();
+        env.tasq()
+            .arg("apply")
+            .write_stdin(value.to_string())
+            .assert()
+            .success();
+        assert_eq!(
+            env.read_task("20260902100000.todo.md"),
+            RANKED
+                .replace("1024", "2048")
+                .replace("#support #B #ready", "#support #ready #B")
+        );
+    }
+
     #[test]
     fn edits_go_through_the_store() {
         let env = TestEnv::fixture();
@@ -2928,6 +3033,28 @@ mod launch {
         assert_eq!(
             env.normalize(&stdout(&out)),
             "Task: [1] Rewrite the tasks script in Rust\nStarting in project: [ROOT]/home\nLauncher: shell (dry run)\ncd [ROOT]/home\nTASQ_TASK_ID=1 TASQ_NOTEBOOK=home exec sh\n"
+        );
+    }
+
+    #[test]
+    fn next_picks_the_top_ranked_task_of_the_group() {
+        let env = TestEnv::fixture();
+        env.write_task(
+            "20260907150000.todo.md",
+            "# [ ] Ranked\n\n## Rank\n\n1024\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
+        );
+        env.tasq().args(["store", "reconcile"]).assert().success();
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["next", "--dry-run", "--launcher", "shell"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(
+            stdout(&out).starts_with("Task: [8] Ranked\n"),
+            "{}",
+            stdout(&out)
         );
     }
 

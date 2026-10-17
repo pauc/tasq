@@ -22,20 +22,38 @@ pub fn run(app: &App, file: Option<&Path>) -> Result<()> {
         std::io::stdin().read_to_string(&mut text)?;
         text
     };
-    let (mut task, has_worktrees) = parse_document(&text)?;
+    let (mut task, keys) = parse_document(&text)?;
     let mut store = app.open_store()?;
-    if !has_worktrees {
-        // Documents written with worktrees disabled leave the key out; that
-        // means "unchanged", never "drop them" (ADR 0022).
-        task.worktrees = store.get(&task.id)?.worktrees;
+    if !(keys.worktrees && keys.rank) {
+        // Documents written with worktrees disabled leave that key out, and
+        // documents written before ranks existed (or with none) leave `rank`
+        // out; a missing key means "unchanged", never "drop it" (ADR 0022,
+        // ADR 0025). `"rank": null` is present and clears the rank.
+        let stored = store.get(&task.id)?;
+        if !keys.worktrees {
+            task.worktrees = stored.worktrees;
+        }
+        if !keys.rank {
+            task.rank = stored.rank;
+        }
     }
     store.update(&task)?;
     finish(app, &store, &task.id, &format!("[{}] applied\n", task.id))
 }
 
-/// The task inside a schema-1 document, and whether it carries a
-/// `worktrees` key. Errors name the offending field.
-pub fn parse_document(text: &str) -> Result<(Task, bool)> {
+/// Which optional keys a `task` document carries: a missing one means
+/// "unchanged" to [`run`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Keys {
+    /// `worktrees` (left out with worktrees disabled, ADR 0022).
+    pub worktrees: bool,
+    /// `rank` (left out when unset, ADR 0025).
+    pub rank: bool,
+}
+
+/// The task inside a schema-1 document, and which optional keys it carries.
+/// Errors name the offending field.
+pub fn parse_document(text: &str) -> Result<(Task, Keys)> {
     let value: Value = serde_json::from_str(text)
         .map_err(|e| CliError::user(format!("apply: invalid JSON: {e}")))?;
     let Value::Object(fields) = value else {
@@ -56,9 +74,12 @@ pub fn parse_document(text: &str) -> Result<(Task, bool)> {
     let task = fields
         .get("task")
         .ok_or_else(|| CliError::user("apply: missing field `task`"))?;
-    let has_worktrees = task.get("worktrees").is_some();
+    let keys = Keys {
+        worktrees: task.get("worktrees").is_some(),
+        rank: task.get("rank").is_some(),
+    };
     serde_json::from_value::<Task>(task.clone())
-        .map(|t| (t, has_worktrees))
+        .map(|t| (t, keys))
         .map_err(|e| CliError::user(format!("apply: invalid task: {e}")))
 }
 
@@ -96,19 +117,39 @@ mod tests {
 
     #[test]
     fn a_valid_document_parses() {
-        let (task, has_worktrees) = parse_document(
-            "{\"schema\":1,\"task\":{\"id\":\"3\",\"title\":\"T\",\"done\":false,\"status\":\"ready\",\"priority\":\"A\",\"due\":\"2026-10-10\",\"description\":null,\"project\":null,\"tags\":[\"x\"],\"related\":[],\"merge_requests\":[],\"worktrees\":[],\"sessions\":[],\"progress\":[{\"at\":\"2026-10-04 10:15\",\"note\":\"n\"}],\"origin\":null}}",
+        let (task, keys) = parse_document(
+            "{\"schema\":1,\"task\":{\"id\":\"3\",\"title\":\"T\",\"done\":false,\"status\":\"ready\",\"priority\":\"A\",\"due\":\"2026-10-10\",\"description\":null,\"project\":null,\"tags\":[\"x\"],\"related\":[],\"merge_requests\":[],\"worktrees\":[],\"sessions\":[],\"progress\":[{\"at\":\"2026-10-04 10:15\",\"note\":\"n\"}],\"origin\":null,\"rank\":null}}",
         )
         .unwrap();
         assert_eq!(task.title, "T");
         assert_eq!(task.priority, tasq_core::model::Priority::A);
         assert_eq!(task.progress.len(), 1);
-        assert!(has_worktrees);
-        let (task, has_worktrees) = parse_document(
+        assert_eq!(
+            keys,
+            Keys {
+                worktrees: true,
+                rank: true
+            }
+        );
+        assert_eq!(task.rank, None);
+        let (task, keys) = parse_document(
             "{\"schema\":1,\"task\":{\"id\":\"3\",\"title\":\"T\",\"done\":false,\"status\":\"ready\",\"priority\":\"B\",\"due\":null,\"description\":null,\"project\":null,\"tags\":[],\"related\":[],\"merge_requests\":[],\"sessions\":[],\"progress\":[],\"origin\":null}}",
         )
         .unwrap();
-        assert!(!has_worktrees);
+        assert_eq!(
+            keys,
+            Keys {
+                worktrees: false,
+                rank: false
+            }
+        );
         assert_eq!(task.worktrees, Vec::new());
+        assert_eq!(task.rank, None);
+        let (task, keys) = parse_document(
+            "{\"schema\":1,\"task\":{\"id\":\"3\",\"title\":\"T\",\"done\":false,\"status\":\"ready\",\"priority\":\"B\",\"due\":null,\"description\":null,\"project\":null,\"tags\":[],\"related\":[],\"merge_requests\":[],\"sessions\":[],\"progress\":[],\"origin\":null,\"rank\":-2048}}",
+        )
+        .unwrap();
+        assert!(keys.rank);
+        assert_eq!(task.rank, Some(-2048));
     }
 }

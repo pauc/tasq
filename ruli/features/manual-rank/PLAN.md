@@ -186,16 +186,16 @@ the TUI and `tasq next` follow it. The rank appears in task JSON and survives `a
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done (2026-10-17)
 
-- [ ] `Task::rank` is read from the first non-empty line of `## Rank`; a non-integer value gives no rank and the bytes are preserved.
-- [ ] Setting, replacing and removing the rank through the store writes or removes `## Rank` at the right place in the scalar chain; round trips of new fixtures are byte-identical.
-- [ ] Within a status group, ranked tasks come before unranked ones, ascending, with ties broken by priority, due, id; the done list order is unchanged.
-- [ ] `tasq next` picks the top ranked task of the first non-empty next status.
-- [ ] Task JSON has `rank` as a number, absent when unset; `tasq apply` without a `rank` key keeps the stored rank, `"rank": null` clears it; `view --json | apply` is a no-op on a ranked task.
-- [ ] A status change and a close/reopen keep the rank.
-- [ ] `docs/file-format.md` and `docs/json.md` document the section and the field.
-- [ ] Zero missed mutants in `format`, `query` and the store diff.
+- [x] `Task::rank` is read from the first non-empty line of `## Rank`; a non-integer value gives no rank and the bytes are preserved.
+- [x] Setting, replacing and removing the rank through the store writes or removes `## Rank` at the right place in the scalar chain; round trips of new fixtures are byte-identical.
+- [x] Within a status group, ranked tasks come before unranked ones, ascending, with ties broken by priority, due, id; the done list order is unchanged.
+- [x] `tasq next` picks the top ranked task of the first non-empty next status.
+- [x] Task JSON has `rank` as a number, absent when unset; `tasq apply` without a `rank` key keeps the stored rank, `"rank": null` clears it; `view --json | apply` is a no-op on a ranked task.
+- [x] A status change and a close/reopen keep the rank.
+- [x] `docs/file-format.md` and `docs/json.md` document the section and the field.
+- [x] Zero missed mutants in `format`, `query` and the store diff.
 
 ### RK-003: `tasq move --top` and `--unrank`
 

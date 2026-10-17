@@ -6,7 +6,7 @@ refuse anything else; a future shape change bumps the number.
 
 | Command | Payload next to `"schema": 1` |
 |---|---|
-| `tasq [list ...]` | `"tasks": [Task, ...]` in display order (group order, then priority, due, id); done tasks only with `--all` (after the open ones) or `--done` |
+| `tasq [list ...]` | `"tasks": [Task, ...]` in display order (group order, then rank, priority, due, id); done tasks only with `--all` (after the open ones) or `--done` |
 | `tasq create`, `log`, `done`, `reopen`, `desc` without a value (it only prints), `view`, `project`, `worktree`, `worktree up`, `worktree release`, `session`, `mr`, `apply` | `"task": Task` as stored after the command |
 | `tasq set`, `rename`, `due`, `tag`, `desc` with TEXT, `-` or `--edit` | `"task": Task` as stored after the command, `"changed": [string]`: the fields written (`"title"`, `"description"`, `"status"`, `"priority"`, `"due"`, `"tags"`), `[]` when the task already had the value and nothing was written |
 | `tasq worktree ls` | `"worktrees": [{task, title, status, done, path, branch, exists, changes}]`: `task` is the id, `status` the task's (`"done"` for a closed task, `null` without one), `branch` `null` for a directory tracked without one, `exists` whether the directory is there, `changes` the changed paths git reports (files provisioning wrote left out; `[]` when clean), `null` when it does not exist or git cannot say |
@@ -53,7 +53,8 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
     {"at": "2026-10-04 10:15", "note": "created via tasks create"}
   ],
   "origin": null,
-  "closed_at": null
+  "closed_at": null,
+  "rank": 1024
 }
 ```
 
@@ -69,13 +70,17 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
 - `worktrees` is present only when worktrees are enabled (`worktree.enabled`, ADR 0022), in
   every document that carries a task, hook documents included. It may be left out on input,
   which leaves the stored worktrees unchanged.
+- `rank` is the task's manual place within its status group (ADR 0025), an integer, smaller
+  first; ranked tasks come before unranked ones. It is left out when the task has none. On
+  input a missing `rank` leaves the stored rank unchanged and `"rank": null` clears it.
 
 ## `tasq apply`
 
 `tasq apply` reads `{"schema": 1, "task": Task}` from stdin (or a file) and writes the task
 through the store, which applies the differences it can express: title, description, status,
-priority, due, project, topic tags, done, `closed_at`, and appended progress entries, worktrees, sessions,
-related links and merge requests. A task without a `worktrees` key keeps its stored worktrees. Anything else (a dropped progress entry, a removed link) is
+priority, due, project, topic tags, done, `closed_at`, `rank`, and appended progress entries, worktrees, sessions,
+related links and merge requests. A task without a `worktrees` key keeps its stored worktrees, and one
+without a `rank` key keeps its stored rank. Anything else (a dropped progress entry, a removed link) is
 refused with an error naming the fields, and nothing is written. Piping `tasq view --json <id>` straight back into
 `tasq apply` changes nothing.
 

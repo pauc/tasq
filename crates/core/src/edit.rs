@@ -697,6 +697,30 @@ mod tests {
     }
 
     #[test]
+    fn status_change_done_and_reopen_keep_the_rank() {
+        let mut store = store();
+        let id = TaskId::from(1);
+        let mut ranked = store.get(&id).unwrap();
+        ranked.rank = Some(1024);
+        store.update(&ranked).unwrap();
+        let task = set(
+            &mut store,
+            &id,
+            &Value::Status(Status::IN_PROGRESS),
+            None,
+            &clock(),
+        )
+        .unwrap()
+        .task;
+        assert_eq!(task.rank, Some(1024));
+        let task = done(&mut store, &id, None, &clock()).unwrap();
+        assert_eq!(task.rank, Some(1024));
+        let task = reopen(&mut store, &id, &Status::READY, None, &clock()).unwrap();
+        assert_eq!(task.rank, Some(1024));
+        assert_eq!(store.get(&id).unwrap().rank, Some(1024));
+    }
+
+    #[test]
     fn set_refuses_an_empty_note_before_writing() {
         let mut store = store();
         let before = store.get(&TaskId::from(1)).unwrap();

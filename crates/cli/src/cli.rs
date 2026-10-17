@@ -296,9 +296,10 @@ pub enum Command {
     ///
     /// The document is `{"schema": 1, "task": {...}}`; see docs/json.md.
     /// The store applies the differences it can express (title, description,
-    /// status, priority, due, project, topic tags, done, closed_at, and
+    /// status, priority, due, project, topic tags, done, closed_at, rank, and
     /// appended progress, worktrees, sessions and links) and refuses anything
-    /// else without writing.
+    /// else without writing. A missing `rank` key keeps the stored rank.
+    /// `"rank": null` clears it.
     Apply {
         /// File to read instead of stdin.
         #[arg(value_name = "FILE")]

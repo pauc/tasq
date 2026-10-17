@@ -680,6 +680,86 @@ const SCENARIOS: &[(&str, Op, Option<bool>)] = &[
         Some(false),
     ),
     (
+        "rank_replaces",
+        |d, _| {
+            ops::set_rank(d, 1024);
+            None
+        },
+        None,
+    ),
+    (
+        "rank_after_closed",
+        |d, _| {
+            ops::set_rank(d, 1024);
+            None
+        },
+        None,
+    ),
+    (
+        "rank_after_source",
+        |d, _| {
+            ops::set_rank(d, 1024);
+            None
+        },
+        None,
+    ),
+    (
+        "rank_after_due",
+        |d, _| {
+            ops::set_rank(d, 1024);
+            None
+        },
+        None,
+    ),
+    (
+        "rank_after_project",
+        |d, _| {
+            ops::set_rank(d, 1024);
+            None
+        },
+        None,
+    ),
+    (
+        "rank_after_description",
+        |d, _| {
+            ops::set_rank(d, 1024);
+            None
+        },
+        None,
+    ),
+    (
+        "rank_after_title",
+        |d, _| {
+            ops::set_rank(d, 1024);
+            None
+        },
+        None,
+    ),
+    (
+        "clear_rank_middle",
+        |d, _| {
+            let r = ops::clear_rank(d);
+            Some(r)
+        },
+        Some(true),
+    ),
+    (
+        "clear_rank_last",
+        |d, _| {
+            let r = ops::clear_rank(d);
+            Some(r)
+        },
+        Some(true),
+    ),
+    (
+        "clear_rank_missing",
+        |d, _| {
+            let r = ops::clear_rank(d);
+            Some(r)
+        },
+        Some(false),
+    ),
+    (
         "clear_project_middle",
         |d, _| {
             let r = ops::clear_project(d);
