@@ -6,16 +6,16 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
 
 | Id | Title | Status | Notes |
 |---|---|---|---|
-| RK-001 | `Store::update_many` (prefactor) | done | 2026-10-17; `cargo mutants --in-diff`: 11 mutants, 10 caught, 1 unviable, 0 missed; commit: ec39107 |
-| RK-002 | Rank in the file orders lists and `next` | done | 2026-10-17; `cargo mutants --in-diff`: 20 mutants, 16 caught, 4 unviable, 0 missed; commits: b0573c9, 7155e25 (review fix: done list ignores a kept rank) |
-| RK-003 | `tasq move --top` / `--unrank` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 82 mutants, 63 caught, 19 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs -f crates/cli/src/commands/mod.rs`: 10 mutants, 9 caught, 1 unviable, 0 missed (the config excludes `crates/cli/**`, so the CLI bar needs this one-off run); commits: 3710eac, 1fba137 (review fixes) |
-| RK-004 | `tasq move --before` / `--after` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 115 mutants, 91 caught, 24 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs`: 11 mutants, 10 caught, 1 unviable, 0 missed; commits: d1d792c, c155e74 (review fixes) |
-| RK-005 | Renumber a group when the gap runs out | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 125 mutants, 99 caught, 26 unviable, 0 missed; commits: f7f8962, 7489f6f (review fixes) |
-| RK-006 | `ctrl+k` / `ctrl+j` in the TUI | done | 2026-10-17; `cargo mutants --no-config --in-diff <(git diff main -- crates/tui)`: 27 mutants, 20 caught, 7 unviable, 0 missed (the config excludes `crates/tui/**`); after the review, `--no-config -f crates/core/src/edit.rs`: 128 mutants, 102 caught, 26 unviable, 0 missed and `-f crates/cli/src/commands/rank.rs`: 6 mutants, 5 caught, 1 unviable, 0 missed; commits: 2fbe7d7, d5e9ffe (review fixes) |
+| RK-001 | `Store::update_many` (prefactor) | done | 2026-10-17; `cargo mutants --in-diff`: 11 mutants, 10 caught, 1 unviable, 0 missed; commit: 364c9d5 |
+| RK-002 | Rank in the file orders lists and `next` | done | 2026-10-17; `cargo mutants --in-diff`: 20 mutants, 16 caught, 4 unviable, 0 missed; commits: da947b4, 36816c2 (review fix: done list ignores a kept rank) |
+| RK-003 | `tasq move --top` / `--unrank` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 82 mutants, 63 caught, 19 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs -f crates/cli/src/commands/mod.rs`: 10 mutants, 9 caught, 1 unviable, 0 missed (the config excludes `crates/cli/**`, so the CLI bar needs this one-off run); commits: 4c70461, 8faef11 (review fixes) |
+| RK-004 | `tasq move --before` / `--after` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 115 mutants, 91 caught, 24 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs`: 11 mutants, 10 caught, 1 unviable, 0 missed; commits: 1c48375, c421e59 (review fixes) |
+| RK-005 | Renumber a group when the gap runs out | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 125 mutants, 99 caught, 26 unviable, 0 missed; commits: 863d03c, 7d9e9a2 (review fixes) |
+| RK-006 | `ctrl+k` / `ctrl+j` in the TUI | done | 2026-10-17; `cargo mutants --no-config --in-diff <(git diff main -- crates/tui)`: 27 mutants, 20 caught, 7 unviable, 0 missed (the config excludes `crates/tui/**`); after the review, `--no-config -f crates/core/src/edit.rs`: 128 mutants, 102 caught, 26 unviable, 0 missed and `-f crates/cli/src/commands/rank.rs`: 6 mutants, 5 caught, 1 unviable, 0 missed; commits: d558307, 03d1193 (review fixes) |
 
 ## Learnings
 
-- 2026-10-17: design settled by grilling; ADR 0025 and `CONTEXT.md` committed (d621eae).
+- 2026-10-17: design settled by grilling; ADR 0025 and `CONTEXT.md` committed (3665873).
 - 2026-10-17 (RK-001): the batch error is its own type, `BatchError { written, error }`, not a new
   `StoreError` variant: wrapping would have forced every `match` on `Conflict` in the CLI to look
   inside, and `update_many` callers are the only ones who care about partial progress. The nb
