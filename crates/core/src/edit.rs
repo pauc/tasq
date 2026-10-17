@@ -275,11 +275,6 @@ pub enum EditError {
         /// The anchor's status group.
         anchor_group: String,
     },
-    /// No integer is left between the ranks of the slot's two neighbours.
-    #[error(
-        "no rank left between {0} and {1}: the group's ranks need renumbering, which tasq does not do yet"
-    )]
-    NoGap(i64, i64),
     /// The store refused or failed.
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -645,11 +640,11 @@ pub fn move_task(store: &mut dyn Store, id: &TaskId, target: &Target) -> Result<
         Target::Unrank => Plan::alone(None),
         Target::Before(anchor) => {
             let anchor = checked_anchor(store, &group, &task, anchor)?;
-            beside(&group, &task, anchor, Side::Before)?
+            beside(&group, &task, anchor, Side::Before)
         }
         Target::After(anchor) => {
             let anchor = checked_anchor(store, &group, &task, anchor)?;
-            beside(&group, &task, anchor, Side::After)?
+            beside(&group, &task, anchor, Side::After)
         }
     };
     let rank_changed = plan.rank != task.rank;
@@ -750,7 +745,7 @@ impl Neighbour {
 /// `group`, see [`checked_anchor`]): the group's current order with `task`
 /// taken out, and `task` put back next to the anchor. A task already in
 /// that slot gets a plan that writes nothing.
-fn beside(group: &[Task], task: &Task, anchor: &Task, side: Side) -> Result<Plan, EditError> {
+fn beside(group: &[Task], task: &Task, anchor: &Task, side: Side) -> Plan {
     let ordered = query::sort(group);
     let current = ordered
         .iter()
@@ -770,7 +765,7 @@ fn beside(group: &[Task], task: &Task, anchor: &Task, side: Side) -> Result<Plan
         Side::After => anchor_at + 1,
     };
     if slot == current {
-        return Ok(Plan::alone(task.rank));
+        return Plan::alone(task.rank);
     }
     let above = Neighbour::of(slot.checked_sub(1).map(|i| &others[i]));
     let below = Neighbour::of(others.get(slot));
@@ -781,24 +776,25 @@ fn beside(group: &[Task], task: &Task, anchor: &Task, side: Side) -> Result<Plan
                 Neighbour::Ranked(rank) => Some(rank),
                 Neighbour::Unranked | Neighbour::Absent => None,
             };
-            Ok(Plan::alone(Some(first_rank(lowest))))
+            Plan::alone(Some(first_rank(lowest)))
         }
-        // Between two ranked neighbours.
+        // Between two ranked neighbours: the midpoint, or a renumber when
+        // no integer is left between them.
         (Neighbour::Ranked(lo), Neighbour::Ranked(hi)) => {
             let mid = lo.midpoint(hi);
             if mid > lo && mid < hi {
-                Ok(Plan::alone(Some(mid)))
+                Plan::alone(Some(mid))
             } else {
-                Err(EditError::NoGap(lo, hi))
+                renumber(&others, slot)
             }
         }
         // Below the last ranked task; whatever follows is unranked and
         // sorts after every ranked task anyway.
         (Neighbour::Ranked(lo), Neighbour::Unranked | Neighbour::Absent) => {
-            Ok(Plan::alone(Some(lo + RANK_STEP)))
+            Plan::alone(Some(lo + RANK_STEP))
         }
         // The slot is in the unranked part: rank the tasks above it first.
-        (Neighbour::Unranked, _) => Ok(rank_prefix(&others[..slot])),
+        (Neighbour::Unranked, _) => rank_prefix(&others[..slot]),
     }
 }
 
@@ -819,6 +815,38 @@ fn rank_prefix(above: &[&Task]) -> Plan {
         rank: Some(next + RANK_STEP),
         others,
     }
+}
+
+/// The plan for a slot between two ranked neighbours with no integer left
+/// between them (ADR 0025): the group's ranked tasks are renumbered
+/// [`RANK_STEP`], 2 × [`RANK_STEP`], ... in the order currently shown, the
+/// moved task taking the number of its slot. A task whose number does not
+/// change is not written, and the unranked tasks below are left alone.
+fn renumber(others: &[&Task], slot: usize) -> Plan {
+    let (above, below) = others.split_at(slot);
+    let mut written = Vec::new();
+    let rank = renumber_from(0, above, &mut written) + RANK_STEP;
+    renumber_from(rank, below, &mut written);
+    Plan {
+        rank: Some(rank),
+        others: written,
+    }
+}
+
+/// Hands the ranked tasks of `tasks` the ranks following `from`,
+/// [`RANK_STEP`] apart, pushing the ones whose rank changes onto
+/// `written`; returns the last rank handed out (`from` when none is).
+fn renumber_from(from: i64, tasks: &[&Task], written: &mut Vec<Task>) -> i64 {
+    let mut next = from;
+    for task in tasks.iter().filter(|t| t.rank.is_some()) {
+        next += RANK_STEP;
+        if task.rank != Some(next) {
+            let mut renumbered = (*task).clone();
+            renumbered.rank = Some(next);
+            written.push(renumbered);
+        }
+    }
+    next
 }
 
 /// The name of the status group a task is in, for error messages: its
@@ -1496,40 +1524,115 @@ mod tests {
     }
 
     #[test]
-    fn move_refuses_a_slot_with_no_integer_left() {
-        let mut inner = group();
-        ranked(&mut inner, 1, 1024);
-        ranked(&mut inner, 3, 1025);
-        let mut store = NoWrite(inner.clone());
-        let err = move_task(
-            &mut store,
-            &TaskId::from(4),
-            &Target::Before(TaskId::from(3)),
-        )
-        .unwrap_err();
-        assert!(matches!(err, EditError::NoGap(1024, 1025)));
-        assert_eq!(
-            err.to_string(),
-            "no rank left between 1024 and 1025: the group's ranks need renumbering, which tasq does not do yet"
-        );
-        let err = move_task(
+    fn ten_moves_bisect_the_same_gap_and_the_eleventh_renumbers_the_group() {
+        // Ready 1 (1024), 3 (2048), 4 unranked. Moving 4 then 3 after 1 in
+        // turns halves the gap below 1 each time.
+        let mut store = Batches(group(), Vec::new());
+        ranked(&mut store.0, 1, 1024);
+        ranked(&mut store.0, 3, 2048);
+        let expected = [
+            (4, 1536),
+            (3, 1280),
+            (4, 1152),
+            (3, 1088),
+            (4, 1056),
+            (3, 1040),
+            (4, 1032),
+            (3, 1028),
+            (4, 1026),
+            (3, 1025),
+        ];
+        for (id, rank) in expected {
+            let moved = move_task(
+                &mut store,
+                &TaskId::from(id),
+                &Target::After(TaskId::from(1)),
+            )
+            .unwrap();
+            assert_eq!(moved.task.rank, Some(rank), "task {id}");
+            assert_eq!(moved.ranked, Vec::<TaskId>::new(), "task {id}");
+        }
+        assert_eq!(ready_ids(&store.0), [1, 3, 4].map(TaskId::from));
+        // Nothing is left between 1024 and 1025: the ranked tasks become
+        // 1024, 2048, 3072 in their current order with 4 in its slot. Task
+        // 1 already holds 1024, so only 3 is rewritten, as one batch.
+        let moved = move_task(
             &mut store,
             &TaskId::from(4),
             &Target::After(TaskId::from(1)),
         )
-        .unwrap_err();
-        assert!(matches!(err, EditError::NoGap(1024, 1025)));
-        // Equal ranks (possible after a status change) have no room either.
-        ranked(&mut inner, 3, 1024);
-        let mut store = NoWrite(inner.clone());
-        let err = move_task(
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.changed, vec!["rank"]);
+        assert_eq!(moved.ranked, vec![TaskId::from(3)]);
+        assert_eq!(store.1.len(), 11);
+        assert_eq!(store.1[10], [3, 4].map(TaskId::from).to_vec());
+        assert_eq!(store.0.get(&TaskId::from(1)).unwrap().rank, Some(1024));
+        assert_eq!(store.0.get(&TaskId::from(3)).unwrap().rank, Some(3072));
+        assert_eq!(ready_ids(&store.0), [1, 4, 3].map(TaskId::from));
+    }
+
+    #[test]
+    fn renumbering_keeps_the_ranked_order_and_leaves_unranked_tasks_alone() {
+        // Ready 3 (-7), 1 (-6), 6 (500) and 4 unranked, plus 2 without a
+        // status: a ranked task below the slot and an unranked one at the
+        // bottom.
+        let mut extra = Task::new(TaskId::from(6), "F");
+        extra.set_status(Status::READY);
+        extra.set_priority(Priority::A);
+        let mut inner = group();
+        let mut tasks: Vec<Task> = inner.tasks().to_vec();
+        tasks.push(extra);
+        inner = MemoryStore::new(tasks);
+        ranked(&mut inner, 3, -7);
+        ranked(&mut inner, 1, -6);
+        ranked(&mut inner, 6, 500);
+        assert_eq!(ready_ids(&inner), [3, 1, 6, 4].map(TaskId::from));
+        let unranked = inner.get(&TaskId::from(4)).unwrap();
+        let no_status = inner.get(&TaskId::from(2)).unwrap();
+        let mut store = Batches(inner, Vec::new());
+        let moved = move_task(
             &mut store,
+            &TaskId::from(4),
+            &Target::Before(TaskId::from(1)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.ranked, [3, 1, 6].map(TaskId::from));
+        assert_eq!(store.1, vec![[3, 1, 6, 4].map(TaskId::from).to_vec()]);
+        assert_eq!(store.0.get(&TaskId::from(3)).unwrap().rank, Some(1024));
+        assert_eq!(store.0.get(&TaskId::from(1)).unwrap().rank, Some(3072));
+        assert_eq!(store.0.get(&TaskId::from(6)).unwrap().rank, Some(4096));
+        assert_eq!(ready_ids(&store.0), [3, 4, 1, 6].map(TaskId::from));
+        assert_eq!(store.0.get(&TaskId::from(2)).unwrap(), no_status);
+        assert_eq!(
+            store.0.get(&TaskId::from(4)).unwrap().rank,
+            Some(2048),
+            "{unranked:?} was the only unranked ready task and it was the one moved"
+        );
+        // Equal ranks (possible after a status change) are renumbered too;
+        // the moved task itself may be one of the ranked tasks.
+        let mut inner = group();
+        ranked(&mut inner, 1, 1024);
+        ranked(&mut inner, 3, 1024);
+        ranked(&mut inner, 4, 1024);
+        assert_eq!(ready_ids(&inner), [1, 3, 4].map(TaskId::from));
+        let moved = move_task(
+            &mut inner,
             &TaskId::from(4),
             &Target::Before(TaskId::from(3)),
         )
-        .unwrap_err();
-        assert!(matches!(err, EditError::NoGap(1024, 1024)));
-        // One free integer is enough; the midpoint never lands on a neighbour.
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.ranked, vec![TaskId::from(3)]);
+        assert_eq!(inner.get(&TaskId::from(3)).unwrap().rank, Some(3072));
+        assert_eq!(ready_ids(&inner), [1, 4, 3].map(TaskId::from));
+    }
+
+    #[test]
+    fn one_free_integer_is_enough_to_avoid_a_renumber() {
+        let mut inner = group();
+        ranked(&mut inner, 1, 1024);
         ranked(&mut inner, 3, 1026);
         let moved = move_task(
             &mut inner,
@@ -1538,16 +1641,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(moved.task.rank, Some(1025));
-        ranked(&mut inner, 1, -2);
-        ranked(&mut inner, 3, -1);
-        let err = move_task(
-            &mut inner,
-            &TaskId::from(4),
-            &Target::After(TaskId::from(1)),
-        )
-        .unwrap_err();
-        assert!(matches!(err, EditError::NoGap(-2, -1)));
+        assert_eq!(moved.ranked, Vec::<TaskId>::new());
         ranked(&mut inner, 1, -3);
+        ranked(&mut inner, 3, -1);
         let moved = move_task(
             &mut inner,
             &TaskId::from(4),
@@ -1555,6 +1651,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(moved.task.rank, Some(-2));
+        assert_eq!(moved.ranked, Vec::<TaskId>::new());
         assert_eq!(ready_ids(&inner), [1, 4, 3].map(TaskId::from));
     }
 

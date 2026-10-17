@@ -1261,15 +1261,33 @@ mod rank {
     }
 
     #[test]
-    fn a_slot_with_no_rank_left_is_refused() {
+    fn a_slot_with_no_rank_left_renumbers_the_group() {
         let env = env_with_three_in_progress_tasks("## Rank\n\n1024\n\n", "## Rank\n\n1025\n\n");
-        let before = env.read_task(FIRST);
+        let second = env.read_task(SECOND);
         env.tasq()
             .args(["move", "1", "--after", "8"])
             .assert()
-            .code(1)
-            .stderr("tasq: no rank left between 1024 and 1025: the group's ranks need renumbering, which tasq does not do yet\n");
-        assert_eq!(env.read_task(FIRST), before);
+            .success()
+            .stdout("[1] moved after task 8 (also ranked: 9)\n");
+        // 8 already holds 1024 and is not rewritten; 1 takes 2048 and 9
+        // moves down to 3072.
+        assert_eq!(env.read_task(SECOND), second);
+        assert!(env.read_task(FIRST).contains("## Rank\n\n2048\n"));
+        assert_eq!(
+            env.read_task(THIRD),
+            "# [ ] Third\n\n## Rank\n\n3072\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-08 16:00: created\n"
+        );
+        let out = env.tasq().args(["list", "--json"]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let in_progress: Vec<&str> = value["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t["status"] == "in-progress")
+            .map(|t| t["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(in_progress, ["8", "1", "9"]);
     }
 
     #[test]

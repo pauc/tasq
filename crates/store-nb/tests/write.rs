@@ -554,6 +554,61 @@ fn a_move_into_the_unranked_part_is_one_commit() {
 }
 
 #[test]
+fn a_renumbering_move_is_one_commit() {
+    let nb = NbEnv::fixture();
+    nb.git_init();
+    let mut store = nb.open();
+    // Three in-progress tasks: FULL (1024), SUPPORT (1025) and WAITING
+    // unranked, so that a move between the first two has no integer left.
+    let mut full = store.get(&TaskId::from(id::FULL)).unwrap();
+    full.rank = Some(1024);
+    let mut support = store.get(&TaskId::from(id::SUPPORT)).unwrap();
+    support.set_status(Status::IN_PROGRESS);
+    support.rank = Some(1025);
+    let mut waiting = store.get(&TaskId::from(id::WAITING)).unwrap();
+    waiting.set_status(Status::IN_PROGRESS);
+    store.update_many(&[full, support, waiting]).unwrap();
+    store.wait_for_bookkeeping().unwrap();
+    let moved = tasq_core::edit::move_task(
+        &mut store,
+        &TaskId::from(id::WAITING),
+        &tasq_core::edit::Target::After(TaskId::from(id::FULL)),
+    )
+    .unwrap();
+    assert_eq!(moved.task.rank, Some(2048));
+    assert_eq!(moved.ranked, vec![TaskId::from(id::SUPPORT)]);
+    store.wait_for_bookkeeping().unwrap();
+    assert_eq!(
+        nb.git_subjects(),
+        vec![
+            format!(
+                "[tasq] Update: {}, {}",
+                file_name(id::SUPPORT),
+                file_name(id::WAITING)
+            ),
+            format!(
+                "[tasq] Update: {}, {}, {}",
+                file_name(id::FULL),
+                file_name(id::SUPPORT),
+                file_name(id::WAITING)
+            ),
+            "[nb] Initialize".to_owned()
+        ]
+    );
+    assert_eq!(nb.git_status(), "", "both files committed");
+    assert!(nb.read(file_name(id::FULL)).contains("## Rank\n\n1024\n"));
+    assert!(
+        nb.read(file_name(id::WAITING))
+            .contains("## Rank\n\n2048\n")
+    );
+    assert!(
+        nb.read(file_name(id::SUPPORT))
+            .contains("## Rank\n\n3072\n")
+    );
+    assert_eq!(store.warnings(), []);
+}
+
+#[test]
 fn update_many_in_a_git_notebook_is_one_commit() {
     let nb = NbEnv::fixture();
     nb.git_init();
