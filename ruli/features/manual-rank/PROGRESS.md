@@ -10,7 +10,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
 | RK-002 | Rank in the file orders lists and `next` | done | 2026-10-17; `cargo mutants --in-diff`: 20 mutants, 16 caught, 4 unviable, 0 missed; commits: b0573c9, 7155e25 (review fix: done list ignores a kept rank) |
 | RK-003 | `tasq move --top` / `--unrank` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 82 mutants, 63 caught, 19 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs -f crates/cli/src/commands/mod.rs`: 10 mutants, 9 caught, 1 unviable, 0 missed (the config excludes `crates/cli/**`, so the CLI bar needs this one-off run); commits: 3710eac, 1fba137 (review fixes) |
 | RK-004 | `tasq move --before` / `--after` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 115 mutants, 91 caught, 24 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs`: 11 mutants, 10 caught, 1 unviable, 0 missed; commits: d1d792c, c155e74 (review fixes) |
-| RK-005 | Renumber a group when the gap runs out | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 124 mutants, 99 caught, 25 unviable, 0 missed; commit: f7f8962 |
+| RK-005 | Renumber a group when the gap runs out | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 125 mutants, 99 caught, 26 unviable, 0 missed; commits: f7f8962, 7489f6f (review fixes) |
 | RK-006 | `ctrl+k` / `ctrl+j` in the TUI | ready | blocked by: none (RK-004 done) |
 
 ## Learnings
@@ -79,10 +79,17 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
   A task whose number does not change (typically the first one, already at 1024) is left out of
   the batch, so `ranked` names only the files written and a renumber of a group whose top is
   already 1024 costs one file less. The `NoGap` error and its CLI test are gone; `beside` no
-  longer returns a `Result`. The write order stays "others in group order, moved task last"; a
-  renumber that raises ranks can invert one pair in an intermediate state of a failed batch (the
-  task above gets its new, higher number before the task below does), which ADR 0025 accepts
-  ("no rollback, every intermediate state is a valid order"), and the next move overwrites it.
+  longer returns a `Result`. The write order stays "others in group order, moved task last". Unlike a
+  prefix ranking, a renumber does not keep the group's order in every intermediate state of a
+  failed batch: a task above that gets its new, higher number before the tasks below it sinks
+  under them until they are written (ranks -7, -6, 500 renumbered to 1024, 3072, 4096: after the
+  first write alone the top task sits last), and a renumber that lowers ranks fails the other
+  way round, so no single write order protects both. ADR 0025 accepts this ("no rollback, every
+  intermediate state is a valid order"); the next move overwrites it.
+  Review follow-ups: the renumber test keeps an unranked task at the bottom of the group and
+  checks it byte for byte, a renumber where the moved task keeps its number is covered
+  (`changed: []`, `ranked: [3]`), the CLI test asserts the `--json` document of a renumbering
+  move, and `rank_prefix` / `renumber_from` share `with_rank`.
   Ten bisections of one gap before the renumber is exactly what the 1024 step promises: the
   core test walks 1536, 1280, ..., 1025 and the eleventh move renumbers.
 

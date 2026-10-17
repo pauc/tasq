@@ -232,7 +232,7 @@ through the anchor, all in one commit through `update_many`.
 - [x] An anchor in the unranked part ranks every task from the top through the anchor in the current order (step 1024), the moved task lands at the requested side, and `ranked` lists the other ids written.
 - [x] A multi-file move produces one bookkeeping commit; a mid-batch failure reports the ids written.
 - [x] An anchor in another status group is refused with an error naming both statuses; an anchor equal to the task is refused.
-- [x] When no integer fits between the neighbours, the move is refused with a clear error (renumbering comes in RK-005).
+- [x] When no integer fits between the neighbours, the move is refused with a clear error (renumbering comes in RK-005). Superseded by RK-005: the move now renumbers.
 - [x] Zero missed mutants in `edit` and the CLI changes.
 
 ### RK-005: renumber a status group when the gap runs out
