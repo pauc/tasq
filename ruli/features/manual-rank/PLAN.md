@@ -225,15 +225,15 @@ through the anchor, all in one commit through `update_many`.
 
 **Blocked by:** RK-001, RK-003.
 
-**Status:** ready-for-agent
+**Status:** done (2026-10-17)
 
-- [ ] Between two ranked neighbours, the task gets their midpoint and only its file is written.
-- [ ] Before the first ranked task, the rank is that task's rank minus 1024; after the last ranked task with nothing unranked below the slot, plus 1024.
-- [ ] An anchor in the unranked part ranks every task from the top through the anchor in the current order (step 1024), the moved task lands at the requested side, and `ranked` lists the other ids written.
-- [ ] A multi-file move produces one bookkeeping commit; a mid-batch failure reports the ids written.
-- [ ] An anchor in another status group is refused with an error naming both statuses; an anchor equal to the task is refused.
-- [ ] When no integer fits between the neighbours, the move is refused with a clear error (renumbering comes in RK-005).
-- [ ] Zero missed mutants in `edit` and the CLI changes.
+- [x] Between two ranked neighbours, the task gets their midpoint and only its file is written.
+- [x] Before the first ranked task, the rank is that task's rank minus 1024; after the last ranked task with nothing unranked below the slot, plus 1024.
+- [x] An anchor in the unranked part ranks every task from the top through the anchor in the current order (step 1024), the moved task lands at the requested side, and `ranked` lists the other ids written.
+- [x] A multi-file move produces one bookkeeping commit; a mid-batch failure reports the ids written.
+- [x] An anchor in another status group is refused with an error naming both statuses; an anchor equal to the task is refused.
+- [x] When no integer fits between the neighbours, the move is refused with a clear error (renumbering comes in RK-005).
+- [x] Zero missed mutants in `edit` and the CLI changes.
 
 ### RK-005: renumber a status group when the gap runs out
 

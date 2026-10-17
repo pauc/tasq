@@ -9,9 +9,9 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
 | RK-001 | `Store::update_many` (prefactor) | done | 2026-10-17; `cargo mutants --in-diff`: 11 mutants, 10 caught, 1 unviable, 0 missed; commit: ec39107 |
 | RK-002 | Rank in the file orders lists and `next` | done | 2026-10-17; `cargo mutants --in-diff`: 20 mutants, 16 caught, 4 unviable, 0 missed; commits: b0573c9, 7155e25 (review fix: done list ignores a kept rank) |
 | RK-003 | `tasq move --top` / `--unrank` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 82 mutants, 63 caught, 19 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs -f crates/cli/src/commands/mod.rs`: 10 mutants, 9 caught, 1 unviable, 0 missed (the config excludes `crates/cli/**`, so the CLI bar needs this one-off run); commits: 3710eac, 1fba137 (review fixes) |
-| RK-004 | `tasq move --before` / `--after` | ready | blocked by: none (RK-001, RK-003 done) |
-| RK-005 | Renumber a group when the gap runs out | blocked | blocked by: RK-004 |
-| RK-006 | `ctrl+k` / `ctrl+j` in the TUI | blocked | blocked by: RK-004 |
+| RK-004 | `tasq move --before` / `--after` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 111 mutants, 89 caught, 22 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs`: 7 mutants, 6 caught, 1 unviable, 0 missed; commit: d1d792c |
+| RK-005 | Renumber a group when the gap runs out | ready | blocked by: none (RK-004 done) |
+| RK-006 | `ctrl+k` / `ctrl+j` in the TUI | ready | blocked by: none (RK-004 done) |
 
 ## Learnings
 
@@ -48,6 +48,25 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
   no-op that keeps the bytes: the model reads it as unranked (`None`), the diff sees no change,
   and removing the section would need the store to know a section exists for a value the model
   does not have. That is US36's "kept as written"; a fix belongs with the format, not here.
+
+- 2026-10-17 (RK-004): the planner works on positions, not ranks: it sorts the group with
+  `query::sort`, takes the moved task out, finds the slot next to the anchor and reads the two
+  neighbours. "Already there" is `slot == current position`, so an unranked task that already
+  follows its unranked anchor is a no-op (US21) even though no rank could express that. The
+  neighbour pair decides everything: `(none, _)` is `--top`, `(ranked, ranked)` is the midpoint
+  (`i64::midpoint`, refused when it lands on a neighbour), `(ranked, unranked|none)` is one step
+  below, `(unranked, _)` ranks every unranked task above the slot first, continuing from the
+  highest rank above it. Since ranked tasks always sort first, `--before` the first unranked
+  task needs no prefix: one step below the last ranked one is enough. One reachable corner:
+  the moved task's own rank can stay the same while the prefix is written (ranked 2048 above
+  unranked tasks, then `--after` the first of them: it gets 1024, the task keeps 2048), so
+  `changed` follows the task's own rank and `ranked` the others, and the printed line counts
+  the move as done when either is non-empty. The batch writes the prefix first and the moved
+  task last: a failure midway leaves tasks ranked in the order they already had, never the
+  moved task above a still-unranked prefix. `update_many` is called once per move (test
+  double counting batches); the one-commit property is RK-001's store-nb test. A done anchor
+  is refused as "task N is done but task M is <status>" through the same `OtherGroup` error,
+  with `done` as the group label.
 
 ## Blockers
 
