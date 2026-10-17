@@ -8,8 +8,8 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
 |---|---|---|---|
 | RK-001 | `Store::update_many` (prefactor) | done | 2026-10-17; `cargo mutants --in-diff`: 11 mutants, 10 caught, 1 unviable, 0 missed; commit: ec39107 |
 | RK-002 | Rank in the file orders lists and `next` | done | 2026-10-17; `cargo mutants --in-diff`: 20 mutants, 16 caught, 4 unviable, 0 missed; commits: b0573c9, 7155e25 (review fix: done list ignores a kept rank) |
-| RK-003 | `tasq move --top` / `--unrank` | ready | blocked by: none (RK-002 done) |
-| RK-004 | `tasq move --before` / `--after` | blocked | blocked by: RK-003 (RK-001 done) |
+| RK-003 | `tasq move --top` / `--unrank` | done | 2026-10-17; `cargo mutants --in-diff`: 11 mutants, 10 caught, 1 unviable, 0 missed (core); `--no-config -f crates/cli/src/commands/rank.rs -f crates/cli/src/commands/mod.rs`: 10 mutants, 9 caught, 1 unviable, 0 missed (the config excludes `crates/cli/**`, so the CLI bar needs this one-off run); commit: 3710eac |
+| RK-004 | `tasq move --before` / `--after` | ready | blocked by: none (RK-001, RK-003 done) |
 | RK-005 | Renumber a group when the gap runs out | blocked | blocked by: RK-004 |
 | RK-006 | `ctrl+k` / `ctrl+j` in the TUI | blocked | blocked by: RK-004 |
 
@@ -32,6 +32,16 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
   a change to it silently, so a new `Task` field is not done until it is in that table.
   `tasq apply` now reports which optional keys the document carries (`Keys { worktrees, rank }`)
   instead of one bool, since both follow the "missing means unchanged" rule.
+
+- 2026-10-17 (RK-003): `move_task` decides "already there" by sorting the group with
+  `query::sort` and checking whether the task comes first, not by comparing ranks: a task that
+  is first by the natural order (nothing ranked) and a task that is first by rank are both
+  no-ops, and the written rank is computed from the *other* tasks' lowest rank, so a ranked task
+  that is not first moves above the current top instead of below itself. The fixture notebook has
+  one task per status group, so every CLI move test adds a second in-progress task first
+  (`store reconcile` gives it id 8). `tasq move` has no `--note`: a rank is a sort hint, not
+  something worth a progress line. `BatchError` became an `EditError` variant now rather than
+  in RK-004, since `move_task` already writes through `update_many`.
 
 ## Blockers
 

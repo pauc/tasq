@@ -205,16 +205,16 @@ Both go through `edit::move_task`, the one entry point the TUI will share.
 
 **Blocked by:** RK-002.
 
-**Status:** ready-for-agent
+**Status:** done (2026-10-17)
 
-- [ ] `--top` writes the group's lowest rank minus 1024, or 1024 when nothing in the group is ranked; `next` then picks it when the group is a next status.
-- [ ] `--unrank` removes the rank; on an unranked task it writes nothing.
-- [ ] A move that leaves the task where it is writes nothing and reports `changed: []`.
-- [ ] A done task is refused with "task N is done".
-- [ ] The target options are mutually exclusive and one is required (clap error otherwise).
-- [ ] Text output is a one-line confirmation; `--json` prints `task`, `changed` and `ranked` (empty here), with insta snapshots.
-- [ ] README command list and the Claude plugin skill (if it enumerates commands) mention `tasq move`.
-- [ ] Zero missed mutants in `edit` and the new CLI command.
+- [x] `--top` writes the group's lowest rank minus 1024, or 1024 when nothing in the group is ranked; `next` then picks it when the group is a next status.
+- [x] `--unrank` removes the rank; on an unranked task it writes nothing.
+- [x] A move that leaves the task where it is writes nothing and reports `changed: []`.
+- [x] A done task is refused with "task N is done".
+- [x] The target options are mutually exclusive and one is required (clap error otherwise).
+- [x] Text output is a one-line confirmation; `--json` prints `task`, `changed` and `ranked` (empty here), with insta snapshots.
+- [x] README command list and the Claude plugin skill (if it enumerates commands) mention `tasq move` (the skills do not enumerate commands; `docs/agents/issue-tracker.md` does and was updated).
+- [x] Zero missed mutants in `edit` and the new CLI command.
 
 ### RK-004: `tasq move --before` and `--after`
 
