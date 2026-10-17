@@ -9,7 +9,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
 | RK-001 | `Store::update_many` (prefactor) | done | 2026-10-17; `cargo mutants --in-diff`: 11 mutants, 10 caught, 1 unviable, 0 missed; commit: ec39107 |
 | RK-002 | Rank in the file orders lists and `next` | done | 2026-10-17; `cargo mutants --in-diff`: 20 mutants, 16 caught, 4 unviable, 0 missed; commits: b0573c9, 7155e25 (review fix: done list ignores a kept rank) |
 | RK-003 | `tasq move --top` / `--unrank` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 82 mutants, 63 caught, 19 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs -f crates/cli/src/commands/mod.rs`: 10 mutants, 9 caught, 1 unviable, 0 missed (the config excludes `crates/cli/**`, so the CLI bar needs this one-off run); commits: 3710eac, 1fba137 (review fixes) |
-| RK-004 | `tasq move --before` / `--after` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 111 mutants, 89 caught, 22 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs`: 7 mutants, 6 caught, 1 unviable, 0 missed; commit: d1d792c |
+| RK-004 | `tasq move --before` / `--after` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 115 mutants, 91 caught, 24 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs`: 11 mutants, 10 caught, 1 unviable, 0 missed; commits: d1d792c, c155e74 (review fixes) |
 | RK-005 | Renumber a group when the gap runs out | ready | blocked by: none (RK-004 done) |
 | RK-006 | `ctrl+k` / `ctrl+j` in the TUI | ready | blocked by: none (RK-004 done) |
 
@@ -66,8 +66,19 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
   moved task above a still-unranked prefix. `update_many` is called once per move (test
   double counting batches); the one-commit property is RK-001's store-nb test. A done anchor
   is refused as "task N is done but task M is <status>" through the same `OtherGroup` error,
-  with `done` as the group label.
+  with `done` as the group label. Review follow-ups: the planner is pure (`checked_anchor` does the
+  one store read, for the error label), a slot's two neighbours are a `Neighbour` enum so the
+  four arms read without comments, and a store-nb test proves a prefix-ranking move is one
+  commit (the acceptance line rested on RK-001's `update_many` test alone).
 
 ## Blockers
 
 ## Deviations from the plan
+
+- 2026-10-17 (RK-004): the plan and ADR 0025 say a move into the unranked part ranks "every
+  task from the top through the anchor". `move_task` ranks every unranked task *above the slot*
+  instead: for `--before <unranked anchor>` the anchor itself stays unranked, and for
+  `--before` the first unranked task (or `--after` the last ranked one) nothing but the moved
+  task is written, one step below the last ranked task. The resulting order is the one the
+  plan asks for in every case; the difference is one file fewer (US16). The anchor is only
+  written when it is above the slot, that is for `--after`.
