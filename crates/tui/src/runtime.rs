@@ -165,30 +165,14 @@ fn revise(store: &mut dyn Store, id: &TaskId, fields: &edit::Fields) -> Result<S
     }
 }
 
-/// `edit::move_task`: `[id] moved before task 3`, `[id] already before
-/// task 3` when the task was there already (nothing written), with
-/// ` (also ranked: 1, 8)` when other tasks of the group were written for
-/// the move, as `tasq move` says.
+/// `edit::move_task`; the status line is what `tasq move` prints
+/// ([`edit::Moved::describe`]): `[3] moved before task 1`, `already
+/// before` when nothing was written, ` (also ranked: ...)` for the other
+/// tasks written.
 fn move_task(store: &mut dyn Store, id: &TaskId, target: &Target) -> Result<String, String> {
-    let moved = edit::move_task(store, id, target).map_err(|e| e.to_string())?;
-    let unchanged = moved.changed.is_empty() && moved.ranked.is_empty();
-    let outcome = match (target, unchanged) {
-        (Target::Top, false) => "moved to the top".to_owned(),
-        (Target::Top, true) => "already at the top".to_owned(),
-        (Target::Unrank, false) => "unranked".to_owned(),
-        (Target::Unrank, true) => "already unranked".to_owned(),
-        (Target::Before(anchor), false) => format!("moved before task {anchor}"),
-        (Target::Before(anchor), true) => format!("already before task {anchor}"),
-        (Target::After(anchor), false) => format!("moved after task {anchor}"),
-        (Target::After(anchor), true) => format!("already after task {anchor}"),
-    };
-    let also = if moved.ranked.is_empty() {
-        String::new()
-    } else {
-        let ids: Vec<String> = moved.ranked.iter().map(ToString::to_string).collect();
-        format!(" (also ranked: {})", ids.join(", "))
-    };
-    Ok(format!("[{id}] {outcome}{also}"))
+    edit::move_task(store, id, target)
+        .map(|moved| moved.describe(target))
+        .map_err(|e| e.to_string())
 }
 
 fn edit_file(store: &mut dyn Store, host: &mut dyn Host, id: &TaskId) -> Result<String, String> {
@@ -509,17 +493,6 @@ mod tests {
         );
         assert_eq!(fresh.get(&TaskId::from(3)).unwrap().rank, Some(1024));
         assert_eq!(fresh.get(&TaskId::from(1)).unwrap().rank, Some(2048));
-        // The other targets, for a front end that sends them.
-        let top = Cmd::Move(TaskId::from(1), Target::Top);
-        let msgs = dispatch(&top, &mut fresh, &clock(), &mut host);
-        assert_eq!(msgs[0], Msg::Info("[1] moved to the top".into()));
-        let msgs = dispatch(&top, &mut fresh, &clock(), &mut host);
-        assert_eq!(msgs[0], Msg::Info("[1] already at the top".into()));
-        let unrank = Cmd::Move(TaskId::from(1), Target::Unrank);
-        let msgs = dispatch(&unrank, &mut fresh, &clock(), &mut host);
-        assert_eq!(msgs[0], Msg::Info("[1] unranked".into()));
-        let msgs = dispatch(&unrank, &mut fresh, &clock(), &mut host);
-        assert_eq!(msgs[0], Msg::Info("[1] already unranked".into()));
         // Core's refusals come through as failures, and still reload.
         let other = Cmd::Move(TaskId::from(1), Target::Before(TaskId::from(2)));
         let msgs = dispatch(&other, &mut store, &clock(), &mut host);

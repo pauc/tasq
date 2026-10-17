@@ -601,6 +601,34 @@ pub struct Moved {
     pub ranked: Vec<TaskId>,
 }
 
+impl Moved {
+    /// The line `tasq move` prints and the TUI shows for a move to
+    /// `target`: `[3] moved before task 1`, or `[3] already before task 1`
+    /// when the task was there already and nothing was written, with
+    /// ` (also ranked: 1, 8)` when other tasks of the group were written
+    /// for the move, so the user knows which files changed.
+    pub fn describe(&self, target: &Target) -> String {
+        let unchanged = self.changed.is_empty() && self.ranked.is_empty();
+        let outcome = match (target, unchanged) {
+            (Target::Top, false) => "moved to the top".to_owned(),
+            (Target::Top, true) => "already at the top".to_owned(),
+            (Target::Unrank, false) => "unranked".to_owned(),
+            (Target::Unrank, true) => "already unranked".to_owned(),
+            (Target::Before(anchor), false) => format!("moved before task {anchor}"),
+            (Target::Before(anchor), true) => format!("already before task {anchor}"),
+            (Target::After(anchor), false) => format!("moved after task {anchor}"),
+            (Target::After(anchor), true) => format!("already after task {anchor}"),
+        };
+        let also = if self.ranked.is_empty() {
+            String::new()
+        } else {
+            let ids: Vec<String> = self.ranked.iter().map(ToString::to_string).collect();
+            format!(" (also ranked: {})", ids.join(", "))
+        };
+        format!("[{}] {outcome}{also}", self.task.id)
+    }
+}
+
 /// The ranks a move writes: the moved task's new rank, and the other tasks
 /// of the group whose rank is written with it (in batch order): the ones
 /// ranked so that the slot exists, or the ones renumbered to make room.
@@ -943,6 +971,46 @@ mod tests {
     use crate::clock::FixedClock;
     use crate::model::ProgressEntry;
     use crate::store::MemoryStore;
+
+    #[test]
+    fn a_move_describes_itself_like_tasq_move_prints_it() {
+        let moved = |changed: Vec<&'static str>, ranked: Vec<u64>| Moved {
+            task: Task::new(TaskId::from(3), "T"),
+            changed,
+            ranked: ranked.into_iter().map(TaskId::from).collect(),
+        };
+        let written = moved(vec!["rank"], Vec::new());
+        let unchanged = moved(Vec::new(), Vec::new());
+        let anchor = TaskId::from(1);
+        for (target, done, same) in [
+            (Target::Top, "moved to the top", "already at the top"),
+            (Target::Unrank, "unranked", "already unranked"),
+            (
+                Target::Before(anchor.clone()),
+                "moved before task 1",
+                "already before task 1",
+            ),
+            (
+                Target::After(anchor),
+                "moved after task 1",
+                "already after task 1",
+            ),
+        ] {
+            assert_eq!(written.describe(&target), format!("[3] {done}"));
+            assert_eq!(unchanged.describe(&target), format!("[3] {same}"));
+        }
+        // The other tasks written for the move are named; a move that
+        // wrote them without touching the task's own rank counts as done.
+        let prefix = moved(Vec::new(), vec![1, 8]);
+        assert_eq!(
+            prefix.describe(&Target::After(TaskId::from(8))),
+            "[3] moved after task 8 (also ranked: 1, 8)"
+        );
+        assert_eq!(
+            moved(vec!["rank"], vec![1]).describe(&Target::Top),
+            "[3] moved to the top (also ranked: 1)"
+        );
+    }
 
     fn store() -> MemoryStore {
         let mut a = Task::new(TaskId::from(1), "A");

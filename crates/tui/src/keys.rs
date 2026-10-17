@@ -894,11 +894,13 @@ mod tests {
         }
     }
 
-    /// A legacy terminal sends `Ctrl+J` as the byte `\n`, which is `Enter`
-    /// outside raw mode; the UI runs in raw mode, where crossterm reports
-    /// it as `Ctrl+J`, and the kitty protocol reports it as such anyway.
-    /// Either way the map sees `ctrl+j`, which is never `enter`: a move
-    /// never launches a session, with or without keyboard enhancement.
+    /// A legacy terminal sends `Ctrl+J` as the byte `\n`, which crossterm
+    /// reports as `Enter` outside raw mode and as `Ctrl+J` in raw mode
+    /// (where the UI runs); the kitty protocol names the key outright.
+    /// That parsing is crossterm's (issue #371) and is not tested here:
+    /// what is pinned is that the map keeps `ctrl+j` and `enter` apart in
+    /// every mode, so a move never launches a session, whatever the
+    /// terminal reports.
     #[test]
     fn ctrl_j_is_never_enter() {
         let keys = KeyMap::default();
@@ -908,16 +910,16 @@ mod tests {
             Chord::from_event(&key(KeyCode::Enter)),
             Some(chord("enter"))
         );
-        // The enhanced report of the same key press: a press with the
-        // modifier, like the legacy one.
-        let mut enhanced = ctrl('j');
-        enhanced.kind = KeyEventKind::Press;
-        assert_eq!(
-            translate(&keys, &Mode::Normal, &enhanced),
-            Some(Msg::MoveDown)
-        );
         assert_eq!(
             translate(&keys, &Mode::Normal, &ctrl('j')),
+            Some(Msg::MoveDown)
+        );
+        // A held key repeats under the kitty protocol (a legacy terminal
+        // only sends presses): the repeat moves again.
+        let mut repeat = ctrl('j');
+        repeat.kind = KeyEventKind::Repeat;
+        assert_eq!(
+            translate(&keys, &Mode::Normal, &repeat),
             Some(Msg::MoveDown)
         );
         assert_eq!(
