@@ -10,7 +10,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
 | RK-002 | Rank in the file orders lists and `next` | done | 2026-10-17; `cargo mutants --in-diff`: 20 mutants, 16 caught, 4 unviable, 0 missed; commits: b0573c9, 7155e25 (review fix: done list ignores a kept rank) |
 | RK-003 | `tasq move --top` / `--unrank` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 82 mutants, 63 caught, 19 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs -f crates/cli/src/commands/mod.rs`: 10 mutants, 9 caught, 1 unviable, 0 missed (the config excludes `crates/cli/**`, so the CLI bar needs this one-off run); commits: 3710eac, 1fba137 (review fixes) |
 | RK-004 | `tasq move --before` / `--after` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 115 mutants, 91 caught, 24 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs`: 11 mutants, 10 caught, 1 unviable, 0 missed; commits: d1d792c, c155e74 (review fixes) |
-| RK-005 | Renumber a group when the gap runs out | ready | blocked by: none (RK-004 done) |
+| RK-005 | Renumber a group when the gap runs out | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 124 mutants, 99 caught, 25 unviable, 0 missed; commit: f7f8962 |
 | RK-006 | `ctrl+k` / `ctrl+j` in the TUI | ready | blocked by: none (RK-004 done) |
 
 ## Learnings
@@ -70,6 +70,21 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
   one store read, for the error label), a slot's two neighbours are a `Neighbour` enum so the
   four arms read without comments, and a store-nb test proves a prefix-ranking move is one
   commit (the acceptance line rested on RK-001's `update_many` test alone).
+
+- 2026-10-17 (RK-005): the renumber is one more arm of the same planner: when `i64::midpoint`
+  lands on a neighbour, `renumber` walks the group's current order (the moved task taken out)
+  and hands the ranked tasks 1024, 2048, ... with the moved task taking the number of its slot.
+  Since ranked tasks always sort first, the slot between two ranked neighbours is inside the
+  ranked prefix, so the unranked tail is never visited by the rank sequence and stays untouched.
+  A task whose number does not change (typically the first one, already at 1024) is left out of
+  the batch, so `ranked` names only the files written and a renumber of a group whose top is
+  already 1024 costs one file less. The `NoGap` error and its CLI test are gone; `beside` no
+  longer returns a `Result`. The write order stays "others in group order, moved task last"; a
+  renumber that raises ranks can invert one pair in an intermediate state of a failed batch (the
+  task above gets its new, higher number before the task below does), which ADR 0025 accepts
+  ("no rollback, every intermediate state is a valid order"), and the next move overwrites it.
+  Ten bisections of one gap before the renumber is exactly what the 1024 step promises: the
+  core test walks 1536, 1280, ..., 1025 and the eleventh move renumbers.
 
 ## Blockers
 

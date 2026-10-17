@@ -243,12 +243,12 @@ RK-004 goes away.
 
 **Blocked by:** RK-004.
 
-**Status:** ready-for-agent
+**Status:** done (2026-10-17)
 
-- [ ] Ten repeated moves into the same gap succeed; the eleventh renumbers and still lands the task in the requested slot.
-- [ ] Renumbering keeps the relative order of every ranked task and leaves unranked tasks untouched.
-- [ ] `ranked` lists every other task whose rank was rewritten; one bookkeeping commit.
-- [ ] Zero missed mutants in `edit`.
+- [x] Ten repeated moves into the same gap succeed; the eleventh renumbers and still lands the task in the requested slot.
+- [x] Renumbering keeps the relative order of every ranked task and leaves unranked tasks untouched.
+- [x] `ranked` lists every other task whose rank was rewritten; one bookkeeping commit.
+- [x] Zero missed mutants in `edit`.
 
 ### RK-006: `ctrl+k` / `ctrl+j` in the TUI
 
