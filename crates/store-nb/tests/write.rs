@@ -514,6 +514,46 @@ fn update_many_writes_every_file_under_one_lock_and_one_checkpoint() {
 }
 
 #[test]
+fn a_move_into_the_unranked_part_is_one_commit() {
+    let nb = NbEnv::fixture();
+    nb.git_init();
+    let mut store = nb.open();
+    // Two unranked in-progress tasks: `#A` FULL above `#B` SUPPORT.
+    let mut support = store.get(&TaskId::from(id::SUPPORT)).unwrap();
+    support.set_status(Status::IN_PROGRESS);
+    store.update(&support).unwrap();
+    store.wait_for_bookkeeping().unwrap();
+    let moved = tasq_core::edit::move_task(
+        &mut store,
+        &TaskId::from(id::FULL),
+        &tasq_core::edit::Target::After(TaskId::from(id::SUPPORT)),
+    )
+    .unwrap();
+    assert_eq!(moved.ranked, vec![TaskId::from(id::SUPPORT)]);
+    assert_eq!(moved.task.rank, Some(2048));
+    store.wait_for_bookkeeping().unwrap();
+    assert_eq!(
+        nb.git_subjects(),
+        vec![
+            format!(
+                "[tasq] Update: {}, {}",
+                file_name(id::SUPPORT),
+                file_name(id::FULL)
+            ),
+            format!("[tasq] Update: {}", file_name(id::SUPPORT)),
+            "[nb] Initialize".to_owned()
+        ]
+    );
+    assert_eq!(nb.git_status(), "", "both files committed");
+    assert!(
+        nb.read(file_name(id::SUPPORT))
+            .contains("## Rank\n\n1024\n")
+    );
+    assert!(nb.read(file_name(id::FULL)).contains("## Rank\n\n2048\n"));
+    assert_eq!(store.warnings(), []);
+}
+
+#[test]
 fn update_many_in_a_git_notebook_is_one_commit() {
     let nb = NbEnv::fixture();
     nb.git_init();

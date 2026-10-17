@@ -20,24 +20,12 @@ pub fn target(
     before: Option<&str>,
     after: Option<&str>,
 ) -> Result<Target> {
-    debug_assert!(
-        usize::from(top)
-            + usize::from(unrank)
-            + usize::from(before.is_some())
-            + usize::from(after.is_some())
-            == 1,
-        "clap requires exactly one target"
-    );
-    if top {
-        return Ok(Target::Top);
-    }
-    if unrank {
-        return Ok(Target::Unrank);
-    }
-    match (before, after) {
-        (Some(anchor), _) => Ok(Target::Before(App::task_id(anchor)?)),
-        (None, Some(anchor)) => Ok(Target::After(App::task_id(anchor)?)),
-        (None, None) => unreachable!("clap requires exactly one target"),
+    match (top, unrank, before, after) {
+        (true, false, None, None) => Ok(Target::Top),
+        (false, true, None, None) => Ok(Target::Unrank),
+        (false, false, Some(anchor), None) => Ok(Target::Before(App::task_id(anchor)?)),
+        (false, false, None, Some(anchor)) => Ok(Target::After(App::task_id(anchor)?)),
+        _ => unreachable!("clap requires exactly one target"),
     }
 }
 

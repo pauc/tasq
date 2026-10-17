@@ -643,24 +643,26 @@ pub fn move_task(store: &mut dyn Store, id: &TaskId, target: &Target) -> Result<
     let plan = match target {
         Target::Top => Plan::alone(top_rank(&group, id)),
         Target::Unrank => Plan::alone(None),
-        Target::Before(anchor) => beside(store, &group, &task, anchor, Side::Before)?,
-        Target::After(anchor) => beside(store, &group, &task, anchor, Side::After)?,
+        Target::Before(anchor) => {
+            let anchor = checked_anchor(store, &group, &task, anchor)?;
+            beside(&group, &task, anchor, Side::Before)?
+        }
+        Target::After(anchor) => {
+            let anchor = checked_anchor(store, &group, &task, anchor)?;
+            beside(&group, &task, anchor, Side::After)?
+        }
     };
-    let changed = if plan.rank == task.rank {
-        Vec::new()
-    } else {
-        vec!["rank"]
-    };
-    if changed.is_empty() && plan.others.is_empty() {
+    let rank_changed = plan.rank != task.rank;
+    if !rank_changed && plan.others.is_empty() {
         return Ok(Moved {
             task,
-            changed,
+            changed: Vec::new(),
             ranked: Vec::new(),
         });
     }
     let ranked: Vec<TaskId> = plan.others.iter().map(|t| t.id.clone()).collect();
     let mut batch = plan.others;
-    if !changed.is_empty() {
+    if rank_changed {
         let mut moved = task;
         moved.rank = plan.rank;
         batch.push(moved);
@@ -668,14 +670,17 @@ pub fn move_task(store: &mut dyn Store, id: &TaskId, target: &Target) -> Result<
     store.update_many(&batch)?;
     Ok(Moved {
         task: store.get(id)?,
-        changed,
+        changed: if rank_changed {
+            vec!["rank"]
+        } else {
+            Vec::new()
+        },
         ranked,
     })
 }
 
 /// The rank that puts `id` first in `group`: its current rank when it is
-/// already first, else the lowest rank of the others minus [`RANK_STEP`],
-/// or [`RANK_STEP`] when none of them is ranked.
+/// already first, else [`first_rank`] of the others.
 fn top_rank(group: &[Task], id: &TaskId) -> Option<i64> {
     let ordered = query::sort(group);
     let first = ordered.first().expect("the group holds the moved task");
@@ -687,25 +692,65 @@ fn top_rank(group: &[Task], id: &TaskId) -> Option<i64> {
         .filter(|t| t.id != *id)
         .filter_map(|t| t.rank)
         .min();
-    Some(lowest.map_or(RANK_STEP, |rank| rank - RANK_STEP))
+    Some(first_rank(lowest))
 }
 
-/// The plan that puts `task` on `side` of `anchor` within `group` (the
-/// group's current order with `task` taken out, `task` put back next to
-/// the anchor). The anchor must be another task of the group: the task
-/// itself, a task of another status group and a done task are refused,
-/// the last two with both groups named. A task already in that slot gets
-/// a plan that writes nothing.
-fn beside(
+/// The rank that goes above every other task of a group whose lowest rank
+/// is `lowest`: one step above it, or [`RANK_STEP`] when nothing is
+/// ranked.
+fn first_rank(lowest: Option<i64>) -> i64 {
+    lowest.map_or(RANK_STEP, |rank| rank - RANK_STEP)
+}
+
+/// The anchor of a `--before` / `--after` move, as the group's task: the
+/// moved task itself is refused, and so is a task outside the group (another
+/// status, no status, or done), with both groups named.
+fn checked_anchor<'a>(
     store: &dyn Store,
-    group: &[Task],
+    group: &'a [Task],
     task: &Task,
     anchor: &TaskId,
-    side: Side,
-) -> Result<Plan, EditError> {
+) -> Result<&'a Task, EditError> {
     if *anchor == task.id {
         return Err(EditError::OwnAnchor(anchor.clone()));
     }
+    if let Some(found) = group.iter().find(|t| t.id == *anchor) {
+        return Ok(found);
+    }
+    let other = store.get(anchor)?;
+    Err(EditError::OtherGroup {
+        id: task.id.clone(),
+        group: group_label(task),
+        anchor: anchor.clone(),
+        anchor_group: group_label(&other),
+    })
+}
+
+/// What sits next to a slot in a group's order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Neighbour {
+    /// The slot is at that edge of the group.
+    Absent,
+    /// A task without a rank.
+    Unranked,
+    /// A task with this rank.
+    Ranked(i64),
+}
+
+impl Neighbour {
+    fn of(task: Option<&&Task>) -> Self {
+        match task {
+            None => Self::Absent,
+            Some(t) => t.rank.map_or(Self::Unranked, Self::Ranked),
+        }
+    }
+}
+
+/// The plan that puts `task` on `side` of `anchor` (another task of
+/// `group`, see [`checked_anchor`]): the group's current order with `task`
+/// taken out, and `task` put back next to the anchor. A task already in
+/// that slot gets a plan that writes nothing.
+fn beside(group: &[Task], task: &Task, anchor: &Task, side: Side) -> Result<Plan, EditError> {
     let ordered = query::sort(group);
     let current = ordered
         .iter()
@@ -716,15 +761,10 @@ fn beside(
         .copied()
         .filter(|t| t.id != task.id)
         .collect();
-    let Some(anchor_at) = others.iter().position(|t| t.id == *anchor) else {
-        let other = store.get(anchor)?;
-        return Err(EditError::OtherGroup {
-            id: task.id.clone(),
-            group: group_label(task),
-            anchor: anchor.clone(),
-            anchor_group: group_label(&other),
-        });
-    };
+    let anchor_at = others
+        .iter()
+        .position(|t| t.id == anchor.id)
+        .expect("the anchor is another task of the group");
     let slot = match side {
         Side::Before => anchor_at,
         Side::After => anchor_at + 1,
@@ -732,15 +772,19 @@ fn beside(
     if slot == current {
         return Ok(Plan::alone(task.rank));
     }
-    let prev = slot.checked_sub(1).map(|i| others[i].rank);
-    let next = others.get(slot).and_then(|t| t.rank);
-    match (prev, next) {
+    let above = Neighbour::of(slot.checked_sub(1).map(|i| &others[i]));
+    let below = Neighbour::of(others.get(slot));
+    match (above, below) {
         // Nothing above the slot: like `--top`.
-        (None, next) => Ok(Plan::alone(Some(
-            next.map_or(RANK_STEP, |hi| hi - RANK_STEP),
-        ))),
+        (Neighbour::Absent, below) => {
+            let lowest = match below {
+                Neighbour::Ranked(rank) => Some(rank),
+                Neighbour::Unranked | Neighbour::Absent => None,
+            };
+            Ok(Plan::alone(Some(first_rank(lowest))))
+        }
         // Between two ranked neighbours.
-        (Some(Some(lo)), Some(hi)) => {
+        (Neighbour::Ranked(lo), Neighbour::Ranked(hi)) => {
             let mid = lo.midpoint(hi);
             if mid > lo && mid < hi {
                 Ok(Plan::alone(Some(mid)))
@@ -750,9 +794,11 @@ fn beside(
         }
         // Below the last ranked task; whatever follows is unranked and
         // sorts after every ranked task anyway.
-        (Some(Some(lo)), None) => Ok(Plan::alone(Some(lo + RANK_STEP))),
+        (Neighbour::Ranked(lo), Neighbour::Unranked | Neighbour::Absent) => {
+            Ok(Plan::alone(Some(lo + RANK_STEP)))
+        }
         // The slot is in the unranked part: rank the tasks above it first.
-        (Some(None), _) => Ok(rank_prefix(&others[..slot])),
+        (Neighbour::Unranked, _) => Ok(rank_prefix(&others[..slot])),
     }
 }
 
@@ -762,16 +808,13 @@ fn beside(
 /// shown; the moved task gets the next one.
 fn rank_prefix(above: &[&Task]) -> Plan {
     let mut next = above.iter().filter_map(|t| t.rank).max().unwrap_or(0);
-    let others = above
-        .iter()
-        .filter(|t| t.rank.is_none())
-        .map(|t| {
-            next += RANK_STEP;
-            let mut ranked = (*t).clone();
-            ranked.rank = Some(next);
-            ranked
-        })
-        .collect();
+    let mut others = Vec::new();
+    for task in above.iter().filter(|t| t.rank.is_none()) {
+        next += RANK_STEP;
+        let mut ranked = (*task).clone();
+        ranked.rank = Some(next);
+        others.push(ranked);
+    }
     Plan {
         rank: Some(next + RANK_STEP),
         others,

@@ -1133,17 +1133,10 @@ mod rank {
     /// Task 9, a second `#C` in-progress task, below task 8 by id.
     const THIRD: &str = "20260908160000.todo.md";
 
-    /// The fixture plus tasks 8 and 9, two `#C` in-progress tasks below
-    /// task 1, with `rank_8` / `rank_9` (`## Rank` and its body, or
-    /// nothing) in their files.
+    /// [`env_with_a_second_in_progress_task`] plus task 9, another `#C`
+    /// in-progress task, with `rank_9` in its file.
     fn env_with_three_in_progress_tasks(rank_8: &str, rank_9: &str) -> TestEnv {
-        let env = TestEnv::fixture();
-        env.write_task(
-            SECOND,
-            &format!(
-                "# [ ] Second\n\n{rank_8}## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n"
-            ),
-        );
+        let env = env_with_a_second_in_progress_task(rank_8);
         env.write_task(
             THIRD,
             &format!(
