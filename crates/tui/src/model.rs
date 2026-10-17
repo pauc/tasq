@@ -517,7 +517,7 @@ impl Model {
     }
 
     /// The group the visible task `id` is listed under.
-    fn group_of(&self, id: &TaskId) -> Option<ListGroup<'_>> {
+    pub fn group_of(&self, id: &TaskId) -> Option<ListGroup<'_>> {
         self.groups()
             .into_iter()
             .find(|g| g.tasks.iter().any(|t| t.id == *id))

@@ -566,6 +566,7 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `up`, `down` | `k`, `up` / `j`, `down` | list, pickers | move the selection or the cursor |
 | `page-up`, `page-down` | `ctrl+u`, `pgup` / `ctrl+d`, `pgdn` | list | move ten tasks |
 | `top`, `bottom` | `g`, `home` / `G`, `end` | list | first / last task |
+| `move-up`, `move-down` | `ctrl+k` / `ctrl+j` | list | move the selected task before the task above it / after the task below it in its status group (`tasq move --before` / `--after` the task listed next to it, so in a filtered view it lands next to its visible neighbour); the selection follows the task. At the ends of a group, on a folded group's header and in the DONE group nothing moves and the status bar says why. The rank is never shown ([ADR 0025](adr/0025-manual-rank-within-a-status-group.md)) |
 | `toggle-group` | `z`, `space` | list | fold the selected task's group to its header, or unfold the folded group under the cursor (kept for the session) |
 | `toggle-today` | `T` | list | the Today view: open tasks in the workflow's first status (`in-progress`) or due today or earlier, across statuses; with `toggle-done`, the tasks closed today (`+today` in the list title) |
 | `toggle-done` | `a` | list | show or hide the DONE group: done tasks matching the filter, newest closed first, unfolded whenever it appears (`+done` in the list title) |
@@ -593,7 +594,8 @@ Typing (the filter, a note, a title, the edit view) is not configurable: charact
 `Esc`, `Backspace` and `Delete` do what they always do, `Left`/`Right` move the cursor and
 `Home`/`End` or `Ctrl+A`/`Ctrl+E` go to the ends of the line, and `Ctrl+W`, `Ctrl+U` and
 `Ctrl+K` delete the word before the cursor, back to the start of the line and on to its end,
-as in readline (on the current line only: they never join lines). In the one-line prompts
+as in readline (on the current line only: they never join lines), so `move-up`'s default
+`ctrl+k` only moves a task in the list. In the one-line prompts
 `Up`/`Down` recall earlier entries of the session; in the edit view they move between rows.
 An input longer than the status bar scrolls to keep the cursor in view. Neither are the toggles of the source picker: `Space` and
 the row digits. `Ctrl+C` quits in every mode and cannot be rebound. A key

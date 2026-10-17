@@ -24,7 +24,7 @@ use ratatui::crossterm::terminal::{
     supports_keyboard_enhancement,
 };
 use tasq_core::clock::Clock;
-use tasq_core::edit::{self, Value};
+use tasq_core::edit::{self, Target, Value};
 use tasq_core::model::{TaskDraft, TaskId};
 use tasq_core::query::Filter;
 use tasq_core::store::Store;
@@ -63,6 +63,7 @@ pub fn dispatch(
             result
         }
         Cmd::Revise(id, fields) => revise(store, id, fields),
+        Cmd::Move(id, target) => move_task(store, id, target),
         Cmd::Editor(id) => edit_file(store, host, id),
         Cmd::View(id, _) => host.view(id),
         Cmd::Launch(id, target) => host.launch(id, *target),
@@ -162,6 +163,32 @@ fn revise(store: &mut dyn Store, id: &TaskId, fields: &edit::Fields) -> Result<S
     } else {
         Ok(format!("[{id}] updated: {}", revised.changed.join(", ")))
     }
+}
+
+/// `edit::move_task`: `[id] moved before task 3`, `[id] already before
+/// task 3` when the task was there already (nothing written), with
+/// ` (also ranked: 1, 8)` when other tasks of the group were written for
+/// the move, as `tasq move` says.
+fn move_task(store: &mut dyn Store, id: &TaskId, target: &Target) -> Result<String, String> {
+    let moved = edit::move_task(store, id, target).map_err(|e| e.to_string())?;
+    let unchanged = moved.changed.is_empty() && moved.ranked.is_empty();
+    let outcome = match (target, unchanged) {
+        (Target::Top, false) => "moved to the top".to_owned(),
+        (Target::Top, true) => "already at the top".to_owned(),
+        (Target::Unrank, false) => "unranked".to_owned(),
+        (Target::Unrank, true) => "already unranked".to_owned(),
+        (Target::Before(anchor), false) => format!("moved before task {anchor}"),
+        (Target::Before(anchor), true) => format!("already before task {anchor}"),
+        (Target::After(anchor), false) => format!("moved after task {anchor}"),
+        (Target::After(anchor), true) => format!("already after task {anchor}"),
+    };
+    let also = if moved.ranked.is_empty() {
+        String::new()
+    } else {
+        let ids: Vec<String> = moved.ranked.iter().map(ToString::to_string).collect();
+        format!(" (also ranked: {})", ids.join(", "))
+    };
+    Ok(format!("[{id}] {outcome}{also}"))
 }
 
 fn edit_file(store: &mut dyn Store, host: &mut dyn Host, id: &TaskId) -> Result<String, String> {
@@ -441,6 +468,73 @@ mod tests {
         );
         assert_eq!(msgs[0], Msg::Info("[1] priority unchanged".into()));
         assert_eq!(store.get(&id).unwrap(), before);
+    }
+
+    #[test]
+    fn a_move_goes_through_edit_move_task_and_says_where_the_task_went() {
+        use tasq_core::edit::Target;
+        let three = || {
+            let mut c = Task::new(TaskId::from(3), "C");
+            c.set_status(Status::READY);
+            let mut tasks = store().tasks().to_vec();
+            tasks.push(c);
+            MemoryStore::new(tasks)
+        };
+        let mut store = three();
+        let mut host = RecordingHost::default();
+        let before = |id: u64| Cmd::Move(TaskId::from(3), Target::Before(TaskId::from(id)));
+        let msgs = dispatch(&before(1), &mut store, &clock(), &mut host);
+        assert_eq!(
+            msgs,
+            vec![
+                Msg::Info("[3] moved before task 1".into()),
+                Msg::Loaded(store.list(&Filter::default().any_done()).unwrap()),
+            ]
+        );
+        assert_eq!(store.get(&TaskId::from(3)).unwrap().rank, Some(1024));
+        assert_eq!(loaded_ids(&msgs), ["1", "2", "3"], "the store lists by id");
+        // Already there: nothing written, said as such.
+        let msgs = dispatch(&before(1), &mut store, &clock(), &mut host);
+        assert_eq!(msgs[0], Msg::Info("[3] already before task 1".into()));
+        let after = Cmd::Move(TaskId::from(1), Target::After(TaskId::from(3)));
+        let msgs = dispatch(&after, &mut store, &clock(), &mut host);
+        assert_eq!(msgs[0], Msg::Info("[1] already after task 3".into()));
+        assert_eq!(store.get(&TaskId::from(1)).unwrap().rank, None);
+        // A move that ranks other tasks names them, like `tasq move`.
+        let mut fresh = three();
+        let msgs = dispatch(&after, &mut fresh, &clock(), &mut host);
+        assert_eq!(
+            msgs[0],
+            Msg::Info("[1] moved after task 3 (also ranked: 3)".into())
+        );
+        assert_eq!(fresh.get(&TaskId::from(3)).unwrap().rank, Some(1024));
+        assert_eq!(fresh.get(&TaskId::from(1)).unwrap().rank, Some(2048));
+        // The other targets, for a front end that sends them.
+        let top = Cmd::Move(TaskId::from(1), Target::Top);
+        let msgs = dispatch(&top, &mut fresh, &clock(), &mut host);
+        assert_eq!(msgs[0], Msg::Info("[1] moved to the top".into()));
+        let msgs = dispatch(&top, &mut fresh, &clock(), &mut host);
+        assert_eq!(msgs[0], Msg::Info("[1] already at the top".into()));
+        let unrank = Cmd::Move(TaskId::from(1), Target::Unrank);
+        let msgs = dispatch(&unrank, &mut fresh, &clock(), &mut host);
+        assert_eq!(msgs[0], Msg::Info("[1] unranked".into()));
+        let msgs = dispatch(&unrank, &mut fresh, &clock(), &mut host);
+        assert_eq!(msgs[0], Msg::Info("[1] already unranked".into()));
+        // Core's refusals come through as failures, and still reload.
+        let other = Cmd::Move(TaskId::from(1), Target::Before(TaskId::from(2)));
+        let msgs = dispatch(&other, &mut store, &clock(), &mut host);
+        assert_eq!(
+            msgs[0],
+            Msg::Failed(
+                "task 2 is no-status but task 1 is ready; a move stays within one status group"
+                    .into()
+            )
+        );
+        assert_eq!(loaded_ids(&msgs), ["1", "2", "3"]);
+        let missing = Cmd::Move(TaskId::from(9), Target::Top);
+        let msgs = dispatch(&missing, &mut store, &clock(), &mut host);
+        assert_eq!(msgs[0], Msg::Failed("no task with id 9".into()));
+        assert_eq!(host.calls, Vec::<String>::new());
     }
 
     #[test]

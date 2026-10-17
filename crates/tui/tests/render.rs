@@ -11,9 +11,11 @@ use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
 use tasq_core::clock::FixedClock;
 use tasq_core::config::{DetailPosition, UiConfig};
+use tasq_core::edit::Target;
 use tasq_core::model::{Link, Priority, Session, Status, Tag, Task, TaskId, Workflow, Worktree};
+use tasq_core::store::{MemoryStore, Store};
 use tasq_core::theme::{Preset, Theme};
-use tasq_tui::{Model, Msg, SourceChoice, update, view};
+use tasq_tui::{Cmd, Model, Msg, RecordingHost, SourceChoice, dispatch, update, view};
 
 fn date(text: &str) -> NaiveDate {
     NaiveDate::parse_from_str(text, "%Y-%m-%d").unwrap()
@@ -287,7 +289,7 @@ fn detail_at_the_bottom() {
 fn overlays() {
     let mut model = fixture(true);
     update(&mut model, Msg::Help);
-    assert_snapshot!("help", screen(&mut model, 120, 28));
+    assert_snapshot!("help", screen(&mut model, 120, 30));
     update(&mut model, Msg::Escape);
     update(&mut model, Msg::BeginStatus);
     assert_snapshot!("status_picker", screen(&mut model, 120, 20));
@@ -689,6 +691,41 @@ fn messages_and_empty_states() {
     update(&mut model, Msg::Loaded(Vec::new()));
     update(&mut model, Msg::Down);
     assert_snapshot!("no_tasks", screen(&mut model, 100, 12));
+}
+
+/// `Ctrl+K` on the second ready task, run through `dispatch` against an
+/// in-memory store: the task is listed first afterwards, the status bar
+/// says so, and its rank appears nowhere, not in the row, not in the
+/// detail.
+#[test]
+fn a_moved_task_is_listed_first_and_its_rank_stays_hidden() {
+    let mut store = MemoryStore::new(tasks());
+    let mut host = RecordingHost::default();
+    let clock = FixedClock::at("2026-10-06 10:00");
+    let mut model = fixture(true);
+    update(&mut model, Msg::Select(TaskId::from(3)));
+    update(&mut model, Msg::ShowDetail);
+    let cmds = update(&mut model, Msg::MoveUp);
+    assert_eq!(
+        cmds,
+        vec![Cmd::Move(TaskId::from(3), Target::Before(TaskId::from(12)))]
+    );
+    for msg in dispatch(&cmds[0], &mut store, &clock, &mut host) {
+        update(&mut model, msg);
+    }
+    assert_eq!(store.get(&TaskId::from(3)).unwrap().rank, Some(1024));
+    let shown = screen(&mut model, 120, 28);
+    assert!(shown.contains("[3] moved before task 12"), "{shown}");
+    assert!(
+        !shown.contains("1024"),
+        "the rank is not rendered:\n{shown}"
+    );
+    assert!(
+        !shown.contains("Rank"),
+        "the rank is not rendered:\n{shown}"
+    );
+    assert_snapshot!("moved_task", shown);
+    assert_eq!(host.calls, Vec::<String>::new());
 }
 
 #[test]

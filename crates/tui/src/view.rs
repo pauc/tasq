@@ -45,6 +45,10 @@ pub const HELP: &[(&[Action], &str)] = &[
     (&[Action::Up, Action::Down], "move the selection"),
     (&[Action::Top, Action::Bottom], "first / last task"),
     (&[Action::PageUp, Action::PageDown], "move ten tasks"),
+    (
+        &[Action::MoveUp, Action::MoveDown],
+        "move the task up / down within its status group (tasq move)",
+    ),
     (&[Action::ToggleGroup], "fold / unfold the group"),
     (
         &[Action::ToggleDone, Action::ToggleToday],
@@ -1765,69 +1769,78 @@ mod tests {
         assert_eq!(rows[0], ("k/Up, j/Down".to_owned(), "move the selection"));
         assert_eq!(rows[1], ("g/Home, G/End".to_owned(), "first / last task"));
         assert_eq!(rows[2], ("C-u/PgUp, C-d/PgDn".to_owned(), "move ten tasks"));
-        assert_eq!(rows[3], ("z/Space".to_owned(), "fold / unfold the group"));
         assert_eq!(
-            rows[4],
+            rows[3],
+            (
+                "C-k, C-j".to_owned(),
+                "move the task up / down within its status group (tasq move)"
+            )
+        );
+        assert_eq!(rows[4], ("z/Space".to_owned(), "fold / unfold the group"));
+        assert_eq!(
+            rows[5],
             (
                 "a, T".to_owned(),
                 "show / hide done tasks; only today's work (doing, due, overdue)"
             )
         );
         assert_eq!(
-            rows[12],
+            rows[13],
             (
                 "e".to_owned(),
                 "edit the task in a form (title, status, priority, due, project, tags)"
             )
         );
         assert_eq!(
-            rows[13],
+            rows[14],
             (
                 "E, v".to_owned(),
                 "open the task file in $EDITOR; read it rendered (tasq view)"
             )
         );
-        assert_eq!(rows[15].0, "C-Enter");
-        assert_eq!(rows[16].0, "S-Enter");
+        assert_eq!(rows[16].0, "C-Enter");
+        assert_eq!(rows[17].0, "S-Enter");
         assert_eq!(
-            rows[17],
+            rows[18],
             (
                 "s".to_owned(),
                 "run the sources that run by default (tasq sync)"
             )
         );
         assert_eq!(
-            rows[18],
+            rows[19],
             (
                 "S".to_owned(),
                 "pick the sources to run: Space toggles, Enter runs"
             )
         );
         assert_eq!(
-            rows[20],
+            rows[21],
             (
                 "Right, Left".to_owned(),
                 "show / hide the selected task's detail"
             )
         );
         assert_eq!(
-            rows[21],
+            rows[22],
             (
                 "Tab, K/C-y, J/C-e".to_owned(),
                 "switch between list and detail; scroll the detail"
             )
         );
         assert_eq!(
-            rows[22],
+            rows[23],
             ("Enter".to_owned(), "in a picker: apply the choice")
         );
-        assert_eq!(rows[24], ("q, C-c".to_owned(), "quit"));
+        assert_eq!(rows[25], ("q, C-c".to_owned(), "quit"));
         let mut table = BTreeMap::new();
         table.insert("quit".to_owned(), KeySpec::Many(Vec::new()));
         table.insert("sync".to_owned(), KeySpec::One("f5".to_owned()));
+        table.insert("move-up".to_owned(), KeySpec::Many(Vec::new()));
         let rows = help_rows(&KeyMap::from_config(&table).unwrap());
-        assert_eq!(rows[24], ("none, C-c".to_owned(), "quit"));
-        assert_eq!(rows[17].0, "F5");
+        assert_eq!(rows[25], ("none, C-c".to_owned(), "quit"));
+        assert_eq!(rows[18].0, "F5");
+        assert_eq!(rows[3].0, "none, C-j");
     }
 
     #[test]
