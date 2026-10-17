@@ -169,13 +169,13 @@ error. Nothing calls it yet; it makes RK-004 and RK-005 easy, and task 24 may re
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done (2026-10-17)
 
-- [ ] The default implementation writes every task and stops at the first error, reporting the ids written before it.
-- [ ] On the nb store, a batch of several tasks produces exactly one bookkeeping commit.
-- [ ] A `Conflict` on a task in the middle of a batch leaves the earlier files written, the later ones untouched, and reports the written ids.
-- [ ] An empty batch writes nothing and starts no job.
-- [ ] Zero missed mutants in the touched code.
+- [x] The default implementation writes every task and stops at the first error, reporting the ids written before it.
+- [x] On the nb store, a batch of several tasks produces exactly one bookkeeping commit.
+- [x] A `Conflict` on a task in the middle of a batch leaves the earlier files written, the later ones untouched, and reports the written ids.
+- [x] An empty batch writes nothing and starts no job.
+- [x] Zero missed mutants in the touched code.
 
 ### RK-002: a rank in the file orders lists and `next`
 

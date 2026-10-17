@@ -40,4 +40,4 @@ pub use self::doctor::{Check, CheckStatus};
 pub use self::index::{Index, TODO_SUFFIX};
 pub use self::revision::Revision;
 pub use self::store::{NbStore, NbStoreOptions, StoreWarning};
-pub use tasq_core::store::{IdScheme, Store, StoreError, StoreInfo};
+pub use tasq_core::store::{BatchError, IdScheme, Store, StoreError, StoreInfo};
