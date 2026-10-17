@@ -106,6 +106,7 @@ prop_compose! {
         progress in proptest::collection::vec((when(), note()), 0..4),
         origin in proptest::option::of(origin()),
         closed_at in proptest::option::of(date_time()),
+        rank in proptest::option::of(-4096i64..4096),
     ) -> Task {
         let mut t = Task::new(TaskId::from(1), title);
         t.done = done;
@@ -122,6 +123,7 @@ prop_compose! {
         t.progress = progress.into_iter().map(|(at, note)| ProgressEntry { at, note }).collect();
         t.origin = origin;
         t.closed_at = closed_at.filter(|_| done);
+        t.rank = rank;
         t
     }
 }
@@ -293,6 +295,12 @@ fn from_task_minimal_done_and_source() {
         format::render(&Document::from_task(&task, &wf)),
         "# [x] Minimal\n\n## Source\n\ngitlab: !1 https://gl.invalid/1\n\n## Closed\n\n2026-10-07 14:32\n\n## Tags\n\n#B\n\n## Progress\n"
     );
+    task.rank = Some(1024);
+    assert_eq!(
+        format::render(&Document::from_task(&task, &wf)),
+        "# [x] Minimal\n\n## Source\n\ngitlab: !1 https://gl.invalid/1\n\n## Closed\n\n2026-10-07 14:32\n\n## Rank\n\n1024\n\n## Tags\n\n#B\n\n## Progress\n"
+    );
+    task.rank = None;
     task.done = false;
     // An open task is not closed: `closed_at` is not written.
     assert!(!format::render(&Document::from_task(&task, &wf)).contains("## Closed"));

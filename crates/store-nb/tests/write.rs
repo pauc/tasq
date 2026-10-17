@@ -462,6 +462,253 @@ fn writes_checkpoint_through_the_bookkeeper() {
 }
 
 #[test]
+fn update_many_writes_every_file_under_one_lock_and_one_checkpoint() {
+    let nb = NbEnv::fixture();
+    let (mut store, calls) = Recording::attach(nb.open(), false);
+    let waiting_text = nb.read(file_name(id::WAITING));
+    let done_text = nb.read(file_name(id::DONE));
+    let mut support = store.get(&TaskId::from(id::SUPPORT)).unwrap();
+    support.set_status(Status::BLOCKED);
+    let mut full = store.get(&TaskId::from(id::FULL)).unwrap();
+    full.set_priority(Priority::C);
+    let waiting = store.get(&TaskId::from(id::WAITING)).unwrap();
+    store
+        .update_many(&[support.clone(), full.clone(), waiting.clone()])
+        .unwrap();
+    assert_eq!(
+        *calls.borrow(),
+        vec![
+            "lock".to_owned(),
+            format!(
+                "checkpoint [tasq] Update: {}, {}",
+                file_name(id::SUPPORT),
+                file_name(id::FULL)
+            ),
+        ]
+    );
+    assert_eq!(store.get(&TaskId::from(id::SUPPORT)).unwrap(), support);
+    assert_eq!(store.get(&TaskId::from(id::FULL)).unwrap(), full);
+    assert_eq!(store.get(&TaskId::from(id::WAITING)).unwrap(), waiting);
+    assert!(
+        nb.read(file_name(id::SUPPORT))
+            .contains("#support #B #blocked"),
+        "support written"
+    );
+    assert!(nb.read(file_name(id::FULL)).contains("#C"), "full written");
+    assert_eq!(
+        nb.read(file_name(id::WAITING)),
+        waiting_text,
+        "unchanged task not rewritten"
+    );
+    assert_eq!(
+        nb.read(file_name(id::DONE)),
+        done_text,
+        "task outside the batch not rewritten"
+    );
+    assert_eq!(store.warnings(), []);
+    // The same tasks again: nothing changes, so the lock is taken and
+    // released without a checkpoint.
+    store.update_many(&[support, full]).unwrap();
+    assert_eq!(calls.borrow().len(), 3);
+    assert_eq!(calls.borrow()[2], "lock");
+}
+
+#[test]
+fn a_move_into_the_unranked_part_is_one_commit() {
+    let nb = NbEnv::fixture();
+    nb.git_init();
+    let mut store = nb.open();
+    // Two unranked in-progress tasks: `#A` FULL above `#B` SUPPORT.
+    let mut support = store.get(&TaskId::from(id::SUPPORT)).unwrap();
+    support.set_status(Status::IN_PROGRESS);
+    store.update(&support).unwrap();
+    store.wait_for_bookkeeping().unwrap();
+    let moved = tasq_core::edit::move_task(
+        &mut store,
+        &TaskId::from(id::FULL),
+        &tasq_core::edit::Target::After(TaskId::from(id::SUPPORT)),
+    )
+    .unwrap();
+    assert_eq!(moved.ranked, vec![TaskId::from(id::SUPPORT)]);
+    assert_eq!(moved.task.rank, Some(2048));
+    store.wait_for_bookkeeping().unwrap();
+    assert_eq!(
+        nb.git_subjects(),
+        vec![
+            format!(
+                "[tasq] Update: {}, {}",
+                file_name(id::SUPPORT),
+                file_name(id::FULL)
+            ),
+            format!("[tasq] Update: {}", file_name(id::SUPPORT)),
+            "[nb] Initialize".to_owned()
+        ]
+    );
+    assert_eq!(nb.git_status(), "", "both files committed");
+    assert!(
+        nb.read(file_name(id::SUPPORT))
+            .contains("## Rank\n\n1024\n")
+    );
+    assert!(nb.read(file_name(id::FULL)).contains("## Rank\n\n2048\n"));
+    assert_eq!(store.warnings(), []);
+}
+
+#[test]
+fn a_renumbering_move_is_one_commit() {
+    let nb = NbEnv::fixture();
+    nb.git_init();
+    let mut store = nb.open();
+    // Three in-progress tasks: FULL (1024), SUPPORT (1025) and WAITING
+    // unranked, so that a move between the first two has no integer left.
+    let mut full = store.get(&TaskId::from(id::FULL)).unwrap();
+    full.rank = Some(1024);
+    let mut support = store.get(&TaskId::from(id::SUPPORT)).unwrap();
+    support.set_status(Status::IN_PROGRESS);
+    support.rank = Some(1025);
+    let mut waiting = store.get(&TaskId::from(id::WAITING)).unwrap();
+    waiting.set_status(Status::IN_PROGRESS);
+    store.update_many(&[full, support, waiting]).unwrap();
+    store.wait_for_bookkeeping().unwrap();
+    let moved = tasq_core::edit::move_task(
+        &mut store,
+        &TaskId::from(id::WAITING),
+        &tasq_core::edit::Target::After(TaskId::from(id::FULL)),
+    )
+    .unwrap();
+    assert_eq!(moved.task.rank, Some(2048));
+    assert_eq!(moved.ranked, vec![TaskId::from(id::SUPPORT)]);
+    store.wait_for_bookkeeping().unwrap();
+    assert_eq!(
+        nb.git_subjects(),
+        vec![
+            format!(
+                "[tasq] Update: {}, {}",
+                file_name(id::SUPPORT),
+                file_name(id::WAITING)
+            ),
+            format!(
+                "[tasq] Update: {}, {}, {}",
+                file_name(id::FULL),
+                file_name(id::SUPPORT),
+                file_name(id::WAITING)
+            ),
+            "[nb] Initialize".to_owned()
+        ]
+    );
+    assert_eq!(nb.git_status(), "", "both files committed");
+    assert!(nb.read(file_name(id::FULL)).contains("## Rank\n\n1024\n"));
+    assert!(
+        nb.read(file_name(id::WAITING))
+            .contains("## Rank\n\n2048\n")
+    );
+    assert!(
+        nb.read(file_name(id::SUPPORT))
+            .contains("## Rank\n\n3072\n")
+    );
+    assert_eq!(store.warnings(), []);
+}
+
+#[test]
+fn update_many_in_a_git_notebook_is_one_commit() {
+    let nb = NbEnv::fixture();
+    nb.git_init();
+    let mut store = nb.open();
+    assert_eq!(store.bookkeeper().name(), "native");
+    let mut support = store.get(&TaskId::from(id::SUPPORT)).unwrap();
+    support.set_status(Status::BLOCKED);
+    let mut full = store.get(&TaskId::from(id::FULL)).unwrap();
+    full.set_priority(Priority::C);
+    store.update_many(&[support, full]).unwrap();
+    store.wait_for_bookkeeping().unwrap();
+    assert_eq!(
+        nb.git_subjects(),
+        vec![
+            format!(
+                "[tasq] Update: {}, {}",
+                file_name(id::SUPPORT),
+                file_name(id::FULL)
+            ),
+            "[nb] Initialize".to_owned()
+        ]
+    );
+    assert_eq!(nb.git_status(), "", "both files committed");
+    assert_eq!(store.warnings(), []);
+}
+
+#[test]
+fn update_many_stops_at_a_conflict_and_reports_the_written_ids() {
+    let nb = NbEnv::fixture();
+    let (mut store, calls) = Recording::attach(nb.open(), false);
+    let waiting = store.get(&TaskId::from(id::WAITING)).unwrap();
+    let mut support = store.get(&TaskId::from(id::SUPPORT)).unwrap();
+    support.set_status(Status::BLOCKED);
+    let mut full = store.get(&TaskId::from(id::FULL)).unwrap();
+    full.set_priority(Priority::C);
+    let mut no_tags = store.get(&TaskId::from(id::NO_TAGS)).unwrap();
+    no_tags.set_priority(Priority::A);
+    let no_tags_text = nb.read(file_name(id::NO_TAGS));
+    // Somebody else edits the third file in between.
+    let text = nb.read(file_name(id::FULL));
+    nb.write(file_name(id::FULL), &text.replace("#B", "#A"));
+    let err = store
+        .update_many(&[waiting, support.clone(), full.clone(), no_tags])
+        .unwrap_err();
+    // An unchanged task counts as written: it is on disk as requested.
+    assert_eq!(
+        err.written,
+        vec![TaskId::from(id::WAITING), TaskId::from(id::SUPPORT)]
+    );
+    assert!(
+        matches!(&err.error, StoreError::Conflict { id, path } if *id == full.id && *path == nb.file(id::FULL)),
+        "{err:?}"
+    );
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "task {} changed since it was read ({}); re-read it and retry (tasks already written: {}, {})",
+            id::FULL,
+            nb.file(id::FULL).display(),
+            id::WAITING,
+            id::SUPPORT
+        )
+    );
+    // The changed file is written and checkpointed, the conflicting one
+    // keeps the other writer's edit, the one after it is untouched.
+    assert_eq!(
+        *calls.borrow(),
+        vec![
+            "lock".to_owned(),
+            format!("checkpoint [tasq] Update: {}", file_name(id::SUPPORT)),
+        ]
+    );
+    assert_eq!(store.get(&TaskId::from(id::SUPPORT)).unwrap(), support);
+    assert!(
+        nb.read(file_name(id::FULL)).contains("#A"),
+        "other edit kept"
+    );
+    assert_eq!(
+        nb.read(file_name(id::NO_TAGS)),
+        no_tags_text,
+        "the task after the conflict was not written"
+    );
+    // Still a conflict until the task is re-read.
+    assert!(matches!(
+        store.update_many(&[full]).unwrap_err().error,
+        StoreError::Conflict { .. }
+    ));
+    assert_eq!(store.warnings(), []);
+}
+
+#[test]
+fn empty_update_many_takes_no_lock() {
+    let nb = NbEnv::fixture();
+    let (mut store, calls) = Recording::attach(nb.open(), false);
+    store.update_many(&[]).unwrap();
+    assert_eq!(*calls.borrow(), Vec::<String>::new());
+    assert_eq!(store.warnings(), []);
+}
+
+#[test]
 fn bookkeeping_failure_after_a_write_is_a_warning() {
     let nb = NbEnv::fixture();
     let (mut store, calls) = Recording::attach(nb.open(), true);

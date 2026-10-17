@@ -227,6 +227,12 @@ pub struct Task {
     /// the original script, tasq before ADR 0020). Absent from older JSON.
     #[serde(default, with = "crate::clock::timestamp_serde::option")]
     pub closed_at: Option<NaiveDateTime>,
+    /// `## Rank`: the task's manual place within its status group, smaller
+    /// first (ADR 0025). `None` on tasks never moved, which follow the
+    /// priority, due, id order after the ranked ones. Left out of JSON when
+    /// unset; missing on input means "unchanged" to `tasq apply`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<i64>,
 }
 
 impl Task {
@@ -251,6 +257,7 @@ impl Task {
             progress: Vec::new(),
             origin: None,
             closed_at: None,
+            rank: None,
         }
     }
 
@@ -497,6 +504,7 @@ impl TaskDraft {
             progress: Vec::new(),
             origin: self.origin,
             closed_at: self.done.then(|| to_minute(clock.now())),
+            rank: None,
         };
         if let Some(note) = self.note {
             task.log(note, clock);
@@ -939,6 +947,13 @@ mod tests {
         assert!(json.contains("\"status\":\"ready\""), "{json}");
         assert!(
             json.ends_with(",\"closed_at\":\"2026-10-04 10:15\"}"),
+            "unset rank is left out: {json}"
+        );
+        assert!(!json.contains("rank"), "{json}");
+        t.rank = Some(-1024);
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(
+            json.ends_with(",\"closed_at\":\"2026-10-04 10:15\",\"rank\":-1024}"),
             "{json}"
         );
         assert!(json.contains("\"tags\":[\"gitlab\"]"), "{json}");
@@ -950,10 +965,13 @@ mod tests {
         );
         let back: Task = serde_json::from_str(&json).unwrap();
         assert_eq!(back, t);
-        // JSON written before `closed_at` existed still reads.
-        let older = json.replace(",\"closed_at\":\"2026-10-04 10:15\"", "");
+        // JSON written before `closed_at` and `rank` existed still reads.
+        let older = json.replace(",\"closed_at\":\"2026-10-04 10:15\",\"rank\":-1024", "");
         let back: Task = serde_json::from_str(&older).unwrap();
         assert_eq!(back.closed_at, None);
+        assert_eq!(back.rank, None);
+        let null: Task = serde_json::from_str(&json.replace("-1024", "null")).unwrap();
+        assert_eq!(null.rank, None);
         let draft = TaskDraft::new("T").with_tag(tag("x"));
         let back: TaskDraft =
             serde_json::from_str(&serde_json::to_string(&draft).unwrap()).unwrap();

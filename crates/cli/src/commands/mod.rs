@@ -24,6 +24,7 @@ pub mod list;
 pub mod mr;
 pub mod plugins;
 pub mod project;
+pub mod rank;
 pub mod session;
 pub mod store;
 pub mod summary;
@@ -38,7 +39,7 @@ pub mod worktree_nav;
 /// could not start) on stderr, then prints `line`, or with `--json` the
 /// task as it is now, as `{"schema": 1, "task": {...}}`.
 pub fn finish(app: &App, store: &NbStore, id: &TaskId, line: &str) -> Result<()> {
-    report(app, store, id, line, None)
+    report(app, store, id, line, Vec::new())
 }
 
 /// [`finish`] for a one-field edit (`set`, `rename`, `due`, `tag`, `desc`
@@ -51,15 +52,37 @@ pub fn finish_edit(
     line: &str,
     changed: &[&str],
 ) -> Result<()> {
-    report(app, store, id, line, Some(changed))
+    report(app, store, id, line, vec![("changed", changed.into())])
 }
 
+/// [`finish_edit`] for `tasq move`: `--json` also carries `"ranked"`, the
+/// ids of the other tasks whose rank was written for the move.
+pub fn finish_move(
+    app: &App,
+    store: &NbStore,
+    id: &TaskId,
+    line: &str,
+    changed: &[&str],
+    ranked: &[TaskId],
+) -> Result<()> {
+    let ranked: Vec<String> = ranked.iter().map(ToString::to_string).collect();
+    report(
+        app,
+        store,
+        id,
+        line,
+        vec![("changed", changed.into()), ("ranked", ranked.into())],
+    )
+}
+
+/// Prints `line`, or with `--json` the task as it is now followed by
+/// `extra`, as `{"schema": 1, "task": {...}, ...}`.
 fn report(
     app: &App,
     store: &NbStore,
     id: &TaskId,
     line: &str,
-    changed: Option<&[&str]>,
+    extra: Vec<(&str, serde_json::Value)>,
 ) -> Result<()> {
     for warning in store.warnings() {
         app.out.warn(&warning.to_string());
@@ -67,9 +90,7 @@ fn report(
     if app.out.json_mode() {
         let task = store.get(id)?;
         let mut fields = vec![("task", app.task_json(&task))];
-        if let Some(changed) = changed {
-            fields.push(("changed", changed.into()));
-        }
+        fields.extend(extra);
         return app.out.json(&json::document(fields));
     }
     app.out.print(line)

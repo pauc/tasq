@@ -11,6 +11,9 @@
 //! the complete task as the caller wants it on disk, and the store works out
 //! which edits produce it. A store that detects the task changed since it
 //! was read fails with [`StoreError::Conflict`] instead of overwriting.
+//! [`Store::update_many`] writes several tasks as one batch (the nb store
+//! makes it one commit) and stops at the first failure, reporting which
+//! tasks were already written.
 
 use std::path::PathBuf;
 
@@ -89,6 +92,30 @@ pub enum StoreError {
     },
 }
 
+/// Why a batch write ([`Store::update_many`]) stopped, and how far it got.
+///
+/// The tasks in `written` are on disk as requested; the task the error is
+/// about and every task after it were left untouched.
+#[derive(Debug, Error)]
+#[error("{error}{}", written_suffix(written))]
+pub struct BatchError {
+    /// The ids written before the failure, in batch order.
+    pub written: Vec<TaskId>,
+    /// What stopped the batch.
+    #[source]
+    pub error: StoreError,
+}
+
+/// The ` (tasks already written: 1, 4)` part of a [`BatchError`] message,
+/// empty when nothing was written.
+fn written_suffix(written: &[TaskId]) -> String {
+    if written.is_empty() {
+        return String::new();
+    }
+    let ids: Vec<String> = written.iter().map(ToString::to_string).collect();
+    format!(" (tasks already written: {})", ids.join(", "))
+}
+
 /// How a store assigns ids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -133,6 +160,26 @@ pub trait Store {
     /// fails with [`StoreError::Unsupported`] and writes nothing. Fails with
     /// [`StoreError::Conflict`] when the stored task changed since it was read.
     fn update(&mut self, task: &Task) -> Result<(), StoreError>;
+
+    /// Writes every task in `tasks`, in order, as one batch: the same
+    /// contract as [`update`](Self::update) per task, including the
+    /// [`StoreError::Conflict`] check. The first failure stops the batch; the
+    /// error carries the ids already written so the caller knows the state
+    /// of the store. An empty batch writes nothing.
+    ///
+    /// The default implementation calls `update` once per task. A store
+    /// with per-write bookkeeping overrides it to do that bookkeeping once
+    /// (nb: one lock, one commit).
+    fn update_many(&mut self, tasks: &[Task]) -> Result<(), BatchError> {
+        let mut written = Vec::with_capacity(tasks.len());
+        for task in tasks {
+            if let Err(error) = self.update(task) {
+                return Err(BatchError { written, error });
+            }
+            written.push(task.id.clone());
+        }
+        Ok(())
+    }
 
     /// Marks the task done (`true`) or reopens it (`false`), with the store's
     /// own `done` semantics (nb: `# [x]` plus the status tag removed).
@@ -468,6 +515,58 @@ mod tests {
                 "no task with id 7"
             );
             assert_eq!(store.tasks().len(), 2);
+        }
+
+        #[test]
+        fn update_many_writes_every_task_in_order() {
+            let mut store = store();
+            let mut a = store.get(&TaskId::from(1)).unwrap();
+            a.title = "A, renamed".to_owned();
+            let mut old = store.get(&TaskId::from(3)).unwrap();
+            old.set_priority(Priority::C);
+            store.update_many(&[a.clone(), old.clone()]).unwrap();
+            assert_eq!(store.tasks(), &[a.clone(), old.clone()]);
+            store.update_many(&[]).unwrap();
+            assert_eq!(store.tasks(), &[a, old]);
+        }
+
+        #[test]
+        fn update_many_stops_at_the_first_error_and_reports_what_it_wrote() {
+            let mut store = store();
+            let mut a = store.get(&TaskId::from(1)).unwrap();
+            a.title = "A, renamed".to_owned();
+            let mut old = store.get(&TaskId::from(3)).unwrap();
+            old.title = "never written".to_owned();
+            let stranger = Task::new(TaskId::from(7), "?");
+            let err = store.update_many(&[a.clone(), stranger, old]).unwrap_err();
+            assert_eq!(err.written, vec![TaskId::from(1)]);
+            assert!(matches!(&err.error, StoreError::NotFound(id) if *id == TaskId::from(7)));
+            assert_eq!(
+                err.to_string(),
+                "no task with id 7 (tasks already written: 1)"
+            );
+            assert_eq!(store.tasks()[0], a);
+            assert_eq!(store.tasks()[1].title, "Old");
+
+            let first = store
+                .update_many(&[Task::new(TaskId::from(9), "?")])
+                .unwrap_err();
+            assert_eq!(first.written, Vec::new());
+            assert_eq!(first.to_string(), "no task with id 9");
+        }
+
+        #[test]
+        fn batch_error_exposes_its_source() {
+            use std::error::Error;
+            let err = BatchError {
+                written: vec![TaskId::from(1), TaskId::from(4)],
+                error: StoreError::NotFound(TaskId::from(2)),
+            };
+            assert_eq!(
+                err.to_string(),
+                "no task with id 2 (tasks already written: 1, 4)"
+            );
+            assert_eq!(err.source().unwrap().to_string(), "no task with id 2");
         }
 
         #[test]

@@ -33,6 +33,12 @@ pub enum Action {
     Top,
     /// Select the last task.
     Bottom,
+    /// Move the selected task before the task above it in its status
+    /// group (`tasq move --before`).
+    MoveUp,
+    /// Move the selected task after the task below it in its status
+    /// group (`tasq move --after`).
+    MoveDown,
     /// Fold or unfold the group under the cursor.
     ToggleGroup,
     /// Show or hide the DONE group.
@@ -97,6 +103,8 @@ pub const NORMAL: &[Action] = &[
     Action::PageDown,
     Action::Top,
     Action::Bottom,
+    Action::MoveUp,
+    Action::MoveDown,
     Action::ToggleGroup,
     Action::ToggleDone,
     Action::ToggleToday,
@@ -143,6 +151,8 @@ impl Action {
         Action::PageDown,
         Action::Top,
         Action::Bottom,
+        Action::MoveUp,
+        Action::MoveDown,
         Action::ToggleGroup,
         Action::ToggleDone,
         Action::ToggleToday,
@@ -181,6 +191,8 @@ impl Action {
             Self::PageDown => "page-down",
             Self::Top => "top",
             Self::Bottom => "bottom",
+            Self::MoveUp => "move-up",
+            Self::MoveDown => "move-down",
             Self::ToggleGroup => "toggle-group",
             Self::ToggleDone => "toggle-done",
             Self::ToggleToday => "toggle-today",
@@ -225,6 +237,8 @@ impl Action {
             Self::PageDown => &["ctrl+d", "pgdn"],
             Self::Top => &["g", "home"],
             Self::Bottom => &["G", "end"],
+            Self::MoveUp => &["ctrl+k"],
+            Self::MoveDown => &["ctrl+j"],
             Self::ToggleGroup => &["z", "space"],
             Self::ToggleDone => &["a"],
             Self::ToggleToday => &["T"],
@@ -263,6 +277,8 @@ impl Action {
             Self::PageDown => Msg::PageDown,
             Self::Top => Msg::Top,
             Self::Bottom => Msg::Bottom,
+            Self::MoveUp => Msg::MoveUp,
+            Self::MoveDown => Msg::MoveDown,
             Self::ToggleGroup => Msg::ToggleGroup,
             Self::ToggleDone => Msg::ToggleDone,
             Self::ToggleToday => Msg::ToggleToday,
@@ -813,6 +829,8 @@ mod tests {
                 Msg::Bottom,
             ),
             (key(KeyCode::End), Msg::Bottom),
+            (ctrl('k'), Msg::MoveUp),
+            (ctrl('j'), Msg::MoveDown),
             (ch('z'), Msg::ToggleGroup),
             (ch(' '), Msg::ToggleGroup),
             (ch('a'), Msg::ToggleDone),
@@ -874,6 +892,69 @@ mod tests {
         ] {
             assert_eq!(translate(&keys, &m, &unbound), None, "{unbound:?}");
         }
+    }
+
+    /// A legacy terminal sends `Ctrl+J` as the byte `\n`, which crossterm
+    /// reports as `Enter` outside raw mode and as `Ctrl+J` in raw mode
+    /// (where the UI runs); the kitty protocol names the key outright.
+    /// That parsing is crossterm's (issue #371) and is not tested here:
+    /// what is pinned is that the map keeps `ctrl+j` and `enter` apart in
+    /// every mode, so a move never launches a session, whatever the
+    /// terminal reports.
+    #[test]
+    fn ctrl_j_is_never_enter() {
+        let keys = KeyMap::default();
+        assert_ne!(chord("ctrl+j"), chord("enter"));
+        assert_eq!(Chord::from_event(&ctrl('j')), Some(chord("ctrl+j")));
+        assert_eq!(
+            Chord::from_event(&key(KeyCode::Enter)),
+            Some(chord("enter"))
+        );
+        assert_eq!(
+            translate(&keys, &Mode::Normal, &ctrl('j')),
+            Some(Msg::MoveDown)
+        );
+        // A held key repeats under the kitty protocol (a legacy terminal
+        // only sends presses): the repeat moves again.
+        let mut repeat = ctrl('j');
+        repeat.kind = KeyEventKind::Repeat;
+        assert_eq!(
+            translate(&keys, &Mode::Normal, &repeat),
+            Some(Msg::MoveDown)
+        );
+        assert_eq!(
+            translate(&keys, &Mode::Normal, &key(KeyCode::Enter)),
+            Some(Msg::Launch)
+        );
+        assert_eq!(
+            translate(&keys, &Mode::Normal, &ctrl('k')),
+            Some(Msg::MoveUp)
+        );
+        // Where the move keys mean nothing, `Ctrl+J` is not `Enter` either.
+        let filter = Mode::Filter {
+            input: Text::single("x"),
+        };
+        assert_eq!(translate(&keys, &filter, &ctrl('j')), None);
+        assert_eq!(
+            translate(&keys, &filter, &key(KeyCode::Enter)),
+            Some(Msg::Enter)
+        );
+        assert_eq!(
+            translate(&keys, &Mode::Status { cursor: 0 }, &ctrl('j')),
+            Some(Msg::Char('j')),
+            "a picker takes it as a character, which picks nothing"
+        );
+        // Rebinding a move to `enter` is refused by the usual conflict
+        // check, since `launch` has it (`move-down` comes first in table
+        // order, so it is the one named first).
+        assert_eq!(
+            KeyMap::from_config(&config(&[("move-down", one("enter"))])).unwrap_err(),
+            KeyError::Conflict {
+                chord: chord("enter"),
+                first: Action::MoveDown,
+                second: Action::Launch
+            }
+        );
     }
 
     #[test]
@@ -1096,8 +1177,11 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), Action::ALL.len(), "names are unique");
-        assert_eq!(Action::ALL.len(), 33);
-        assert_eq!(NORMAL.len(), 32);
+        assert_eq!(Action::ALL.len(), 35);
+        assert_eq!(NORMAL.len(), 34);
+        assert!(NORMAL.contains(&Action::MoveUp));
+        assert!(NORMAL.contains(&Action::MoveDown));
+        assert!(!PICKER.contains(&Action::MoveUp));
         assert!(!NORMAL.contains(&Action::Confirm));
         assert_eq!(
             PICKER,
@@ -1299,6 +1383,8 @@ mod tests {
         );
         assert_eq!(keys.keys(Action::Top), [chord("g"), chord("home")]);
         assert_eq!(keys.keys(Action::Bottom), [chord("G"), chord("end")]);
+        assert_eq!(keys.keys(Action::MoveUp), [chord("ctrl+k")]);
+        assert_eq!(keys.keys(Action::MoveDown), [chord("ctrl+j")]);
         assert_eq!(keys.keys(Action::Filter), [chord("/")]);
         assert_eq!(keys.keys(Action::Status), [chord("t")]);
         assert_eq!(keys.keys(Action::Priority), [chord("p")]);

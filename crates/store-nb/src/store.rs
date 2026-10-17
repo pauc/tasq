@@ -11,7 +11,7 @@ use tasq_core::config::StoreConfig;
 use tasq_core::format::{self, Document, FormatError, Parsed};
 use tasq_core::model::{Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::Filter;
-use tasq_core::store::{IdScheme, Store, StoreError, StoreInfo};
+use tasq_core::store::{BatchError, IdScheme, Store, StoreError, StoreInfo};
 
 use crate::bookkeeper::{Bookkeeper, NativeBookkeeper, RECONCILE_FIX, WriteLock};
 use crate::create::{DEFAULT_NOTE, check_draft, free_file_name};
@@ -447,6 +447,47 @@ impl NbStore {
         }
     }
 
+    /// The write behind [`Store::update`], without the lock and the
+    /// checkpoint: conflict check, diff, atomic write. Returns the file's
+    /// path when its bytes changed, `None` when the task was already as
+    /// requested.
+    fn write_task(&mut self, task: &Task) -> Result<Option<PathBuf>, StoreError> {
+        let path = self.path_of(&task.id)?;
+        let baseline = self.revisions.borrow().get(&task.id).copied();
+        let (mut parsed, current) = self.read(&task.id, &path)?;
+        if let Some(baseline) = baseline
+            && baseline != current
+        {
+            // Put the baseline back: the caller's task is still the stale one.
+            self.revisions
+                .borrow_mut()
+                .insert(task.id.clone(), baseline);
+            return Err(StoreError::Conflict {
+                id: task.id.clone(),
+                path,
+            });
+        }
+        let before = format::render(&parsed.document);
+        if let Err(fields) = diff::apply(&mut parsed.document, task, &self.workflow) {
+            return Err(StoreError::Unsupported {
+                operation: format!(
+                    "changing {} of task {} (the nb store can only set status, priority, project and done, and append progress, worktrees, sessions, related links and merge requests)",
+                    fields.join(", "),
+                    task.id
+                ),
+            });
+        }
+        let after = format::render(&parsed.document);
+        if after == before {
+            return Ok(None);
+        }
+        let revision = Self::write_atomic(&path, &after)?;
+        self.revisions
+            .borrow_mut()
+            .insert(task.id.clone(), revision);
+        Ok(Some(path))
+    }
+
     /// The text [`Store::create`] writes for `draft`: the draft as a task
     /// with the id still unknown, its note (or [`DEFAULT_NOTE`]) stamped
     /// at `now`, rendered by [`Document::from_task`].
@@ -553,41 +594,48 @@ impl Store for NbStore {
     /// ([`StoreError::Unsupported`]).
     fn update(&mut self, task: &Task) -> Result<(), StoreError> {
         let lock = self.lock()?;
-        let path = self.path_of(&task.id)?;
-        let baseline = self.revisions.borrow().get(&task.id).copied();
-        let (mut parsed, current) = self.read(&task.id, &path)?;
-        if let Some(baseline) = baseline
-            && baseline != current
-        {
-            // Put the baseline back: the caller's task is still the stale one.
-            self.revisions
-                .borrow_mut()
-                .insert(task.id.clone(), baseline);
-            return Err(StoreError::Conflict {
-                id: task.id.clone(),
-                path,
-            });
+        if let Some(path) = self.write_task(task)? {
+            self.checkpoint(lock, &format!("[tasq] Update: {}", Self::file_name(&path)));
         }
-        let before = format::render(&parsed.document);
-        if let Err(fields) = diff::apply(&mut parsed.document, task, &self.workflow) {
-            return Err(StoreError::Unsupported {
-                operation: format!(
-                    "changing {} of task {} (the nb store can only set status, priority, project and done, and append progress, worktrees, sessions, related links and merge requests)",
-                    fields.join(", "),
-                    task.id
-                ),
-            });
-        }
-        let after = format::render(&parsed.document);
-        if after == before {
+        Ok(())
+    }
+
+    /// One lock, every file, one checkpoint naming the files that changed
+    /// (`[tasq] Update: a.todo.md, b.todo.md`), so a batch is one commit.
+    /// Stops at the first failure; the files written before it are still
+    /// checkpointed and their ids are reported in the error. An empty batch
+    /// does not even take the lock.
+    fn update_many(&mut self, tasks: &[Task]) -> Result<(), BatchError> {
+        if tasks.is_empty() {
             return Ok(());
         }
-        let revision = Self::write_atomic(&path, &after)?;
-        self.revisions
-            .borrow_mut()
-            .insert(task.id.clone(), revision);
-        self.checkpoint(lock, &format!("[tasq] Update: {}", Self::file_name(&path)));
-        Ok(())
+        let lock = self.lock().map_err(|error| BatchError {
+            written: Vec::new(),
+            error,
+        })?;
+        let mut written = Vec::new();
+        let mut changed = Vec::new();
+        let mut failure = None;
+        for task in tasks {
+            match self.write_task(task) {
+                Ok(Some(path)) => {
+                    written.push(task.id.clone());
+                    changed.push(Self::file_name(&path));
+                }
+                Ok(None) => written.push(task.id.clone()),
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+        }
+        if !changed.is_empty() {
+            self.checkpoint(lock, &format!("[tasq] Update: {}", changed.join(", ")));
+        }
+        match failure {
+            Some(error) => Err(BatchError { written, error }),
+            None => Ok(()),
+        }
     }
 
     /// `done`: what `nb todo do` writes (`# [x]`) plus the status tag

@@ -405,6 +405,35 @@ pub fn clear_closed(doc: &mut Document) -> bool {
     remove_sections(doc, section::CLOSED)
 }
 
+/// `set_rank`: replaces the body of every `## Rank` with a blank line and
+/// the integer, like [`set_due`]; a missing section is inserted after
+/// `## Closed`, else `## Source`, else `## Due`, else `## Project`, else
+/// `## Description`, else right after the title line (where
+/// [`Document::from_task`] puts it). `tasq` only (ADR 0025).
+pub fn set_rank(doc: &mut Document, rank: i64) {
+    let value = rank.to_string();
+    if replace_bodies(doc, section::RANK, &value) {
+        return;
+    }
+    let insafter = [
+        section::CLOSED,
+        section::SOURCE,
+        section::DUE,
+        section::PROJECT,
+        section::DESCRIPTION,
+    ]
+    .iter()
+    .find_map(|name| doc.find_first(&heading(name)))
+    .map_or(1, |h| doc.section_end(h));
+    insert_section(doc, section::RANK, &[&value], insafter);
+}
+
+/// `clear_rank`: removes every `## Rank` section. Returns whether there
+/// was one. `tasq` only.
+pub fn clear_rank(doc: &mut Document) -> bool {
+    remove_sections(doc, section::RANK)
+}
+
 /// `clear_project`: removes every `## Project` section. Returns whether
 /// there was one. `tasq` only.
 pub fn clear_project(doc: &mut Document) -> bool {

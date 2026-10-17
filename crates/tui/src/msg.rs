@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use tasq_core::edit::Fields;
+use tasq_core::edit::{Fields, Target};
 use tasq_core::model::{Priority, Status, Task, TaskDraft, TaskId, Worktree};
 
 /// Something that happened: a key, translated by [`crate::keys`] for the
@@ -48,6 +48,12 @@ pub enum Msg {
     Top,
     /// Select the last task (`G`).
     Bottom,
+    /// `Ctrl+K`: move the selected task before the task above it in its
+    /// status group.
+    MoveUp,
+    /// `Ctrl+J`: move the selected task after the task below it in its
+    /// status group.
+    MoveDown,
     /// Confirm: launch (normal mode), apply the filter, pick, send the note.
     Enter,
     /// Cancel: leave the mode, or clear the filter / hide the detail.
@@ -144,6 +150,10 @@ pub enum Cmd {
     Create(Box<TaskDraft>, Option<String>),
     /// The edit view's save: [`tasq_core::edit::revise`] with the fields.
     Revise(TaskId, Box<Fields>),
+    /// `tasq move <id> ...`: [`tasq_core::edit::move_task`] with the
+    /// target; `Ctrl+K` / `Ctrl+J` send `Before` / `After` the visible
+    /// neighbour in the task's status group.
+    Move(TaskId, Target),
     /// Open the task's file in the editor (terminal released meanwhile).
     Editor(TaskId),
     /// `tasq view <id>` (terminal released meanwhile), then a pause for a
@@ -363,6 +373,9 @@ mod tests {
             assert!(!detached.pauses_after(), "{detached:?}");
         }
         assert!(!Cmd::Load.releases_terminal());
+        let before = tasq_core::edit::Target::Before(TaskId::from(2));
+        assert!(!Cmd::Move(id.clone(), before.clone()).releases_terminal());
+        assert!(!Cmd::Move(id.clone(), before).pauses_after());
         assert!(!Cmd::SetStatus(id.clone(), Status::READY).releases_terminal());
         assert!(!Cmd::Reopen(id.clone(), Status::READY).releases_terminal());
         assert!(!Cmd::Reopen(id.clone(), Status::READY).pauses_after());

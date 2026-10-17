@@ -130,7 +130,8 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    tasq ui
    ```
 
-   `j`/`k` move, `z` or `Space` folds the group to its header and back, `/` filters, `c` creates a task in the edit view, `t`/`p` set status and
+   `j`/`k` move, `Ctrl+K`/`Ctrl+J` move the selected task up or down within its status group
+   (`tasq move`), `z` or `Space` folds the group to its header and back, `/` filters, `c` creates a task in the edit view, `t`/`p` set status and
    priority, `e` opens the edit view (every field and the description, `Enter` on the due
    date opens a calendar, `Ctrl+S` saves), `l`
    logs a note, `d` marks done, `E` opens the file in `$EDITOR`, `v` shows it rendered
@@ -216,6 +217,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq due ID DATE\|none [--note TEXT]` | Set the due date (`create --due` words) or remove it |
 | `tasq tag ID TAG... [--note TEXT]` | `+name` or `name` adds a topic tag, `-name` removes one; the other tags stay |
 | `tasq desc ID [TEXT\|-\|--edit] [--note TEXT]` | Print the description, replace it (`-` reads stdin, `""` clears) or open it in `$VISUAL`/`$EDITOR` |
+| `tasq move ID --before ID\|--after ID\|--top\|--unrank` | Place the task next to another task of its status group, first in the group (above every priority), or drop its rank back to the priority, due, id order; lists, the UI and `next` follow |
 | `tasq next [--launcher NAME] [--dry-run]` | Open a session on the first in-progress task, else the first ready one |
 | `tasq pick ID [--launcher NAME] [--dry-run]` | Open a session on a specific task |
 | `tasq view ID [--raw]` | Show a task (glow on a terminal, plain markdown otherwise; `--raw` is verbatim) |

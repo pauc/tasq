@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Manual order within a status group: `tasq move <id> --before <id>` / `--after <id>` places
+  a task next to another task of its group, `--top` puts it first (above every priority) and
+  `--unrank` hands it back to the priority, due, id order; `tasq list`, `tasq ui` and
+  `tasq next` follow. In `tasq ui`, `Ctrl+K`/`Ctrl+J` (`move-up`, `move-down`) move the
+  selected task one slot, next to its visible neighbour. The rank lives in a `## Rank` section
+  of the task file, is never shown, and is kept across status changes and close/reopen;
+  `rank` is in every task JSON (`tasq move --json` adds `changed` and `ranked`) and
+  `tasq apply` keeps it unless the document says `"rank": null`. The common move rewrites one
+  file; a move that ranks or renumbers neighbours goes out as one commit (ADR 0025).
 - `tasq ui` detail pane: `J`/`Ctrl+E` and `K`/`Ctrl+Y` scroll it (`detail-down`, `detail-up`),
   `PgUp`/`PgDn` page it when it replaces the list, a scrollbar shows the position, and every
   progress note is listed (no longer the last 8). Related and merge request entries show

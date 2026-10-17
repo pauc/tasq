@@ -6,14 +6,16 @@
 //!
 //! - [`Filter`] selects tasks by status, tag, priority, done flag and title
 //!   text. Like the script, a default filter keeps **open** tasks only.
-//! - [`sort`] and [`sort_key`] order tasks the way `sorted_group` did:
-//!   priority `A` before `B` before `C`, then earliest due date first with
-//!   undated tasks last, then by id. [`sort_done`] orders done tasks newest
-//!   first by [`closed_key`].
+//! - [`sort`] and [`sort_key`] order tasks the way `sorted_group` did,
+//!   under the manual rank (ADR 0025): ranked tasks first, smallest rank on
+//!   top, then priority `A` before `B` before `C`, then earliest due date
+//!   first with undated tasks last, then by id. [`sort_done`] orders done
+//!   tasks newest first by [`closed_key`], rank ignored.
 //! - [`group_by_status`] buckets tasks per status in workflow order, with the
 //!   tasks that have no status last; empty groups are dropped.
 //! - [`next`] picks the task to work on: the first task of the first non-empty
-//!   group among the leading workflow statuses (`in-progress`, then `ready`).
+//!   group among the leading workflow statuses (`in-progress`, then `ready`),
+//!   so the top ranked task of that group when it has one.
 //!
 //! The typical pipeline is `filter` → `group_by_status` (or [`list`], which
 //! does both), or `filter` → `next`.
@@ -200,6 +202,14 @@ where
 // Ordering
 // ---------------------------------------------------------------------------
 
+/// A rank that orders ranked tasks (smallest first) before every unranked
+/// one (ADR 0025).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum RankKey {
+    At(i64),
+    Unranked,
+}
+
 /// A due date that orders undated tasks after every dated one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum DueKey {
@@ -231,13 +241,17 @@ impl<'a> IdKey<'a> {
 
 /// The key tasks are sorted by; compare two of them to order two tasks.
 ///
-/// Orders by priority (`A` < `B` < `C`), then due date ascending with undated
-/// tasks last, then id. Ids are compared numerically when they are made of
-/// digits (`9` before `10`, as the script's `sort -n` did); any other id sorts
-/// after all numeric ids, as text. Two tasks compare equal only when all
-/// three parts are equal, which in practice means the same id.
+/// Orders by rank (ranked tasks first, smallest rank on top; unranked tasks
+/// and done tasks after every ranked one, ADR 0025), then priority (`A` <
+/// `B` < `C`), then
+/// due date ascending with undated tasks last, then id. Ids are compared
+/// numerically when they are made of digits (`9` before `10`, as the
+/// script's `sort -n` did); any other id sorts after all numeric ids, as
+/// text. Two tasks compare equal only when all four parts are equal, which
+/// in practice means the same id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SortKey<'a> {
+    rank: RankKey,
     priority: Priority,
     due: DueKey,
     id: IdKey<'a>,
@@ -246,6 +260,12 @@ pub struct SortKey<'a> {
 /// The [`SortKey`] of `task`.
 pub fn sort_key(task: &Task) -> SortKey<'_> {
     SortKey {
+        // A done task keeps its rank for when it is reopened, but it has
+        // no status group to be ranked in: the done list never follows it.
+        rank: task
+            .rank
+            .filter(|_| !task.done)
+            .map_or(RankKey::Unranked, RankKey::At),
         priority: task.priority,
         due: task.due.map_or(DueKey::Never, DueKey::On),
         id: IdKey::of(&task.id),
@@ -382,7 +402,8 @@ where
 pub const NEXT_STATUSES: usize = 2;
 
 /// The task to pick up next: the first task, in [`sort_key`] order, of the
-/// first status in `statuses` that has any tasks.
+/// first status in `statuses` that has any tasks. A ranked task in that
+/// status beats every unranked one, whatever their priorities (ADR 0025).
 ///
 /// Returns `None` when no task is in any of the given statuses. Tasks are
 /// not filtered by `done`; apply a [`Filter`] first if the input may contain
@@ -866,6 +887,7 @@ mod tests {
         assert_eq!(
             sort_key(&t),
             SortKey {
+                rank: RankKey::Unranked,
                 priority: Priority::A,
                 due: DueKey::On(date("2026-10-05")),
                 id: IdKey::Number(5, "5"),
@@ -875,12 +897,102 @@ mod tests {
         assert_eq!(
             sort_key(&t),
             SortKey {
+                rank: RankKey::Unranked,
                 priority: Priority::C,
                 due: DueKey::Never,
                 id: IdKey::Text("x"),
             }
         );
         assert!(DueKey::On(date("9999-12-31")) < DueKey::Never);
+    }
+
+    #[test]
+    fn ranked_tasks_come_first_ascending_then_the_natural_order() {
+        use Priority::{A, B, C};
+        let ranked = |id: &str, prio: Priority, due: Option<&str>, rank: i64| {
+            let mut t = task(id, "", Some("ready"), prio, due, &[]);
+            t.rank = Some(rank);
+            t
+        };
+        let tasks = vec![
+            task("1", "", Some("ready"), A, Some("2026-10-01"), &[]),
+            ranked("2", C, None, 2048),
+            task("3", "", Some("ready"), B, None, &[]),
+            ranked("4", C, None, 1024),
+            ranked("5", C, None, -1024),
+            // Equal ranks fall back to priority, due, id.
+            ranked("6", B, None, 1024),
+            ranked("7", C, Some("2026-10-01"), 1024),
+            ranked("8", C, None, 1024),
+        ];
+        assert_eq!(ids(&sort(&tasks)), ["5", "6", "7", "4", "8", "2", "1", "3"]);
+        assert_eq!(
+            compare(&tasks[1], &tasks[0]),
+            Ordering::Less,
+            "a #C ranked task passes an unranked #A one"
+        );
+        assert_eq!(compare(&tasks[3], &tasks[1]), Ordering::Less);
+        assert_eq!(compare(&tasks[0], &tasks[2]), Ordering::Less);
+        assert_eq!(
+            sort_key(&tasks[4]),
+            SortKey {
+                rank: RankKey::At(-1024),
+                priority: C,
+                due: DueKey::Never,
+                id: IdKey::Number(5, "5"),
+            }
+        );
+        assert_eq!(sort_key(&tasks[0]).rank, RankKey::Unranked);
+        assert!(RankKey::At(i64::MAX) < RankKey::Unranked);
+    }
+
+    #[test]
+    fn a_done_task_keeps_its_rank_but_sorts_without_it() {
+        let mut ranked = task("1", "", None, Priority::C, None, &[]);
+        ranked.done = true;
+        ranked.rank = Some(-1024);
+        let mut plain = task("2", "", None, Priority::B, None, &[]);
+        plain.done = true;
+        let tasks = vec![ranked, plain];
+        assert_eq!(ids(&sort(&tasks)), ["2", "1"]);
+        assert_eq!(sort_key(&tasks[0]).rank, RankKey::Unranked);
+        assert_eq!(tasks[0].rank, Some(-1024));
+    }
+
+    #[test]
+    fn done_order_ignores_the_rank() {
+        use crate::clock::FixedClock;
+        let at = |s: &str| FixedClock::at(s).0;
+        let mut older = task("1", "", None, Priority::B, None, &[]);
+        older.done = true;
+        older.closed_at = Some(at("2026-10-01 09:00"));
+        older.rank = Some(-4096);
+        let mut newer = task("2", "", None, Priority::B, None, &[]);
+        newer.done = true;
+        newer.closed_at = Some(at("2026-10-02 09:00"));
+        let tasks = vec![older, newer];
+        assert_eq!(ids(&sort_done(&tasks)), ["2", "1"]);
+    }
+
+    #[test]
+    fn next_picks_the_top_ranked_task_of_the_group() {
+        let wf = Workflow::default();
+        let mut tasks = vec![
+            task("1", "", Some("ready"), Priority::A, Some("2026-01-01"), &[]),
+            task("2", "", Some("ready"), Priority::C, None, &[]),
+            task("3", "", Some("ready"), Priority::C, None, &[]),
+            task("4", "", Some("later"), Priority::C, None, &[]),
+        ];
+        tasks[1].rank = Some(2048);
+        tasks[2].rank = Some(1024);
+        // A rank in another status group does not count.
+        tasks[3].rank = Some(-1024);
+        assert_eq!(next(&tasks, &wf).unwrap().id.as_str(), "3");
+        tasks[2].rank = Some(4096);
+        assert_eq!(next(&tasks, &wf).unwrap().id.as_str(), "2");
+        tasks[1].rank = None;
+        tasks[2].rank = None;
+        assert_eq!(next(&tasks, &wf).unwrap().id.as_str(), "1");
     }
 
     #[test]

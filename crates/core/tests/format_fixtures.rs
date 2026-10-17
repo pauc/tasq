@@ -26,6 +26,7 @@ const FIXTURES: &[&str] = &[
     "crlf",
     "extra-sections",
     "source",
+    "ranked",
 ];
 
 fn fixture(name: &str) -> String {
@@ -306,6 +307,18 @@ fn source() {
         })
     );
     assert_eq!(task.tags, vec![tag("review-request")]);
+}
+
+#[test]
+fn ranked() {
+    let task = parse(&fixture("ranked")).task;
+    assert_eq!(task.rank, Some(1024));
+    assert_eq!(
+        task.due,
+        Some(NaiveDate::from_ymd_opt(2026, 10, 10).unwrap())
+    );
+    assert_eq!(task.status, Some(Status::READY));
+    assert_eq!(task.priority, Priority::C);
 }
 
 #[test]

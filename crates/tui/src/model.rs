@@ -162,6 +162,18 @@ pub enum Row<'a> {
     Task(&'a Task),
 }
 
+/// A visible task's place in its group, for `Ctrl+K` / `Ctrl+J`: the
+/// tasks listed right next to it there ([`Model::neighbours`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Neighbours {
+    /// The group the task is listed under.
+    pub group: GroupKey,
+    /// The task listed right above it in that group, if any.
+    pub above: Option<TaskId>,
+    /// The task listed right below it in that group, if any.
+    pub below: Option<TaskId>,
+}
+
 /// Where the list cursor rests.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cursor {
@@ -523,6 +535,20 @@ impl Model {
             .find(|g| g.tasks.iter().any(|t| t.id == *id))
     }
 
+    /// The visible task `id`'s place in its group: the group, and the
+    /// tasks listed right above and below it there (a filtered view counts
+    /// only what is shown); `None` for a task that is not listed.
+    pub fn neighbours(&self, id: &TaskId) -> Option<Neighbours> {
+        let group = self.group_of(id)?;
+        let at = group.tasks.iter().position(|t| t.id == *id)?;
+        let listed = |i: usize| group.tasks.get(i).map(|t| t.id.clone());
+        Some(Neighbours {
+            group: group.key,
+            above: at.checked_sub(1).and_then(listed),
+            below: listed(at + 1),
+        })
+    }
+
     /// The visible tasks in list order.
     pub fn visible(&self) -> Vec<&Task> {
         self.groups()
@@ -792,6 +818,54 @@ mod tests {
         assert_eq!(m.selected, None);
         m.select_last();
         assert_eq!(m.selected, None);
+    }
+
+    #[test]
+    fn neighbours_are_the_tasks_listed_next_to_a_task_in_its_group() {
+        let mut m = model();
+        m.set_tasks(vec![
+            task(1, "First", Some(Status::IN_PROGRESS)),
+            task(2, "Second", Some(Status::READY)),
+            task(3, "Third", Some(Status::READY)),
+            task(5, "Fifth", Some(Status::READY)),
+            task(4, "Loose", None),
+        ]);
+        let ready = GroupKey::Status(Some(Status::READY));
+        let at = |group: &GroupKey, above: Option<u64>, below: Option<u64>| {
+            Some(Neighbours {
+                group: group.clone(),
+                above: above.map(TaskId::from),
+                below: below.map(TaskId::from),
+            })
+        };
+        let n = |m: &Model, id: u64| m.neighbours(&TaskId::from(id));
+        assert_eq!(
+            n(&m, 1),
+            at(&GroupKey::Status(Some(Status::IN_PROGRESS)), None, None)
+        );
+        assert_eq!(n(&m, 2), at(&ready, None, Some(3)));
+        assert_eq!(n(&m, 3), at(&ready, Some(2), Some(5)));
+        assert_eq!(n(&m, 5), at(&ready, Some(3), None));
+        assert_eq!(n(&m, 4), at(&GroupKey::Status(None), None, None));
+        assert_eq!(n(&m, 99), None);
+        // Only what the filter shows counts, and a hidden task has no place.
+        m.set_filter("i".into());
+        let ids: Vec<&str> = m.visible().iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["1", "3", "5"]);
+        assert_eq!(n(&m, 3), at(&ready, None, Some(5)));
+        assert_eq!(n(&m, 2), None);
+        m.set_filter(String::new());
+        // A folded group still lists its tasks; the DONE group is a group.
+        m.collapsed.insert(ready.clone());
+        assert_eq!(n(&m, 3), at(&ready, Some(2), Some(5)));
+        let mut closed = task(6, "Closed", None);
+        closed.mark_done();
+        let mut tasks = m.tasks.clone();
+        tasks.push(closed);
+        m.set_tasks(tasks);
+        assert_eq!(n(&m, 6), None, "hidden until `a`");
+        m.toggle_done();
+        assert_eq!(n(&m, 6), at(&GroupKey::Done, None, None));
     }
 
     #[test]

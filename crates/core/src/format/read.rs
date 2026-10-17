@@ -3,7 +3,8 @@
 //! Follows the script's `parse_todo` awk: a section is a line starting with
 //! `## `, all `## Tags` lines are concatenated, the first non-empty `## Due`
 //! line wins, and the last status or priority tag seen wins. `## Closed`
-//! (tasq only) reads like `## Due`, as a `YYYY-MM-DD HH:MM` timestamp.
+//! (tasq only) reads like `## Due`, as a `YYYY-MM-DD HH:MM` timestamp, and
+//! `## Rank` (tasq only) the same way, as an integer.
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -38,6 +39,8 @@ pub mod section {
     pub const SOURCE: &str = "Source";
     /// `## Closed` (written only by tasq, ADR 0020).
     pub const CLOSED: &str = "Closed";
+    /// `## Rank` (written only by tasq, ADR 0025).
+    pub const RANK: &str = "Rank";
 }
 
 /// Builds the typed task from the document.
@@ -77,6 +80,9 @@ pub fn project(doc: &Document, id: TaskId, workflow: &Workflow) -> Task {
                     Ok(When::DateTime(at)) => Some(at),
                     Ok(When::Date(_)) | Err(_) => None,
                 });
+            }
+            section::RANK if task.rank.is_none() => {
+                task.rank = first_non_empty(&section).and_then(|l| l.trim().parse().ok());
             }
             _ => {}
         }

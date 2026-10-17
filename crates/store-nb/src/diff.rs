@@ -55,33 +55,7 @@ pub fn apply(
             }
         }
     }
-    // Against the task as read: reopening drops `## Closed` even though the
-    // projection after `set_open` already reads `None`. A stale section on
-    // an open file reads as `None` too, so it is left alone.
-    if wanted.closed_at != current.closed_at {
-        match wanted.closed_at {
-            Some(at) => ops::set_closed(doc, at),
-            None => {
-                ops::clear_closed(doc);
-            }
-        }
-    }
-    if wanted.due != current.due {
-        match wanted.due {
-            Some(due) => ops::set_due(doc, due),
-            None => {
-                ops::clear_due(doc);
-            }
-        }
-    }
-    if wanted.project != current.project {
-        match &wanted.project {
-            Some(project_dir) => ops::set_project(doc, project_dir),
-            None => {
-                ops::clear_project(doc);
-            }
-        }
-    }
+    apply_scalars(doc, wanted, &current);
     if wanted.tags != current.tags {
         ops::set_tags(doc, &wanted.tags, workflow);
     }
@@ -128,9 +102,50 @@ pub fn apply(
     }
 }
 
+/// The one-value sections (`## Closed`, `## Rank`, `## Due`, `## Project`):
+/// each is set, replaced or removed when `wanted` differs from `current`.
+fn apply_scalars(doc: &mut Document, wanted: &Task, current: &Task) {
+    // Against the task as read: reopening drops `## Closed` even though the
+    // projection after `set_open` already reads `None`. A stale section on
+    // an open file reads as `None` too, so it is left alone.
+    if wanted.closed_at != current.closed_at {
+        match wanted.closed_at {
+            Some(at) => ops::set_closed(doc, at),
+            None => {
+                ops::clear_closed(doc);
+            }
+        }
+    }
+    // Likewise a hand-written, invalid `## Rank` reads as `None` and stays.
+    if wanted.rank != current.rank {
+        match wanted.rank {
+            Some(rank) => ops::set_rank(doc, rank),
+            None => {
+                ops::clear_rank(doc);
+            }
+        }
+    }
+    if wanted.due != current.due {
+        match wanted.due {
+            Some(due) => ops::set_due(doc, due),
+            None => {
+                ops::clear_due(doc);
+            }
+        }
+    }
+    if wanted.project != current.project {
+        match &wanted.project {
+            Some(project_dir) => ops::set_project(doc, project_dir),
+            None => {
+                ops::clear_project(doc);
+            }
+        }
+    }
+}
+
 /// Names of the fields in which `a` and `b` differ, in declaration order.
 pub fn differing_fields(a: &Task, b: &Task) -> Vec<&'static str> {
-    let checks: [(&'static str, bool); 16] = [
+    let checks: [(&'static str, bool); 17] = [
         ("id", a.id != b.id),
         ("title", a.title != b.title),
         ("done", a.done != b.done),
@@ -147,6 +162,7 @@ pub fn differing_fields(a: &Task, b: &Task) -> Vec<&'static str> {
         ("progress", a.progress != b.progress),
         ("origin", a.origin != b.origin),
         ("closed_at", a.closed_at != b.closed_at),
+        ("rank", a.rank != b.rank),
     ];
     checks
         .into_iter()
@@ -251,6 +267,42 @@ mod tests {
             apply_to(TEXT, |t| t.closed_at = Some(clock.now())),
             Err(vec!["closed_at"])
         );
+    }
+
+    #[test]
+    fn rank_is_written_replaced_and_removed() {
+        let ranked = apply_to(TEXT, |t| t.rank = Some(1024)).unwrap();
+        assert_eq!(
+            ranked,
+            "# [ ] Title\n\n## Rank\n\n1024\n\n## Tags\n\n#gitlab #B #ready\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+        );
+        let moved = apply_to(&ranked, |t| t.rank = Some(-512)).unwrap();
+        assert_eq!(
+            moved,
+            "# [ ] Title\n\n## Rank\n\n-512\n\n## Tags\n\n#gitlab #B #ready\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+        );
+        assert_eq!(apply_to(&moved, |t| t.rank = None).unwrap(), TEXT);
+        // A hand-written, invalid rank reads as `None`, so it is left alone.
+        let invalid = "# [ ] T\n\n## Rank\n\nsoon\n\n## Tags\n\n#B\n";
+        assert_eq!(apply_to(invalid, |_| {}).unwrap(), invalid);
+        assert_eq!(
+            apply_to(invalid, |t| t.rank = Some(1)).unwrap(),
+            "# [ ] T\n\n## Rank\n\n1\n\n## Tags\n\n#B\n"
+        );
+        // Closing and reopening keep the rank (ADR 0025).
+        let clock = FixedClock::at("2026-10-07 14:32");
+        let closed = apply_to(&ranked, |t| t.close(&clock)).unwrap();
+        assert_eq!(
+            closed,
+            "# [x] Title\n\n## Closed\n\n2026-10-07 14:32\n\n## Rank\n\n1024\n\n## Tags\n\n#gitlab #B\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+        );
+        let reopened = apply_to(&closed, |t| {
+            t.done = false;
+            t.closed_at = None;
+            t.set_status(Status::READY);
+        })
+        .unwrap();
+        assert_eq!(reopened, ranked);
     }
 
     #[test]
@@ -392,6 +444,7 @@ mod tests {
             url: None,
         });
         b.closed_at = Some(FixedClock::at("2026-10-04 10:15").0);
+        b.rank = Some(1024);
         assert_eq!(
             differing_fields(&a, &b),
             vec![
@@ -411,6 +464,7 @@ mod tests {
                 "progress",
                 "origin",
                 "closed_at",
+                "rank",
             ]
         );
     }

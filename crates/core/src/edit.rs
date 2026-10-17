@@ -1,7 +1,8 @@
 //! The small edits of the original script, `set`, `log` and `done`, as
 //! operations on a [`Store`], plus [`reopen`], the inverse of `done`,
-//! [`revise`], the TUI form's save, and the one-field edits of the CLI
-//! ([`rename`], [`due`], [`retag`], [`describe`]).
+//! [`revise`], the TUI form's save, the one-field edits of the CLI
+//! ([`rename`], [`due`], [`retag`], [`describe`]) and [`move_task`], the
+//! rank within a status group (`tasq move`, ADR 0025).
 //!
 //! The CLI (`tasq set/log/done`) and the TUI (`t`, `p`, `l`, `d`) both call
 //! these, so the two front ends cannot drift (FR-10): a status change is
@@ -16,7 +17,8 @@ use thiserror::Error;
 
 use crate::clock::Clock;
 use crate::model::{ModelError, Priority, Status, Tag, Task, TaskDraft, TaskId, Workflow};
-use crate::store::{Store, StoreError};
+use crate::query::{self, Filter};
+use crate::store::{BatchError, Store, StoreError};
 
 /// What `set` changes: a workflow status or a priority.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,9 +253,34 @@ pub enum EditError {
     /// `reopen` was asked for a task that is still open.
     #[error("task {0} is not done")]
     NotDone(TaskId),
+    /// `move` was asked for a done task, which has no status group to be
+    /// ranked in.
+    #[error("task {0} is done")]
+    IsDone(TaskId),
+    /// `move` was given the task itself as the anchor.
+    #[error("task {0} cannot be moved relative to itself")]
+    OwnAnchor(TaskId),
+    /// `move` was given an anchor outside the task's status group (another
+    /// status, no status, or done): a move never changes status.
+    #[error(
+        "task {anchor} is {anchor_group} but task {id} is {group}; a move stays within one status group"
+    )]
+    OtherGroup {
+        /// The moved task.
+        id: TaskId,
+        /// Its status group: the status, `no-status` or `done`.
+        group: String,
+        /// The anchor.
+        anchor: TaskId,
+        /// The anchor's status group.
+        anchor_group: String,
+    },
     /// The store refused or failed.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A batch write stopped; the error names the tasks already written.
+    #[error(transparent)]
+    Batch(#[from] BatchError),
 }
 
 /// `tasq set <id> <value> [note]`: changes the status or priority, logs
@@ -537,6 +564,333 @@ pub fn reopen(
     Ok(store.get(id)?)
 }
 
+/// The distance between two ranks written by a move (ADR 0025).
+pub const RANK_STEP: i64 = 1024;
+
+/// Where `tasq move` puts a task within its status group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// First in the group: the group's lowest rank minus [`RANK_STEP`], or
+    /// [`RANK_STEP`] when nothing else in the group is ranked.
+    Top,
+    /// Directly before another task of the same status group (the anchor).
+    Before(TaskId),
+    /// Directly after another task of the same status group (the anchor).
+    After(TaskId),
+    /// No rank: back to the natural priority, due, id order.
+    Unrank,
+}
+
+/// Which side of the anchor a [`Target::Before`] or [`Target::After`] means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Before,
+    After,
+}
+
+/// What [`move_task`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Moved {
+    /// The task as stored afterwards (as read when nothing was written).
+    pub task: Task,
+    /// `["rank"]` when the task's rank was written, `[]` when the move left
+    /// it where it was and nothing was written.
+    pub changed: Vec<&'static str>,
+    /// The other tasks of the group whose rank was written for this move,
+    /// in batch order; empty for a move that touched the task alone.
+    pub ranked: Vec<TaskId>,
+}
+
+impl Moved {
+    /// The line `tasq move` prints and the TUI shows for a move to
+    /// `target`: `[3] moved before task 1`, or `[3] already before task 1`
+    /// when the task was there already and nothing was written, with
+    /// ` (also ranked: 1, 8)` when other tasks of the group were written
+    /// for the move, so the user knows which files changed.
+    pub fn describe(&self, target: &Target) -> String {
+        let unchanged = self.changed.is_empty() && self.ranked.is_empty();
+        let outcome = match (target, unchanged) {
+            (Target::Top, false) => "moved to the top".to_owned(),
+            (Target::Top, true) => "already at the top".to_owned(),
+            (Target::Unrank, false) => "unranked".to_owned(),
+            (Target::Unrank, true) => "already unranked".to_owned(),
+            (Target::Before(anchor), false) => format!("moved before task {anchor}"),
+            (Target::Before(anchor), true) => format!("already before task {anchor}"),
+            (Target::After(anchor), false) => format!("moved after task {anchor}"),
+            (Target::After(anchor), true) => format!("already after task {anchor}"),
+        };
+        let also = if self.ranked.is_empty() {
+            String::new()
+        } else {
+            let ids: Vec<String> = self.ranked.iter().map(ToString::to_string).collect();
+            format!(" (also ranked: {})", ids.join(", "))
+        };
+        format!("[{}] {outcome}{also}", self.task.id)
+    }
+}
+
+/// The ranks a move writes: the moved task's new rank, and the other tasks
+/// of the group whose rank is written with it (in batch order): the ones
+/// ranked so that the slot exists, or the ones renumbered to make room.
+struct Plan {
+    rank: Option<i64>,
+    others: Vec<Task>,
+}
+
+impl Plan {
+    /// A plan that touches the moved task alone.
+    fn alone(rank: Option<i64>) -> Self {
+        Self {
+            rank,
+            others: Vec::new(),
+        }
+    }
+}
+
+/// `tasq move <id> <target>`: sets the task's rank so that it sits at
+/// `target` within its status group (the open tasks sharing its status,
+/// the no-status group included) and writes every task whose rank changed
+/// as one batch, the other tasks first and the moved task last. A done
+/// task is refused before anything is read further; a move that leaves the
+/// task where it is writes nothing.
+pub fn move_task(store: &mut dyn Store, id: &TaskId, target: &Target) -> Result<Moved, EditError> {
+    let task = store.get(id)?;
+    if task.done {
+        return Err(EditError::IsDone(id.clone()));
+    }
+    let group: Vec<Task> = store
+        .list(&Filter::new())?
+        .into_iter()
+        .filter(|t| t.status == task.status)
+        .collect();
+    let plan = match target {
+        Target::Top => Plan::alone(top_rank(&group, id)),
+        Target::Unrank => Plan::alone(None),
+        Target::Before(anchor) => {
+            let anchor = checked_anchor(store, &group, &task, anchor)?;
+            beside(&group, &task, anchor, Side::Before)
+        }
+        Target::After(anchor) => {
+            let anchor = checked_anchor(store, &group, &task, anchor)?;
+            beside(&group, &task, anchor, Side::After)
+        }
+    };
+    let rank_changed = plan.rank != task.rank;
+    if !rank_changed && plan.others.is_empty() {
+        return Ok(Moved {
+            task,
+            changed: Vec::new(),
+            ranked: Vec::new(),
+        });
+    }
+    let ranked: Vec<TaskId> = plan.others.iter().map(|t| t.id.clone()).collect();
+    let mut batch = plan.others;
+    if rank_changed {
+        let mut moved = task;
+        moved.rank = plan.rank;
+        batch.push(moved);
+    }
+    store.update_many(&batch)?;
+    Ok(Moved {
+        task: store.get(id)?,
+        changed: if rank_changed {
+            vec!["rank"]
+        } else {
+            Vec::new()
+        },
+        ranked,
+    })
+}
+
+/// The rank that puts `id` first in `group`: its current rank when it is
+/// already first, else [`first_rank`] of the others.
+fn top_rank(group: &[Task], id: &TaskId) -> Option<i64> {
+    let ordered = query::sort(group);
+    let first = ordered.first().expect("the group holds the moved task");
+    if first.id == *id {
+        return first.rank;
+    }
+    let lowest = group
+        .iter()
+        .filter(|t| t.id != *id)
+        .filter_map(|t| t.rank)
+        .min();
+    Some(first_rank(lowest))
+}
+
+/// The rank that goes above every other task of a group whose lowest rank
+/// is `lowest`: one step above it, or [`RANK_STEP`] when nothing is
+/// ranked.
+fn first_rank(lowest: Option<i64>) -> i64 {
+    lowest.map_or(RANK_STEP, |rank| rank - RANK_STEP)
+}
+
+/// The anchor of a `--before` / `--after` move, as the group's task: the
+/// moved task itself is refused, and so is a task outside the group (another
+/// status, no status, or done), with both groups named.
+fn checked_anchor<'a>(
+    store: &dyn Store,
+    group: &'a [Task],
+    task: &Task,
+    anchor: &TaskId,
+) -> Result<&'a Task, EditError> {
+    if *anchor == task.id {
+        return Err(EditError::OwnAnchor(anchor.clone()));
+    }
+    if let Some(found) = group.iter().find(|t| t.id == *anchor) {
+        return Ok(found);
+    }
+    let other = store.get(anchor)?;
+    Err(EditError::OtherGroup {
+        id: task.id.clone(),
+        group: group_label(task),
+        anchor: anchor.clone(),
+        anchor_group: group_label(&other),
+    })
+}
+
+/// What sits next to a slot in a group's order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Neighbour {
+    /// The slot is at that edge of the group.
+    Absent,
+    /// A task without a rank.
+    Unranked,
+    /// A task with this rank.
+    Ranked(i64),
+}
+
+impl Neighbour {
+    fn of(task: Option<&&Task>) -> Self {
+        match task {
+            None => Self::Absent,
+            Some(t) => t.rank.map_or(Self::Unranked, Self::Ranked),
+        }
+    }
+}
+
+/// The plan that puts `task` on `side` of `anchor` (another task of
+/// `group`, see [`checked_anchor`]): the group's current order with `task`
+/// taken out, and `task` put back next to the anchor. A task already in
+/// that slot gets a plan that writes nothing.
+fn beside(group: &[Task], task: &Task, anchor: &Task, side: Side) -> Plan {
+    let ordered = query::sort(group);
+    let current = ordered
+        .iter()
+        .position(|t| t.id == task.id)
+        .expect("the group holds the moved task");
+    let others: Vec<&Task> = ordered
+        .iter()
+        .copied()
+        .filter(|t| t.id != task.id)
+        .collect();
+    let anchor_at = others
+        .iter()
+        .position(|t| t.id == anchor.id)
+        .expect("the anchor is another task of the group");
+    let slot = match side {
+        Side::Before => anchor_at,
+        Side::After => anchor_at + 1,
+    };
+    if slot == current {
+        return Plan::alone(task.rank);
+    }
+    let above = Neighbour::of(slot.checked_sub(1).map(|i| &others[i]));
+    let below = Neighbour::of(others.get(slot));
+    match (above, below) {
+        // Nothing above the slot: like `--top`.
+        (Neighbour::Absent, below) => {
+            let lowest = match below {
+                Neighbour::Ranked(rank) => Some(rank),
+                Neighbour::Unranked | Neighbour::Absent => None,
+            };
+            Plan::alone(Some(first_rank(lowest)))
+        }
+        // Between two ranked neighbours: the midpoint, or a renumber when
+        // no integer is left between them.
+        (Neighbour::Ranked(lo), Neighbour::Ranked(hi)) => {
+            let mid = lo.midpoint(hi);
+            if mid > lo && mid < hi {
+                Plan::alone(Some(mid))
+            } else {
+                renumber(&others, slot)
+            }
+        }
+        // Below the last ranked task; whatever follows is unranked and
+        // sorts after every ranked task anyway.
+        (Neighbour::Ranked(lo), Neighbour::Unranked | Neighbour::Absent) => {
+            Plan::alone(Some(lo + RANK_STEP))
+        }
+        // The slot is in the unranked part: rank the tasks above it first.
+        (Neighbour::Unranked, _) => rank_prefix(&others[..slot]),
+    }
+}
+
+/// The plan for a slot in the unranked part of a group: every unranked
+/// task above the slot gets a rank, [`RANK_STEP`] apart, continuing from
+/// the highest rank above the slot (or from zero), in the order currently
+/// shown; the moved task gets the next one.
+fn rank_prefix(above: &[&Task]) -> Plan {
+    let mut next = above.iter().filter_map(|t| t.rank).max().unwrap_or(0);
+    let mut others = Vec::new();
+    for task in above.iter().filter(|t| t.rank.is_none()) {
+        next += RANK_STEP;
+        others.push(with_rank(task, next));
+    }
+    Plan {
+        rank: Some(next + RANK_STEP),
+        others,
+    }
+}
+
+/// The plan for a slot between two ranked neighbours with no integer left
+/// between them (ADR 0025): the group's ranked tasks are renumbered
+/// [`RANK_STEP`], 2 × [`RANK_STEP`], ... in the order currently shown, the
+/// moved task taking the number of its slot. A task whose number does not
+/// change is not written, and the unranked tasks below are left alone.
+fn renumber(others: &[&Task], slot: usize) -> Plan {
+    let (above, below) = others.split_at(slot);
+    let mut written = Vec::new();
+    let rank = renumber_from(0, above, &mut written) + RANK_STEP;
+    renumber_from(rank, below, &mut written);
+    Plan {
+        rank: Some(rank),
+        others: written,
+    }
+}
+
+/// Hands the ranked tasks of `tasks` the ranks following `from`,
+/// [`RANK_STEP`] apart, pushing the ones whose rank changes onto
+/// `written`; returns the last rank handed out (`from` when none is).
+fn renumber_from(from: i64, tasks: &[&Task], written: &mut Vec<Task>) -> i64 {
+    let mut next = from;
+    for task in tasks.iter().filter(|t| t.rank.is_some()) {
+        next += RANK_STEP;
+        if task.rank != Some(next) {
+            written.push(with_rank(task, next));
+        }
+    }
+    next
+}
+
+/// A copy of `task` with `rank`, ready to be written.
+fn with_rank(task: &Task, rank: i64) -> Task {
+    let mut copy = task.clone();
+    copy.rank = Some(rank);
+    copy
+}
+
+/// The name of the status group a task is in, for error messages: its
+/// status, `no-status`, or `done`.
+fn group_label(task: &Task) -> String {
+    if task.done {
+        return "done".to_owned();
+    }
+    task.status
+        .as_ref()
+        .map_or_else(|| "no-status".to_owned(), ToString::to_string)
+}
+
 /// The shape of every one-field edit: checks `note`, reads the task and
 /// hands it to [`edited`].
 fn change(
@@ -618,6 +972,46 @@ mod tests {
     use crate::model::ProgressEntry;
     use crate::store::MemoryStore;
 
+    #[test]
+    fn a_move_describes_itself_like_tasq_move_prints_it() {
+        let moved = |changed: Vec<&'static str>, ranked: Vec<u64>| Moved {
+            task: Task::new(TaskId::from(3), "T"),
+            changed,
+            ranked: ranked.into_iter().map(TaskId::from).collect(),
+        };
+        let written = moved(vec!["rank"], Vec::new());
+        let unchanged = moved(Vec::new(), Vec::new());
+        let anchor = TaskId::from(1);
+        for (target, done, same) in [
+            (Target::Top, "moved to the top", "already at the top"),
+            (Target::Unrank, "unranked", "already unranked"),
+            (
+                Target::Before(anchor.clone()),
+                "moved before task 1",
+                "already before task 1",
+            ),
+            (
+                Target::After(anchor),
+                "moved after task 1",
+                "already after task 1",
+            ),
+        ] {
+            assert_eq!(written.describe(&target), format!("[3] {done}"));
+            assert_eq!(unchanged.describe(&target), format!("[3] {same}"));
+        }
+        // The other tasks written for the move are named; a move that
+        // wrote them without touching the task's own rank counts as done.
+        let prefix = moved(Vec::new(), vec![1, 8]);
+        assert_eq!(
+            prefix.describe(&Target::After(TaskId::from(8))),
+            "[3] moved after task 8 (also ranked: 1, 8)"
+        );
+        assert_eq!(
+            moved(vec!["rank"], vec![1]).describe(&Target::Top),
+            "[3] moved to the top (also ranked: 1)"
+        );
+    }
+
     fn store() -> MemoryStore {
         let mut a = Task::new(TaskId::from(1), "A");
         a.set_status(Status::READY);
@@ -694,6 +1088,669 @@ mod tests {
         assert_eq!(task.status, Some(Status::IN_PROGRESS));
         assert_eq!(task.progress, vec![entry("urgent")]);
         assert_eq!(store.get(&id).unwrap(), task);
+    }
+
+    #[test]
+    fn status_change_done_and_reopen_keep_the_rank() {
+        let mut store = store();
+        let id = TaskId::from(1);
+        let mut ranked = store.get(&id).unwrap();
+        ranked.rank = Some(1024);
+        store.update(&ranked).unwrap();
+        let task = set(
+            &mut store,
+            &id,
+            &Value::Status(Status::IN_PROGRESS),
+            None,
+            &clock(),
+        )
+        .unwrap()
+        .task;
+        assert_eq!(task.rank, Some(1024));
+        let task = done(&mut store, &id, None, &clock()).unwrap();
+        assert_eq!(task.rank, Some(1024));
+        let task = reopen(&mut store, &id, &Status::READY, None, &clock()).unwrap();
+        assert_eq!(task.rank, Some(1024));
+        assert_eq!(store.get(&id).unwrap().rank, Some(1024));
+    }
+
+    /// Three ready tasks: 1 (`#A`), 3 (`#B`), 4 (`#C`), plus 2 without a
+    /// status and 5 done.
+    fn group() -> MemoryStore {
+        let mut urgent = Task::new(TaskId::from(1), "A");
+        urgent.set_status(Status::READY);
+        urgent.set_priority(Priority::A);
+        let no_status = Task::new(TaskId::from(2), "B");
+        let mut normal = Task::new(TaskId::from(3), "C");
+        normal.set_status(Status::READY);
+        let mut low = Task::new(TaskId::from(4), "D");
+        low.set_status(Status::READY);
+        low.set_priority(Priority::C);
+        let mut done = Task::new(TaskId::from(5), "E");
+        done.mark_done();
+        MemoryStore::new([urgent, no_status, normal, low, done])
+    }
+
+    #[test]
+    fn move_top_ranks_1024_when_nothing_in_the_group_is_ranked() {
+        let mut store = group();
+        let moved = move_task(&mut store, &TaskId::from(4), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(1024));
+        assert_eq!(moved.changed, vec!["rank"]);
+        assert_eq!(moved.ranked, Vec::<TaskId>::new());
+        assert_eq!(store.get(&TaskId::from(4)).unwrap(), moved.task);
+        let ready = crate::query::sort(
+            store
+                .tasks()
+                .iter()
+                .filter(|t| t.status == Some(Status::READY)),
+        );
+        let ids: Vec<&TaskId> = ready.iter().map(|t| &t.id).collect();
+        assert_eq!(ids, [&TaskId::from(4), &TaskId::from(1), &TaskId::from(3)]);
+    }
+
+    /// [`group`] plus `extra` tasks.
+    fn group_with(extra: impl IntoIterator<Item = Task>) -> MemoryStore {
+        let mut tasks: Vec<Task> = group().tasks().to_vec();
+        tasks.extend(extra);
+        MemoryStore::new(tasks)
+    }
+
+    fn ready_task(id: u64, title: &str, priority: Priority) -> Task {
+        let mut task = Task::new(TaskId::from(id), title);
+        task.set_status(Status::READY);
+        task.set_priority(priority);
+        task
+    }
+
+    fn ranked(store: &mut MemoryStore, id: u64, rank: i64) {
+        let mut task = store.get(&TaskId::from(id)).unwrap();
+        task.rank = Some(rank);
+        store.update(&task).unwrap();
+    }
+
+    fn ready_ids(store: &MemoryStore) -> Vec<TaskId> {
+        crate::query::sort(
+            store
+                .tasks()
+                .iter()
+                .filter(|t| t.status == Some(Status::READY)),
+        )
+        .into_iter()
+        .map(|t| t.id.clone())
+        .collect()
+    }
+
+    #[test]
+    fn move_top_goes_one_step_below_the_lowest_rank_of_the_others() {
+        let mut store = group();
+        ranked(&mut store, 1, 1024);
+        ranked(&mut store, 3, 2048);
+        let moved = move_task(&mut store, &TaskId::from(4), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(0));
+        assert_eq!(ready_ids(&store), [4, 1, 3].map(TaskId::from));
+        // A ranked task that is not first moves above the lowest rank,
+        // its own rank left out of the minimum.
+        let moved = move_task(&mut store, &TaskId::from(3), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(-1024));
+        assert_eq!(moved.changed, vec!["rank"]);
+        assert_eq!(ready_ids(&store), [3, 4, 1].map(TaskId::from));
+    }
+
+    #[test]
+    fn move_top_only_looks_at_the_tasks_own_status_group() {
+        let mut store = group();
+        // Task 2 has no status: its rank is not this group's lowest.
+        ranked(&mut store, 2, -5000);
+        let moved = move_task(&mut store, &TaskId::from(4), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(1024));
+        // The no-status tasks are a group of their own and move like any other.
+        let draft = TaskDraft {
+            status: None,
+            ..TaskDraft::new("F")
+        };
+        assert_eq!(store.create(draft).unwrap().id, TaskId::from(6));
+        let moved = move_task(&mut store, &TaskId::from(6), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(-6024));
+        assert_eq!(moved.task.status, None);
+    }
+
+    #[test]
+    fn move_top_on_the_first_task_writes_nothing() {
+        let mut store = group();
+        let first = store.get(&TaskId::from(1)).unwrap();
+        // First by the natural order, nothing ranked.
+        let mut no_write = NoWrite(store.clone());
+        let moved = move_task(&mut no_write, &TaskId::from(1), &Target::Top).unwrap();
+        assert_eq!(
+            moved,
+            Moved {
+                task: first,
+                changed: Vec::new(),
+                ranked: Vec::new()
+            }
+        );
+        // First by rank.
+        ranked(&mut store, 4, 1024);
+        ranked(&mut store, 3, 2048);
+        let mut no_write = NoWrite(store);
+        let moved = move_task(&mut no_write, &TaskId::from(4), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(1024));
+        assert_eq!(moved.changed, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn move_unrank_removes_the_rank_and_is_a_no_op_without_one() {
+        let mut store = group();
+        ranked(&mut store, 4, 1024);
+        assert_eq!(ready_ids(&store), [4, 1, 3].map(TaskId::from));
+        let moved = move_task(&mut store, &TaskId::from(4), &Target::Unrank).unwrap();
+        assert_eq!(moved.task.rank, None);
+        assert_eq!(moved.changed, vec!["rank"]);
+        assert_eq!(moved.ranked, Vec::<TaskId>::new());
+        assert_eq!(store.get(&TaskId::from(4)).unwrap(), moved.task);
+        assert_eq!(ready_ids(&store), [1, 3, 4].map(TaskId::from));
+        let mut no_write = NoWrite(store);
+        let moved = move_task(&mut no_write, &TaskId::from(4), &Target::Unrank).unwrap();
+        assert_eq!(moved.task.rank, None);
+        assert_eq!(moved.changed, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn move_refuses_done_and_missing_tasks_before_writing() {
+        let mut store = NoWrite(group());
+        let err = move_task(&mut store, &TaskId::from(5), &Target::Top).unwrap_err();
+        assert!(matches!(err, EditError::IsDone(ref id) if *id == TaskId::from(5)));
+        assert_eq!(err.to_string(), "task 5 is done");
+        let err = move_task(&mut store, &TaskId::from(5), &Target::Unrank).unwrap_err();
+        assert_eq!(err.to_string(), "task 5 is done");
+        let err = move_task(&mut store, &TaskId::from(9), &Target::Top).unwrap_err();
+        assert_eq!(err.to_string(), "no task with id 9");
+    }
+
+    #[test]
+    fn move_before_and_after_ranked_neighbours_take_the_midpoint_or_one_step_past_the_edge() {
+        let mut store = group();
+        ranked(&mut store, 1, 1024);
+        ranked(&mut store, 3, 3072);
+        // Between two ranked neighbours: the midpoint, only task 4 written.
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(4),
+            &Target::Before(TaskId::from(3)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.changed, vec!["rank"]);
+        assert_eq!(moved.ranked, Vec::<TaskId>::new());
+        assert_eq!(store.get(&TaskId::from(4)).unwrap(), moved.task);
+        assert_eq!(ready_ids(&store), [1, 4, 3].map(TaskId::from));
+        // After the last ranked task with nothing below: one step past it.
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(4),
+            &Target::After(TaskId::from(3)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(4096));
+        assert_eq!(moved.changed, vec!["rank"]);
+        assert_eq!(ready_ids(&store), [1, 3, 4].map(TaskId::from));
+        // Before the first ranked task: one step above it.
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(4),
+            &Target::Before(TaskId::from(1)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(0));
+        assert_eq!(ready_ids(&store), [4, 1, 3].map(TaskId::from));
+        // After a ranked task whose next neighbour is ranked: the midpoint.
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(4),
+            &Target::After(TaskId::from(1)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.ranked, Vec::<TaskId>::new());
+        assert_eq!(ready_ids(&store), [1, 4, 3].map(TaskId::from));
+        // The neighbours were never rewritten.
+        assert_eq!(store.get(&TaskId::from(1)).unwrap().rank, Some(1024));
+        assert_eq!(store.get(&TaskId::from(3)).unwrap().rank, Some(3072));
+    }
+
+    #[test]
+    fn move_into_the_unranked_part_ranks_every_task_above_the_slot_first() {
+        // Nothing ranked: 1 (#A), 3 (#B), 4 (#C) in the natural order.
+        let mut store = group();
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(1),
+            &Target::After(TaskId::from(3)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.changed, vec!["rank"]);
+        assert_eq!(moved.ranked, vec![TaskId::from(3)]);
+        assert_eq!(store.get(&TaskId::from(3)).unwrap().rank, Some(1024));
+        assert_eq!(store.get(&TaskId::from(4)).unwrap().rank, None);
+        assert_eq!(ready_ids(&store), [3, 1, 4].map(TaskId::from));
+        // The ranks continue from the highest one above the slot.
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(3),
+            &Target::After(TaskId::from(4)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(4096));
+        assert_eq!(moved.ranked, vec![TaskId::from(4)]);
+        assert_eq!(store.get(&TaskId::from(4)).unwrap().rank, Some(3072));
+        assert_eq!(store.get(&TaskId::from(1)).unwrap().rank, Some(2048));
+        assert_eq!(ready_ids(&store), [1, 4, 3].map(TaskId::from));
+
+        // `--before` an unranked task that is not the first unranked one.
+        let mut store = group();
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(1),
+            &Target::Before(TaskId::from(4)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.ranked, vec![TaskId::from(3)]);
+        assert_eq!(store.get(&TaskId::from(3)).unwrap().rank, Some(1024));
+        assert_eq!(ready_ids(&store), [3, 1, 4].map(TaskId::from));
+
+        // `--before` the first unranked task needs no prefix: one step
+        // below the last ranked task.
+        let mut store = group();
+        ranked(&mut store, 4, 1024);
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(3),
+            &Target::Before(TaskId::from(1)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.ranked, Vec::<TaskId>::new());
+        assert_eq!(ready_ids(&store), [4, 3, 1].map(TaskId::from));
+    }
+
+    #[test]
+    fn move_whose_own_rank_stays_still_ranks_the_prefix() {
+        // 4 ranked 2048 above the unranked 1 and 3; after 1 it keeps 2048
+        // while 1 gets 1024: only 1 is written.
+        let mut store = group();
+        ranked(&mut store, 4, 2048);
+        assert_eq!(ready_ids(&store), [4, 1, 3].map(TaskId::from));
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(4),
+            &Target::After(TaskId::from(1)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.changed, Vec::<&str>::new());
+        assert_eq!(moved.ranked, vec![TaskId::from(1)]);
+        assert_eq!(store.get(&TaskId::from(1)).unwrap().rank, Some(1024));
+        assert_eq!(ready_ids(&store), [1, 4, 3].map(TaskId::from));
+    }
+
+    /// A store that records every batch's ids and refuses single writes.
+    struct Batches(MemoryStore, Vec<Vec<TaskId>>);
+
+    impl Store for Batches {
+        fn list(&self, filter: &crate::query::Filter) -> Result<Vec<Task>, StoreError> {
+            self.0.list(filter)
+        }
+
+        fn get(&self, id: &TaskId) -> Result<Task, StoreError> {
+            self.0.get(id)
+        }
+
+        fn create(&mut self, _draft: crate::model::TaskDraft) -> Result<Task, StoreError> {
+            panic!("no create expected")
+        }
+
+        fn update(&mut self, _task: &Task) -> Result<(), StoreError> {
+            panic!("a move writes through update_many")
+        }
+
+        fn update_many(&mut self, tasks: &[Task]) -> Result<(), BatchError> {
+            self.1.push(tasks.iter().map(|t| t.id.clone()).collect());
+            self.0.update_many(tasks)
+        }
+
+        fn set_done(&mut self, _id: &TaskId, _done: bool) -> Result<(), StoreError> {
+            panic!("no set_done expected")
+        }
+
+        fn describe(&self) -> crate::store::StoreInfo {
+            self.0.describe()
+        }
+    }
+
+    #[test]
+    fn move_writes_the_other_tasks_then_the_task_as_one_batch() {
+        let mut store = Batches(group(), Vec::new());
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(1),
+            &Target::After(TaskId::from(4)),
+        )
+        .unwrap();
+        assert_eq!(moved.ranked, [3, 4].map(TaskId::from));
+        assert_eq!(store.1, vec![[3, 4, 1].map(TaskId::from).to_vec()]);
+        // A move that touches the task alone is a batch of one.
+        let moved = move_task(&mut store, &TaskId::from(1), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(0));
+        assert_eq!(store.1.len(), 2);
+        assert_eq!(store.1[1], vec![TaskId::from(1)]);
+    }
+
+    /// A store whose single writes fail for one id.
+    struct FailOn(MemoryStore, TaskId);
+
+    impl Store for FailOn {
+        fn list(&self, filter: &crate::query::Filter) -> Result<Vec<Task>, StoreError> {
+            self.0.list(filter)
+        }
+
+        fn get(&self, id: &TaskId) -> Result<Task, StoreError> {
+            self.0.get(id)
+        }
+
+        fn create(&mut self, draft: crate::model::TaskDraft) -> Result<Task, StoreError> {
+            self.0.create(draft)
+        }
+
+        fn update(&mut self, task: &Task) -> Result<(), StoreError> {
+            if task.id == self.1 {
+                return Err(StoreError::NotFound(task.id.clone()));
+            }
+            self.0.update(task)
+        }
+
+        fn set_done(&mut self, id: &TaskId, done: bool) -> Result<(), StoreError> {
+            self.0.set_done(id, done)
+        }
+
+        fn describe(&self) -> crate::store::StoreInfo {
+            self.0.describe()
+        }
+    }
+
+    #[test]
+    fn move_that_fails_midway_reports_the_tasks_already_written() {
+        let mut store = FailOn(group(), TaskId::from(4));
+        let err = move_task(
+            &mut store,
+            &TaskId::from(1),
+            &Target::After(TaskId::from(4)),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "no task with id 4 (tasks already written: 3)"
+        );
+        assert!(
+            matches!(err, EditError::Batch(ref batch) if batch.written == vec![TaskId::from(3)])
+        );
+        assert_eq!(store.get(&TaskId::from(3)).unwrap().rank, Some(1024));
+        assert_eq!(store.get(&TaskId::from(4)).unwrap().rank, None);
+        assert_eq!(store.get(&TaskId::from(1)).unwrap().rank, None);
+    }
+
+    #[test]
+    fn move_refuses_an_anchor_outside_the_group_before_writing() {
+        let mut store = NoWrite(group());
+        let err = move_task(
+            &mut store,
+            &TaskId::from(4),
+            &Target::Before(TaskId::from(4)),
+        )
+        .unwrap_err();
+        assert!(matches!(err, EditError::OwnAnchor(ref id) if *id == TaskId::from(4)));
+        assert_eq!(err.to_string(), "task 4 cannot be moved relative to itself");
+        // Another status group (here the no-status one), seen from both sides.
+        let err = move_task(
+            &mut store,
+            &TaskId::from(1),
+            &Target::After(TaskId::from(2)),
+        )
+        .unwrap_err();
+        assert!(matches!(err, EditError::OtherGroup { .. }));
+        assert_eq!(
+            err.to_string(),
+            "task 2 is no-status but task 1 is ready; a move stays within one status group"
+        );
+        let err = move_task(
+            &mut store,
+            &TaskId::from(2),
+            &Target::Before(TaskId::from(1)),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "task 1 is ready but task 2 is no-status; a move stays within one status group"
+        );
+        // A done anchor has no group.
+        let err = move_task(
+            &mut store,
+            &TaskId::from(1),
+            &Target::Before(TaskId::from(5)),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "task 5 is done but task 1 is ready; a move stays within one status group"
+        );
+        let err = move_task(
+            &mut store,
+            &TaskId::from(1),
+            &Target::After(TaskId::from(9)),
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "no task with id 9");
+        // The done check comes first.
+        let err = move_task(
+            &mut store,
+            &TaskId::from(5),
+            &Target::After(TaskId::from(1)),
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "task 5 is done");
+    }
+
+    #[test]
+    fn move_beside_the_current_neighbour_writes_nothing() {
+        // Natural order 1, 3, 4, nothing ranked.
+        let mut store = NoWrite(group());
+        for (id, target) in [
+            (3, Target::After(TaskId::from(1))),
+            (1, Target::Before(TaskId::from(3))),
+            (3, Target::Before(TaskId::from(4))),
+            (4, Target::After(TaskId::from(3))),
+        ] {
+            let moved = move_task(&mut store, &TaskId::from(id), &target).unwrap();
+            assert_eq!(moved.task.rank, None, "{target:?}");
+            assert_eq!(moved.changed, Vec::<&str>::new(), "{target:?}");
+            assert_eq!(moved.ranked, Vec::<TaskId>::new(), "{target:?}");
+        }
+        // Ranked 4, 3 above the unranked 1: the same from inside the ranked
+        // part and across its lower edge.
+        let mut inner = group();
+        ranked(&mut inner, 4, 1024);
+        ranked(&mut inner, 3, 2048);
+        let mut store = NoWrite(inner);
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(3),
+            &Target::After(TaskId::from(4)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.changed, Vec::<&str>::new());
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(3),
+            &Target::Before(TaskId::from(1)),
+        )
+        .unwrap();
+        assert_eq!(moved.changed, Vec::<&str>::new());
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(1),
+            &Target::After(TaskId::from(3)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, None);
+        assert_eq!(moved.changed, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn ten_moves_bisect_the_same_gap_and_the_eleventh_renumbers_the_group() {
+        // Ready 1 (1024), 3 (2048), 4 unranked. Moving 4 then 3 after 1 in
+        // turns halves the gap below 1 each time.
+        let mut store = Batches(group(), Vec::new());
+        ranked(&mut store.0, 1, 1024);
+        ranked(&mut store.0, 3, 2048);
+        let expected = [
+            (4, 1536),
+            (3, 1280),
+            (4, 1152),
+            (3, 1088),
+            (4, 1056),
+            (3, 1040),
+            (4, 1032),
+            (3, 1028),
+            (4, 1026),
+            (3, 1025),
+        ];
+        for (id, rank) in expected {
+            let moved = move_task(
+                &mut store,
+                &TaskId::from(id),
+                &Target::After(TaskId::from(1)),
+            )
+            .unwrap();
+            assert_eq!(moved.task.rank, Some(rank), "task {id}");
+            assert_eq!(moved.ranked, Vec::<TaskId>::new(), "task {id}");
+        }
+        assert_eq!(ready_ids(&store.0), [1, 3, 4].map(TaskId::from));
+        // Nothing is left between 1024 and 1025: the ranked tasks become
+        // 1024, 2048, 3072 in their current order with 4 in its slot. Task
+        // 1 already holds 1024, so only 3 is rewritten, as one batch.
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(4),
+            &Target::After(TaskId::from(1)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.changed, vec!["rank"]);
+        assert_eq!(moved.ranked, vec![TaskId::from(3)]);
+        assert_eq!(store.1.len(), 11);
+        assert_eq!(store.1[10], [3, 4].map(TaskId::from).to_vec());
+        assert_eq!(store.0.get(&TaskId::from(1)).unwrap().rank, Some(1024));
+        assert_eq!(store.0.get(&TaskId::from(3)).unwrap().rank, Some(3072));
+        assert_eq!(ready_ids(&store.0), [1, 4, 3].map(TaskId::from));
+    }
+
+    #[test]
+    fn renumbering_keeps_the_ranked_order_and_leaves_unranked_tasks_alone() {
+        // Ready 3 (-7), 1 (-6), 6 (500), then 4 and 7 unranked, plus 2
+        // without a status: a ranked task below the slot and, at the
+        // bottom, an unranked task that is not the one moved.
+        let mut inner = group_with([
+            ready_task(6, "F", Priority::A),
+            ready_task(7, "G", Priority::C),
+        ]);
+        ranked(&mut inner, 3, -7);
+        ranked(&mut inner, 1, -6);
+        ranked(&mut inner, 6, 500);
+        assert_eq!(ready_ids(&inner), [3, 1, 6, 4, 7].map(TaskId::from));
+        let bystander = inner.get(&TaskId::from(7)).unwrap();
+        let no_status = inner.get(&TaskId::from(2)).unwrap();
+        let mut store = Batches(inner, Vec::new());
+        let moved = move_task(
+            &mut store,
+            &TaskId::from(4),
+            &Target::Before(TaskId::from(1)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.changed, vec!["rank"]);
+        assert_eq!(moved.ranked, [3, 1, 6].map(TaskId::from));
+        assert_eq!(store.1, vec![[3, 1, 6, 4].map(TaskId::from).to_vec()]);
+        assert_eq!(store.0.get(&TaskId::from(3)).unwrap().rank, Some(1024));
+        assert_eq!(store.0.get(&TaskId::from(1)).unwrap().rank, Some(3072));
+        assert_eq!(store.0.get(&TaskId::from(6)).unwrap().rank, Some(4096));
+        assert_eq!(ready_ids(&store.0), [3, 4, 1, 6, 7].map(TaskId::from));
+        assert_eq!(store.0.get(&TaskId::from(7)).unwrap(), bystander);
+        assert_eq!(store.0.get(&TaskId::from(7)).unwrap().rank, None);
+        assert_eq!(store.0.get(&TaskId::from(2)).unwrap(), no_status);
+        // A ranked task whose number survives the renumber: 4 (2048) moved
+        // after 1 (1024) with 3 at 1025 keeps 2048, so only 3 is written
+        // and `changed` is empty while `ranked` is not.
+        let mut inner = group();
+        ranked(&mut inner, 1, 1024);
+        ranked(&mut inner, 3, 1025);
+        ranked(&mut inner, 4, 2048);
+        let moved = move_task(
+            &mut inner,
+            &TaskId::from(4),
+            &Target::After(TaskId::from(1)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.changed, Vec::<&str>::new());
+        assert_eq!(moved.ranked, vec![TaskId::from(3)]);
+        assert_eq!(inner.get(&TaskId::from(3)).unwrap().rank, Some(3072));
+        assert_eq!(ready_ids(&inner), [1, 4, 3].map(TaskId::from));
+        // Equal ranks (possible after a status change) are renumbered too;
+        // the moved task itself may be one of the ranked tasks.
+        let mut inner = group();
+        ranked(&mut inner, 1, 1024);
+        ranked(&mut inner, 3, 1024);
+        ranked(&mut inner, 4, 1024);
+        assert_eq!(ready_ids(&inner), [1, 3, 4].map(TaskId::from));
+        let moved = move_task(
+            &mut inner,
+            &TaskId::from(4),
+            &Target::Before(TaskId::from(3)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(2048));
+        assert_eq!(moved.ranked, vec![TaskId::from(3)]);
+        assert_eq!(inner.get(&TaskId::from(3)).unwrap().rank, Some(3072));
+        assert_eq!(ready_ids(&inner), [1, 4, 3].map(TaskId::from));
+    }
+
+    #[test]
+    fn one_free_integer_is_enough_to_avoid_a_renumber() {
+        let mut inner = group();
+        ranked(&mut inner, 1, 1024);
+        ranked(&mut inner, 3, 1026);
+        let moved = move_task(
+            &mut inner,
+            &TaskId::from(4),
+            &Target::Before(TaskId::from(3)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(1025));
+        assert_eq!(moved.ranked, Vec::<TaskId>::new());
+        ranked(&mut inner, 1, -3);
+        ranked(&mut inner, 3, -1);
+        let moved = move_task(
+            &mut inner,
+            &TaskId::from(4),
+            &Target::After(TaskId::from(1)),
+        )
+        .unwrap();
+        assert_eq!(moved.task.rank, Some(-2));
+        assert_eq!(moved.ranked, Vec::<TaskId>::new());
+        assert_eq!(ready_ids(&inner), [1, 4, 3].map(TaskId::from));
     }
 
     #[test]

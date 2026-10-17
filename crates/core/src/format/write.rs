@@ -14,7 +14,7 @@ impl Document {
     /// Progress), then the sections the script added with later commands
     /// (merge requests, Worktrees, Sessions) through the same operations the
     /// commands used. `## Source` goes after `## Due`, then `## Closed` on a
-    /// done task that has a `closed_at`.
+    /// done task that has a `closed_at`, then `## Rank` when the task has one.
     ///
     /// Only `## Tags` and `## Progress` are always present; `## Tags` holds
     /// topic tags, then the priority, then the status (omitted on done tasks).
@@ -43,6 +43,9 @@ impl Document {
         }
         if let Some(at) = task.closed_at.filter(|_| task.done) {
             section(section::CLOSED, &[crate::clock::format_timestamp(at)]);
+        }
+        if let Some(rank) = task.rank {
+            section(section::RANK, &[rank.to_string()]);
         }
         if !task.related.is_empty() {
             let related: Vec<String> = task.related.iter().map(entry::format_link).collect();

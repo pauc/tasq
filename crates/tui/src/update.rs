@@ -1,12 +1,14 @@
 //! `update(model, msg) -> cmds`: the whole behaviour of the UI, with no
 //! I/O, so a test is a sequence of messages and a look at the model.
 
+use tasq_core::edit::Target;
 use tasq_core::model::{Priority, TaskId};
 
 use crate::calendar::Calendar;
 use crate::form::{Field, Form, FormError, Text};
 use crate::history::History;
-use crate::model::{LayoutKind, Message, Mode, Model, NoteTarget, PAGE};
+use crate::keys::Action;
+use crate::model::{Cursor, GroupKey, LayoutKind, Message, Mode, Model, NoteTarget, PAGE};
 use crate::msg::{Cmd, LaunchTarget, Msg};
 use crate::view;
 
@@ -78,6 +80,8 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::PageDown | Msg::PageUp | Msg::DetailDown | Msg::DetailUp => scroll(model, msg),
         Msg::Top => model.select_first(),
         Msg::Bottom => model.select_last(),
+        Msg::MoveUp => return move_selected(model, Beside::Above),
+        Msg::MoveDown => return move_selected(model, Beside::Below),
         Msg::ToggleGroup => model.toggle_group(),
         Msg::ToggleDone => model.toggle_done(),
         Msg::ToggleToday => model.toggle_today(),
@@ -109,7 +113,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
                     .unwrap_or(0);
                 model.mode = Mode::Status { cursor };
             } else {
-                model.message = Some(Message::error(NO_SELECTION));
+                return refuse(model, NO_SELECTION);
             }
         }
         Msg::BeginPriority => {
@@ -120,7 +124,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
                     .unwrap_or(1);
                 model.mode = Mode::Priority { cursor };
             } else {
-                model.message = Some(Message::error(NO_SELECTION));
+                return refuse(model, NO_SELECTION);
             }
         }
         Msg::BeginNote => begin_note(model, NoteTarget::Log),
@@ -130,7 +134,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
             if let Some(task) = model.selected_task() {
                 model.mode = Mode::Form(Box::new(Form::of(task, &model.workflow)));
             } else {
-                model.message = Some(Message::error(NO_SELECTION));
+                return refuse(model, NO_SELECTION);
             }
         }
         Msg::Editor => return with_selection(model, Cmd::Editor),
@@ -208,6 +212,65 @@ const NO_SELECTION: &str = "no task selected";
 const NO_SOURCES: &str = "no [[source]] is configured (see docs/sources.md)";
 const NO_SOURCE_CHECKED: &str = "no source checked (Space toggles, Esc closes)";
 
+/// Which neighbour a move puts the selected task next to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Beside {
+    /// Before the task listed above it (`Ctrl+K`).
+    Above,
+    /// After the task listed below it (`Ctrl+J`).
+    Below,
+}
+
+/// `Ctrl+K` / `Ctrl+J`: the selected task before the task above it or
+/// after the task below it in its status group, as listed
+/// ([`Model::neighbours`]), so in a filtered view it lands next to its
+/// visible neighbour. The rank is written by [`Cmd::Move`]; the reload
+/// keeps the task selected. Nothing moves, and the status bar says why,
+/// on a folded group's header, on a done task (the DONE group is by close
+/// time) and at the ends of the group (in the Today view the task listed
+/// next may be in another group: the move stays within one).
+fn move_selected(model: &mut Model, beside: Beside) -> Vec<Cmd> {
+    let id = match &model.selected {
+        Some(Cursor::Task(id)) => id.clone(),
+        Some(Cursor::Group(_)) => {
+            let text = folded_group(model);
+            return refuse(model, text);
+        }
+        None => return refuse(model, NO_SELECTION),
+    };
+    let Some(neighbours) = model.neighbours(&id) else {
+        return refuse(model, NO_SELECTION);
+    };
+    if neighbours.group == GroupKey::Done {
+        return refuse(model, format!("[{id}] is done; done tasks are not ranked"));
+    }
+    match beside {
+        Beside::Above => match neighbours.above {
+            Some(anchor) => vec![Cmd::Move(id, Target::Before(anchor))],
+            None => refuse(model, format!("nothing above [{id}] in its group")),
+        },
+        Beside::Below => match neighbours.below {
+            Some(anchor) => vec![Cmd::Move(id, Target::After(anchor))],
+            None => refuse(model, format!("nothing below [{id}] in its group")),
+        },
+    }
+}
+
+/// The refusal on a folded group's header, naming the `toggle-group` key
+/// as bound (the help follows the map, ADR-0013).
+fn folded_group(model: &Model) -> String {
+    match model.keys.hint(Action::ToggleGroup) {
+        Some(key) => format!("unfold the group ({key}) to move a task"),
+        None => "unfold the group to move a task".to_owned(),
+    }
+}
+
+/// No command, and `text` in the status bar.
+fn refuse(model: &mut Model, text: impl Into<String>) -> Vec<Cmd> {
+    model.message = Some(Message::error(text));
+    Vec::new()
+}
+
 /// Opens the filter prompt on the applied filter, which is also the
 /// draft its recall comes back to.
 fn begin_filter(model: &mut Model) {
@@ -229,7 +292,7 @@ fn begin_note(model: &mut Model, target: NoteTarget) {
             target,
         };
     } else {
-        model.message = Some(Message::error(NO_SELECTION));
+        refuse(model, NO_SELECTION);
     }
 }
 
@@ -252,8 +315,7 @@ fn refuse_done(model: &mut Model) -> bool {
 /// remembered id), or the no-selection message.
 fn with_selection(model: &mut Model, make: impl FnOnce(TaskId) -> Cmd) -> Vec<Cmd> {
     let Some(id) = model.selected_task().map(|task| task.id.clone()) else {
-        model.message = Some(Message::error(NO_SELECTION));
-        return Vec::new();
+        return refuse(model, NO_SELECTION);
     };
     vec![make(id)]
 }
@@ -599,10 +661,13 @@ pub fn one_line(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
     use crate::form::Text;
-    use crate::model::{Cursor, SourceChoice};
-    use tasq_core::config::DetailPosition;
-    use tasq_core::edit::Fields;
+    use crate::keys::KeyMap;
+    use crate::model::{Cursor, GroupKey, SourceChoice};
+    use tasq_core::config::{DetailPosition, KeySpec};
+    use tasq_core::edit::{Fields, Target};
     use tasq_core::model::{Status, Tag, Task, TaskDraft, Workflow};
     use tasq_core::theme::Theme;
 
@@ -627,6 +692,206 @@ mod tests {
 
     fn feed(m: &mut Model, msgs: impl IntoIterator<Item = Msg>) -> Vec<Cmd> {
         msgs.into_iter().flat_map(|msg| update(m, msg)).collect()
+    }
+
+    /// Three ready tasks between the in-progress one and the loose one;
+    /// a filter on `x` shows the first and the last of them.
+    fn ranked_model() -> Model {
+        let mut m = model();
+        update(
+            &mut m,
+            Msg::Loaded(vec![
+                task(1, "First", Some(Status::IN_PROGRESS)),
+                task(2, "Second x", Some(Status::READY)),
+                task(5, "Fifth", Some(Status::READY)),
+                task(6, "Sixth x", Some(Status::READY)),
+                task(3, "Third", None),
+            ]),
+        );
+        m
+    }
+
+    fn selected_id(m: &Model) -> Option<&str> {
+        m.selected_task().map(|t| t.id.as_str())
+    }
+
+    #[test]
+    fn a_move_places_the_task_next_to_its_visible_neighbour() {
+        let mut m = ranked_model();
+        update(&mut m, Msg::Select(TaskId::from(5)));
+        assert_eq!(
+            update(&mut m, Msg::MoveUp),
+            vec![Cmd::Move(TaskId::from(5), Target::Before(TaskId::from(2)))]
+        );
+        assert_eq!(m.message, None);
+        assert_eq!(
+            update(&mut m, Msg::MoveDown),
+            vec![Cmd::Move(TaskId::from(5), Target::After(TaskId::from(6)))]
+        );
+        update(&mut m, Msg::Select(TaskId::from(2)));
+        assert_eq!(
+            update(&mut m, Msg::MoveDown),
+            vec![Cmd::Move(TaskId::from(2), Target::After(TaskId::from(5)))]
+        );
+        update(&mut m, Msg::Select(TaskId::from(6)));
+        assert_eq!(
+            update(&mut m, Msg::MoveUp),
+            vec![Cmd::Move(TaskId::from(6), Target::Before(TaskId::from(5)))]
+        );
+        // In a filtered view the neighbour is the one shown, not the one
+        // in between.
+        m.set_filter("x".into());
+        let ids: Vec<&str> = m.visible().iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["2", "6"]);
+        assert_eq!(selected_id(&m), Some("6"));
+        assert_eq!(
+            update(&mut m, Msg::MoveUp),
+            vec![Cmd::Move(TaskId::from(6), Target::Before(TaskId::from(2)))]
+        );
+        update(&mut m, Msg::Select(TaskId::from(2)));
+        assert_eq!(
+            update(&mut m, Msg::MoveDown),
+            vec![Cmd::Move(TaskId::from(2), Target::After(TaskId::from(6)))]
+        );
+        assert_eq!(m.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn the_selection_follows_the_moved_task_through_the_reload() {
+        let mut m = ranked_model();
+        update(&mut m, Msg::Select(TaskId::from(6)));
+        assert_eq!(m.selected_index(), Some(3));
+        update(&mut m, Msg::MoveUp);
+        // What dispatch sends back: the outcome, then the tasks as stored.
+        update(&mut m, Msg::Info("[6] moved before task 5".into()));
+        let mut moved = task(6, "Sixth x", Some(Status::READY));
+        moved.rank = Some(1024);
+        update(
+            &mut m,
+            Msg::Loaded(vec![
+                task(1, "First", Some(Status::IN_PROGRESS)),
+                task(2, "Second x", Some(Status::READY)),
+                task(5, "Fifth", Some(Status::READY)),
+                moved,
+                task(3, "Third", None),
+            ]),
+        );
+        assert_eq!(selected_id(&m), Some("6"));
+        assert_eq!(m.selected_index(), Some(1), "ranked: first of its group");
+        assert_eq!(m.message, Some(Message::info("[6] moved before task 5")));
+        // Pressing again moves it further: nothing above it now.
+        assert_eq!(update(&mut m, Msg::MoveUp), Vec::new());
+        assert_eq!(
+            m.message,
+            Some(Message::error("nothing above [6] in its group"))
+        );
+        assert_eq!(
+            update(&mut m, Msg::MoveDown),
+            vec![Cmd::Move(TaskId::from(6), Target::After(TaskId::from(2)))]
+        );
+    }
+
+    #[test]
+    fn a_move_that_makes_no_sense_says_why_and_asks_nothing() {
+        let mut m = ranked_model();
+        // The ends of a group, and a group of one.
+        update(&mut m, Msg::Select(TaskId::from(2)));
+        assert_eq!(update(&mut m, Msg::MoveUp), Vec::new());
+        assert_eq!(
+            m.message,
+            Some(Message::error("nothing above [2] in its group"))
+        );
+        update(&mut m, Msg::Select(TaskId::from(6)));
+        assert_eq!(update(&mut m, Msg::MoveDown), Vec::new());
+        assert_eq!(
+            m.message,
+            Some(Message::error("nothing below [6] in its group"))
+        );
+        update(&mut m, Msg::Select(TaskId::from(1)));
+        assert_eq!(update(&mut m, Msg::MoveUp), Vec::new());
+        assert_eq!(
+            m.message,
+            Some(Message::error("nothing above [1] in its group"))
+        );
+        assert_eq!(update(&mut m, Msg::MoveDown), Vec::new());
+        assert_eq!(
+            m.message,
+            Some(Message::error("nothing below [1] in its group"))
+        );
+        // The Today view lists task 3 under task 1, in another group.
+        let mut tasks = m.tasks.clone();
+        tasks[4].due = Some(m.today);
+        update(&mut m, Msg::Loaded(tasks));
+        update(&mut m, Msg::ToggleToday);
+        let ids: Vec<&str> = m.visible().iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["1", "3"]);
+        update(&mut m, Msg::Select(TaskId::from(3)));
+        assert_eq!(update(&mut m, Msg::MoveUp), Vec::new());
+        assert_eq!(
+            m.message,
+            Some(Message::error("nothing above [3] in its group"))
+        );
+        update(&mut m, Msg::Select(TaskId::from(1)));
+        assert_eq!(update(&mut m, Msg::MoveDown), Vec::new());
+        assert_eq!(
+            m.message,
+            Some(Message::error("nothing below [1] in its group"))
+        );
+        update(&mut m, Msg::ToggleToday);
+        // A folded group's header.
+        update(&mut m, Msg::Select(TaskId::from(5)));
+        update(&mut m, Msg::ToggleGroup);
+        assert_eq!(
+            m.selected,
+            Some(Cursor::Group(GroupKey::Status(Some(Status::READY))))
+        );
+        for msg in [Msg::MoveUp, Msg::MoveDown] {
+            assert_eq!(update(&mut m, msg.clone()), Vec::new(), "{msg:?}");
+            assert_eq!(
+                m.message,
+                Some(Message::error("unfold the group (z) to move a task")),
+                "{msg:?}"
+            );
+        }
+        // The hint names the key as bound, or no key when it is unbound.
+        let rebound = |spec: KeySpec| {
+            KeyMap::from_config(&BTreeMap::from([("toggle-group".to_owned(), spec)])).unwrap()
+        };
+        m.keys = rebound(KeySpec::One("f2".to_owned()));
+        update(&mut m, Msg::MoveUp);
+        assert_eq!(
+            m.message,
+            Some(Message::error("unfold the group (F2) to move a task"))
+        );
+        m.keys = rebound(KeySpec::Many(Vec::new()));
+        update(&mut m, Msg::MoveDown);
+        assert_eq!(
+            m.message,
+            Some(Message::error("unfold the group to move a task"))
+        );
+        m.keys = KeyMap::default();
+        update(&mut m, Msg::ToggleGroup);
+        // The done list is by close time.
+        let mut closed = task(9, "Closed", None);
+        closed.mark_done();
+        let mut tasks = m.tasks.clone();
+        tasks.push(closed);
+        feed(&mut m, [Msg::Loaded(tasks), Msg::ToggleDone, Msg::Bottom]);
+        assert_eq!(selected_id(&m), Some("9"));
+        for msg in [Msg::MoveUp, Msg::MoveDown] {
+            assert_eq!(update(&mut m, msg.clone()), Vec::new(), "{msg:?}");
+            assert_eq!(
+                m.message,
+                Some(Message::error("[9] is done; done tasks are not ranked")),
+                "{msg:?}"
+            );
+        }
+        // Nothing selected.
+        update(&mut m, Msg::Loaded(Vec::new()));
+        for msg in [Msg::MoveUp, Msg::MoveDown] {
+            assert_eq!(update(&mut m, msg.clone()), Vec::new(), "{msg:?}");
+            assert_eq!(m.message, Some(Message::error(NO_SELECTION)), "{msg:?}");
+        }
     }
 
     fn chars(text: &str) -> Vec<Msg> {
@@ -1846,6 +2111,8 @@ mod tests {
         let mut m = model();
         m.selected = Some(Cursor::Task(TaskId::from(42)));
         assert_eq!(update(&mut m, Msg::Launch), Vec::new());
+        assert_eq!(m.message, Some(Message::error("no task selected")));
+        assert_eq!(update(&mut m, Msg::MoveUp), Vec::new());
         assert_eq!(m.message, Some(Message::error("no task selected")));
     }
 
