@@ -1264,11 +1264,16 @@ mod rank {
     fn a_slot_with_no_rank_left_renumbers_the_group() {
         let env = env_with_three_in_progress_tasks("## Rank\n\n1024\n\n", "## Rank\n\n1025\n\n");
         let second = env.read_task(SECOND);
-        env.tasq()
-            .args(["move", "1", "--after", "8"])
-            .assert()
-            .success()
-            .stdout("[1] moved after task 8 (also ranked: 9)\n");
+        let out = env
+            .tasq()
+            .args(["move", "1", "--after", "8", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["changed"], serde_json::json!(["rank"]));
+        assert_eq!(value["ranked"], serde_json::json!(["9"]));
+        assert_eq!(value["task"]["rank"], serde_json::json!(2048));
         // 8 already holds 1024 and is not rewritten; 1 takes 2048 and 9
         // moves down to 3072.
         assert_eq!(env.read_task(SECOND), second);
