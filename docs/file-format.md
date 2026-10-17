@@ -193,9 +193,10 @@ Written only by `tasq` (ADR 0025), ignored by nb and the script. The task's
 manual place within its status group: one integer line, smaller first. Reading
 takes the first non-empty line of the first `## Rank` section that holds an
 integer; anything else gives `rank = None` and is preserved, so a hand-edited
-typo never makes a task unreadable (the next move overwrites it). Done tasks
-keep their rank for when they are reopened. `tasq move` and `tasq apply` write
-it; `Document::from_task` puts it after `## Closed`, and `set_rank` inserts it
+typo never makes a task unreadable (the next write overwrites it). Done tasks
+keep their rank for when they are reopened, but the done list does not follow
+it. `tasq apply` writes it, as will `tasq move` (ADR 0025);
+`Document::from_task` puts it after `## Closed`, and `set_rank` inserts it
 after `## Closed`, else `## Source`, `## Due`, `## Project`, `## Description`,
 else after the title line. Unranking removes the section. The rank is never
 shown outside JSON and the raw file.

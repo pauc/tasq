@@ -242,7 +242,8 @@ impl<'a> IdKey<'a> {
 /// The key tasks are sorted by; compare two of them to order two tasks.
 ///
 /// Orders by rank (ranked tasks first, smallest rank on top; unranked tasks
-/// after every ranked one, ADR 0025), then priority (`A` < `B` < `C`), then
+/// and done tasks after every ranked one, ADR 0025), then priority (`A` <
+/// `B` < `C`), then
 /// due date ascending with undated tasks last, then id. Ids are compared
 /// numerically when they are made of digits (`9` before `10`, as the
 /// script's `sort -n` did); any other id sorts after all numeric ids, as
@@ -259,7 +260,12 @@ pub struct SortKey<'a> {
 /// The [`SortKey`] of `task`.
 pub fn sort_key(task: &Task) -> SortKey<'_> {
     SortKey {
-        rank: task.rank.map_or(RankKey::Unranked, RankKey::At),
+        // A done task keeps its rank for when it is reopened, but it has
+        // no status group to be ranked in: the done list never follows it.
+        rank: task
+            .rank
+            .filter(|_| !task.done)
+            .map_or(RankKey::Unranked, RankKey::At),
         priority: task.priority,
         due: task.due.map_or(DueKey::Never, DueKey::On),
         id: IdKey::of(&task.id),
@@ -938,6 +944,19 @@ mod tests {
         );
         assert_eq!(sort_key(&tasks[0]).rank, RankKey::Unranked);
         assert!(RankKey::At(i64::MAX) < RankKey::Unranked);
+    }
+
+    #[test]
+    fn a_done_task_keeps_its_rank_but_sorts_without_it() {
+        let mut ranked = task("1", "", None, Priority::C, None, &[]);
+        ranked.done = true;
+        ranked.rank = Some(-1024);
+        let mut plain = task("2", "", None, Priority::B, None, &[]);
+        plain.done = true;
+        let tasks = vec![ranked, plain];
+        assert_eq!(ids(&sort(&tasks)), ["2", "1"]);
+        assert_eq!(sort_key(&tasks[0]).rank, RankKey::Unranked);
+        assert_eq!(tasks[0].rank, Some(-1024));
     }
 
     #[test]

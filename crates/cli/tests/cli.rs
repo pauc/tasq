@@ -303,6 +303,33 @@ mod list {
         assert_eq!(tasks.last().unwrap()["done"], true, "done tasks come last");
     }
 
+    /// A closed task keeps its `## Rank` for when it is reopened, but the
+    /// done list does not follow it.
+    #[test]
+    fn done_list_ignores_a_kept_rank() {
+        let env = TestEnv::fixture();
+        env.write_task(
+            "20260907150000.todo.md",
+            "# [x] Closed with a rank\n\n## Rank\n\n-1024\n\n## Tags\n\n#C\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
+        );
+        env.tasq().args(["store", "reconcile"]).assert().success();
+        let out = env.tasq().args(["list", "--done"]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            "DONE\n  \
+             [ 4] #C Ship the release notes  #gitlab \n  \
+             [ 8] #C Closed with a rank\n\n"
+        );
+        let json = env
+            .tasq()
+            .args(["list", "--done", "--json"])
+            .output()
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(value["tasks"][1]["rank"], -1024);
+    }
+
     #[test]
     fn done_lists_only_closed_tasks() {
         let env = TestEnv::fixture();
