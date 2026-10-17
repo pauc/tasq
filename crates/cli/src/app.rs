@@ -144,6 +144,9 @@ fn edit(app: &App, command: EditCommand) -> Result<()> {
         EditCommand::Desc { id, text, note, .. } => {
             commands::fields::desc(app, &id, text.as_deref(), note.as_deref())
         }
+        EditCommand::Move { id, top, unrank } => {
+            commands::rank::run(app, &id, &commands::rank::target(top, unrank))
+        }
     }
 }
 
@@ -160,6 +163,7 @@ fn command_name(command: &Command) -> &'static str {
             EditCommand::Due { .. } => "due",
             EditCommand::Tag { .. } => "tag",
             EditCommand::Desc { .. } => "desc",
+            EditCommand::Move { .. } => "move",
         },
         Command::Next { .. } => "next",
         Command::Pick { .. } => "pick",

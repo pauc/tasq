@@ -952,6 +952,176 @@ mod edit {
     }
 }
 
+/// `tasq move`: the rank within a status group.
+mod rank {
+    use super::*;
+
+    const RANKED: &str = "20260907150000.todo.md";
+
+    /// The fixture plus task 8, a `#C` in-progress task below task 1.
+    fn env_with_a_second_in_progress_task() -> TestEnv {
+        let env = TestEnv::fixture();
+        env.write_task(
+            RANKED,
+            "# [ ] Second\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
+        );
+        env.tasq().args(["store", "reconcile"]).assert().success();
+        env
+    }
+
+    fn next_task(env: &TestEnv) -> String {
+        let out = env
+            .tasq()
+            .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .args(["next", "--dry-run", "--launcher", "shell"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        stdout(&out).lines().next().unwrap().to_owned()
+    }
+
+    #[test]
+    fn top_ranks_the_task_first_and_next_follows() {
+        let env = env_with_a_second_in_progress_task();
+        assert_eq!(
+            next_task(&env),
+            "Task: [1] Rewrite the tasks script in Rust"
+        );
+        env.tasq()
+            .args(["move", "8", "--top"])
+            .assert()
+            .success()
+            .stdout("[8] moved to the top\n");
+        assert_eq!(
+            env.read_task(RANKED),
+            "# [ ] Second\n\n## Rank\n\n1024\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n"
+        );
+        assert_eq!(next_task(&env), "Task: [8] Second");
+        // Now task 1 goes above it.
+        env.tasq()
+            .args(["move", "1", "--top"])
+            .assert()
+            .success()
+            .stdout("[1] moved to the top\n");
+        assert!(
+            env.read_task("20260901090000.todo.md")
+                .contains("## Rank\n\n0\n"),
+            "{}",
+            env.read_task("20260901090000.todo.md")
+        );
+        assert_eq!(
+            next_task(&env),
+            "Task: [1] Rewrite the tasks script in Rust"
+        );
+    }
+
+    #[test]
+    fn top_json_names_the_rank_as_the_change() {
+        let env = env_with_a_second_in_progress_task();
+        let out = env
+            .tasq()
+            .args(["move", "8", "--top", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_snapshot!(stdout(&out));
+    }
+
+    #[test]
+    fn unrank_removes_the_section_and_is_idempotent() {
+        let env = env_with_a_second_in_progress_task();
+        env.tasq().args(["move", "8", "--top"]).assert().success();
+        env.tasq()
+            .args(["move", "8", "--unrank"])
+            .assert()
+            .success()
+            .stdout("[8] unranked\n");
+        let before = env.read_task(RANKED);
+        assert!(!before.contains("## Rank"), "{before}");
+        assert_eq!(
+            next_task(&env),
+            "Task: [1] Rewrite the tasks script in Rust"
+        );
+        env.tasq()
+            .args(["move", "8", "--unrank"])
+            .assert()
+            .success()
+            .stdout("[8] already unranked\n");
+        assert_eq!(env.read_task(RANKED), before);
+    }
+
+    #[test]
+    fn a_move_that_changes_nothing_writes_nothing() {
+        let env = env_with_a_second_in_progress_task();
+        let before = env.read_task("20260901090000.todo.md");
+        env.tasq()
+            .args(["move", "1", "--top"])
+            .assert()
+            .success()
+            .stdout("[1] already at the top\n");
+        assert_eq!(env.read_task("20260901090000.todo.md"), before);
+        let out = env
+            .tasq()
+            .args(["move", "1", "--top", "--json"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["schema"], 1);
+        assert_eq!(value["task"]["id"], "1");
+        assert_eq!(value["task"].get("rank"), None);
+        assert_eq!(value["changed"], serde_json::json!([]));
+        assert_eq!(value["ranked"], serde_json::json!([]));
+        let out = env
+            .tasq()
+            .args(["move", "8", "--unrank", "--json"])
+            .output()
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["changed"], serde_json::json!([]));
+        assert_eq!(env.read_task("20260901090000.todo.md"), before);
+    }
+
+    #[test]
+    fn a_done_or_missing_task_is_refused() {
+        let env = TestEnv::fixture();
+        let before = env.read_task("20260903110000.todo.md");
+        env.tasq()
+            .args(["move", "4", "--top"])
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr("tasq: task 4 is done\n");
+        env.tasq()
+            .args(["move", "4", "--unrank"])
+            .assert()
+            .code(1)
+            .stderr("tasq: task 4 is done\n");
+        assert_eq!(env.read_task("20260903110000.todo.md"), before);
+        env.tasq()
+            .args(["move", "99", "--top"])
+            .assert()
+            .code(1)
+            .stderr("tasq: no task with id 99\n");
+    }
+
+    #[test]
+    fn exactly_one_target_is_required() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .args(["move", "3"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("required"));
+        env.tasq()
+            .args(["move", "3", "--top", "--unrank"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("cannot be used with"));
+        env.tasq().args(["move"]).assert().code(2);
+    }
+}
+
 /// `tasq rename`, `due`, `tag` and `desc`: one field each, an optional
 /// `--note`, and the task as stored with `--json`.
 mod fields {

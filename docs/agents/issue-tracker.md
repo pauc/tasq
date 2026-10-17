@@ -19,6 +19,7 @@ Ids are positional (`.index` line numbers). Refer to a task by id **and** title,
 - **Tags**: `tasq tag <id> +<add> -<remove>`; only the named tags change. Status and priority words are refused (use `tasq set`).
 - **Description**: `tasq desc <id>` prints it; `tasq desc <id> "<body>"` replaces it, `tasq desc <id> -` reads it from stdin, `tasq desc <id> ""` clears it. A line starting with `## ` is refused.
 - These four take `--note "<note>"` to log why in the same write. For several fields at once, `tasq view <id> --json`, edit the document, pipe it to `tasq apply`; it refuses what it cannot express (a removed progress entry, link or session) and writes nothing.
+- **Order within a status group**: `tasq move <id> --top` puts a task first in its group (above every priority); `tasq move <id> --unrank` hands it back to the priority, due, id order.
 
 ## Plans for larger issues
 

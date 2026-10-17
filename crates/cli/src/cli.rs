@@ -517,6 +517,31 @@ pub enum EditCommand {
         #[arg(long, value_name = "TEXT", requires = "content")]
         note: Option<String>,
     },
+
+    /// Move a task within its status group: to the top, or back to the natural order.
+    ///
+    /// A task's rank is its manually set place among the tasks of its
+    /// status group; ranked tasks come before unranked ones, smallest rank
+    /// first, and unranked tasks keep the priority, due, id order. --top
+    /// puts the task first in its group, above every priority; --unrank
+    /// drops its rank. Lists, the UI and `tasq next` follow. Only the
+    /// task's own file is written, and the rank is never displayed. Prints
+    /// `[id] moved to the top` or `[id] unranked`, or `[id] already at the
+    /// top` / `[id] already unranked` when the task stays where it is
+    /// (then nothing is written). A done task is refused.
+    #[command(after_help = "Example:\n  tasq move 31 --top")]
+    #[command(group(clap::ArgGroup::new("target").required(true).args(["top", "unrank"])))]
+    Move {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Put the task first in its status group.
+        #[arg(long)]
+        top: bool,
+        /// Remove the task's rank: back to the priority, due, id order.
+        #[arg(long)]
+        unrank: bool,
+    },
 }
 
 const DESC_HELP: &str = "\

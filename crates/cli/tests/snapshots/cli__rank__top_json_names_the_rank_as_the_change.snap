@@ -1,0 +1,34 @@
+---
+source: crates/cli/tests/cli.rs
+expression: stdout(&out)
+---
+{
+  "changed": [
+    "rank"
+  ],
+  "ranked": [],
+  "schema": 1,
+  "task": {
+    "closed_at": null,
+    "description": null,
+    "done": false,
+    "due": null,
+    "id": "8",
+    "merge_requests": [],
+    "origin": null,
+    "priority": "C",
+    "progress": [
+      {
+        "at": "2026-10-07 15:00",
+        "note": "created"
+      }
+    ],
+    "project": null,
+    "rank": 1024,
+    "related": [],
+    "sessions": [],
+    "status": "in-progress",
+    "tags": [],
+    "title": "Second"
+  }
+}

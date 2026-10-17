@@ -16,7 +16,8 @@ use thiserror::Error;
 
 use crate::clock::Clock;
 use crate::model::{ModelError, Priority, Status, Tag, Task, TaskDraft, TaskId, Workflow};
-use crate::store::{Store, StoreError};
+use crate::query::{self, Filter};
+use crate::store::{BatchError, Store, StoreError};
 
 /// What `set` changes: a workflow status or a priority.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,9 +252,16 @@ pub enum EditError {
     /// `reopen` was asked for a task that is still open.
     #[error("task {0} is not done")]
     NotDone(TaskId),
+    /// `move` was asked for a done task, which has no status group to be
+    /// ranked in.
+    #[error("task {0} is done")]
+    IsDone(TaskId),
     /// The store refused or failed.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A batch write stopped; the error names the tasks already written.
+    #[error(transparent)]
+    Batch(#[from] BatchError),
 }
 
 /// `tasq set <id> <value> [note]`: changes the status or priority, logs
@@ -537,6 +545,85 @@ pub fn reopen(
     Ok(store.get(id)?)
 }
 
+/// The distance between two ranks written by a move (ADR 0025).
+pub const RANK_STEP: i64 = 1024;
+
+/// Where `tasq move` puts a task within its status group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// First in the group: the group's lowest rank minus [`RANK_STEP`], or
+    /// [`RANK_STEP`] when nothing else in the group is ranked.
+    Top,
+    /// No rank: back to the natural priority, due, id order.
+    Unrank,
+}
+
+/// What [`move_task`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Moved {
+    /// The task as stored afterwards (as read when nothing was written).
+    pub task: Task,
+    /// `["rank"]` when the task's rank was written, `[]` when the move left
+    /// it where it was and nothing was written.
+    pub changed: Vec<&'static str>,
+    /// The other tasks of the group whose rank was written for this move,
+    /// in batch order; empty for a move that touched the task alone.
+    pub ranked: Vec<TaskId>,
+}
+
+/// `tasq move <id> <target>`: sets the task's rank so that it sits at
+/// `target` within its status group (the open tasks sharing its status,
+/// the no-status group included) and writes every task whose rank changed
+/// as one batch. A done task is refused before anything is read further;
+/// a move that leaves the task where it is writes nothing.
+pub fn move_task(store: &mut dyn Store, id: &TaskId, target: &Target) -> Result<Moved, EditError> {
+    let task = store.get(id)?;
+    if task.done {
+        return Err(EditError::IsDone(id.clone()));
+    }
+    let group: Vec<Task> = store
+        .list(&Filter::new())?
+        .into_iter()
+        .filter(|t| t.status == task.status)
+        .collect();
+    let rank = match target {
+        Target::Top => top_rank(&group, id),
+        Target::Unrank => None,
+    };
+    if rank == task.rank {
+        return Ok(Moved {
+            task,
+            changed: Vec::new(),
+            ranked: Vec::new(),
+        });
+    }
+    let mut moved = task;
+    moved.rank = rank;
+    store.update_many(std::slice::from_ref(&moved))?;
+    Ok(Moved {
+        task: store.get(id)?,
+        changed: vec!["rank"],
+        ranked: Vec::new(),
+    })
+}
+
+/// The rank that puts `id` first in `group`: its current rank when it is
+/// already first, else the lowest rank of the others minus [`RANK_STEP`],
+/// or [`RANK_STEP`] when none of them is ranked.
+fn top_rank(group: &[Task], id: &TaskId) -> Option<i64> {
+    let ordered = query::sort(group);
+    let first = ordered.first().expect("the group holds the moved task");
+    if first.id == *id {
+        return first.rank;
+    }
+    let lowest = group
+        .iter()
+        .filter(|t| t.id != *id)
+        .filter_map(|t| t.rank)
+        .min();
+    Some(lowest.map_or(RANK_STEP, |rank| rank - RANK_STEP))
+}
+
 /// The shape of every one-field edit: checks `note`, reads the task and
 /// hands it to [`edited`].
 fn change(
@@ -718,6 +805,146 @@ mod tests {
         let task = reopen(&mut store, &id, &Status::READY, None, &clock()).unwrap();
         assert_eq!(task.rank, Some(1024));
         assert_eq!(store.get(&id).unwrap().rank, Some(1024));
+    }
+
+    /// Three ready tasks: 1 (`#A`), 3 (`#B`), 4 (`#C`), plus 2 without a
+    /// status and 5 done.
+    fn group() -> MemoryStore {
+        let mut urgent = Task::new(TaskId::from(1), "A");
+        urgent.set_status(Status::READY);
+        urgent.set_priority(Priority::A);
+        let no_status = Task::new(TaskId::from(2), "B");
+        let mut normal = Task::new(TaskId::from(3), "C");
+        normal.set_status(Status::READY);
+        let mut low = Task::new(TaskId::from(4), "D");
+        low.set_status(Status::READY);
+        low.set_priority(Priority::C);
+        let mut done = Task::new(TaskId::from(5), "E");
+        done.mark_done();
+        MemoryStore::new([urgent, no_status, normal, low, done])
+    }
+
+    #[test]
+    fn move_top_ranks_1024_when_nothing_in_the_group_is_ranked() {
+        let mut store = group();
+        let moved = move_task(&mut store, &TaskId::from(4), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(1024));
+        assert_eq!(moved.changed, vec!["rank"]);
+        assert_eq!(moved.ranked, Vec::<TaskId>::new());
+        assert_eq!(store.get(&TaskId::from(4)).unwrap(), moved.task);
+        let ready = crate::query::sort(
+            store
+                .tasks()
+                .iter()
+                .filter(|t| t.status == Some(Status::READY)),
+        );
+        let ids: Vec<&TaskId> = ready.iter().map(|t| &t.id).collect();
+        assert_eq!(ids, [&TaskId::from(4), &TaskId::from(1), &TaskId::from(3)]);
+    }
+
+    fn ranked(store: &mut MemoryStore, id: u64, rank: i64) {
+        let mut task = store.get(&TaskId::from(id)).unwrap();
+        task.rank = Some(rank);
+        store.update(&task).unwrap();
+    }
+
+    fn ready_ids(store: &MemoryStore) -> Vec<TaskId> {
+        crate::query::sort(
+            store
+                .tasks()
+                .iter()
+                .filter(|t| t.status == Some(Status::READY)),
+        )
+        .into_iter()
+        .map(|t| t.id.clone())
+        .collect()
+    }
+
+    #[test]
+    fn move_top_goes_one_step_below_the_lowest_rank_of_the_others() {
+        let mut store = group();
+        ranked(&mut store, 1, 1024);
+        ranked(&mut store, 3, 2048);
+        let moved = move_task(&mut store, &TaskId::from(4), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(0));
+        assert_eq!(ready_ids(&store), [4, 1, 3].map(TaskId::from));
+        // A ranked task that is not first moves above the lowest rank,
+        // its own rank left out of the minimum.
+        let moved = move_task(&mut store, &TaskId::from(3), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(-1024));
+        assert_eq!(moved.changed, vec!["rank"]);
+        assert_eq!(ready_ids(&store), [3, 4, 1].map(TaskId::from));
+    }
+
+    #[test]
+    fn move_top_only_looks_at_the_tasks_own_status_group() {
+        let mut store = group();
+        // Task 2 has no status: its rank is not this group's lowest.
+        ranked(&mut store, 2, -5000);
+        let moved = move_task(&mut store, &TaskId::from(4), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(1024));
+        // The no-status tasks are a group of their own and move like any other.
+        let draft = TaskDraft {
+            status: None,
+            ..TaskDraft::new("F")
+        };
+        assert_eq!(store.create(draft).unwrap().id, TaskId::from(6));
+        let moved = move_task(&mut store, &TaskId::from(6), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(-6024));
+        assert_eq!(moved.task.status, None);
+    }
+
+    #[test]
+    fn move_top_on_the_first_task_writes_nothing() {
+        let mut store = group();
+        let first = store.get(&TaskId::from(1)).unwrap();
+        // First by the natural order, nothing ranked.
+        let mut no_write = NoWrite(store.clone());
+        let moved = move_task(&mut no_write, &TaskId::from(1), &Target::Top).unwrap();
+        assert_eq!(
+            moved,
+            Moved {
+                task: first,
+                changed: Vec::new(),
+                ranked: Vec::new()
+            }
+        );
+        // First by rank.
+        ranked(&mut store, 4, 1024);
+        ranked(&mut store, 3, 2048);
+        let mut no_write = NoWrite(store);
+        let moved = move_task(&mut no_write, &TaskId::from(4), &Target::Top).unwrap();
+        assert_eq!(moved.task.rank, Some(1024));
+        assert_eq!(moved.changed, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn move_unrank_removes_the_rank_and_is_a_no_op_without_one() {
+        let mut store = group();
+        ranked(&mut store, 4, 1024);
+        assert_eq!(ready_ids(&store), [4, 1, 3].map(TaskId::from));
+        let moved = move_task(&mut store, &TaskId::from(4), &Target::Unrank).unwrap();
+        assert_eq!(moved.task.rank, None);
+        assert_eq!(moved.changed, vec!["rank"]);
+        assert_eq!(moved.ranked, Vec::<TaskId>::new());
+        assert_eq!(store.get(&TaskId::from(4)).unwrap(), moved.task);
+        assert_eq!(ready_ids(&store), [1, 3, 4].map(TaskId::from));
+        let mut no_write = NoWrite(store);
+        let moved = move_task(&mut no_write, &TaskId::from(4), &Target::Unrank).unwrap();
+        assert_eq!(moved.task.rank, None);
+        assert_eq!(moved.changed, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn move_refuses_done_and_missing_tasks_before_writing() {
+        let mut store = NoWrite(group());
+        let err = move_task(&mut store, &TaskId::from(5), &Target::Top).unwrap_err();
+        assert!(matches!(err, EditError::IsDone(ref id) if *id == TaskId::from(5)));
+        assert_eq!(err.to_string(), "task 5 is done");
+        let err = move_task(&mut store, &TaskId::from(5), &Target::Unrank).unwrap_err();
+        assert_eq!(err.to_string(), "task 5 is done");
+        let err = move_task(&mut store, &TaskId::from(9), &Target::Top).unwrap_err();
+        assert_eq!(err.to_string(), "no task with id 9");
     }
 
     #[test]

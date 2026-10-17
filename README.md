@@ -216,6 +216,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq due ID DATE\|none [--note TEXT]` | Set the due date (`create --due` words) or remove it |
 | `tasq tag ID TAG... [--note TEXT]` | `+name` or `name` adds a topic tag, `-name` removes one; the other tags stay |
 | `tasq desc ID [TEXT\|-\|--edit] [--note TEXT]` | Print the description, replace it (`-` reads stdin, `""` clears) or open it in `$VISUAL`/`$EDITOR` |
+| `tasq move ID --top\|--unrank` | Put the task first in its status group, above every priority, or drop its rank back to the priority, due, id order; lists, the UI and `next` follow |
 | `tasq next [--launcher NAME] [--dry-run]` | Open a session on the first in-progress task, else the first ready one |
 | `tasq pick ID [--launcher NAME] [--dry-run]` | Open a session on a specific task |
 | `tasq view ID [--raw]` | Show a task (glow on a terminal, plain markdown otherwise; `--raw` is verbatim) |
