@@ -258,11 +258,11 @@ sense the status bar says why instead.
 
 **Blocked by:** RK-004.
 
-**Status:** ready-for-agent
+**Status:** done (2026-10-17)
 
-- [ ] New actions `move-up` (`ctrl+k`) and `move-down` (`ctrl+j`), rebindable under `[ui.keys]`, listed in the help overlay and in `docs/config.md`.
-- [ ] A move places the task before/after its visible neighbour (in a filtered view too) and the moved task stays selected after the reload.
-- [ ] No-op with a status-bar message at a group edge, on a collapsed group, in the done list and when the neighbour is in another status group (Today view).
-- [ ] `ctrl+j` is never interpreted as `Enter`, with and without keyboard enhancement (test on the key mapping).
-- [ ] The rank number is never rendered (render snapshot after a move).
-- [ ] Zero missed mutants in the touched TUI modules.
+- [x] New actions `move-up` (`ctrl+k`) and `move-down` (`ctrl+j`), rebindable under `[ui.keys]`, listed in the help overlay and in `docs/config.md`.
+- [x] A move places the task before/after its visible neighbour (in a filtered view too) and the moved task stays selected after the reload.
+- [x] No-op with a status-bar message at a group edge, on a collapsed group, in the done list and when the neighbour is in another status group (Today view).
+- [x] `ctrl+j` is never interpreted as `Enter`, with and without keyboard enhancement (test on the key mapping).
+- [x] The rank number is never rendered (render snapshot after a move).
+- [x] Zero missed mutants in the touched TUI modules.

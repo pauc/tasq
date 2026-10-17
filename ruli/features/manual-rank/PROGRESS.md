@@ -11,7 +11,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
 | RK-003 | `tasq move --top` / `--unrank` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 82 mutants, 63 caught, 19 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs -f crates/cli/src/commands/mod.rs`: 10 mutants, 9 caught, 1 unviable, 0 missed (the config excludes `crates/cli/**`, so the CLI bar needs this one-off run); commits: 3710eac, 1fba137 (review fixes) |
 | RK-004 | `tasq move --before` / `--after` | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 115 mutants, 91 caught, 24 unviable, 0 missed; `--no-config -f crates/cli/src/commands/rank.rs`: 11 mutants, 10 caught, 1 unviable, 0 missed; commits: d1d792c, c155e74 (review fixes) |
 | RK-005 | Renumber a group when the gap runs out | done | 2026-10-17; `cargo mutants --no-config -f crates/core/src/edit.rs`: 125 mutants, 99 caught, 26 unviable, 0 missed; commits: f7f8962, 7489f6f (review fixes) |
-| RK-006 | `ctrl+k` / `ctrl+j` in the TUI | ready | blocked by: none (RK-004 done) |
+| RK-006 | `ctrl+k` / `ctrl+j` in the TUI | done | 2026-10-17; `cargo mutants --no-config --in-diff <(git diff main -- crates/tui)`: 27 mutants, 20 caught, 7 unviable, 0 missed (the config excludes `crates/tui/**`); after the review, `--no-config -f crates/core/src/edit.rs`: 128 mutants, 102 caught, 26 unviable, 0 missed and `-f crates/cli/src/commands/rank.rs`: 6 mutants, 5 caught, 1 unviable, 0 missed; commits: 2fbe7d7, d5e9ffe (review fixes) |
 
 ## Learnings
 
@@ -92,6 +92,32 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
   move, and `rank_prefix` / `renumber_from` share `with_rank`.
   Ten bisections of one gap before the renumber is exactly what the 1024 step promises: the
   core test walks 1536, 1280, ..., 1025 and the eleventh move renumbers.
+
+- 2026-10-17 (RK-006): the TUI adds nothing to the planning: `Msg::MoveUp` / `MoveDown` become
+  `Cmd::Move(id, Target::Before(above))` / `After(below)` with the neighbour read from the
+  model's own `ListGroup` (`Model::group_of`, now public), so a filtered view and the Today
+  view place the task next to what is shown, and `dispatch` calls `edit::move_task` like the
+  CLI and words the status line like `tasq move` (`[3] moved before task 12`, `already
+  before`, ` (also ranked: ...)`). The selection follows for free: the reload keeps
+  `Cursor::Task(id)` whenever the id is still visible. The Today view still groups by
+  status (`query::list`), so "a neighbour in another status group" is the group edge: the
+  refusal is the same `nothing above [id] in its group` message. The `Ctrl+J` / `Enter`
+  question is settled in crossterm, not here: outside raw mode it reports the byte `\n` as
+  `Enter` (issue #371), in raw mode as `Ctrl+J`, and the kitty protocol names the key, so the
+  map only ever sees `ctrl+j`; the test pins that `Chord::from_event` keeps the two apart and
+  that `enter` on `move-down` is a configuration conflict. One row more in the help overlay
+  no longer fits a 28-row terminal with the status bar (the popup is clamped and the `quit`
+  row is cut), so the help snapshot is taken at 30 rows; the overlay was already cut at 24.
+  The `.cargo/mutants.toml` excludes `crates/tui/**`, so the acceptance run is
+  `--no-config --in-diff <(git diff main -- crates/tui)`.
+  Review follow-ups: the `tasq move` line is `Moved::describe(&Target)` in core now, used by
+  the CLI and the TUI alike (the TUI had copied the CLI's eight arms, dead ones included);
+  the neighbour lookup is `Model::neighbours` (group, task above, task below, as shown),
+  so `group_of` stays private and the update step only decides; the folded-group refusal
+  names the `toggle-group` key as bound (ADR 0013) instead of a hardcoded `z`; and the
+  `Ctrl+J` test no longer pretends to cover keyboard enhancement with a second identical
+  press: it pins the map (`ctrl+j` is not `enter` in any mode, a kitty `Repeat` moves
+  again) and says the byte parsing is crossterm's.
 
 ## Blockers
 
