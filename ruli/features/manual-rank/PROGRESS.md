@@ -7,7 +7,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 43.
 | Id | Title | Status | Notes |
 |---|---|---|---|
 | RK-001 | `Store::update_many` (prefactor) | done | 2026-10-17; `cargo mutants --in-diff`: 11 mutants, 10 caught, 1 unviable, 0 missed; commit: ec39107 |
-| RK-002 | Rank in the file orders lists and `next` | done | 2026-10-17; `cargo mutants --in-diff`: 19 mutants, 15 caught, 4 unviable, 0 missed; commit: COMMIT |
+| RK-002 | Rank in the file orders lists and `next` | done | 2026-10-17; `cargo mutants --in-diff`: 19 mutants, 15 caught, 4 unviable, 0 missed; commit: b0573c9 |
 | RK-003 | `tasq move --top` / `--unrank` | ready | blocked by: none (RK-002 done) |
 | RK-004 | `tasq move --before` / `--after` | blocked | blocked by: RK-003 (RK-001 done) |
 | RK-005 | Renumber a group when the gap runs out | blocked | blocked by: RK-004 |
