@@ -1,5 +1,6 @@
 ---
 source: crates/tui/tests/render.rs
+assertion_line: 109
 expression: "off"
 ---
 "┌ Tasks (5/5) ─────────────────────────────────────────────┐┌ [1] ─────────────────────────────────────────────────────┐"
@@ -14,11 +15,10 @@ expression: "off"
 "│LATER (1)                                                 ││Suspect the cache.                                        │"
 "│  [ 4] #B Try the new profiler                            ││                                                          │"
 "│                                                          ││Related                                                   │"
-"│NO STATUS (1)                                             ││- https://example.com/issue/1                             │"
+"│NO STATUS (1)                                             ││- example.com/issue/1                                     │"
 "│  [ 5] #B Call the bank                                   ││                                                          │"
 "│                                                          ││Merge requests                                            │"
 "│                                                          ││- Pin the cache key                                       │"
-"│                                                          ││<https://gitlab.example.com/g/p/-/merge_requests/7>       │"
 "│                                                          ││                                                          │"
 "│                                                          ││Sessions                                                  │"
 "│                                                          ││- 2026-10-03 16:40 abc123 — first look                    │"
@@ -27,6 +27,7 @@ expression: "off"
 "│                                                          ││- 2026-10-04 09:30: reproduced locally                    │"
 "│                                                          ││- 2026-10-04 09:30: cache key uses the wrong hash         │"
 "│                                                          ││- 2026-10-04 09:30: fix pushed                            │"
+"│                                                          ││                                                          │"
 "│                                                          ││                                                          │"
 "│                                                          ││                                                          │"
 "│                                                          ││                                                          │"

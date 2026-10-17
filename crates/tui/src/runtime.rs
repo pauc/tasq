@@ -64,6 +64,7 @@ pub fn dispatch(
         }
         Cmd::Revise(id, fields) => revise(store, id, fields),
         Cmd::Editor(id) => edit_file(store, host, id),
+        Cmd::View(id, _) => host.view(id),
         Cmd::Launch(id, target) => host.launch(id, *target),
         Cmd::Sync(sources) => host.sync(sources),
     };
@@ -718,6 +719,14 @@ mod tests {
             );
             assert_eq!(msgs[0], Msg::Info("ok".into()));
         }
+        let msgs = dispatch(
+            &Cmd::View(TaskId::from(2), true),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(msgs[0], Msg::Info("ok".into()));
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
         let msgs = dispatch(&Cmd::Sync(Vec::new()), &mut store, &clock(), &mut host);
         assert_eq!(msgs[0], Msg::Info("ok".into()));
         let picked = Cmd::Sync(vec!["gitlab".to_owned(), "inbox".to_owned()]);
@@ -747,6 +756,7 @@ mod tests {
                 "launch 1",
                 "launch 1 detached",
                 "launch 1 detached no-focus",
+                "view 2",
                 "sync",
                 "sync gitlab inbox"
             ]

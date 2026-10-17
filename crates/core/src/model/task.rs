@@ -33,6 +33,54 @@ impl Link {
             label: Some(label.into()),
         }
     }
+
+    /// What the link shows as: its label, else [`shortref`] of the URL.
+    pub fn short_label(&self) -> String {
+        self.label.clone().unwrap_or_else(|| shortref(&self.url))
+    }
+}
+
+/// The label a URL gets when it has none: `!123` for a merge request,
+/// `#123` for an issue or work item, otherwise the URL without scheme and
+/// `www.`, shortened in the middle past 60 characters.
+pub fn shortref(url: &str) -> String {
+    if let Some(n) = number_after(url, &["/merge_requests/"]) {
+        return format!("!{n}");
+    }
+    if let Some(n) = number_after(url, &["/work_items/", "/issues/"]) {
+        return format!("#{n}");
+    }
+    let u = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    let u = u.strip_prefix("www.").unwrap_or(u);
+    let chars: Vec<char> = u.chars().collect();
+    if chars.len() > 60 {
+        let head: String = chars[..45].iter().collect();
+        let tail: String = chars[chars.len() - 10..].iter().collect();
+        format!("{head}...{tail}")
+    } else {
+        u.to_owned()
+    }
+}
+
+/// The digits right after the leftmost of `markers` that has any.
+fn number_after<'a>(url: &'a str, markers: &[&str]) -> Option<&'a str> {
+    let mut found: Vec<(usize, &str)> = markers
+        .iter()
+        .flat_map(|marker| {
+            url.match_indices(marker)
+                .map(|(at, m)| (at, &url[at + m.len()..]))
+        })
+        .collect();
+    found.sort_unstable();
+    found.into_iter().find_map(|(_, rest)| {
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        (end > 0).then(|| &rest[..end])
+    })
 }
 
 /// A git worktree where the task is being developed (`- /path (`branch`)`).
@@ -468,6 +516,79 @@ mod tests {
 
     fn tag(s: &str) -> Tag {
         Tag::new(s).unwrap()
+    }
+
+    const GL: &str = "https://gitlab.example.com/group/project/-/merge_requests/123";
+    const ISSUE: &str = "https://gitlab.example.com/group/project/-/issues/42";
+
+    #[test]
+    fn shortrefs() {
+        assert_eq!(shortref(GL), "!123");
+        assert_eq!(shortref(&format!("{GL}/diffs")), "!123");
+        assert_eq!(shortref(ISSUE), "#42");
+        assert_eq!(
+            shortref("https://gitlab.example.com/groups/g/-/work_items/7"),
+            "#7"
+        );
+        assert_eq!(shortref("https://www.example.com/x"), "example.com/x");
+        assert_eq!(shortref("http://example.com"), "example.com");
+        let long = format!("https://example.com/{}", "a".repeat(70));
+        let short = shortref(&long);
+        assert_eq!(short.chars().count(), 45 + 3 + 10);
+        assert!(short.starts_with("example.com/aaaa"));
+        assert!(short.ends_with("...aaaaaaaaaa"));
+    }
+
+    #[test]
+    fn shortref_takes_the_first_number_after_a_marker() {
+        // No number after the marker: the URL itself.
+        assert_eq!(
+            shortref("https://gl.example.com/g/-/merge_requests/new"),
+            "gl.example.com/g/-/merge_requests/new"
+        );
+        assert_eq!(
+            shortref("https://gl.example.com/g/-/merge_requests/new/merge_requests/9"),
+            "!9"
+        );
+        // A merge request wins over an issue anywhere in the URL.
+        assert_eq!(
+            shortref("https://gl.example.com/g/-/issues/4/merge_requests/9"),
+            "!9"
+        );
+        // The leftmost of the issue markers.
+        assert_eq!(
+            shortref("https://gl.example.com/issues/4/work_items/5"),
+            "#4"
+        );
+        assert_eq!(
+            shortref("https://gl.example.com/work_items/5/issues/4"),
+            "#5"
+        );
+        assert_eq!(shortref("https://gl.example.com/issues/12ab"), "#12");
+    }
+
+    #[test]
+    fn shortref_shortens_past_sixty_characters() {
+        let sixty = format!("example.com/{}", "a".repeat(48));
+        assert_eq!(shortref(&format!("https://{sixty}")), sixty);
+        let long = format!("example.com/{}b", "a".repeat(48));
+        assert_eq!(
+            shortref(&format!("https://{long}")),
+            format!("example.com/{}...aaaaaaaaab", "a".repeat(33))
+        );
+        // Characters, not bytes.
+        let wide = format!("ex.com/{}", "é".repeat(54));
+        assert_eq!(
+            shortref(&wide),
+            format!("ex.com/{}...{}", "é".repeat(38), "é".repeat(10))
+        );
+        assert_eq!(shortref("www.example.com"), "example.com");
+    }
+
+    #[test]
+    fn short_label_prefers_the_label() {
+        assert_eq!(Link::labelled(GL, "Fix it").short_label(), "Fix it");
+        assert_eq!(Link::new(GL).short_label(), "!123");
     }
 
     fn task() -> Task {

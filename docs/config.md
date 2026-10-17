@@ -122,7 +122,7 @@ pre-launch = []
 | `launch.claude.prompt_file` | path | unset | Prompt template replacing the built-in `crates/launch/templates/claude.md`. `~` expanded. |
 | `launch.herdr.placement` | `auto` \| `workspace` \| `tab` | `auto` | What a herdr session opens: `auto` a tab in the workspace already holding the directory, else a workspace; `workspace` always a new workspace; `tab` always a tab (in the holding workspace, else the current one). |
 | `ui.pager` | string | `less -RFX` | Pager for long output on a terminal, split without a shell. `cat` or empty disables it. |
-| `ui.no_osc8` | bool | `false` | Disable OSC 8 hyperlinks in `tasq view`. |
+| `ui.no_osc8` | bool | `false` | Disable OSC 8 hyperlinks in `tasq view` and on the link labels of the `tasq ui` detail. |
 | `ui.glow_style` | string | `dark` | Style passed to `glow -s`. |
 | `ui.week_start` | weekday name | `monday` | First column of the calendar picker in `tasq ui` (`monday`, `tuesday`, ... `sunday`). |
 | `ui.due_format` | `relative` \| `iso` \| `both` | `relative` | How the rows of `tasq list` and `tasq ui` show a due date: `overdue 3d`, `due today`, `due tomorrow`, `due in 4d`; `due 2026-10-03`; or `overdue 3d, 2026-10-03`. The detail pane of `tasq ui` always shows both, `--json` always the ISO date. A done task always shows its ISO date, dim. |
@@ -575,6 +575,7 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `create` | `c` | list | open the create view (the edit view's fields, empty; a Worktree box with worktrees enabled) |
 | `edit` | `e` | list | open the edit view (title, status, priority, due, project, tags, description) |
 | `editor` | `E` | list | open the file in the editor |
+| `view` | `v` | list | `tasq view <id>`: the task rendered by glow, in the pager. With less (`ui.pager`), it runs with `-+F -+X` so it stays open full screen and `q` returns; with another pager, a key returns after it |
 | `launch` | `enter` | list | `tasq pick <id>` here |
 | `launch-detached` | `ctrl+enter` | list | `tasq pick <id> --detached` |
 | `launch-detached-stay` | `shift+enter` | list | `tasq pick <id> --detached --no-focus` |
@@ -583,6 +584,7 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `help` | `?` | list | the key overlay (any key closes it) |
 | `toggle-detail` | `tab` | list | switch between list and detail |
 | `show-detail`, `hide-detail` | `right` / `left` | list | show / hide the selected task's detail |
+| `detail-up`, `detail-down` | `K`, `ctrl+y` / `J`, `ctrl+e` | list | scroll the detail a line; `page-up`/`page-down` page it when it replaces the list |
 | `cancel` | `esc` | list, pickers | clear the filter, close the detail or the dialog |
 | `confirm` | `enter` | pickers | apply the choice; in the source picker, run the checked sources |
 | `quit` | `q` | list, pickers | leave `tasq ui`; in a picker, close it |

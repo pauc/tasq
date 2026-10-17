@@ -1,0 +1,19 @@
+---
+source: crates/tui/tests/render.rs
+assertion_line: 179
+expression: "screen(&mut model, 80, 14)"
+---
+"┌ [1] ─────────────────────────────────────────────────────────────────────────┐"
+"│                                                                              │"
+"│Worktrees                                                                     │"
+"│- /home/me/code/app-fix-cache (fix-cache)                                     │"
+"│                                                                              │"
+"│Sessions                                                                      │"
+"│- 2026-10-03 16:40 abc123 — first look                                        │"
+"│                                                                              █"
+"│Progress                                                                      █"
+"│- 2026-10-04 09:30: reproduced locally                                        █"
+"│- 2026-10-04 09:30: cache key uses the wrong hash                             █"
+"│- 2026-10-04 09:30: fix pushed                                                █"
+"└────────────────────────────────────────────────────────────────── Left: list ┘"
+"j/k  /  c t p l d e  Enter open  s/S sync  ? help  q quit                       "

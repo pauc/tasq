@@ -199,6 +199,16 @@ pub struct Model {
     /// The project a task created with `c` tracks (the CLI passes the
     /// directory `tasq ui` runs in); `None` leaves the draft without one.
     pub default_project: Option<PathBuf>,
+    /// The user's home, shown as `~` in the detail's paths; `None` shows
+    /// them in full.
+    pub home: Option<PathBuf>,
+    /// Whether the detail's link labels are OSC 8 hyperlinks (off with
+    /// `ui.no_osc8`).
+    pub osc8: bool,
+    /// Whether `v` waits for a key after `tasq view`: its pager may quit
+    /// at once on a short task (`less -F`), unless the front end keeps it
+    /// open. On by default.
+    pub view_pauses: bool,
     /// Group colours (`[ui.colors]`).
     pub theme: Theme,
     /// Whether colours are used at all (`false` under `NO_COLOR`).
@@ -245,6 +255,9 @@ pub struct Model {
     /// layout, instead of it in the one-pane layout. Off until `Right`
     /// (or `Tab`); `Left` and `Esc` turn it off again.
     pub show_detail: bool,
+    /// How many lines the detail is scrolled down, at most
+    /// [`crate::view::detail_max_scroll`].
+    pub detail_scroll: u16,
     /// Set by `q`; the runtime stops.
     pub quit: bool,
 }
@@ -259,6 +272,9 @@ impl Model {
             workflow,
             default_status: Status::READY,
             default_project: None,
+            home: None,
+            osc8: false,
+            view_pauses: true,
             theme,
             color,
             keys: KeyMap::default(),
@@ -279,6 +295,7 @@ impl Model {
             width: 0,
             height: 0,
             show_detail: false,
+            detail_scroll: 0,
             quit: false,
         }
     }
@@ -323,6 +340,27 @@ impl Model {
     #[must_use]
     pub fn with_default_project(mut self, project: Option<PathBuf>) -> Self {
         self.default_project = project;
+        self
+    }
+
+    /// The user's home (from the CLI), shown as `~` in paths.
+    #[must_use]
+    pub fn with_home(mut self, home: Option<PathBuf>) -> Self {
+        self.home = home;
+        self
+    }
+
+    /// Whether link labels are OSC 8 hyperlinks (`!ui.no_osc8`).
+    #[must_use]
+    pub fn with_osc8(mut self, osc8: bool) -> Self {
+        self.osc8 = osc8;
+        self
+    }
+
+    /// Whether `v` waits for a key after `tasq view`.
+    #[must_use]
+    pub fn with_view_pause(mut self, pause: bool) -> Self {
+        self.view_pauses = pause;
         self
     }
 

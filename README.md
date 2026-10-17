@@ -133,7 +133,8 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    `j`/`k` move, `z` or `Space` folds the group to its header and back, `/` filters, `c` creates a task in the edit view, `t`/`p` set status and
    priority, `e` opens the edit view (every field and the description, `Enter` on the due
    date opens a calendar, `Ctrl+S` saves), `l`
-   logs a note, `d` marks done, `E` opens the file in `$EDITOR`, `Enter` starts
+   logs a note, `d` marks done, `E` opens the file in `$EDITOR`, `v` shows it rendered
+   (`tasq view`), `J`/`K` scroll the detail (`Tab` or `Right` shows it), `Enter` starts
    a session here, `Ctrl+Enter` starts it in a new herdr or tmux window and switches to it,
    `Shift+Enter` does the same without leaving the list, `s` runs the sources that run by
    default, `S` picks which sources to run, `?` lists every key. Every key can be rebound under `[ui.keys]` in the config: Ghostty on Linux keeps

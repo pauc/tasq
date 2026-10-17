@@ -168,6 +168,23 @@ fn one_pane_layout_list_and_detail() {
 }
 
 #[test]
+fn a_long_detail_scrolls_under_a_scrollbar() {
+    let mut model = fixture(true);
+    update(&mut model, Msg::ShowDetail);
+    assert_snapshot!("detail_scroll_top", screen(&mut model, 80, 14));
+    for _ in 0..3 {
+        update(&mut model, Msg::DetailDown);
+    }
+    assert_snapshot!("detail_scroll_down", screen(&mut model, 80, 14));
+    update(&mut model, Msg::PageDown);
+    update(&mut model, Msg::PageDown);
+    assert_snapshot!("detail_scroll_bottom", screen(&mut model, 80, 14));
+    // A detail that fits has no scrollbar.
+    update(&mut model, Msg::Select(TaskId::from(5)));
+    assert_snapshot!("detail_scroll_none", screen(&mut model, 80, 14));
+}
+
+#[test]
 fn selection_and_filter() {
     let mut model = fixture(true);
     update(&mut model, Msg::Down);
@@ -728,7 +745,7 @@ fn detail_head_and_progress_heading() {
         text(&Task::new(TaskId::from(5), "Call the bank"))[1],
         "[5]  #B"
     );
-    // The progress heading counts only when notes were left out.
+    // Every progress note is shown, the pane scrolls to the old ones.
     let clock = FixedClock::at("2026-10-04 09:30");
     let mut few = Task::new(TaskId::from(8), "Few");
     few.log("one", &clock);
@@ -742,15 +759,141 @@ fn detail_head_and_progress_heading() {
         many.log(format!("note {i}"), &clock);
     }
     let lines = text(&many);
+    let progress = lines.iter().position(|l| l == "Progress").unwrap();
+    assert_eq!(
+        lines[progress + 1..],
+        (1..=10)
+            .map(|i| format!("- 2026-10-04 09:30: note {i}"))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// The detail lines of `task` as plain text.
+fn detail_text(model: &Model, task: &Task) -> Vec<String> {
+    tasq_tui::view::detail_lines(model, task)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+#[test]
+fn links_show_their_label_or_a_short_reference() {
+    let model = fixture(true);
+    let mut task = Task::new(TaskId::from(6), "Links");
+    task.add_related(Link::new("https://gitlab.example.com/g/p/-/issues/42"));
+    task.add_related(Link::new("https://www.example.com/doc"));
+    task.add_merge_request(Link::labelled(
+        "https://gitlab.example.com/g/p/-/merge_requests/7",
+        "Pin the cache key",
+    ));
+    task.add_merge_request(Link::new(
+        "https://gitlab.example.com/g/p/-/merge_requests/8",
+    ));
+    let lines = detail_text(&model, &task);
+    let related = lines.iter().position(|l| l == "Related").unwrap();
+    assert_eq!(
+        lines[related..related + 7],
+        [
+            "Related",
+            "- #42",
+            "- example.com/doc",
+            "",
+            "Merge requests",
+            "- Pin the cache key",
+            "- !8",
+        ]
+    );
+}
+
+#[test]
+fn paths_under_home_start_with_a_tilde() {
+    let model = fixture(true).with_home(Some("/home/me".into()));
+    let lines = detail_text(&model, &tasks()[0]);
     assert!(
-        lines.contains(&"Progress (last 8 of 10)".to_owned()),
+        lines.contains(&"Project: ~/code/app".to_owned()),
         "{lines:?}"
     );
     assert!(
-        !lines.iter().any(|l| l.ends_with("note 1")),
-        "the first two notes are left out: {lines:?}"
+        lines.contains(&"- ~/code/app-fix-cache (fix-cache)".to_owned()),
+        "{lines:?}"
     );
-    assert!(lines.iter().any(|l| l.ends_with("note 3")), "{lines:?}");
+    // Without a home, the full path.
+    let lines = detail_text(&fixture(true), &tasks()[0]);
+    assert!(
+        lines.contains(&"Project: /home/me/code/app".to_owned()),
+        "{lines:?}"
+    );
+}
+
+const MR7: &str = "https://gitlab.example.com/g/p/-/merge_requests/7";
+
+/// The characters of the cells that link to `url`, in reading order,
+/// each checked to carry the whole OSC 8 link on its own.
+fn linked_text(terminal: &Terminal<TestBackend>, url: &str) -> String {
+    let open = format!("\x1b]8;;{url}\x1b\\");
+    let close = "\x1b]8;;\x1b\\";
+    let buffer = terminal.backend().buffer();
+    let mut text = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            let symbol = buffer[(x, y)].symbol();
+            if let Some(rest) = symbol.strip_prefix(&open) {
+                text.push_str(rest.strip_suffix(close).expect("closed in the cell"));
+            }
+        }
+    }
+    text
+}
+
+#[test]
+fn osc8_links_the_labels() {
+    let mut model = fixture(true).with_osc8(true);
+    update(&mut model, Msg::ShowDetail);
+    let terminal = render(&mut model, 120, 28);
+    assert_eq!(linked_text(&terminal, MR7), "Pin the cache key");
+    assert_eq!(
+        linked_text(&terminal, "https://example.com/issue/1"),
+        "example.com/issue/1"
+    );
+    // Off, no escape reaches the screen.
+    let mut model = fixture(true);
+    update(&mut model, Msg::ShowDetail);
+    assert_eq!(linked_text(&render(&mut model, 120, 28), MR7), "");
+}
+
+#[test]
+fn osc8_follows_wrapping_and_scrolling() {
+    let squeezed = |text: String| text.split_whitespace().collect::<String>();
+    let mut model = fixture(true).with_osc8(true);
+    update(&mut model, Msg::ShowDetail);
+    // 14 columns inside the border: "- Pin the" / "cache key".
+    let terminal = render(&mut model, 16, 40);
+    assert_eq!(squeezed(linked_text(&terminal, MR7)), "Pinthecachekey");
+    let buffer = terminal.backend().buffer();
+    let row = |y: u16| {
+        (0..16)
+            .map(|x| buffer[(x, y)].symbol().contains(MR7))
+            .collect::<Vec<_>>()
+    };
+    let first = (0..40).find(|&y| row(y).contains(&true)).unwrap();
+    assert_eq!(
+        row(first)[..4],
+        [false, false, false, true],
+        "the border and \"- \" are not linked"
+    );
+    // Scrolled so the link's first row is above the pane (the border is
+    // screen row 0): the rest of it still links.
+    update(&mut model, Msg::Resize(16, 12));
+    for _ in 0..first {
+        update(&mut model, Msg::DetailDown);
+    }
+    let terminal = render(&mut model, 16, 12);
+    assert_eq!(squeezed(linked_text(&terminal, MR7)), "cachekey");
 }
 
 #[test]

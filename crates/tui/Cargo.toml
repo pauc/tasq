@@ -15,7 +15,9 @@ authors.workspace = true
 tasq-core = { path = "../core", version = "0.1.0" }
 # The widgets, the terminal and the crossterm backend (events are read
 # through `ratatui::crossterm`, so the two versions always agree).
-ratatui = "0.30"
+# `unstable-rendered-line-info` for `Paragraph::line_count`: how far the
+# detail scrolls, counted by the same wrapping that draws it.
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 # `#[mutants::skip]` on the functions that only drive the terminal.
 mutants = "0.0.4"
 # `NaiveDate` for the form's `today` (the same chrono core already uses).

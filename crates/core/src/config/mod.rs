@@ -124,7 +124,7 @@ pub use self::load::{
     ENV_CONFIG, ENV_KEYS, ENV_PROFILE, ENV_SET, GLOBAL_FILE, Layer, LoadOptions, Loaded, Origin,
     PROJECT_FILE, global_file, parse_env_set, project_file,
 };
-pub use self::path::expand_tilde;
+pub use self::path::{contract_tilde, expand_tilde};
 
 /// The effective configuration.
 ///
@@ -472,7 +472,8 @@ pub struct ClaudeLaunchConfig {
 pub struct UiConfig {
     /// Pager command for long output on a terminal. Default: `less -RFX`.
     pub pager: String,
-    /// Disable OSC 8 hyperlinks in `view`. Default: `false`.
+    /// Disable OSC 8 hyperlinks in `view` and in the `ui` detail. Default:
+    /// `false`.
     pub no_osc8: bool,
     /// `glow` style passed with `-s`. Default: `dark`.
     pub glow_style: String,

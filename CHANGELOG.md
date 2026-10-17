@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tasq ui` detail pane: `J`/`Ctrl+E` and `K`/`Ctrl+Y` scroll it (`detail-down`, `detail-up`),
+  `PgUp`/`PgDn` page it when it replaces the list, a scrollbar shows the position, and every
+  progress note is listed (no longer the last 8). Related and merge request entries show
+  their label or a short reference (`!7`, `#42`, `example.com/doc`) as OSC 8 hyperlinks
+  (`ui.no_osc8` turns them off); Project and Worktrees paths show the home directory as `~`.
+  `v` (`view`) runs `tasq view` on the task; with less as `ui.pager` it stays open full screen
+  even on a short task and `q` returns to the list.
 - Launch trace for `tasq pick|next`: `-v` prints every `herdr`/`tmux` command with its result
   and output on stderr, and `launch.log` (`TASQ_LAUNCH_LOG`) appends it to a file with a header
   and the outcome. The herdr launcher now names herdr's error when it cannot open a pane, warns

@@ -55,6 +55,8 @@ pub enum Action {
     Edit,
     /// Open the task's file in the editor.
     Editor,
+    /// Show the task with `tasq view`.
+    View,
     /// Open a work session in this terminal.
     Launch,
     /// Open a work session in a new window and switch to it.
@@ -75,6 +77,10 @@ pub enum Action {
     ShowDetail,
     /// Hide the detail.
     HideDetail,
+    /// Scroll the detail one line down.
+    DetailDown,
+    /// Scroll the detail one line up.
+    DetailUp,
     /// Clear the filter, close the detail or a dialog.
     Cancel,
     /// Apply the choice in a picker.
@@ -102,6 +108,7 @@ pub const NORMAL: &[Action] = &[
     Action::Create,
     Action::Edit,
     Action::Editor,
+    Action::View,
     Action::Launch,
     Action::LaunchDetached,
     Action::LaunchDetachedStay,
@@ -112,6 +119,8 @@ pub const NORMAL: &[Action] = &[
     Action::ToggleDetail,
     Action::ShowDetail,
     Action::HideDetail,
+    Action::DetailDown,
+    Action::DetailUp,
     Action::Cancel,
     Action::Quit,
 ];
@@ -145,6 +154,7 @@ impl Action {
         Action::Create,
         Action::Edit,
         Action::Editor,
+        Action::View,
         Action::Launch,
         Action::LaunchDetached,
         Action::LaunchDetachedStay,
@@ -155,6 +165,8 @@ impl Action {
         Action::ToggleDetail,
         Action::ShowDetail,
         Action::HideDetail,
+        Action::DetailDown,
+        Action::DetailUp,
         Action::Cancel,
         Action::Confirm,
         Action::Quit,
@@ -180,6 +192,7 @@ impl Action {
             Self::Create => "create",
             Self::Edit => "edit",
             Self::Editor => "editor",
+            Self::View => "view",
             Self::Launch => "launch",
             Self::LaunchDetached => "launch-detached",
             Self::LaunchDetachedStay => "launch-detached-stay",
@@ -190,6 +203,8 @@ impl Action {
             Self::ToggleDetail => "toggle-detail",
             Self::ShowDetail => "show-detail",
             Self::HideDetail => "hide-detail",
+            Self::DetailDown => "detail-down",
+            Self::DetailUp => "detail-up",
             Self::Cancel => "cancel",
             Self::Confirm => "confirm",
             Self::Quit => "quit",
@@ -221,6 +236,7 @@ impl Action {
             Self::Create => &["c"],
             Self::Edit => &["e"],
             Self::Editor => &["E"],
+            Self::View => &["v"],
             Self::Launch | Self::Confirm => &["enter"],
             Self::LaunchDetached => &["ctrl+enter"],
             Self::LaunchDetachedStay => &["shift+enter"],
@@ -231,6 +247,8 @@ impl Action {
             Self::ToggleDetail => &["tab"],
             Self::ShowDetail => &["right"],
             Self::HideDetail => &["left"],
+            Self::DetailDown => &["J", "ctrl+e"],
+            Self::DetailUp => &["K", "ctrl+y"],
             Self::Cancel => &["esc"],
             Self::Quit => &["q"],
         }
@@ -256,6 +274,7 @@ impl Action {
             Self::Create => Msg::BeginCreate,
             Self::Edit => Msg::Edit,
             Self::Editor => Msg::Editor,
+            Self::View => Msg::View,
             Self::Launch => Msg::Launch,
             Self::LaunchDetached => Msg::LaunchDetached { focus: true },
             Self::LaunchDetachedStay => Msg::LaunchDetached { focus: false },
@@ -266,6 +285,8 @@ impl Action {
             Self::ToggleDetail => Msg::ToggleDetail,
             Self::ShowDetail => Msg::ShowDetail,
             Self::HideDetail => Msg::HideDetail,
+            Self::DetailDown => Msg::DetailDown,
+            Self::DetailUp => Msg::DetailUp,
             Self::Cancel => Msg::Escape,
             Self::Confirm => Msg::Enter,
             Self::Quit => Msg::Quit,
@@ -808,6 +829,7 @@ mod tests {
             (ch('c'), Msg::BeginCreate),
             (ch('e'), Msg::Edit),
             (ch('E'), Msg::Editor),
+            (ch('v'), Msg::View),
             (key(KeyCode::Enter), Msg::Launch),
             (
                 KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
@@ -824,6 +846,14 @@ mod tests {
             (key(KeyCode::Tab), Msg::ToggleDetail),
             (key(KeyCode::Right), Msg::ShowDetail),
             (key(KeyCode::Left), Msg::HideDetail),
+            (ch('J'), Msg::DetailDown),
+            (
+                KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT),
+                Msg::DetailDown,
+            ),
+            (ctrl('e'), Msg::DetailDown),
+            (ch('K'), Msg::DetailUp),
+            (ctrl('y'), Msg::DetailUp),
             (ch('q'), Msg::Quit),
             (ctrl('c'), Msg::Quit),
             (key(KeyCode::Esc), Msg::Escape),
@@ -1059,13 +1089,15 @@ mod tests {
             Some(Action::LaunchDetached)
         );
         assert_eq!(Action::parse("Launch"), None);
+        assert_eq!(Action::parse("detail-down"), Some(Action::DetailDown));
+        assert_eq!(Action::parse("detail-up"), Some(Action::DetailUp));
         assert_eq!(Action::parse(""), None);
         let mut names: Vec<_> = Action::ALL.iter().map(|a| a.name()).collect();
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), Action::ALL.len(), "names are unique");
-        assert_eq!(Action::ALL.len(), 30);
-        assert_eq!(NORMAL.len(), 29);
+        assert_eq!(Action::ALL.len(), 33);
+        assert_eq!(NORMAL.len(), 32);
         assert!(!NORMAL.contains(&Action::Confirm));
         assert_eq!(
             PICKER,
