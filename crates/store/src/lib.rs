@@ -6,7 +6,10 @@
 //!   id map is the files' frontmatter, there is no index), never lock and
 //!   never create it; a directory that does not exist is an empty store.
 //!   `create` takes the store lock, allocates the highest id plus one and
-//!   writes a new file; `update` comes with the next slice.
+//!   writes a new file; `update` takes it, refuses a file that changed
+//!   since the task was read, edits the task's document with
+//!   [`diff::apply`] and writes it over; `set_done` is the same write with
+//!   the done ops and no revision check.
 //! - [`lock`]: the store lock, `.tasq/lock`, held across a write; a stale
 //!   one is broken, a live one waited on.
 //! - [`ulid`]: the file name, whose timestamp is the task's creation time.

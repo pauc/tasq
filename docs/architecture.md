@@ -47,7 +47,7 @@ everything meets.
 | Crate | Package | Role | Talks to the world through |
 |---|---|---|---|
 | `crates/core` | `tasq-core` | Domain model, lossless markdown format, queries, config, clock, reconciliation, reports, and the `Store`, `Source`, `Launcher`, `Summarizer` traits; the worktree lifecycle decisions (`worktree`). | Nothing. No filesystem, no processes, no terminal, no network. |
-| `crates/store` | `tasq-store` | The tasq-owned `Store` (ADR-0026): `TasqStore` over a directory of `<ULID>.md` files with a frontmatter block, built in slices. Today: reads (the id map is the files' frontmatter, scanned on every call; the creation time is the ULID's), `create` under the store lock (`.tasq/lock`; highest id plus one, a ULID minted from the clock, a no-clobber write), `doctor` checks, `Revision` (mtime, length, hash) and `diff::apply` (whole-task write to `format::ops` calls); `update` comes with the next slice. | Files. |
+| `crates/store` | `tasq-store` | The tasq-owned `Store` (ADR-0026): `TasqStore` over a directory of `<ULID>.md` files with a frontmatter block, built in slices. Today: reads (the id map is the files' frontmatter, scanned on every call; the creation time is the ULID's), `create` under the store lock (`.tasq/lock`; highest id plus one, a ULID minted from the clock, a no-clobber write), `update` and `set_done` under the same lock (conflict detection by `Revision`, `diff::apply` to the v2 ops, an atomic write over the file), `doctor` checks (`store`, `task-file`, `ids`, `lock`), `Revision` (mtime, length, hash) and `diff::apply` (whole-task write to `format::ops` calls). | Files. |
 | `crates/store-nb` | `tasq-store-nb` | The `Store` implementation: `*.todo.md` files in an nb notebook, `.index` ids, atomic writes, conflict detection, bookkeeping (`nb` or `git`), `tasq doctor` checks. | Files; `nb` and `git` child processes (only for bookkeeping, never for reads). |
 | `crates/sources` | `tasq-sources` | `Source` implementations: GitLab and GitHub review requests and work items over a shared forge client, and the LLM bridge that turns a command's JSON into items. | HTTPS (`ureq`); a child process for the LLM bridge and `token_cmd`. |
 | `crates/launch` | `tasq-launch` | `Launcher` implementations (shell, tmux, Claude Code, herdr), the command `Summarizer` behind `tasq summary`. | Child processes, with an explicitly injected environment. |
@@ -209,11 +209,26 @@ the highest id plus one, renders the draft as a fresh v2 document, writes it to 
 the directory and renames it into place without overwriting as `<ULID>.md`, the ULID minted
 from the store's clock and the OS's randomness (a name that exists gets a fresh ULID, a bounded
 number of times), then releases the lock and reads the task back. The first write creates the
-directory. No job, no git: dropping the lock removes the file. `update` is not implemented yet.
+directory. No job, no git: dropping the lock removes the file.
+
+An `update` takes the same lock, scans, finds the one file claiming the id and compares its
+`Revision` with the one remembered when this store last handed the task out (`get`, `list`,
+and the read-back at the end of `create`); a mismatch is `StoreError::Conflict` and nothing
+is written. Then `diff::apply` edits the document with the v2 ops; a field the ops cannot
+express (a removed or rewritten list entry) is `StoreError::Unsupported`, also with nothing
+written. When the rendered bytes changed, they go to a temp file in the directory, given the
+task file's permissions, and are renamed over it; the new revision becomes the baseline, so
+the same reader can keep writing. `set_done` is the same write with the done ops (`status:
+done` plus `closed` stamped from the clock; reopening drops both) and no revision check; it
+leaves the baseline alone, so a task read before it conflicts on `update` until re-read. A
+file whose bytes are not valid UTF-8 is read with replacement characters but refused by both
+writes (`InvalidData`) when they would change it, since writing it back would replace the
+bytes. Doctor adds a `lock` check: `Ok` without a lock file or with a live one, `Warn` naming a
+stale one (doctor does not remove it; the next write does).
 
 | Module | What it holds |
 |---|---|
-| `store` | `TasqStore`: `list`, `get`, `file_of`, `describe` (`tasq`, stable ids), `doctor` (`store`, `task-file`, `ids` checks), warnings, `create`; the injected `Clock` and random source (`with_clock`, `with_random`). |
+| `store` | `TasqStore`: `list`, `get`, `file_of`, `describe` (`tasq`, stable ids), `doctor` (`store`, `task-file`, `ids`, `lock` checks), warnings, `create`, `update`, `set_done`; the remembered revisions; the injected `Clock` and random source (`with_clock`, `with_random`). |
 | `lock` | `StoreLock`: `.tasq/lock`, taken with an exclusive create, stale after `STALE_AFTER`, released on drop. |
 | `draft` | `check_draft` (a merge request needs a title) and `materialize` (the default note, the done-draft rules), shared with the nb store. |
 | `ulid` | `Ulid`: the file name; parse, render, and the millisecond timestamp that is the task's creation time. |

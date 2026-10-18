@@ -317,30 +317,6 @@ fn reads_propagate_errors_other_than_a_missing_file() {
 }
 
 #[test]
-fn updates_are_not_supported_yet() {
-    let temp = TempStore::empty();
-    temp.write(&ulid_name(1_000), &task_file(1, "Task", "ready"));
-    let mut store = temp.open();
-    let task = store.get(&TaskId::from(1)).unwrap();
-    assert_eq!(
-        store.update(&task).unwrap_err().to_string(),
-        "unsupported: update of task 1 (the tasq store does not write yet)"
-    );
-    assert_eq!(
-        store
-            .set_done(&TaskId::from(1), true)
-            .unwrap_err()
-            .to_string(),
-        "unsupported: set_done of task 1 (the tasq store does not write yet)"
-    );
-    assert_eq!(
-        store.get(&TaskId::from(1)).unwrap(),
-        task,
-        "nothing changed"
-    );
-}
-
-#[test]
 fn doctor_reports_the_directory_the_non_task_files_and_the_duplicate_ids() {
     let temp = TempStore::absent();
     let store = temp.open();
@@ -420,6 +396,7 @@ fn doctor_reports_the_directory_the_non_task_files_and_the_duplicate_ids() {
                 ),
                 "give one of the files another id, or remove the copy",
             ),
+            Check::ok("lock", "no write in progress"),
         ]
     );
 
@@ -435,6 +412,7 @@ fn doctor_reports_the_directory_the_non_task_files_and_the_duplicate_ids() {
             ),
             Check::ok("task-files", "every .md file is a v2 task file"),
             Check::ok("ids", "ids are stable and no id is claimed twice"),
+            Check::ok("lock", "no write in progress"),
         ]
     );
 }
