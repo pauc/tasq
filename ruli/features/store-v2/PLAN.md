@@ -319,12 +319,12 @@ changes except the two commands being gone.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready
+**Status:** done
 
-- [ ] No file in the CLI crate names the nb store type; the store is opened once as a trait object.
-- [ ] `tasq store sync` and `tasq store reconcile` are unknown subcommands; `store.sync_interval` is an unknown key.
-- [ ] Every existing CLI test and snapshot is green on the nb fixture notebook.
-- [ ] Zero missed mutants in the touched code.
+- [x] No command module names the nb store type; `App::open_store` is the one construction site and returns a `Box<dyn Store>`.
+- [x] `tasq store sync` and `tasq store reconcile` are unknown subcommands; `store.sync_interval` is an unknown key.
+- [x] Every existing CLI test and snapshot is green on the nb fixture notebook.
+- [x] Zero missed mutants in the touched code.
 
 ### SV-002: `tasq-store` crate skeleton, revision and diff moved out of store-nb (prefactor)
 
