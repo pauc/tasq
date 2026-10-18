@@ -367,12 +367,12 @@ done` and `closed`; reopening writes the status and clears `closed`.
 
 **Blocked by:** SV-003.
 
-**Status:** ready
+**Status:** done
 
-- [ ] A fresh document for every fixture task renders the canonical block and round-trips to the same `Task`.
-- [ ] Setting, adding and clearing each of the eleven keys leaves every other line byte-identical; adding puts the key in canonical order among the known keys present.
-- [ ] Unknown keys and blank lines in the block survive every op.
-- [ ] Zero missed mutants in the format module.
+- [x] A fresh document for every fixture task renders the canonical block and round-trips to the same `Task`.
+- [x] Setting, adding and clearing each of the eleven keys leaves every other line byte-identical; adding puts the key in canonical order among the known keys present.
+- [x] Unknown keys and blank lines in the block survive every op.
+- [x] Zero missed mutants in the format module.
 
 ### SV-005: the tasq store reads a directory
 

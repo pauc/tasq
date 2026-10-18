@@ -9,9 +9,9 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 | SV-001 | CLI talks to the `Store` trait; `store sync` / `store reconcile` go (prefactor) | done | 2d527e5; `App::open_store` returns `Box<dyn Store>`; `Store` gained `take_warnings` and `doctor` (required); `Check` moved to `tasq_core::doctor`; 40 mutants in the diff, 0 missed |
 | SV-002 | `tasq-store` crate skeleton, revision and diff moved (prefactor) | done | 7920eb3; `crates/store` (`tasq-store`, deps: core only); `revision.rs` and `diff.rs` moved with their 16 unit tests, store-nb re-exports `Revision`, `diff`, `revision`; `mutants-in crates/store/src`: 44 mutants, 42 caught, 2 unviable, 0 missed (two tests added) |
 | SV-003 | Core reads and renders a v2 task file | done | 710f1ff, c1d2bf1; `Document` keeps the block as a `front` region ahead of the body, `format::parse_v2(text, created_at, workflow)`, `Document::{frontmatter, id}`, `format::key`, `Task::created_at`; nine v2 fixtures under `crates/core/tests/fixtures/v2/`, `format_v2.rs` (23 tests), a v2 arm in `format_props.rs`; `mutants-in crates/core/src/format`: 385 mutants, 347 caught, 38 unviable, 0 missed |
-| SV-004 | Core writes v2: new documents and one op per key | ready | |
+| SV-004 | Core writes v2: new documents and one op per key | done | dba6a08; `Document::from_task_v2`, `key::ORDER`, `ops::{set_key, clear_key, set_origin, clear_origin}`, every scalar op dispatches on the shape; `diff::apply` writes the origin on v2; `format_v2_write.rs` (28 tests), two v2 props; `mutants-in crates/core/src/format`: 415 mutants, 376 caught, 39 unviable, 0 missed (one `||` survivor in `clear_origin` fixed by reshaping it to a `map` over the three keys); `mutants-in crates/store/src`: 45 mutants, 0 missed |
 | SV-005 | The tasq store reads a directory | ready | |
-| SV-006 | Create under the store lock | blocked (SV-004, SV-005) | |
+| SV-006 | Create under the store lock | blocked (SV-005) | |
 | SV-007 | Update with conflict detection, and doctor | blocked (SV-006) | |
 | SV-008 | Migrate as a library, and the committed v2 fixture store | blocked (SV-006) | |
 | SV-009 | The CLI opens the tasq store | blocked (SV-001, SV-007, SV-008) | |
@@ -105,6 +105,37 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   `set_title` on a v2 document would write a `# [ ] ` marker; the store's re-parse compare
   turns that into `Unsupported`, and nothing calls them on a v2 document yet.
 
+- 2026-10-18 (SV-004): the scalar ops kept their names and gained a shape check
+  (`Document::is_v2`, the block is non-empty) at the top: `set_status`, `set_priority`,
+  `set_rank`, `set_due`, `set_closed`, `set_project`, `set_tags`, `set_title`, `set_done`,
+  `set_open`, `strip_status_tag` and the `clear_*` write a frontmatter key on a v2 document
+  and the v1 section or tag otherwise. `diff::apply` therefore works on both shapes with no
+  branch of its own: closing a v2 task is `set_done` (`status: done`) plus `set_closed`,
+  reopening is `set_open` (drops `status: done`) plus `set_status` and `clear_closed`,
+  which is the sequence the apply tests pin. The one new case in `apply` is the origin:
+  `set_origin`/`clear_origin` are v2-only (no v1 command ever rewrote `## Source`), so on a
+  v1 document they do nothing and `origin` is still reported as unsupported, as before.
+- 2026-10-18 (SV-004): the primitives are `Document::set_key`/`clear_key` (crate-private)
+  behind `ops::set_key`/`ops::clear_key`. Set replaces the first line of the key and removes
+  any later duplicate, so a write leaves one line per key; a missing key goes after the last
+  line whose key precedes it in `key::ORDER` (`id` is always present and first, so every
+  known key has a predecessor; `map_or(1, ..)` is the unreachable top-of-block fallback), a
+  key outside the order goes right before the closing fence. Clear removes every line of
+  the key; `ops::clear_key` refuses `id`. The body, its trailing newline included, is not
+  touched by a frontmatter op (the v1 "every awk rewrite terminates the file" rule does not
+  apply to the block). The written values are `Status::as_str`, `Priority::as_str`,
+  `format_date`, `format_timestamp`, `Path::display`, `i64` and `[a, b]`
+  (`write::format_tag_list`).
+- 2026-10-18 (SV-004): `Document::from_task_v2(task)` writes `id` and `priority` always
+  (`priority: B` is written even though absent reads as `B`, so the block shows every field
+  the model has), `status` when open with a status or `done` when done, `closed` on a done
+  task only, `source_url` whenever the origin has one (also when it equals `source_id`),
+  `tags` when non-empty; then `# Title`, Description, Related, Progress (always), and merge
+  requests, Worktrees, Sessions through the append ops, which insert them before
+  `## Progress` as on v1. No blank line between the closing fence and the title. The v1
+  fixtures' tasks round-trip through a v2 document too, including the v1 `source` fixture
+  whose url-shaped id became an explicit `source_url`.
+
 ## Deviations
 
 - SV-001's first criterion read "No file in the CLI crate names the nb store type". The
@@ -127,5 +158,5 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 ## Blockers
 
 - One cargo build at a time on this machine (`scripts/guard`); independent sub-tasks (SV-001,
-  SV-002 and SV-003 were; SV-004 and SV-005 are now the frontier) are worked one after
-  another, not in parallel agents.
+  SV-002 and SV-003 were; SV-005 is now the frontier, SV-006 waits on it only) are worked
+  one after another, not in parallel agents.
