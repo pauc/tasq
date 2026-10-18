@@ -149,6 +149,28 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 - Still reached through `tasq_store_nb` from the CLI, not the store type: `doctor::tool_check`
   and `which::find_in_path` (PATH lookups for optional tools). They need a home outside the nb
   crate before SV-009 makes it `migrate`'s dependency only.
+- SV-004: the second criterion reads "each of the eleven keys"; `id` is set-only. `ops::set_key`
+  replaces it, `ops::clear_key` refuses it (a v2 document always has one), and nothing adds it
+  (the parse guarantees it). The plan's "added at its position in the canonical order among the
+  known keys present" was read as "after the last line whose key precedes it in `key::ORDER`"
+  (the other reading, before the first key that follows it, differs only on a hand-edited block
+  whose keys are out of order); a duplicated key is collapsed to one line on set and every line
+  goes on clear (the reader takes the first, so the result reads the same); a key outside
+  `key::ORDER` goes at the end of the block. `set_key` writes the value as given (a line
+  break, or an `id` that is not a positive integer, makes a file the parser refuses, like
+  `set_title` with an empty title); the typed ops never pass one. `ops::set_key`/`clear_key`
+  stay public with no production caller: the integration tests need them for `id` and for
+  unknown keys, and `pub(crate)` would hide them from `crates/core/tests`.
+- SV-004: `diff::apply` (store crate) gained the origin branch, which SV-007 would otherwise
+  have added: the v2 ops only prove themselves composed through `apply` (close, reopen), and the
+  origin was the one field with no op at all. On a v1 document `set_origin`/`clear_origin` do
+  nothing and `origin` is reported as before.
+- SV-004 review follow-ups (2ec89b2): the two writers share `push_section` and
+  `with_appended_lists`, `format_tag_list` moved to `entry.rs` next to the other `format_*`
+  helpers, `frontmatter_lines` is private. Kept: the `if doc.is_v2()` prelude in the thirteen
+  scalar ops (one op per command is the module's rule; a dispatch helper would hide which key
+  each writes), and the `map_or(1, ..)` top-of-block fallback in `Document::set_key`
+  (unreachable after parse, 0 missed mutants).
 - SV-003: `FormatError::NotATask`'s message still names only the v1 title shapes; the CLI and
   store-nb snapshots pin it, and the tasq store (SV-005) classifies files through
   `NotFrontmatter` instead. The v2 file format is implemented but `docs/file-format.md` is
