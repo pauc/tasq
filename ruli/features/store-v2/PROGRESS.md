@@ -14,9 +14,9 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 | SV-006 | Create under the store lock | done | 840706a, 9de6066; `TasqStore::create` (`crates/store/src/store.rs`), `tasq_store::lock::StoreLock` (`.tasq/lock`), `tasq_store::draft::{check_draft, materialize, DEFAULT_NOTE}` (shared with store-nb), `TasqStore::{with_clock, with_random}`; `tests/create.rs` (12 tests) plus lock and draft unit tests; `mutants-in crates/store/src`: 153 mutants, 124 caught, 27 unviable, 2 timeouts (both make a loop infinite: the lock poll, the name-attempt counter), 0 missed |
 | SV-007 | Update with conflict detection, and doctor | done | 9184e95; `TasqStore::{update, set_done}` (`crates/store/src/store.rs`), revisions remembered by `get`/`list`, `TasqStore::edit` (the shared edit-compare-write, with the invalid-UTF-8 refusal), doctor's `lock` check; `tests/update.rs` (14 tests); `mutants-in crates/store/src`: 164 mutants, 130 caught, 32 unviable, 2 timeouts (the same two loops as SV-006), 0 missed |
 | SV-008 | Migrate as a library, and the committed v2 fixture store | done | 69f7f75; `tasq_store::migrate::{plan, Plan, Entry, MigrateError}` (`crates/store/src/migrate.rs`), the fixture store `crates/store/tests/fixtures/stores/default` (ids 1, 3, 4, 6, 7), `format::section::ALL`; `tests/migrate.rs` (23 tests), the parity test `crates/store-nb/tests/migrate.rs`; mutants on `migrate.rs`, `lock.rs`, `store.rs`: 107 + 49 mutants, 0 missed (timeouts: the known lock and name loops) |
-| SV-009 | The CLI opens the tasq store | ready | |
-| SV-010 | Creation time and store provenance surfaces | blocked (SV-009) | |
-| SV-011 | `tasq migrate <notebook> [--to] [--dry-run]` | blocked (SV-009) | |
+| SV-009 | The CLI opens the tasq store | done | 5cffcd5; `Config::data_dir` (`Option<PathBuf>`, filled by `Config::load` from `default_data_dir`), `StoreConfig::name` plus three `Removed` keys, `ConfigError::BadStoreName`, `ENV_DATA_DIR`/`ENV_STORE_NAME`; `App::{data_dir, store_dir, store_env}`, `open_store` builds a `TasqStore`; `tasq_launch::which::{find_in_path, tool_check}` (moved out of store-nb); `NbStore::open(notebook: &str, ..)`; the CLI harness copies the v2 fixture store under the test `HOME` (`TZ=UTC`, `ulid_name`, `v2`, `file_of`, `read_task(id)`); 201 CLI tests, 23 snapshots regenerated and reviewed; mutants `--in-diff` (config loading, `NbStore::open`, `tool_check`): 16 mutants, 13 caught, 3 unviable, 0 missed; `mutants-in crates/launch/src/which.rs`: 11 mutants, 10 caught, 1 unviable, 0 missed |
+| SV-010 | Creation time and store provenance surfaces | ready | the launched-session and no-ids-warning bullets landed with SV-009 |
+| SV-011 | `tasq migrate <notebook> [--to] [--dry-run]` | ready | |
 | SV-012 | Docs, agent surfaces and the hand-over | blocked (SV-010, SV-011) | |
 
 ## Learnings
@@ -290,6 +290,56 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   environment before snapshotting `created`. The pinning test compares names and bytes with
   the plan's; `TASQ_UPDATE_FIXTURES=1` rewrites the directory.
 
+- 2026-10-18 (SV-009): `data_dir` is `Option<PathBuf>` on `Config` (`None` in
+  `Config::default()`, so the serialised reference document does not show it) and
+  `Config::load` inserts `default_data_dir(opts)` (`$XDG_DATA_HOME/tasq/stores`, else
+  `~/.local/share/tasq/stores`) into the merged table before the file layers, so the defaults
+  layer records it: `explain("data_dir")` answers `defaults` and `tasq config show` prints it
+  with that annotation (a blank line now separates top-level scalars from the layer comments).
+  It stays `None` only when neither `$XDG_DATA_HOME` nor a home is known; `App::data_dir` turns
+  that into a user error naming `TASQ_DATA_DIR`. A relative `data_dir` (`--set`, the env) is
+  taken from the working directory there, so `TASQ_DATA_DIR` handed to a launched session is
+  always absolute. `store.name` is checked after `finalize` (`check_store_name`: non-empty, not
+  `.`/`..`, no `/`; `ConfigError::BadStoreName` names the origin), so a mistyped name can only
+  make a harmless directory under the stores root.
+- 2026-10-18 (SV-009): the removed keys follow the `work.worktree_manager` precedent: private
+  `Removed` fields on `StoreConfig` with `deserialize_with` functions whose message names the
+  replacement, so a file that sets one fails in the per-file typed pass with file, line and
+  column. serde's unknown-field message still lists them among the expected keys (`name`,
+  `kind`, `notebook`, `sync_interval`); known, as for `[work]`. `TASQ_NOTEBOOK` in the
+  environment is simply not a key any more (ignored, not an error), as the plan says.
+- 2026-10-18 (SV-009): `find_in_path` and `tool_check` moved from store-nb to `tasq-launch`
+  (`tasq_launch::which`), the crate that already runs the optional tools; store-nb's test
+  support takes it from a dev-dependency on `tasq-launch` to locate the real `nb` and `git`
+  (a first cut copied the function; the review asked for one definition). The launch module's
+  `ENV_DATA_DIR`/`ENV_STORE_NAME` are re-exports of the config constants for the same reason.
+  `NbStore::open` takes the notebook as `&str` instead of a
+  `StoreConfig` (the struct no longer has the field); SV-011's `migrate` will pass the
+  command-line argument through it.
+- 2026-10-18 (SV-009): launched sessions (`next`, `pick`, `sync --interactive`) now receive
+  `TASQ_DATA_DIR` (resolved, absolute) and `TASQ_STORE_NAME` through `App::store_env`; the
+  Claude prompt template says "from my tasq store". The example `tasq-tlogs` plugin no longer
+  exports `TASKS_NB_NOTEBOOK` (there is no notebook to name).
+- 2026-10-18 (SV-009): the CLI harness copies `crates/store/tests/fixtures/stores/default` to
+  `<home>/.local/share/tasq/stores/default`, so every test also exercises the default location;
+  `TestEnv::empty()` creates nothing (an absent directory is an empty store). Tests place tasks
+  with `write_task(&ulid_name("2026-09-07 15:00", 8), &v2(8, front, body))` and read them back
+  by id (`file_of`, `read_task(id)`, `task_files()`), because a created file's name is the
+  store's to choose (random tail). `TZ=UTC` is pinned in the harness as SV-008 asked, so the
+  minted names and SV-010's `created` are zone-independent. One snapshot changed in meaning:
+  under a custom workflow without `waiting`, the fixture's `status: waiting` task now shows no
+  chip (an unknown status reads as unset, SV-003) where the v1 file showed `#waiting` as a
+  topic tag.
+- 2026-10-18 (SV-009): user-visible changes besides the store itself: `tasq view` prints the
+  file as it is, frontmatter included; `-v` says `store: tasq at <dir>`; `store info` says
+  `tasq`, `stable` and has no bookkeeper line (`"bookkeeper": null` in JSON); `doctor` prints
+  the store crate's four checks (`store`, `task-files`, `ids`, `lock`) and no positional-id
+  warning; the `git` tool check's fix text says the worktree commands run it.
+  `docs/config.md`'s key table, env table and launched-session lines, `README.md`'s quick
+  start, `docs/plugins.md`, `docs/sources.md`, `docs/migration.md`, `docs/testing.md`,
+  `docs/architecture.md` and the two example configs were updated where they named the changed
+  keys; the full sweep (nb prose, `.index`, positional ids) stays SV-012's.
+
 ## Deviations
 
 - SV-001's first criterion read "No file in the CLI crate names the nb store type". The
@@ -383,6 +433,19 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   notebook would have one. The third criterion ("equal field by field, plus `created_at`")
   therefore reads "plus `created_at`, and `closed` where nb had none"; the parity test pins
   the fixture's done task at `2026-10-03 16:30` and compares every other field.
+- SV-009: SV-010's fourth criterion ("a launched session's environment has `TASQ_DATA_DIR` and
+  `TASQ_STORE_NAME` and not `TASQ_NOTEBOOK`") landed here, ticked in PLAN.md: `store.notebook`
+  went, so the two call sites that exported it had to change in the same commit. So did its
+  third ("`doctor` on a clean store prints no warning about ids"): the tasq store's `doctor` has
+  no such check, and the clean-store snapshot pins its absence. Not in the plan but added:
+  `store.name` is validated (`ConfigError::BadStoreName`: not empty, not `.`/`..`, no `/`),
+  because the stores-root safety argument of the plan ("a mistyped name creates a harmless
+  empty directory") only holds for a single path component. Story 5 says `tasq list` on an
+  absent store "prints nothing"; it prints `No open todos.`, the text every empty list has
+  printed since the nb store, and exits zero. store-nb's
+  `resolve` module still names `store.notebook` in its error texts (`SETTING`); SV-011 rewords
+  them for `migrate <notebook>`. The CLI crate no longer depends on store-nb at all; SV-011 adds
+  the dependency back for `migrate` only.
 - SV-008: not carried over: text the projection does not read inside a known section (prose
   around `### Merge requests`, extra lines under `## Due`) and text between the title and
   the first section. Unknown `##` sections are carried (story 23). A todo file with invalid
@@ -392,5 +455,5 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 ## Blockers
 
 - One cargo build at a time on this machine (`scripts/guard`); independent sub-tasks (SV-001,
-  SV-002 and SV-003 were; SV-009 is now the frontier, SV-011 behind it) are worked one after
+  SV-002 and SV-003 were; SV-010 and SV-011 are now the frontier) are worked one after
   another, not in parallel agents.

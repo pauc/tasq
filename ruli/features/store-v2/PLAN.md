@@ -456,13 +456,13 @@ copy of the v2 fixture store and every CLI test and snapshot is green on it.
 
 **Blocked by:** SV-001, SV-007, SV-008.
 
-**Status:** ready
+**Status:** done
 
-- [ ] With no config, `tasq list` reads `~/.local/share/tasq/stores/default` (under the test `HOME`); `data_dir`, `store.name`, `.tasq.toml`, a profile and the two env variables override it in the documented precedence.
-- [ ] `store.kind`, `store.notebook` and `store.sync_interval` in a config file fail with file, line, column and a message naming `data_dir` / `store.name` or ADR-0026.
-- [ ] Every CLI test and snapshot is green on the v2 fixture store; no CLI code path references store-nb except `migrate`'s future entry point.
-- [ ] `tasq store info` prints the resolved directory.
-- [ ] Zero missed mutants in the touched code.
+- [x] With no config, `tasq list` reads `~/.local/share/tasq/stores/default` (under the test `HOME`); `data_dir`, `store.name`, `.tasq.toml`, a profile and the two env variables override it in the documented precedence.
+- [x] `store.kind`, `store.notebook` and `store.sync_interval` in a config file fail with file, line, column and a message naming `data_dir` / `store.name` or ADR-0026.
+- [x] Every CLI test and snapshot is green on the v2 fixture store; no CLI code path references store-nb except `migrate`'s future entry point.
+- [x] `tasq store info` prints the resolved directory.
+- [x] Zero missed mutants in the touched code.
 
 ### SV-010: creation time and store provenance surfaces
 
@@ -473,12 +473,12 @@ positional-id warning; launched sessions receive `TASQ_DATA_DIR` (resolved, abso
 
 **Blocked by:** SV-009.
 
-**Status:** blocked
+**Status:** ready
 
 - [ ] `view --json` carries `created` as ISO local time; absent when unknown; `tasq view` and the TUI detail show it.
 - [ ] `store info` shows `data_dir` and `store.name` with where each was set.
-- [ ] `doctor` on a clean store prints no warning about ids.
-- [ ] A launched session's environment has `TASQ_DATA_DIR` and `TASQ_STORE_NAME` and not `TASQ_NOTEBOOK`.
+- [x] `doctor` on a clean store prints no warning about ids (landed with SV-009: the tasq store's `doctor` has no such check; pinned by the `passes_on_a_clean_store` snapshot).
+- [x] A launched session's environment has `TASQ_DATA_DIR` and `TASQ_STORE_NAME` and not `TASQ_NOTEBOOK` (landed with SV-009: `store.notebook` went, so the launch env had to change with it).
 - [ ] Zero missed mutants in the touched code.
 
 ### SV-011: `tasq migrate <notebook> [--to <dir>] [--dry-run]`
@@ -490,7 +490,7 @@ never written and no git command runs.
 
 **Blocked by:** SV-008, SV-009.
 
-**Status:** blocked
+**Status:** ready
 
 - [ ] On a copy of the fixture notebook, `tasq migrate home --to <tmp>` prints one line per task and the config lines; the notebook directory is byte-identical afterwards.
 - [ ] `tasq list` on the new store shows the same ids and titles as the notebook did.
