@@ -22,7 +22,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 ## Learnings
 
 - 2026-10-18: design settled by grilling (four rounds); ADR 0026 and the `CONTEXT.md` terms
-  written. Git is out of the store entirely (task 57 brings it back as opt-in); ULID file names
+  written and committed (868a1c7). Git is out of the store entirely (task 57 brings it back as opt-in); ULID file names
   carry the creation time so there is no `created:` key; no marker file, no `store.kind`, no
   `store init`; stores live at `<data_dir>/<store.name>`.
 
