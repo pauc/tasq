@@ -19,8 +19,12 @@ use tasq_core::store::StoreError;
 
 pub use crate::native::NativeBookkeeper;
 
-/// The manual repair for an index that no longer matches the files.
-pub const RECONCILE_FIX: &str = "run 'tasq store reconcile'";
+/// The manual repair for an index that no longer matches the files: what
+/// `tasq store reconcile` did before it went with git sync (ADR-0026),
+/// keeping every id. A missing index is rebuilt by the next
+/// [`crate::NbStore::open`].
+pub const RECONCILE_FIX: &str =
+    "edit .index by hand: blank the line of a file that is gone, append a file that is not listed";
 
 /// The notebook's write lock, from before a write until its background job
 /// ends. Dropping it releases it; [`Bookkeeper::checkpoint`] takes it over
@@ -274,7 +278,7 @@ mod tests {
         let e = failure("registering x.todo.md", &"boom", RECONCILE_FIX);
         assert_eq!(
             e.to_string(),
-            "bookkeeping failed after the write: registering x.todo.md: boom; run 'tasq store reconcile'"
+            "bookkeeping failed after the write: registering x.todo.md: boom; edit .index by hand: blank the line of a file that is gone, append a file that is not listed"
         );
     }
 

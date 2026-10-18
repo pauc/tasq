@@ -38,7 +38,12 @@ pub fn run(app: &App, file: Option<&Path>) -> Result<()> {
         }
     }
     store.update(&task)?;
-    finish(app, &store, &task.id, &format!("[{}] applied\n", task.id))
+    finish(
+        app,
+        &mut store,
+        &task.id,
+        &format!("[{}] applied\n", task.id),
+    )
 }
 
 /// Which optional keys a `task` document carries: a missing one means

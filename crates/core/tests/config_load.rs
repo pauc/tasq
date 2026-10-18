@@ -119,7 +119,6 @@ fn empty_environment_yields_defaults() {
 fn defaults_match_the_script() {
     let c = Config::default();
     assert_eq!(c.store.notebook, "home");
-    assert_eq!(c.store.sync_interval, 3600);
     assert_eq!(c.workflow.statuses, Status::DEFAULTS.to_vec());
     assert_eq!(c.workflow.default_status, Status::READY);
     assert_eq!(c.workflow.workflow(), tasq_core::model::Workflow::default());
@@ -172,7 +171,6 @@ fn default_config_round_trips_through_toml_and_matches_the_module_docs() {
 [store]
 kind = \"nb\"
 notebook = \"home\"
-sync_interval = 3600
 
 [workflow]
 statuses = [\"in-progress\", \"ready\", \"waiting\", \"blocked\", \"later\"]
@@ -578,10 +576,7 @@ fn global_file_alone() {
         Some(&Origin::File(path.clone()))
     );
     assert_eq!(loaded.file_for("store.notebook"), Some(path.as_path()));
-    assert_eq!(
-        loaded.explain("store.sync_interval"),
-        Some(&Origin::Defaults)
-    );
+    assert_eq!(loaded.explain("store.kind"), Some(&Origin::Defaults));
     assert_eq!(loaded.layers[1].keys, vec!["store.notebook", "ui.no_osc8"]);
 }
 
@@ -632,15 +627,11 @@ fn without_home_there_is_no_global_file_but_xdg_still_works() {
 fn project_file_overrides_global_field_wise() {
     let sb = Sandbox::new();
     let global = sb.write_global(
-        "[store]\nnotebook = \"global\"\nsync_interval = 60\n[ui]\nglow_style = \"light\"\nweek_start = \"sunday\"\n",
+        "[store]\nnotebook = \"global\"\nkind = \"nb\"\n[ui]\nglow_style = \"light\"\nweek_start = \"sunday\"\n",
     );
     let project = sb.write_project("[store]\nnotebook = \"project\"\n");
     let loaded = Config::load(&sb.opts()).unwrap();
     assert_eq!(loaded.config.store.notebook, "project");
-    assert_eq!(
-        loaded.config.store.sync_interval, 60,
-        "sibling key survives"
-    );
     assert_eq!(loaded.config.ui.glow_style, "light");
     assert_eq!(loaded.config.ui.week_start, WeekStart::Sunday);
     assert_eq!(loaded.config.ui.week_start.weekday(), chrono::Weekday::Sun);
@@ -649,8 +640,9 @@ fn project_file_overrides_global_field_wise() {
         Some(&Origin::File(project.clone()))
     );
     assert_eq!(
-        loaded.explain("store.sync_interval"),
-        Some(&Origin::File(global.clone()))
+        loaded.explain("store.kind"),
+        Some(&Origin::File(global.clone())),
+        "sibling key survives"
     );
     assert_eq!(loaded.explain("store"), Some(&Origin::File(project)));
     let origins: Vec<&Origin> = loaded.layers.iter().map(|l| &l.origin).collect();
@@ -874,6 +866,28 @@ fn unknown_section_and_nested_unknown_key_are_errors() {
     );
 }
 
+/// `store.sync_interval` went with git sync (ADR-0026): a file that still
+/// sets it fails like any unknown key, naming the file, line and column.
+#[test]
+fn sync_interval_is_an_unknown_key() {
+    let sb = Sandbox::new();
+    let path = sb.write_global("[store]\nnotebook = \"home\"\nsync_interval = 3600\n");
+    let err = Config::load(&sb.opts()).unwrap_err();
+    assert!(
+        err.to_string().starts_with(&format!(
+            "{}:3:1: unknown field `sync_interval`",
+            path.display()
+        )),
+        "{err}"
+    );
+    assert!(
+        !tasq_core::config::ENV_KEYS
+            .iter()
+            .any(|(var, key)| *var == "TASQ_SYNC_INTERVAL" || *key == "store.sync_interval"),
+        "no environment variable maps to the removed key"
+    );
+}
+
 #[test]
 fn syntax_error_names_file_and_line() {
     let sb = Sandbox::new();
@@ -999,7 +1013,6 @@ fn env_overrides_files() {
     let mut opts = sb.opts();
     opts.env = env(&[
         ("TASQ_NOTEBOOK", "env"),
-        ("TASQ_SYNC_INTERVAL", "0"),
         ("TASQ_DEFAULT_PROJECT", "~/code/x"),
         ("TASQ_WORKTREE_ENABLED", "true"),
         (
@@ -1032,7 +1045,6 @@ fn env_overrides_files() {
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
     assert_eq!(c.store.notebook, "env");
-    assert_eq!(c.store.sync_interval, 0);
     assert_eq!(c.work.default_project, Some(sb.home.join("code/x")));
     assert!(c.worktree.enabled);
     assert_eq!(c.worktree.path, "{{project}}/.worktrees/{{branch_safe}}");
@@ -1071,7 +1083,7 @@ fn env_overrides_files() {
     assert_eq!(loaded.explain("ui.pager"), Some(&Origin::Env));
     let env_layer = loaded.layers.last().unwrap();
     assert_eq!(env_layer.origin, Origin::Env);
-    assert_eq!(env_layer.keys.len(), 26);
+    assert_eq!(env_layer.keys.len(), 25);
     assert_eq!(Origin::Env.to_string(), "env");
 }
 
@@ -1094,7 +1106,6 @@ fn every_documented_env_key_is_a_real_key() {
         // Any value a string key accepts; enums get their first variant.
         let value = match *key {
             "launch.herdr.placement" => "auto",
-            "store.sync_interval" => "60",
             "worktree.on_create" | "worktree.delete_branch" => "never",
             "worktree.on_done" => "keep",
             "launch.env" => "direnv",
@@ -1592,7 +1603,6 @@ fn plan_section_4_6_example_loads_as_is() {
     let loaded = Config::load(&sb.opts()).unwrap();
     let c = &loaded.config;
     assert_eq!(c.store.notebook, "home");
-    assert_eq!(c.store.sync_interval, 3600);
     assert_eq!(c.workflow.statuses.len(), 5);
     assert_eq!(
         c.work.default_project,
@@ -1735,7 +1745,7 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     let sb = Sandbox::new();
     // Every layer sets `store.notebook`; each also owns one private key.
     let global = sb.write_global(
-        "[store]\nnotebook = \"global\"\nsync_interval = 60\n\
+        "[store]\nnotebook = \"global\"\n[hooks]\npost-done = [\"echo done\"]\n\
          [profile.p.store]\nnotebook = \"profile\"\n[profile.p.ui]\nglow_style = \"light\"\n",
     );
     let project = sb.write_project("[store]\nnotebook = \"project\"\n[ui]\npager = \"more\"\n");
@@ -1749,7 +1759,6 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
     assert_eq!(c.store.notebook, "override");
-    assert_eq!(c.store.sync_interval, 60);
     assert_eq!(c.ui.pager, "more");
     assert_eq!(c.ui.glow_style, "light");
     assert_eq!(c.launch.default, "shell");
@@ -1762,7 +1771,7 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     };
     assert_eq!(loaded.explain("store.notebook"), Some(&Origin::Overrides));
     assert_eq!(
-        loaded.explain("store.sync_interval"),
+        loaded.explain("hooks.post-done"),
         Some(&Origin::File(global.clone()))
     );
     assert_eq!(

@@ -7,8 +7,9 @@
 //! - Writes rewrite one file atomically with the edit operations of
 //!   [`tasq_core::format::ops`], refuse to overwrite a file that changed since
 //!   it was read, and then hand over to a [`Bookkeeper`]: index registration,
-//!   then a commit (and every `store.sync_interval` a pull and push) in a
-//!   background job, so no write waits for git or the network.
+//!   then a commit (and, every [`DEFAULT_SYNC_INTERVAL`] seconds when the
+//!   caller asks for it, a pull and push) in a background job, so no write
+//!   waits for git or the network.
 //! - [`Store::create`] writes a new `YYYYMMDDHHMMSS.todo.md`, registers it
 //!   through the bookkeeper and reads the id back from `.index`.
 //! - [`doctor::checks`] produces the store part of `tasq doctor`.
@@ -39,5 +40,5 @@ pub use self::bookkeeper::{
 pub use self::doctor::{Check, CheckStatus};
 pub use self::index::{Index, TODO_SUFFIX};
 pub use self::revision::Revision;
-pub use self::store::{NbStore, NbStoreOptions, StoreWarning};
+pub use self::store::{DEFAULT_SYNC_INTERVAL, NbStore, NbStoreOptions, StoreWarning};
 pub use tasq_core::store::{BatchError, IdScheme, Store, StoreError, StoreInfo};

@@ -21,6 +21,7 @@ fn describe_reports_location_count_and_positional_ids() {
             task_count: 5,
             id_scheme: IdScheme::Positional,
             ids_may_change_on_reconcile: true,
+            bookkeeper: Some("native".to_owned()),
         },
         "open and done todos count; notes.md and the missing file do not"
     );

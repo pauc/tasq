@@ -35,7 +35,7 @@ pub fn run(
     if task.sessions.iter().any(|s| s.id == session_id) {
         return finish(
             app,
-            &store,
+            &mut store,
             &id,
             &format!("[{id}] session already tracked: {session_id}\n"),
         );
@@ -52,7 +52,7 @@ pub fn run(
         .map_or_else(String::new, |h| format!(" (resume: {h})"));
     finish(
         app,
-        &store,
+        &mut store,
         &id,
         &format!("[{id}] session: {session_id}{hint}\n"),
     )

@@ -105,6 +105,20 @@ impl TestEnv {
         std::fs::write(self.notebook().join(name), text).unwrap();
     }
 
+    /// Appends `name` to the notebook's `.index`, giving the file the next
+    /// id: what registering a write does, for tests that place a file by
+    /// hand with [`Self::write_task`].
+    pub fn register(&self, name: &str) {
+        let path = self.notebook().join(".index");
+        let mut index = std::fs::read_to_string(&path).unwrap();
+        if !index.is_empty() && !index.ends_with('\n') {
+            index.push('\n');
+        }
+        index.push_str(name);
+        index.push('\n');
+        std::fs::write(&path, index).unwrap();
+    }
+
     /// Writes `<home>/.tasq.toml`.
     pub fn write_project_config(&self, text: &str) {
         std::fs::write(self.home.join(".tasq.toml"), text).unwrap();

@@ -58,7 +58,7 @@ static SPACE_BEFORE_PUNCT: LazyLock<Regex> =
 pub fn run(app: &App, id: &str, raw: bool) -> Result<()> {
     let id = App::task_id(id)?;
     let store = app.open_store()?;
-    let path = store.path_of(&id)?;
+    let path = super::task_file(store.as_ref(), &id)?;
     let text = std::fs::read_to_string(&path).map_err(|source| StoreError::Io {
         path: path.clone(),
         source,

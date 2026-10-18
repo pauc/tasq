@@ -5,10 +5,9 @@ use std::path::{Path, PathBuf};
 
 use tasq_core::model::TaskId;
 use tasq_core::store::Store;
-use tasq_store_nb::NbStore;
 
 use crate::app::App;
-use crate::error::Result;
+use crate::error::{CliError, Result};
 use crate::json;
 
 pub mod apply;
@@ -38,7 +37,7 @@ pub mod worktree_nav;
 /// Ends an editing command: reports the store's warnings (a commit that
 /// could not start) on stderr, then prints `line`, or with `--json` the
 /// task as it is now, as `{"schema": 1, "task": {...}}`.
-pub fn finish(app: &App, store: &NbStore, id: &TaskId, line: &str) -> Result<()> {
+pub fn finish(app: &App, store: &mut dyn Store, id: &TaskId, line: &str) -> Result<()> {
     report(app, store, id, line, Vec::new())
 }
 
@@ -47,7 +46,7 @@ pub fn finish(app: &App, store: &NbStore, id: &TaskId, line: &str) -> Result<()>
 /// fields written, `[]` when the edit changed nothing and wrote nothing.
 pub fn finish_edit(
     app: &App,
-    store: &NbStore,
+    store: &mut dyn Store,
     id: &TaskId,
     line: &str,
     changed: &[&str],
@@ -59,7 +58,7 @@ pub fn finish_edit(
 /// ids of the other tasks whose rank was written for the move.
 pub fn finish_move(
     app: &App,
-    store: &NbStore,
+    store: &mut dyn Store,
     id: &TaskId,
     line: &str,
     changed: &[&str],
@@ -79,13 +78,13 @@ pub fn finish_move(
 /// `extra`, as `{"schema": 1, "task": {...}, ...}`.
 fn report(
     app: &App,
-    store: &NbStore,
+    store: &mut dyn Store,
     id: &TaskId,
     line: &str,
     extra: Vec<(&str, serde_json::Value)>,
 ) -> Result<()> {
-    for warning in store.warnings() {
-        app.out.warn(&warning.to_string());
+    for warning in store.take_warnings() {
+        app.out.warn(&warning);
     }
     if app.out.json_mode() {
         let task = store.get(id)?;
@@ -94,6 +93,15 @@ fn report(
         return app.out.json(&json::document(fields));
     }
     app.out.print(line)
+}
+
+/// The file holding task `id`, for the commands that read it whole
+/// (`view`, the launch prompt). A store without one file per task is a
+/// user-facing error, not a panic.
+pub fn task_file(store: &dyn Store, id: &TaskId) -> Result<PathBuf> {
+    store
+        .file_of(id)?
+        .ok_or_else(|| CliError::user(format!("task {id} has no file of its own in this store")))
 }
 
 /// `path` as an existing directory's canonical path, like the script's

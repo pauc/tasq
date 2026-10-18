@@ -1428,6 +1428,14 @@ mod tests {
         fn describe(&self) -> crate::store::StoreInfo {
             self.0.describe()
         }
+
+        fn take_warnings(&mut self) -> Vec<String> {
+            self.0.take_warnings()
+        }
+
+        fn doctor(&self) -> Vec<crate::doctor::Check> {
+            self.0.doctor()
+        }
     }
 
     #[test]
@@ -1477,6 +1485,14 @@ mod tests {
 
         fn describe(&self) -> crate::store::StoreInfo {
             self.0.describe()
+        }
+
+        fn take_warnings(&mut self) -> Vec<String> {
+            self.0.take_warnings()
+        }
+
+        fn doctor(&self) -> Vec<crate::doctor::Check> {
+            self.0.doctor()
         }
     }
 
@@ -2093,6 +2109,14 @@ mod tests {
 
         fn describe(&self) -> crate::store::StoreInfo {
             self.0.describe()
+        }
+
+        fn take_warnings(&mut self) -> Vec<String> {
+            self.0.take_warnings()
+        }
+
+        fn doctor(&self) -> Vec<crate::doctor::Check> {
+            self.0.doctor()
         }
     }
 

@@ -113,7 +113,8 @@ flowchart LR
 | `clock` | `Clock`, `SystemClock`, `FixedClock`, `When`, timestamp helpers. Local wall-clock time, no zone, as the script wrote it. |
 | `dates` | `today`, `yesterday`, weekday names, ISO dates, report ranges. |
 | `theme` | `Color` and `Theme`: colour decisions shared by CLI and TUI; rendering is the front ends' job. |
-| `store` | `Store` trait, `StoreError`, `StoreInfo`, `IdScheme`, and `MemoryStore` for tests. |
+| `store` | `Store` trait (`list`, `get`, `create`, `update`, `set_done`, `describe`, `take_warnings`, `doctor`, `file_of`), `StoreError`, `StoreInfo`, `IdScheme`, `impl Store for Box<S>`, and `MemoryStore` for tests. |
+| `doctor` | `Check` and `CheckStatus`, the diagnostics a `Store::doctor` reports and `tasq doctor` prints; `any_failed`. |
 
 ### Two ideas that shape everything else
 
@@ -135,7 +136,7 @@ The crate that runs `git` for the notebook; nothing runs `nb` (ADR-0023). Reads 
 process: `NbStore::open` resolves the notebook (`$NB_DIR/<name>`, or a path), reads `.index`
 (line number = task id) and parses the files directly. A write takes `.git/tasq/lock` (waiting
 for the previous background job), writes the file, and hands the lock to a detached job that
-commits and, every `store.sync_interval` seconds, pulls and pushes.
+commits and, at most hourly (`DEFAULT_SYNC_INTERVAL`, set by the CLI), pulls and pushes.
 
 ```mermaid
 sequenceDiagram
@@ -302,7 +303,7 @@ flowchart TB
     cmd -->|"next, pick, session,<br/>worktree, summary"| lnch["tasq-launch<br/>launcher_for, summarizer_for"]
     cmd -->|"next, pick, worktree"| wt["tasq-worktree<br/>Git"]
     cmd -->|"ui"| tui["tasq-tui::run<br/>+ CliHost"]
-    cmd -->|"doctor, store"| store_doc["tasq-store-nb<br/>doctor::checks, describe"]
+    cmd -->|"doctor, store"| store_doc["Store::doctor, Store::describe<br/>(the nb store's checks)"]
     core -->|"through the Store trait"| open
     cmd --> out["output.rs / json.rs<br/>human or --json, pager, colour"]
     cmd --> hooks["hooks: post-create,<br/>post-done, pre-launch"]

@@ -5,7 +5,7 @@ expression: env.normalize(&stdout(&out))
 OK    config       loaded from defaults
 OK    notebook     notebook at [ROOT]/nb/home, not a git repository (no commits or sync)
 FAIL  index        [ROOT]/nb/home/.index: index out of date: 1 listed file(s) missing, 0 file(s) not listed
-                   fix: run 'tasq store reconcile'
+                   fix: edit .index by hand: blank the line of a file that is gone, append a file that is not listed
 WARN  ids          ids are positions in .index (5 tasks) and can change when another tool rewrites it (nb index reconcile)
                    fix: refer to tasks by title in notes you keep outside tasq
 OK    bookkeeper   bookkeeper: native, syncing at most every 3600 s after a write

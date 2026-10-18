@@ -9,7 +9,6 @@ expression: env.normalize(&stdout(&out))
 [store]
 kind = "nb"                                  # defaults
 notebook = "home"                            # defaults
-sync_interval = 3600                         # defaults
 
 [workflow]
 default_status = "ready"                     # defaults

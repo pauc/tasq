@@ -17,9 +17,7 @@ refuse anything else; a future shape change bumps the number.
 | `tasq worktree trust` | `"file"`: the repository's `.tasq.toml` (its main checkout when it has none), `"approved": [{kind, line}]`: each hook line now approved, `kind` one of `"pre-create"`, `"post-create"`, `"pre-remove"`, `"post-remove"` (in that order, then the lines in file order); `[]` when the file sets no hooks |
 | `tasq project <id>` (show) | `"task": Task`, `"default_project": path or null` |
 | `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool` (only with worktrees enabled), `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
-| `tasq store info` | `"store": {name, location, task_count, id_scheme, ids_may_change_on_reconcile}`, `"bookkeeper": "native" \| "none"` |
-| `tasq store reconcile` | `"changed"` (bool), `"blanked"` (index lines emptied because the file is gone), `"appended"` (files added to the index) |
-| `tasq store sync` | `"synced": bool`, `"detail": string` |
+| `tasq store info` | `"store": {name, location, task_count, id_scheme, ids_may_change_on_reconcile}`, `"bookkeeper": the bookkeeper's name (`"native"`; `"none"` in tests), `null` for a store without one |
 | `tasq doctor` | `"checks": [{name, status: "ok" \| "warn" \| "fail", detail, fix}]`, `"ok": bool` |
 | `tasq sync` | `"dry_run": bool`, `"ok": bool`, `"sources": [{name, changes: [string], applied: [{id, description}], error}]` |
 | `tasq summary` | `"day"`, `"header"` (`Friday 2026-10-02`), `"summarizer": "raw" \| "llm"`, `"tasks": [{id, title, done, notes: [string]}]`, `"notes"` (the raw text), `"summary"` (the distilled text, `null` when raw) |

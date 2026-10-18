@@ -1,14 +1,17 @@
 //! `tasq doctor`: configuration, store and optional-tool diagnostics.
 //!
-//! The store checks come from `tasq_store_nb::doctor::checks`; this module
-//! adds the `config` check (the layers that loaded, or why loading failed)
-//! and one check per optional tool. Any `FAIL` makes the exit code 1.
+//! The store checks come from [`Store::doctor`]; this module adds the
+//! `config` check (the layers that loaded, or why loading failed) and one
+//! check per optional tool. Any `FAIL` makes the exit code 1.
+//!
+//! [`Store::doctor`]: tasq_core::store::Store::doctor
 
 use std::fmt::Write as _;
 
 use serde_json::Value;
 use tasq_core::config::{Config, LoadOptions, UiConfig};
-use tasq_store_nb::doctor::{self, Check, CheckStatus, any_failed, tool_check};
+use tasq_core::doctor::{Check, CheckStatus, any_failed};
+use tasq_store_nb::doctor::tool_check;
 
 use crate::app::{App, env_vec};
 use crate::cli::GlobalArgs;
@@ -74,7 +77,7 @@ pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
     if let Some(loaded) = loaded {
         let app = App::new(global, opts, loaded, out.clone());
         match app.open_store() {
-            Ok(store) => checks.extend(doctor::checks(&store)),
+            Ok(store) => checks.extend(store.doctor()),
             Err(e) => checks.push(Check::fail(
                 "store",
                 e.to_string(),

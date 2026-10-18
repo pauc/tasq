@@ -243,11 +243,8 @@ impl NbEnv {
     /// Opens the fixture notebook syncing at most every `sync_interval`
     /// seconds after a write.
     pub fn open_syncing(&self, sync_interval: u64) -> NbStore {
-        let config = StoreConfig {
-            sync_interval,
-            ..StoreConfig::default()
-        };
-        NbStore::open(&config, &self.options()).expect("fixture notebook opens")
+        let options = self.options().with_sync_interval(sync_interval);
+        NbStore::open(&StoreConfig::default(), &options).expect("fixture notebook opens")
     }
 
     /// This environment with `dir` first on `PATH`, for fake tools.

@@ -27,7 +27,7 @@ pub fn run(app: &App, id: &str, url: &str, title: Option<&str>) -> Result<()> {
     if task.merge_requests.iter().any(|mr| mr.url == url) {
         return finish(
             app,
-            &store,
+            &mut store,
             &id,
             &format!("[{id}] MR already tracked: {url}\n"),
         );
@@ -36,7 +36,7 @@ pub fn run(app: &App, id: &str, url: &str, title: Option<&str>) -> Result<()> {
     let label = link.label.clone().unwrap_or_default();
     task.add_merge_request(link);
     store.update(&task)?;
-    finish(app, &store, &id, &format!("[{id}] MR: {label}\n"))
+    finish(app, &mut store, &id, &format!("[{id}] MR: {label}\n"))
 }
 
 /// The link for `url`: `title` when given, else the title the configured

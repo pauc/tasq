@@ -69,7 +69,7 @@ impl Index {
         })
     }
 
-    /// The repair `tasq store reconcile` makes, without renumbering: lines
+    /// The repair of an out-of-date index, without renumbering: lines
     /// naming one of `missing` become empty (how nb leaves a deleted file's
     /// line), then `unlisted` are appended in the given order.
     #[must_use]

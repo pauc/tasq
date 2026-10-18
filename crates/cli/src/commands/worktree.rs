@@ -15,7 +15,6 @@ use tasq_core::work;
 use tasq_core::worktree::declaration;
 use tasq_core::worktree::hooks::Kind;
 use tasq_core::worktree::lifecycle::Declared;
-use tasq_store_nb::NbStore;
 use tasq_worktree::Repo;
 pub use tasq_worktree::RepoSettings;
 pub use tasq_worktree::create::Created;
@@ -95,7 +94,7 @@ pub fn run(app: &App, id: &str, target: Option<&str>, create: Option<&str>) -> R
             let already = if new { "" } else { "already " };
             finish(
                 app,
-                &store,
+                &mut store,
                 &id,
                 &format!(
                     "[{id}] worktree {already}declared: {}\n",
@@ -145,7 +144,7 @@ pub fn declare(
 /// new: the worktree and whether it is new.
 fn declare_and_save(
     app: &App,
-    store: &mut NbStore,
+    store: &mut dyn Store,
     task: &mut Task,
     branch: Option<&str>,
 ) -> Result<(Worktree, bool)> {
@@ -214,7 +213,7 @@ pub fn repo_settings(app: &App, project: &Path) -> Result<RepoSettings> {
 
 /// `tasq worktree <id> --create <branch>`: declares a worktree on
 /// `branch` and creates it, unless its directory exists already.
-pub fn create_and_track(app: &App, store: &mut NbStore, id: &TaskId, branch: &str) -> Result<()> {
+pub fn create_and_track(app: &App, store: &mut dyn Store, id: &TaskId, branch: &str) -> Result<()> {
     let mut task = store.get(id)?;
     let (worktree, _) = declare_and_save(app, store, &mut task, Some(branch))?;
     let only = Task {
@@ -235,7 +234,7 @@ pub fn up(app: &App, id: &str, from: Option<&str>, yes: bool, dry_run: bool) -> 
         return Err(disabled());
     }
     let id = App::task_id(id)?;
-    let store = app.open_store()?;
+    let mut store = app.open_store()?;
     let task = store.get(&id)?;
     let line = match materialize(app, &task, from, yes, dry_run)? {
         Some(created) if dry_run => {
@@ -253,7 +252,7 @@ pub fn up(app: &App, id: &str, from: Option<&str>, yes: bool, dry_run: bool) -> 
             }
         },
     };
-    finish(app, &store, &id, &line)
+    finish(app, &mut store, &id, &line)
 }
 
 /// `tasq worktree trust [DIR]`: approves the hooks of the repository's own
@@ -330,7 +329,7 @@ pub fn materialize(
 
 /// Records `path` (which must exist) with its current branch, unless it is
 /// already tracked.
-fn track(app: &App, store: &mut NbStore, id: &TaskId, path: &Path) -> Result<()> {
+fn track(app: &App, store: &mut dyn Store, id: &TaskId, path: &Path) -> Result<()> {
     let dir = existing_dir(path)
         .ok_or_else(|| CliError::user(format!("worktree path not found: {}", path.display())))?;
     let mut task = store.get(id)?;
@@ -364,7 +363,7 @@ pub fn release_command(app: &App, id: &str, force: bool, yes: bool, dry_run: boo
         return Err(disabled());
     }
     let id = App::task_id(id)?;
-    let store = app.open_store()?;
+    let mut store = app.open_store()?;
     let task = store.get(&id)?;
     let how = Releasing::on_demand(force, dry_run);
     let approval = Approval::from_yes(yes);
@@ -380,7 +379,7 @@ pub fn release_command(app: &App, id: &str, force: bool, yes: bool, dry_run: boo
     } else {
         prefixed(&id, &lines)
     };
-    finish(app, &store, &id, &text)
+    finish(app, &mut store, &id, &text)
 }
 
 /// `lines`, one per line, each prefixed with `[id] ` unless indented (the

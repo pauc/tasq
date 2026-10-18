@@ -44,7 +44,7 @@ pub fn run(app: &App, id: &str, path: Option<&Path>) -> Result<()> {
     store.update(&task)?;
     finish(
         app,
-        &store,
+        &mut store,
         &id,
         &format!("[{id}] project: {}\n", dir.display()),
     )

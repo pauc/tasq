@@ -23,8 +23,7 @@ Terminal task manager over nb markdown todos.
 
 Tasks are the `*.todo.md` files of an nb notebook; `tasq` reads and writes
 them directly, in the same format the original `tasks` script used, without
-running nb. Writes are committed with git in the background, and pulled and
-pushed at most every store.sync_interval seconds.
+running nb. Writes are committed with git in the background.
 
 Every command accepts --json for machine-readable output. Exit codes: 0 on
 success, 1 for an error you can fix (`tasq: <message>` on stderr), 2 for a
@@ -329,7 +328,7 @@ pub enum Command {
     #[command(after_help = UI_HELP)]
     Ui,
 
-    /// The store behind the tasks: where it is and how to sync it.
+    /// The store behind the tasks: where it is.
     #[command(subcommand)]
     Store(StoreCommand),
 
@@ -919,12 +918,6 @@ pub struct ListArgs {
 pub enum StoreCommand {
     /// Print the notebook path, task count and how ids behave.
     Info,
-    /// Exchange commits with the notebook's remote now
-    /// (`git pull --rebase && git push`), after any background commit.
-    Sync,
-    /// Repair `.index` without renumbering: lines naming a missing file
-    /// become empty, unlisted markdown files are appended.
-    Reconcile,
 }
 
 /// `tasq config ...`.

@@ -306,7 +306,12 @@ fn verify_reports_the_fixture_gap_and_recovers() {
         v.detail,
         "index out of date: 1 listed file(s) missing, 0 file(s) not listed"
     );
-    assert_eq!(v.fix(), Some("run 'tasq store reconcile'"));
+    assert_eq!(
+        v.fix(),
+        Some(
+            "edit .index by hand: blank the line of a file that is gone, append a file that is not listed"
+        )
+    );
     nb.restore_missing_file();
     nb.write("stray.todo.md", "# [ ] Stray\n");
     let v = b.verify().unwrap();
@@ -452,20 +457,22 @@ fn a_failed_job_is_a_warning_when_the_store_opens_next() {
             .unwrap(),
     );
     let mut next = nb.open();
-    let warnings = next.take_warnings();
-    let messages: Vec<String> = warnings.iter().map(ToString::to_string).collect();
+    assert!(matches!(
+        next.warnings()[0],
+        StoreWarning::Bookkeeping { .. }
+    ));
     assert_eq!(
-        messages,
+        next.take_warnings(),
         vec![
-            "bookkeeping failed: the background commit failed: committing: hook says no; check 'git status' in the notebook, then run 'tasq store sync'"
+            "bookkeeping failed: the background commit failed: committing: hook says no; check 'git status' in the notebook and commit by hand"
                 .to_owned()
         ]
     );
-    assert!(matches!(warnings[0], StoreWarning::Bookkeeping { .. }));
+    assert_eq!(next.warnings(), &[], "taken means cleared");
 }
 
 #[test]
-fn opening_takes_the_sync_interval_from_the_config() {
+fn opening_takes_the_sync_interval_from_the_options() {
     let nb = NbEnv::fixture();
     assert_eq!(nb.open().sync_interval(), 0);
     assert_eq!(nb.open_syncing(3600).sync_interval(), 3600);

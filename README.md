@@ -159,15 +159,17 @@ maps between the two; nothing else asks whether a tag is a status.
 
 **Ids are nb's.** A task's id is the line number of its file in the notebook's `.index`, so
 `tasq` and `nb` show the same numbers. Ids are positional: `nb index reconcile` can renumber
-them. `tasq store info` says so for the store in use, `tasq doctor` warns when the index is
-inconsistent, and `tasq store reconcile` repairs it without renumbering.
+them. `tasq store info` says so for the store in use and `tasq doctor` warns when the index is
+inconsistent (a missing `.index` is rebuilt from the files on the next command).
 
 **nb's format, no nb at runtime.** Reads never spawn a process: `.index` and the markdown
 files are parsed directly. Writes are atomic rewrites of one file; new files are appended to
 `.index` with the bytes `nb index add` would write. The commit (`[tasq] Update: <file>`, nb's
 message style) runs in a detached git job, so no command waits for git, commit signing or the
-network; the same job pulls and pushes at most every `store.sync_interval` seconds (default an
-hour). A failed job is reported as a warning by the next command, never as data loss
+network; the same job pulls and pushes at most hourly (no longer configurable: sync comes back as
+a feature of the tasq-owned store,
+[ADR-0026](docs/adr/0026-store-v2-frontmatter-tasq-directory-ulid-files.md)). A failed job is
+reported as a warning by the next command, never as data loss
 ([ADR-0023](docs/adr/0023-no-nb-at-runtime.md)).
 
 **Layered configuration.** TOML, later layers winning key by key: built-in defaults,
@@ -232,8 +234,6 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq dates [SPEC]...` | Resolve `today`, `last week`, `last 7 days`, ... to `FROM TO` |
 | `tasq ui` | Full-screen terminal UI |
 | `tasq store info` | Notebook path, task count, how ids behave |
-| `tasq store sync` | `git pull --rebase && git push` now, after any background commit |
-| `tasq store reconcile` | Repair `.index` without renumbering |
 | `tasq doctor` | Check config, notebook, git and optional tools |
 | `tasq config show` | Effective configuration with the layer that set each key |
 | `tasq plugins list` | Discovered `tasq-*` plugins and configured hooks |

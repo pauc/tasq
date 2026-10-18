@@ -848,7 +848,14 @@ mod tests {
                 task_count: self.tasks.len(),
                 id_scheme: IdScheme::Stable,
                 ids_may_change_on_reconcile: false,
+                bookkeeper: None,
             }
+        }
+        fn take_warnings(&mut self) -> Vec<String> {
+            Vec::new()
+        }
+        fn doctor(&self) -> Vec<crate::doctor::Check> {
+            Vec::new()
         }
     }
 

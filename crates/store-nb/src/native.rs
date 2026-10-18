@@ -18,7 +18,7 @@ use crate::job::{self, State};
 use crate::resolve::index_path;
 
 /// The fix suggested when the background job failed.
-pub const JOB_FIX: &str = "check 'git status' in the notebook, then run 'tasq store sync'";
+pub const JOB_FIX: &str = "check 'git status' in the notebook and commit by hand";
 
 /// Bookkeeping done by `tasq` itself.
 #[derive(Debug, Clone, PartialEq, Eq)]

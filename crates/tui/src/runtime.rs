@@ -695,6 +695,12 @@ mod tests {
             fn describe(&self) -> tasq_core::store::StoreInfo {
                 MemoryStore::default().describe()
             }
+            fn take_warnings(&mut self) -> Vec<String> {
+                Vec::new()
+            }
+            fn doctor(&self) -> Vec<tasq_core::doctor::Check> {
+                Vec::new()
+            }
         }
         let mut host = RecordingHost::default();
         let msgs = dispatch(
@@ -868,6 +874,12 @@ mod tests {
             }
             fn describe(&self) -> tasq_core::store::StoreInfo {
                 self.0.describe()
+            }
+            fn take_warnings(&mut self) -> Vec<String> {
+                self.0.take_warnings()
+            }
+            fn doctor(&self) -> Vec<tasq_core::doctor::Check> {
+                self.0.doctor()
             }
             fn file_of(
                 &self,

@@ -187,7 +187,13 @@ mod list {
             "20260909170000.todo.md",
             "# [ ] Rank by hand\n\n## Rank\n\nsoon\n\n## Tags\n\n#A #in-progress\n\n## Progress\n\n- 2026-10-09 17:00: created\n",
         );
-        env.tasq().args(["store", "reconcile"]).assert().success();
+        for name in [
+            "20260907150000.todo.md",
+            "20260908160000.todo.md",
+            "20260909170000.todo.md",
+        ] {
+            env.register(name);
+        }
         let out = env.tasq().arg("in-progress").output().unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(
@@ -312,7 +318,7 @@ mod list {
             "20260907150000.todo.md",
             "# [x] Closed with a rank\n\n## Rank\n\n-1024\n\n## Tags\n\n#C\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
         );
-        env.tasq().args(["store", "reconcile"]).assert().success();
+        env.register("20260907150000.todo.md");
         let out = env.tasq().args(["list", "--done"]).output().unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(
@@ -455,73 +461,29 @@ mod store {
         assert_snapshot!(env.normalize(&stdout(&out)));
     }
 
+    /// `tasq store sync` and `tasq store reconcile` went with git sync
+    /// (ADR-0026): clap rejects them like any unknown subcommand.
     #[test]
-    fn sync_without_a_repository_is_skipped() {
+    fn sync_and_reconcile_are_unknown_subcommands() {
         let env = TestEnv::fixture();
-        let out = env.tasq().args(["store", "sync"]).output().unwrap();
-        assert!(out.status.success(), "{}", stderr(&out));
-        assert_snapshot!(env.normalize(&stdout(&out)));
-        let json = env
-            .tasq()
-            .args(["--json", "store", "sync"])
-            .output()
-            .unwrap();
-        let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-        assert_eq!(value["schema"], 1);
-        assert_eq!(value["synced"], false);
+        for gone in ["sync", "reconcile"] {
+            let out = env.tasq().args(["store", gone]).output().unwrap();
+            assert_eq!(out.status.code(), Some(2), "{gone}: {}", stderr(&out));
+            assert!(
+                stderr(&out).contains(&format!("unrecognized subcommand '{gone}'")),
+                "{gone}: {}",
+                stderr(&out)
+            );
+        }
     }
 
     #[test]
-    fn reconcile_repairs_the_index_and_doctor_then_passes() {
-        // The fixture index names a file that does not exist.
-        let env = TestEnv::fixture();
-        std::fs::write(
-            env.notebook().join("20261001000000.todo.md"),
-            "# [ ] Unlisted\n",
-        )
-        .unwrap();
-        let out = env.tasq().args(["store", "reconcile"]).output().unwrap();
-        assert!(out.status.success(), "{}", stderr(&out));
-        assert_eq!(
-            stdout(&out),
-            "blanked  20260905130000.todo.md (file is gone; its id stays unused)\n\
-             appended 20261001000000.todo.md\n"
-        );
-        let index = std::fs::read_to_string(env.notebook().join(".index")).unwrap();
-        assert_eq!(
-            index,
-            "20260901090000.todo.md\nnotes.md\n20260902100000.todo.md\n20260903110000.todo.md\n\n\
-             20260904120000.todo.md\n20260906140000.todo.md\n20261001000000.todo.md\n"
-        );
-        let out = env.tasq().args(["view", "8"]).output().unwrap();
-        assert!(
-            stdout(&out).starts_with("# [ ] Unlisted"),
-            "{}",
-            stdout(&out)
-        );
-        let out = env.tasq().arg("doctor").output().unwrap();
-        assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
-        let out = env
-            .tasq()
-            .args(["--json", "store", "reconcile"])
-            .output()
-            .unwrap();
-        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(value["schema"], 1);
-        assert_eq!(value["changed"], false);
-        assert_eq!(value["blanked"], serde_json::json!([]));
-        assert_eq!(value["appended"], serde_json::json!([]));
-        let out = env.tasq().args(["store", "reconcile"]).output().unwrap();
-        assert_eq!(stdout(&out), "index already matches the files\n");
-    }
-
-    #[test]
-    fn verbose_prints_the_notebook_path() {
+    fn verbose_prints_the_store_location() {
         let env = TestEnv::fixture();
         let out = env.tasq().args(["-v", "store", "info"]).output().unwrap();
         assert_eq!(
             env.normalize(&stderr(&out)),
-            "tasq: notebook: [ROOT]/nb/home\n"
+            "tasq: store: nb at [ROOT]/nb/home\n"
         );
     }
 }
@@ -622,6 +584,24 @@ mod config {
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         assert_snapshot!(env.normalize(&stdout(&out)));
+    }
+
+    /// `store.sync_interval` went with git sync (ADR-0026); a config that
+    /// still sets it fails naming the file, line and column.
+    #[test]
+    fn sync_interval_is_an_unknown_key() {
+        let env = TestEnv::fixture();
+        let file = env.write_global_config("[store]\nnotebook = \"home\"\nsync_interval = 60\n");
+        let out = env.tasq().args(["config", "show"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert!(
+            stderr(&out).starts_with(&format!(
+                "tasq: {}:3:1: unknown field `sync_interval`",
+                file.display()
+            )),
+            "{}",
+            stderr(&out)
+        );
     }
 
     #[test]
@@ -971,7 +951,7 @@ mod rank {
                 "# [ ] Second\n\n{rank_section}## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n"
             ),
         );
-        env.tasq().args(["store", "reconcile"]).assert().success();
+        env.register(SECOND);
         env
     }
 
@@ -1143,7 +1123,7 @@ mod rank {
                 "# [ ] Third\n\n{rank_9}## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-08 16:00: created\n"
             ),
         );
-        env.tasq().args(["store", "reconcile"]).assert().success();
+        env.register(THIRD);
         env
     }
 
@@ -3440,7 +3420,7 @@ mod launch {
             "20260907150000.todo.md",
             "# [ ] Ranked\n\n## Rank\n\n1024\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
         );
-        env.tasq().args(["store", "reconcile"]).assert().success();
+        env.register("20260907150000.todo.md");
         let out = env
             .tasq()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())

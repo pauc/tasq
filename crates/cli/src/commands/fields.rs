@@ -15,7 +15,6 @@ use tasq_core::dates::parse_day;
 use tasq_core::edit::{self, Revised, TagChange};
 use tasq_core::model::{Task, TaskId};
 use tasq_core::store::Store;
-use tasq_store_nb::NbStore;
 
 use crate::app::App;
 use crate::commands::{finish, finish_edit};
@@ -33,7 +32,7 @@ pub fn rename(app: &App, id: &str, title: &str, note: Option<&str>) -> Result<()
     } else {
         format!("[{id}] renamed\n")
     };
-    finish_edit(app, &store, &id, &line, &revised.changed)
+    finish_edit(app, &mut store, &id, &line, &revised.changed)
 }
 
 /// `tasq due <id> <date|none> [--note TEXT]`.
@@ -48,7 +47,7 @@ pub fn due(app: &App, id: &str, date: &str, note: Option<&str>) -> Result<()> {
         None => format!("[{id}] due cleared\n"),
         Some(day) => format!("[{id}] due {day}\n"),
     };
-    finish_edit(app, &store, &id, &line, &revised.changed)
+    finish_edit(app, &mut store, &id, &line, &revised.changed)
 }
 
 /// `tasq tag <id> <tag>... [--note TEXT]`. Every word is checked before
@@ -69,7 +68,7 @@ pub fn tag(app: &App, id: &str, words: &[String], note: Option<&str>) -> Result<
         let labels: Vec<String> = done.applied.iter().map(TagChange::label).collect();
         (format!("[{id}] tags: {}\n", labels.join(" ")), &["tags"])
     };
-    finish_edit(app, &store, &id, &line, written)
+    finish_edit(app, &mut store, &id, &line, written)
 }
 
 /// `tasq desc <id> [text|-] [--note TEXT]`: prints the description
@@ -93,7 +92,7 @@ pub fn desc(app: &App, id: &str, text: Option<&str>, note: Option<&str>) -> Resu
     let revised = edit::describe(&mut store, &id, text, note, clock.as_ref())?;
     finish_edit(
         app,
-        &store,
+        &mut store,
         &id,
         &described(&id, &revised),
         &revised.changed,
@@ -142,7 +141,7 @@ pub fn desc_edit(app: &App, id: &str, note: Option<&str>) -> Result<()> {
 /// was drained or the editor started (`desc -`, `desc --edit`).
 fn save_read(
     app: &App,
-    store: &mut NbStore,
+    store: &mut dyn Store,
     task: Task,
     after: &str,
     note: Option<&str>,
@@ -188,9 +187,9 @@ fn described(id: &TaskId, revised: &Revised) -> String {
 /// `tasq desc <id>`: the description and a newline, nothing when there is
 /// none; with `--json`, the task.
 fn print_description(app: &App, id: &TaskId) -> Result<()> {
-    let store = app.open_store()?;
+    let mut store = app.open_store()?;
     let task = store.get(id)?;
-    finish(app, &store, id, &as_lines(task.description.as_deref()))
+    finish(app, &mut store, id, &as_lines(task.description.as_deref()))
 }
 
 /// A description as lines of text: a newline after it, nothing for none.

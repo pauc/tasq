@@ -39,7 +39,6 @@
 //! [store]
 //! kind = "nb"
 //! notebook = "home"
-//! sync_interval = 3600
 //!
 //! [workflow]
 //! statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
@@ -167,21 +166,13 @@ pub struct StoreConfig {
     /// a directory path when it contains a `/` (`~/` expanded).
     /// Default: `home`, as in the original script.
     pub notebook: String,
-    /// Minimum seconds between two automatic pulls and pushes after a
-    /// write; `0` never syncs automatically (ADR-0023). Default: `3600`.
-    pub sync_interval: u64,
 }
-
-/// Default `store.sync_interval`: an hour, the `NB_AUTO_SYNC_SECONDS` the
-/// author's nb was configured with.
-pub const DEFAULT_SYNC_INTERVAL: u64 = 3600;
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             kind: StoreKind::Nb,
             notebook: "home".to_owned(),
-            sync_interval: DEFAULT_SYNC_INTERVAL,
         }
     }
 }

@@ -30,6 +30,7 @@
 pub mod clock;
 pub mod config;
 pub mod dates;
+pub mod doctor;
 pub mod edit;
 pub mod format;
 pub mod launch;

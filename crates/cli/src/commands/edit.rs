@@ -41,7 +41,7 @@ pub fn set(app: &App, id: &str, value: &str, note: Option<&str>) -> Result<()> {
         let suffix = note.map_or_else(String::new, |n| format!(" ({n})"));
         format!("[{id}] -> {}{suffix}\n", value.label())
     };
-    finish_edit(app, &store, &id, &line, &revised.changed)
+    finish_edit(app, &mut store, &id, &line, &revised.changed)
 }
 
 /// `tasq log <id> <note>`.
@@ -50,7 +50,7 @@ pub fn log(app: &App, id: &str, note: &str) -> Result<()> {
     let mut store = app.open_store()?;
     let clock = app.clock()?;
     edit::log(&mut store, &id, note, clock.as_ref())?;
-    finish(app, &store, &id, &format!("[{id}] logged: {note}\n"))
+    finish(app, &mut store, &id, &format!("[{id}] logged: {note}\n"))
 }
 
 /// `tasq done <id> [note]`: the note first, then `# [x]` with the status
@@ -75,7 +75,7 @@ pub fn done(app: &App, id: &str, note: Option<&str>, yes: bool) -> Result<()> {
             Err(e) => app.out.warn(&format!("worktrees not released: {e}")),
         }
     }
-    finish(app, &store, &id, &text)
+    finish(app, &mut store, &id, &text)
 }
 
 /// Splits `tasq reopen`'s optional words into a status and a note: a first
@@ -114,7 +114,7 @@ pub fn reopen(app: &App, id: &str, first: Option<&str>, second: Option<&str>) ->
     let task = edit::reopen(&mut store, &id, &status, note, clock.as_ref())?;
     finish(
         app,
-        &store,
+        &mut store,
         &id,
         &format!("[{id}] reopened -> {status}: {}\n", task.title),
     )

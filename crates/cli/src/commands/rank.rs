@@ -34,7 +34,7 @@ pub fn run(app: &App, id: &str, target: &Target) -> Result<()> {
     let mut store = app.open_store()?;
     let moved = edit::move_task(&mut store, &id, target)?;
     let line = format!("{}\n", moved.describe(target));
-    finish_move(app, &store, &id, &line, &moved.changed, &moved.ranked)
+    finish_move(app, &mut store, &id, &line, &moved.changed, &moved.ranked)
 }
 
 #[cfg(test)]

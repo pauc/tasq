@@ -8,18 +8,25 @@ use std::path::{Path, PathBuf};
 
 use tasq_core::clock::{Clock, SystemClock};
 use tasq_core::config::StoreConfig;
+use tasq_core::doctor::Check;
 use tasq_core::format::{self, Document, FormatError, Parsed};
 use tasq_core::model::{Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::Filter;
 use tasq_core::store::{BatchError, IdScheme, Store, StoreError, StoreInfo};
 
-use crate::bookkeeper::{Bookkeeper, NativeBookkeeper, RECONCILE_FIX, WriteLock};
+use crate::bookkeeper::{Bookkeeper, NativeBookkeeper, WriteLock};
 use crate::create::{DEFAULT_NOTE, check_draft, free_file_name};
 use crate::diff;
 use crate::index::{Index, is_todo};
 use crate::native::{JOB_FIX, markdown_files, verify_index};
 use crate::resolve::{index_path, resolve_notebook};
 use crate::revision::Revision;
+
+/// The interval the removed `store.sync_interval` key defaulted to: an
+/// hourly pull and push after a write, the `NB_AUTO_SYNC_SECONDS` the
+/// author's nb was configured with. The CLI keeps the nb store syncing at
+/// this rate until task 57 decides how sync comes back (ADR-0026).
+pub const DEFAULT_SYNC_INTERVAL: u64 = 3600;
 
 /// Everything [`NbStore::open`] needs besides the config: the environment
 /// to resolve `NB_DIR` in and run `git` with, the home directory, the config
@@ -38,7 +45,8 @@ pub struct NbStoreOptions {
     /// Which `#tags` are statuses.
     pub workflow: Workflow,
     /// Seconds between automatic pulls and pushes after a write, `0` for
-    /// never (`store.sync_interval`).
+    /// never. No config key sets it any more (ADR-0026); tests of the
+    /// background job do.
     pub sync_interval: u64,
 }
 
@@ -159,12 +167,10 @@ impl fmt::Debug for NbStore {
 }
 
 impl NbStore {
-    /// Resolves `config.notebook` (see [`crate::resolve`]) and opens it,
-    /// syncing every `config.sync_interval` seconds after a write.
+    /// Resolves `config.notebook` (see [`crate::resolve`]) and opens it.
     pub fn open(config: &StoreConfig, options: &NbStoreOptions) -> Result<Self, StoreError> {
         let dir = resolve_notebook(&config.notebook, options)?;
-        let options = options.clone().with_sync_interval(config.sync_interval);
-        Self::open_dir(dir, &options)
+        Self::open_dir(dir, options)
     }
 
     /// Opens the notebook at `dir` directly with a [`NativeBookkeeper`]. A
@@ -266,11 +272,6 @@ impl NbStore {
         &self.warnings
     }
 
-    /// Hands over and clears the warnings.
-    pub fn take_warnings(&mut self) -> Vec<StoreWarning> {
-        std::mem::take(&mut self.warnings)
-    }
-
     /// Whether `open` had to rebuild a missing `.index`.
     pub fn rebuilt_index(&self) -> bool {
         self.warnings
@@ -279,8 +280,7 @@ impl NbStore {
     }
 
     /// Waits until the background bookkeeping of earlier writes is done
-    /// (tests, and `tasq store sync`, which must not race a job). A failed
-    /// job becomes a warning.
+    /// (tests). A failed job becomes a warning.
     pub fn wait_for_bookkeeping(&mut self) -> Result<(), StoreError> {
         drop(self.bookkeeper.lock(self.clock.as_ref())?);
         self.collect_job_failure();
@@ -581,7 +581,9 @@ impl Store for NbStore {
             .load_index()?
             .last_id_of(&name)
             .ok_or_else(|| StoreError::Bookkeeping {
-                message: format!("{name} was written but .index does not list it; {RECONCILE_FIX}"),
+                message: format!(
+                    "{name} was written but .index does not list it; append it to .index by hand"
+                ),
             })?;
         self.checkpoint(lock, &format!("[tasq] Add: {name}"));
         self.get(&id)
@@ -679,7 +681,21 @@ impl Store for NbStore {
             task_count,
             id_scheme: IdScheme::Positional,
             ids_may_change_on_reconcile: true,
+            bookkeeper: Some(self.bookkeeper.name().to_owned()),
         }
+    }
+
+    /// Hands over and clears the [`StoreWarning`]s, rendered.
+    fn take_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.warnings)
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    /// [`crate::doctor::checks`].
+    fn doctor(&self) -> Vec<Check> {
+        crate::doctor::checks(self)
     }
 
     /// The todo file behind `id` ([`NbStore::path_of`]).

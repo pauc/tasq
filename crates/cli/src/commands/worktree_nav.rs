@@ -20,7 +20,6 @@ use tasq_core::store::Store;
 use tasq_core::worktree::listing::{Row, destinations};
 use tasq_core::worktree::target::{self, Found, Target};
 use tasq_core::worktree::{git, hooks, prune as scope};
-use tasq_store_nb::NbStore;
 use tasq_worktree::{Repo, listing};
 
 use crate::app::App;
@@ -106,7 +105,7 @@ pub fn render(rows: &[Row]) -> String {
 /// task working in the current directory's repository (every task with
 /// `all`, or outside a repository), leaving out those of closed tasks that
 /// do not exist.
-pub fn rows(app: &App, store: &NbStore, id: Option<&TaskId>, all: bool) -> Result<Vec<Row>> {
+pub fn rows(app: &App, store: &dyn Store, id: Option<&TaskId>, all: bool) -> Result<Vec<Row>> {
     let tasks = match id {
         Some(id) => vec![store.get(id)?],
         None => store.list(&Filter::new().any_done())?,
@@ -129,7 +128,7 @@ pub fn prune(app: &App, all: bool, yes: bool, dry_run: bool) -> Result<()> {
     if !app.worktrees() {
         return Err(disabled());
     }
-    let store = app.open_store()?;
+    let mut store = app.open_store()?;
     let tasks = store.list(&Filter::new().any_done())?;
     let here = if all {
         None
@@ -164,8 +163,8 @@ pub fn prune(app: &App, all: bool, yes: bool, dry_run: bool) -> Result<()> {
                 .warn(&format!("worktrees of task {} not released: {e}", task.id)),
         }
     }
-    for warning in store.warnings() {
-        app.out.warn(&warning.to_string());
+    for warning in store.take_warnings() {
+        app.out.warn(&warning);
     }
     if app.out.json_mode() {
         return app.out.json(&pruned_json(&forgotten, &released, dry_run));
@@ -262,7 +261,7 @@ pub fn switch(app: &App, target: Option<&str>, yes: bool) -> Result<()> {
 
 /// The directory `arg` names. A task's worktree that does not exist is
 /// created when `create` is `Some(yes)` (`switch`), an error otherwise.
-fn resolve(app: &App, store: &NbStore, arg: &str, create: Option<bool>) -> Result<PathBuf> {
+fn resolve(app: &App, store: &dyn Store, arg: &str, create: Option<bool>) -> Result<PathBuf> {
     let parsed =
         target::parse(arg, Path::new(arg).is_dir()).map_err(|e| CliError::user(e.to_string()))?;
     match parsed {
@@ -333,7 +332,7 @@ fn task_dir(app: &App, task: &Task, create: Option<bool>) -> Result<PathBuf> {
 
 /// The user's pick among the main checkout and the listed worktrees: with
 /// fzf when it is on `PATH`, else from a numbered list on stderr.
-fn choose(app: &App, store: &NbStore, yes: bool) -> Result<PathBuf> {
+fn choose(app: &App, store: &dyn Store, yes: bool) -> Result<PathBuf> {
     enum Choice {
         Dir(PathBuf),
         Task(TaskId),

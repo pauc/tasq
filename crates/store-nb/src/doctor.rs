@@ -1,88 +1,18 @@
 //! The store's part of `tasq doctor` (plan T-205): a list of [`Check`]s
-//! about the notebook, its index, the bookkeeper and the git identity. The CLI (Phase 3)
-//! prints them as OK/WARN/FAIL lines or as JSON and adds its own checks for
-//! optional tools through [`tool_check`].
+//! about the notebook, its index, the bookkeeper and the git identity,
+//! reached through [`Store::doctor`]. The CLI prints them as OK/WARN/FAIL
+//! lines or as JSON and adds its own checks for optional tools through
+//! [`tool_check`].
 
-use std::fmt;
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
 use tasq_core::store::{IdScheme, Store};
 
 use crate::git::Git;
 use crate::store::NbStore;
 use crate::which::find_in_path;
 
-/// How a check went.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CheckStatus {
-    /// Fine.
-    Ok,
-    /// Works, but the user should know.
-    Warn,
-    /// Broken; `tasq doctor` exits 1.
-    Fail,
-}
-
-impl fmt::Display for CheckStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Ok => "OK",
-            Self::Warn => "WARN",
-            Self::Fail => "FAIL",
-        })
-    }
-}
-
-/// One diagnostic.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Check {
-    /// Short identifier (`notebook`, `index`, `nb`, ...).
-    pub name: String,
-    /// The verdict.
-    pub status: CheckStatus,
-    /// One line saying what was found.
-    pub detail: String,
-    /// What to do about it, for `Warn` and `Fail`.
-    pub fix: Option<String>,
-}
-
-impl Check {
-    /// An `Ok` check.
-    pub fn ok(name: &str, detail: impl Into<String>) -> Self {
-        Self::new(name, CheckStatus::Ok, detail, None)
-    }
-
-    /// A `Warn` check with its fix.
-    pub fn warn(name: &str, detail: impl Into<String>, fix: impl Into<String>) -> Self {
-        Self::new(name, CheckStatus::Warn, detail, Some(fix.into()))
-    }
-
-    /// A `Fail` check with its fix.
-    pub fn fail(name: &str, detail: impl Into<String>, fix: impl Into<String>) -> Self {
-        Self::new(name, CheckStatus::Fail, detail, Some(fix.into()))
-    }
-
-    fn new(
-        name: &str,
-        status: CheckStatus,
-        detail: impl Into<String>,
-        fix: Option<String>,
-    ) -> Self {
-        Self {
-            name: name.to_owned(),
-            status,
-            detail: detail.into(),
-            fix,
-        }
-    }
-}
-
-/// Whether any check failed (the CLI exits 1 then).
-pub fn any_failed(checks: &[Check]) -> bool {
-    checks.iter().any(|c| c.status == CheckStatus::Fail)
-}
+pub use tasq_core::doctor::{Check, CheckStatus, any_failed};
 
 /// Whether an executable called `name` is on the `PATH` entry of `env`.
 /// `Ok` with its path, otherwise `Warn` with `fix` (how to install it).
@@ -101,7 +31,7 @@ pub fn tool_check(name: &str, env: &[(String, String)], fix: &str) -> Check {
 ///
 /// 1. `notebook`: the resolved directory, and whether it is a git repository.
 /// 2. `index`: `.index` present and consistent (through the bookkeeper's
-///    `verify`), with `tasq store reconcile` as the fix.
+///    `verify`), with [`crate::bookkeeper::RECONCILE_FIX`] as the fix.
 /// 3. `ids`: a warning for positional ids (T-204).
 /// 4. `bookkeeper`: which strategy is in use and how often it syncs.
 /// 5. `git-identity`: present when commits will be made (a repository); a
@@ -170,7 +100,7 @@ fn index_check(store: &NbStore) -> Check {
 /// `bookkeeper: native, syncing at most every 3600 s after a write`.
 fn bookkeeper_detail(name: &str, sync_interval: u64) -> String {
     if sync_interval == 0 {
-        format!("bookkeeper: {name}, no automatic sync (tasq store sync)")
+        format!("bookkeeper: {name}, no automatic sync")
     } else {
         format!("bookkeeper: {name}, syncing at most every {sync_interval} s after a write")
     }
@@ -210,55 +140,6 @@ fn identity_check(git: &Git, bookkeeper: &str) -> Option<Check> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn status_display_and_serde() {
-        assert_eq!(CheckStatus::Ok.to_string(), "OK");
-        assert_eq!(CheckStatus::Warn.to_string(), "WARN");
-        assert_eq!(CheckStatus::Fail.to_string(), "FAIL");
-        assert_eq!(
-            serde_json::to_string(&CheckStatus::Warn).unwrap(),
-            "\"warn\""
-        );
-        let c = Check::fail("index", "missing", "reconcile");
-        let json = serde_json::to_string(&c).unwrap();
-        assert_eq!(
-            json,
-            "{\"name\":\"index\",\"status\":\"fail\",\"detail\":\"missing\",\"fix\":\"reconcile\"}"
-        );
-        assert_eq!(serde_json::from_str::<Check>(&json).unwrap(), c);
-        assert_eq!(
-            serde_json::to_string(&Check::ok("nb", "fine")).unwrap(),
-            "{\"name\":\"nb\",\"status\":\"ok\",\"detail\":\"fine\",\"fix\":null}"
-        );
-    }
-
-    #[test]
-    fn constructors() {
-        let ok = Check::ok("a", "fine");
-        assert_eq!(
-            (
-                ok.name.as_str(),
-                ok.status,
-                ok.detail.as_str(),
-                ok.fix.as_deref()
-            ),
-            ("a", CheckStatus::Ok, "fine", None)
-        );
-        let warn = Check::warn("b", "meh", "do x");
-        assert_eq!(
-            (warn.status, warn.fix.as_deref()),
-            (CheckStatus::Warn, Some("do x"))
-        );
-        let fail = Check::fail("c", "bad", "do y");
-        assert_eq!(
-            (fail.status, fail.fix.as_deref()),
-            (CheckStatus::Fail, Some("do y"))
-        );
-        assert!(!any_failed(&[ok.clone(), warn.clone()]));
-        assert!(any_failed(&[ok, warn, fail]));
-        assert!(!any_failed(&[]));
-    }
 
     #[test]
     #[cfg(unix)]
@@ -302,7 +183,7 @@ mod tests {
         );
         assert_eq!(
             bookkeeper_detail("native", 0),
-            "bookkeeper: native, no automatic sync (tasq store sync)"
+            "bookkeeper: native, no automatic sync"
         );
     }
 

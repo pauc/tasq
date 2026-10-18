@@ -17,9 +17,8 @@ the procedure is at the end of this document.
 - **Same ids.** Both read `.index` and use the line number as the task id.
   `tasq` appends to `.index` with the same bytes `nb index add` writes and
   never reorders it. `nb index reconcile` renumbers ids for both tools alike;
-  `tasq store reconcile` repairs an out-of-date index without renumbering
-  (lines of deleted files become empty, as nb leaves them), and is what
-  `tasq doctor` suggests.
+  `tasq doctor` reports an out-of-date index and a missing one is rebuilt
+  from the files by the next command.
 - **Lossless format.** `tasq` parses a file into a document that keeps unknown
   sections, unknown lines, ordering, blank lines and line endings byte for
   byte, and rewrites only the section an edit touched. For every file the
@@ -29,9 +28,10 @@ the procedure is at the end of this document.
   ([ADR-0023](adr/0023-no-nb-at-runtime.md)). Every write is committed as
   `[tasq] Update: <file>` (`Add`, `Done`, `Undone`) by a background `git`
   job, so `nb history` reads as before, and the same job pulls and pushes at
-  most every `store.sync_interval` seconds (default 3600, like an hourly
-  `NB_AUTO_SYNC_SECONDS`). The command itself returns before the commit
-  lands.
+  most hourly (like `NB_AUTO_SYNC_SECONDS=3600`; no longer configurable,
+  [ADR-0026](adr/0026-store-v2-frontmatter-tasq-directory-ulid-files.md)
+  brings sync back as a feature of the new store). The command itself
+  returns before the commit lands.
 - **Conflicts are detected, not merged.** `tasq` captures mtime, length and
   hash of a file when it reads it and refuses to write (`Conflict`) if the
   file changed in between. Alternating the two tools is fine; editing the
@@ -103,7 +103,7 @@ names below are from `crates/core/src/config/mod.rs`.
 | `glab api` for MR titles, `gitlab.silverfin.com` | hard-coded | `[forge.gitlab] host`, `token_cmd = "glab config get token --host gitlab.silverfin.com"` (or `GITLAB_TOKEN`) | |
 | `/update-tasks` skill (GitLab, Slack, Gmail) | Claude session | `[[source]]` blocks (`gitlab-review-requests`, `gitlab-work-items`, `github-*`, `llm-bridge`) | |
 | `FRESHDESK_API_KEY`, `bin/freshdesk` | | none (Non-Goal) | |
-| `nb` bookkeeping, `NB_AUTO_SYNC_SECONDS` | always through nb, sync on every checkpoint | native; `store.sync_interval` (seconds, `0` never) | `TASQ_SYNC_INTERVAL` |
+| `nb` bookkeeping, `NB_AUTO_SYNC_SECONDS` | always through nb, sync on every checkpoint | native; pull and push at most hourly, not configurable (ADR-0026) | |
 
 A global config that reproduces the script's defaults:
 

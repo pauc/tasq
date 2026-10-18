@@ -325,7 +325,7 @@ fn create_reports_a_failed_registration_without_hiding_the_write() {
     let err = store.create(TaskDraft::new("Forgotten")).unwrap_err();
     assert_eq!(
         err.to_string(),
-        "bookkeeping failed after the write: 20261004123401.todo.md was written but .index does not list it; run 'tasq store reconcile'"
+        "bookkeeping failed after the write: 20261004123401.todo.md was written but .index does not list it; append it to .index by hand"
     );
 }
 
@@ -387,7 +387,7 @@ fn commit_failure_after_create_is_a_warning() {
     assert_eq!(task.id, TaskId::from(8), "the task exists");
     assert_eq!(store.warnings(), [], "the commit runs in the background");
     store.wait_for_bookkeeping().unwrap();
-    let warnings = store.take_warnings();
+    let warnings = store.warnings();
     assert_eq!(warnings.len(), 1);
     match &warnings[0] {
         StoreWarning::Bookkeeping { message } => {
@@ -396,8 +396,7 @@ fn commit_failure_after_create_is_a_warning() {
                 "{message}"
             );
             assert!(
-                message
-                    .ends_with("; check 'git status' in the notebook, then run 'tasq store sync'"),
+                message.ends_with("; check 'git status' in the notebook and commit by hand"),
                 "{message}"
             );
         }

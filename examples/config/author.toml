@@ -8,7 +8,6 @@
 [store]
 kind = "nb"
 notebook = "home"
-sync_interval = 3600         # commits after every write; pulls and pushes at most hourly
 
 [workflow]
 statuses = ["in-progress", "ready", "waiting", "blocked", "later"]

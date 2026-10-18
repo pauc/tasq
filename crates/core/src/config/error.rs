@@ -41,7 +41,7 @@ pub enum ConfigError {
         /// 1-based column.
         column: usize,
         /// Parser message, for example
-        /// ``unknown field `notbook`, expected one of `kind`, `notebook`, `sync_interval` ``.
+        /// ``unknown field `notbook`, expected one of `kind`, `notebook` ``.
         message: String,
     },
     /// A value set by the environment or `--set` could not be used.

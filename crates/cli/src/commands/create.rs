@@ -6,7 +6,6 @@ use tasq_core::dates::parse_day;
 use tasq_core::model::{Link, Priority, Status, Tag, Task, TaskDraft, Workflow, Worktree};
 use tasq_core::store::Store;
 use tasq_core::worktree::{declaration, lifecycle};
-use tasq_store_nb::NbStore;
 
 use crate::app::App;
 use crate::cli::CreateArgs;
@@ -125,7 +124,7 @@ fn worktree_flag<'a>(app: &App, args: &'a CreateArgs) -> Result<Asked<'a>> {
 /// it; the task as stored, and the declared worktree for the message.
 fn declare_worktree(
     app: &App,
-    store: &mut NbStore,
+    store: &mut dyn Store,
     task: Task,
     asked: Asked,
 ) -> Result<(Task, Option<String>)> {

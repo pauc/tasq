@@ -7,7 +7,7 @@ mod support;
 
 use tasq_core::model::Workflow;
 use tasq_store_nb::doctor::{any_failed, checks, tool_check};
-use tasq_store_nb::{Check, CheckStatus, NbStore, NbStoreOptions};
+use tasq_store_nb::{Check, CheckStatus, NbStore, NbStoreOptions, Store};
 
 use support::NbEnv;
 
@@ -34,6 +34,7 @@ fn healthy_native_notebook() {
         ["notebook", "index", "ids", "bookkeeper", "git-identity"]
     );
     assert!(!any_failed(&report), "{report:#?}");
+    assert_eq!(store.doctor(), report, "the trait reports the same checks");
     let notebook = by_name(&report, "notebook");
     assert_eq!(notebook.status, CheckStatus::Ok);
     assert_eq!(
@@ -99,10 +100,15 @@ fn broken_notebook_without_git() {
             store.index_path().display()
         )
     );
-    assert_eq!(index.fix.as_deref(), Some("run 'tasq store reconcile'"));
+    assert_eq!(
+        index.fix.as_deref(),
+        Some(
+            "edit .index by hand: blank the line of a file that is gone, append a file that is not listed"
+        )
+    );
     assert_eq!(
         by_name(&report, "bookkeeper").detail,
-        "bookkeeper: native, no automatic sync (tasq store sync)"
+        "bookkeeper: native, no automatic sync"
     );
 
     // Index file gone entirely (opened before deletion).
@@ -114,7 +120,12 @@ fn broken_notebook_without_git() {
         index.detail,
         format!("{} is missing", store.index_path().display())
     );
-    assert_eq!(index.fix.as_deref(), Some("run 'tasq store reconcile'"));
+    assert_eq!(
+        index.fix.as_deref(),
+        Some(
+            "edit .index by hand: blank the line of a file that is gone, append a file that is not listed"
+        )
+    );
 }
 
 #[test]

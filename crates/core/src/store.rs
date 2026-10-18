@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::clock::FixedClock;
+use crate::doctor::Check;
 use crate::format::FormatError;
 use crate::model::{Task, TaskDraft, TaskId};
 use crate::query::Filter;
@@ -141,6 +142,11 @@ pub struct StoreInfo {
     /// Whether ids can change when the store's index is rebuilt; the CLI
     /// warns about it.
     pub ids_may_change_on_reconcile: bool,
+    /// The strategy that does the bookkeeping after a write (nb: `native`,
+    /// or `none` in tests), for stores that have one. Left out of the JSON
+    /// when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bookkeeper: Option<String>,
 }
 
 /// Task persistence.
@@ -188,6 +194,16 @@ pub trait Store {
     /// Location, size and id semantics.
     fn describe(&self) -> StoreInfo;
 
+    /// Hands over, and clears, what the user should hear about that did not
+    /// stop a command (nb: an index rebuilt on open, a background commit
+    /// that failed). The CLI prints each one as a warning.
+    fn take_warnings(&mut self) -> Vec<String>;
+
+    /// The store's part of `tasq doctor`: one [`Check`] per thing worth
+    /// verifying about the store itself (nb: the notebook, its index, the
+    /// bookkeeper, the git identity), in display order.
+    fn doctor(&self) -> Vec<Check>;
+
     /// The file holding `id`, for stores that keep one file per task (the
     /// TUI opens it in `$EDITOR`). `None` when the store has no such file;
     /// [`StoreError::NotFound`] when there is no such task.
@@ -196,15 +212,61 @@ pub trait Store {
     }
 }
 
+/// A boxed store is a store: the CLI opens its store as a `Box<dyn Store>`
+/// and hands it to functions taking `&mut dyn Store` or `&dyn Store`.
+impl<S: Store + ?Sized> Store for Box<S> {
+    fn list(&self, filter: &Filter) -> Result<Vec<Task>, StoreError> {
+        (**self).list(filter)
+    }
+
+    fn get(&self, id: &TaskId) -> Result<Task, StoreError> {
+        (**self).get(id)
+    }
+
+    fn create(&mut self, draft: TaskDraft) -> Result<Task, StoreError> {
+        (**self).create(draft)
+    }
+
+    fn update(&mut self, task: &Task) -> Result<(), StoreError> {
+        (**self).update(task)
+    }
+
+    fn update_many(&mut self, tasks: &[Task]) -> Result<(), BatchError> {
+        (**self).update_many(tasks)
+    }
+
+    fn set_done(&mut self, id: &TaskId, done: bool) -> Result<(), StoreError> {
+        (**self).set_done(id, done)
+    }
+
+    fn describe(&self) -> StoreInfo {
+        (**self).describe()
+    }
+
+    fn take_warnings(&mut self) -> Vec<String> {
+        (**self).take_warnings()
+    }
+
+    fn doctor(&self) -> Vec<Check> {
+        (**self).doctor()
+    }
+
+    fn file_of(&self, id: &TaskId) -> Result<Option<PathBuf>, StoreError> {
+        (**self).file_of(id)
+    }
+}
+
 /// A [`Store`] that keeps its tasks in memory: the test double for every
 /// front end, and a scratch store for tools that assemble tasks without a
 /// notebook. Ids are stable and assigned on creation as `1`, `2`, ...
 /// after the highest numeric id present. New tasks' notes are stamped with
-/// the injected clock.
+/// the injected clock. Warnings are whatever a test queued with
+/// [`MemoryStore::warn`].
 #[derive(Debug, Clone)]
 pub struct MemoryStore {
     tasks: Vec<Task>,
     clock: FixedClock,
+    warnings: Vec<String>,
 }
 
 impl Default for MemoryStore {
@@ -219,7 +281,14 @@ impl MemoryStore {
         Self {
             tasks: tasks.into_iter().collect(),
             clock: FixedClock::at("2026-01-01 09:00"),
+            warnings: Vec::new(),
         }
+    }
+
+    /// Queues `message` for the next [`Store::take_warnings`], so a front
+    /// end's warning output can be tested.
+    pub fn warn(&mut self, message: impl Into<String>) {
+        self.warnings.push(message.into());
     }
 
     /// Uses `clock` to stamp the first note of created tasks.
@@ -296,7 +365,20 @@ impl Store for MemoryStore {
             task_count: self.tasks.len(),
             id_scheme: IdScheme::Stable,
             ids_may_change_on_reconcile: false,
+            bookkeeper: None,
         }
+    }
+
+    fn take_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.warnings)
+    }
+
+    /// One check: how many tasks are held.
+    fn doctor(&self) -> Vec<Check> {
+        vec![Check::ok(
+            "memory",
+            format!("{} task(s) held in memory", self.tasks.len()),
+        )]
     }
 }
 
@@ -408,14 +490,24 @@ mod tests {
             task_count: 4,
             id_scheme: IdScheme::Positional,
             ids_may_change_on_reconcile: true,
+            bookkeeper: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert_eq!(
             json,
-            "{\"name\":\"nb\",\"location\":\"/nb/home\",\"task_count\":4,\"id_scheme\":\"positional\",\"ids_may_change_on_reconcile\":true}"
+            "{\"name\":\"nb\",\"location\":\"/nb/home\",\"task_count\":4,\"id_scheme\":\"positional\",\"ids_may_change_on_reconcile\":true}",
+            "no bookkeeper: the key is left out"
         );
         let back: StoreInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(back, info);
+        let with_bookkeeper = StoreInfo {
+            bookkeeper: Some("native".to_owned()),
+            ..info
+        };
+        let json = serde_json::to_string(&with_bookkeeper).unwrap();
+        assert!(json.ends_with(",\"bookkeeper\":\"native\"}"), "{json}");
+        let back: StoreInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, with_bookkeeper);
         assert_eq!(
             serde_json::to_string(&IdScheme::Stable).unwrap(),
             "\"stable\""
@@ -614,7 +706,125 @@ mod tests {
                     task_count: 2,
                     id_scheme: IdScheme::Stable,
                     ids_may_change_on_reconcile: false,
+                    bookkeeper: None,
                 }
+            );
+        }
+
+        #[test]
+        fn warnings_are_queued_until_taken() {
+            let mut store = store();
+            assert_eq!(store.take_warnings(), Vec::<String>::new());
+            store.warn("first");
+            store.warn("second");
+            assert_eq!(
+                store.take_warnings(),
+                vec!["first".to_owned(), "second".to_owned()]
+            );
+            assert_eq!(
+                store.take_warnings(),
+                Vec::<String>::new(),
+                "taken means cleared"
+            );
+        }
+
+        #[test]
+        fn doctor_counts_the_tasks() {
+            assert_eq!(
+                store().doctor(),
+                vec![Check::ok("memory", "2 task(s) held in memory")]
+            );
+            assert_eq!(
+                MemoryStore::default().doctor(),
+                vec![Check::ok("memory", "0 task(s) held in memory")]
+            );
+        }
+
+        /// A recording store: every call is logged, so the boxed forwarding
+        /// is checked call by call, with the arguments it passed on.
+        #[derive(Default)]
+        struct Recording {
+            inner: MemoryStore,
+            calls: std::cell::RefCell<Vec<String>>,
+        }
+
+        impl Recording {
+            fn note(&self, call: String) {
+                self.calls.borrow_mut().push(call);
+            }
+        }
+
+        impl Store for Recording {
+            fn list(&self, filter: &Filter) -> Result<Vec<Task>, StoreError> {
+                self.note("list".to_owned());
+                self.inner.list(filter)
+            }
+            fn get(&self, id: &TaskId) -> Result<Task, StoreError> {
+                self.note(format!("get {id}"));
+                self.inner.get(id)
+            }
+            fn create(&mut self, draft: TaskDraft) -> Result<Task, StoreError> {
+                self.note("create".to_owned());
+                self.inner.create(draft)
+            }
+            fn update(&mut self, task: &Task) -> Result<(), StoreError> {
+                self.note(format!("update {}", task.id));
+                self.inner.update(task)
+            }
+            fn update_many(&mut self, tasks: &[Task]) -> Result<(), BatchError> {
+                self.note(format!("update_many {}", tasks.len()));
+                self.inner.update_many(tasks)
+            }
+            fn set_done(&mut self, id: &TaskId, done: bool) -> Result<(), StoreError> {
+                self.note(format!("set_done {id} {done}"));
+                self.inner.set_done(id, done)
+            }
+            fn describe(&self) -> StoreInfo {
+                self.note("describe".to_owned());
+                StoreInfo {
+                    name: "recording".to_owned(),
+                    ..self.inner.describe()
+                }
+            }
+            fn take_warnings(&mut self) -> Vec<String> {
+                self.note("take_warnings".to_owned());
+                vec!["w".to_owned()]
+            }
+            fn doctor(&self) -> Vec<Check> {
+                self.note("doctor".to_owned());
+                vec![Check::ok("c", "fine")]
+            }
+            fn file_of(&self, id: &TaskId) -> Result<Option<PathBuf>, StoreError> {
+                self.note(format!("file_of {id}"));
+                Ok(Some(PathBuf::from(format!("/{id}.md"))))
+            }
+        }
+
+        #[test]
+        fn a_box_forwards_every_call() {
+            let mut boxed = Box::new(Recording::default());
+            let created = boxed.create(TaskDraft::new("Boxed")).unwrap();
+            assert_eq!(created.id, TaskId::from(1));
+            assert_eq!(boxed.get(&created.id).unwrap().title, "Boxed");
+            assert_eq!(boxed.list(&Filter::new()).unwrap().len(), 1);
+            let mut renamed = created.clone();
+            renamed.title = "Renamed".to_owned();
+            boxed.update(&renamed).unwrap();
+            assert_eq!(boxed.get(&created.id).unwrap().title, "Renamed");
+            boxed.update_many(&[renamed.clone(), renamed]).unwrap();
+            boxed.set_done(&created.id, true).unwrap();
+            assert!(boxed.get(&created.id).unwrap().done);
+            assert_eq!(boxed.describe().name, "recording");
+            assert_eq!(boxed.take_warnings(), vec!["w".to_owned()]);
+            assert_eq!(boxed.doctor(), vec![Check::ok("c", "fine")]);
+            assert_eq!(
+                boxed.file_of(&created.id).unwrap(),
+                Some(PathBuf::from("/1.md"))
+            );
+            assert_eq!(
+                boxed.calls.borrow().join("; "),
+                "create; get 1; list; update 1; get 1; update_many 2; set_done 1 true; get 1; \
+                 describe; take_warnings; doctor; file_of 1"
             );
         }
     }

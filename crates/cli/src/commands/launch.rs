@@ -10,7 +10,6 @@ use tasq_launch::process::Trace;
 use tasq_launch::prompt::DEFAULT_TEMPLATE;
 use tasq_launch::registry::resolve_name;
 use tasq_launch::{LaunchSettings, launcher_for, resolve_detached};
-use tasq_store_nb::NbStore;
 
 use crate::app::App;
 use crate::cli::Command;
@@ -154,7 +153,7 @@ pub fn launch_settings(app: &App) -> Result<LaunchSettings> {
 /// The script's `open_session`.
 fn open_session(
     app: &App,
-    store: &mut NbStore,
+    store: &mut dyn Store,
     id: &TaskId,
     how: &How,
     dry_run: bool,
@@ -185,7 +184,7 @@ fn open_session(
         }
     }
     say(app, &format!("Task: [{id}] {}\n", task.title))?;
-    let file = store.path_of(id)?;
+    let file = super::task_file(store, id)?;
     let markdown = std::fs::read_to_string(&file).map_err(|source| StoreError::Io {
         path: file.clone(),
         source,

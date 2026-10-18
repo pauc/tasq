@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 use tasq_core::clock::{Clock, FixedClock, SystemClock, When, parse_timestamp};
 use tasq_core::config::{Config, LoadOptions, Loaded};
 use tasq_core::model::{TaskId, Workflow};
-use tasq_store_nb::{NbStore, NbStoreOptions};
+use tasq_core::store::Store;
+use tasq_store_nb::{DEFAULT_SYNC_INTERVAL, NbStore, NbStoreOptions};
 use tasq_worktree::Git;
 
 use crate::cli::{Cli, Command, EditCommand, GlobalArgs, ListArgs};
@@ -274,12 +275,14 @@ impl App {
     }
 
     /// Store options from the config and the process environment: `NB_DIR`
-    /// is looked up in this environment, `git` runs with it, and the file
-    /// that set `store.notebook` is recorded for error messages.
+    /// is looked up in this environment, `git` runs with it, the file that
+    /// set `store.notebook` is recorded for error messages, and the notebook
+    /// keeps pulling and pushing at the rate the removed `store.sync_interval`
+    /// defaulted to (ADR-0026 brings sync back as a feature of the new store).
     pub fn store_options(&self) -> NbStoreOptions {
         let mut options = NbStoreOptions::new(self.workflow())
             .with_env(self.env_vec())
-            .with_sync_interval(self.config().store.sync_interval);
+            .with_sync_interval(DEFAULT_SYNC_INTERVAL);
         if let Some(home) = &self.opts.home {
             options = options.with_home(home);
         }
@@ -308,17 +311,23 @@ impl App {
         TaskId::new(text).map_err(|_| CliError::user("task id must not be empty"))
     }
 
-    /// Opens the configured store. Warnings raised while opening (a
-    /// rebuilt index, the previous command's failed background commit) go
-    /// to stderr.
-    pub fn open_store(&self) -> Result<NbStore> {
-        let mut store =
-            NbStore::open(&self.config().store, &self.store_options())?.with_clock(self.clock()?);
+    /// Opens the configured store as a [`Store`] trait object: this is the
+    /// one place that knows which implementation backs the commands.
+    /// Warnings raised while opening (a rebuilt index, the previous
+    /// command's failed background commit) go to stderr.
+    pub fn open_store(&self) -> Result<Box<dyn Store>> {
+        let mut store: Box<dyn Store> = Box::new(
+            NbStore::open(&self.config().store, &self.store_options())?.with_clock(self.clock()?),
+        );
         for warning in store.take_warnings() {
-            self.out.warn(&warning.to_string());
+            self.out.warn(&warning);
         }
-        self.out
-            .verbose(&format!("notebook: {}", store.dir().display()));
+        let info = store.describe();
+        self.out.verbose(&format!(
+            "store: {} at {}",
+            info.name,
+            info.location.display()
+        ));
         Ok(store)
     }
 }
