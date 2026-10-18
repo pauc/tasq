@@ -8,7 +8,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 |---|---|---|---|
 | SV-001 | CLI talks to the `Store` trait; `store sync` / `store reconcile` go (prefactor) | done | 2d527e5; `App::open_store` returns `Box<dyn Store>`; `Store` gained `take_warnings` and `doctor` (required); `Check` moved to `tasq_core::doctor`; 40 mutants in the diff, 0 missed |
 | SV-002 | `tasq-store` crate skeleton, revision and diff moved (prefactor) | done | 7920eb3; `crates/store` (`tasq-store`, deps: core only); `revision.rs` and `diff.rs` moved with their 16 unit tests, store-nb re-exports `Revision`, `diff`, `revision`; `mutants-in crates/store/src`: 44 mutants, 42 caught, 2 unviable, 0 missed (two tests added) |
-| SV-003 | Core reads and renders a v2 task file | done | 710f1ff; `Document` keeps the block as a `front` region ahead of the body, `format::parse_v2(text, created_at, workflow)`, `Document::{frontmatter, id}`, `format::key`, `Task::created_at`; nine v2 fixtures under `crates/core/tests/fixtures/v2/`, `format_v2.rs` (23 tests), a v2 arm in `format_props.rs`; `mutants-in crates/core/src/format`: 380 mutants, 342 caught, 38 unviable, 0 missed |
+| SV-003 | Core reads and renders a v2 task file | done | 710f1ff, c1d2bf1; `Document` keeps the block as a `front` region ahead of the body, `format::parse_v2(text, created_at, workflow)`, `Document::{frontmatter, id}`, `format::key`, `Task::created_at`; nine v2 fixtures under `crates/core/tests/fixtures/v2/`, `format_v2.rs` (23 tests), a v2 arm in `format_props.rs`; `mutants-in crates/core/src/format`: 385 mutants, 347 caught, 38 unviable, 0 missed |
 | SV-004 | Core writes v2: new documents and one op per key | ready | |
 | SV-005 | The tasq store reads a directory | ready | |
 | SV-006 | Create under the store lock | blocked (SV-004, SV-005) | |
@@ -88,15 +88,22 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   `diff::apply` call it unchanged). `format::parse_v2(text, created_at, workflow)` is the
   store's entry point: it refuses a v1 file with `FormatError::NotFrontmatter` and sets
   `Task::created_at`, which is `#[serde(skip)]` until SV-010 picks the JSON shape (it is not
-  a field of the file, so `diff::differing_fields` never compares it).
+  a field of the file, so `diff::differing_fields` never compares it). `parse_v2` checks the
+  first line itself, so a v1 task file and any other markdown file are both `NotFrontmatter`
+  (the review caught the first cut, which let a README through to `NotATask`); SV-005 skips
+  and reports on that one variant.
 - 2026-10-18 (SV-003): a value that does not parse (`priority: D`, `due: next friday`, a
   `status` the workflow does not know, `rank: 1.5`) reads as unset and stays in the file,
   the way an invalid `## Rank` did in v1; an empty value (`project:`) is unset too. `tags`
   must be bracketed (`[a, b]`), items are trimmed and anything `Tag::new` refuses is dropped.
-  An origin needs `source` and `source_id`; `source_url` is optional and a `source_id` that is
-  a URL is the url too, the v1 `## Source` rule, so SV-004 can write the line the way
-  `format_origin` did. The v1 scalar sections (`## Due`, `## Tags`, ...) are unknown sections
-  in a v2 body and are not read (`extra-sections` fixture).
+  An origin needs `source` and `source_id`; `source_url` is the url and nothing else is
+  (the v1 rule that a URL-shaped id doubles as the url was dropped on review: it made
+  `url: None` unrepresentable for such an id, and SV-004's writer always writes
+  `source_url` when there is one). The v1 scalar sections (`## Due`, `## Tags`, ...) are
+  unknown sections in a v2 body and are not read (`extra-sections` fixture). The scalar ops in
+  `format::ops` (`set_title`, `set_done`, `set_status`, ...) are v1-only until SV-004:
+  `set_title` on a v2 document would write a `# [ ] ` marker; the store's re-parse compare
+  turns that into `Unsupported`, and nothing calls them on a v2 document yet.
 
 ## Deviations
 
