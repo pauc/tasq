@@ -216,7 +216,7 @@ the nb store crate stays only as `migrate`'s dependency until a follow-up task d
   `tasq store init`.
 - Launched sessions receive `TASQ_DATA_DIR` (the resolved absolute directory) and
   `TASQ_STORE_NAME` instead of `TASQ_NOTEBOOK`.
-- `created` appears in the JSON document of a task (ISO local time, absent when unknown) and in
+- `created` appears in the JSON document of a task (local time, `YYYY-MM-DD HH:MM`, absent when unknown) and in
   `tasq view` and the TUI detail.
 - `tasq migrate <notebook> [--to <dir>] [--dry-run]`: `<notebook>` resolves the way
   `store.notebook` did (a name is `$NB_DIR/<name>`, default `~/.nb/<name>`; a value containing
@@ -473,13 +473,13 @@ positional-id warning; launched sessions receive `TASQ_DATA_DIR` (resolved, abso
 
 **Blocked by:** SV-009.
 
-**Status:** ready
+**Status:** done
 
-- [ ] `view --json` carries `created` as ISO local time; absent when unknown; `tasq view` and the TUI detail show it.
-- [ ] `store info` shows `data_dir` and `store.name` with where each was set.
+- [x] `view --json` carries `created` as local time (`YYYY-MM-DD HH:MM`, the shape of every JSON timestamp); absent when unknown; `tasq view` (on a terminal) and the TUI detail show it.
+- [x] `store info` shows `data_dir` and `store.name` with where each was set.
 - [x] `doctor` on a clean store prints no warning about ids (landed with SV-009: the tasq store's `doctor` has no such check; pinned by the `passes_on_a_clean_store` snapshot).
 - [x] A launched session's environment has `TASQ_DATA_DIR` and `TASQ_STORE_NAME` and not `TASQ_NOTEBOOK` (landed with SV-009: `store.notebook` went, so the launch env had to change with it).
-- [ ] Zero missed mutants in the touched code.
+- [x] Zero missed mutants in the touched code.
 
 ### SV-011: `tasq migrate <notebook> [--to <dir>] [--dry-run]`
 
@@ -505,7 +505,7 @@ only", `docs/config.md`, `docs/json.md`, `docs/testing.md`, `docs/agents/issue-t
 `CLAUDE.md` and the plugin prompts updated; task 47 and task 2 closed; the store-nb removal task
 created, blocked by nothing once this task lands, and linked from task 56.
 
-**Blocked by:** SV-010, SV-011.
+**Blocked by:** SV-011.
 
 **Status:** blocked
 

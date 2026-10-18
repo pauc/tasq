@@ -15,9 +15,9 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 | SV-007 | Update with conflict detection, and doctor | done | 9184e95; `TasqStore::{update, set_done}` (`crates/store/src/store.rs`), revisions remembered by `get`/`list`, `TasqStore::edit` (the shared edit-compare-write, with the invalid-UTF-8 refusal), doctor's `lock` check; `tests/update.rs` (14 tests); `mutants-in crates/store/src`: 164 mutants, 130 caught, 32 unviable, 2 timeouts (the same two loops as SV-006), 0 missed |
 | SV-008 | Migrate as a library, and the committed v2 fixture store | done | 69f7f75; `tasq_store::migrate::{plan, Plan, Entry, MigrateError}` (`crates/store/src/migrate.rs`), the fixture store `crates/store/tests/fixtures/stores/default` (ids 1, 3, 4, 6, 7), `format::section::ALL`; `tests/migrate.rs` (23 tests), the parity test `crates/store-nb/tests/migrate.rs`; mutants on `migrate.rs`, `lock.rs`, `store.rs`: 107 + 49 mutants, 0 missed (timeouts: the known lock and name loops) |
 | SV-009 | The CLI opens the tasq store | done | 5cffcd5; `Config::data_dir` (`Option<PathBuf>`, filled by `Config::load` from `default_data_dir`), `StoreConfig::name` plus three `Removed` keys, `ConfigError::BadStoreName`, `ENV_DATA_DIR`/`ENV_STORE_NAME`; `App::{data_dir, store_dir, store_env}`, `open_store` builds a `TasqStore`; `tasq_launch::which::{find_in_path, tool_check}` (moved out of store-nb); `NbStore::open(notebook: &str, ..)`; the CLI harness copies the v2 fixture store under the test `HOME` (`TZ=UTC`, `ulid_name`, `v2`, `file_of`, `read_task(id)`); 201 CLI tests, 23 snapshots regenerated and reviewed; mutants `--in-diff` (config loading, `NbStore::open`, `tool_check`): 16 mutants, 13 caught, 3 unviable, 0 missed; `mutants-in crates/launch/src/which.rs`: 11 mutants, 10 caught, 1 unviable, 0 missed |
-| SV-010 | Creation time and store provenance surfaces | ready | the launched-session and no-ids-warning bullets landed with SV-009 |
+| SV-010 | Creation time and store provenance surfaces | done | 2728d5a; `Task::created_at` serialised as `created` (`YYYY-MM-DD HH:MM`, skipped when `None`, never deserialised); TUI detail `Created:` line; `tasq view` on a terminal adds `created:` to the shown frontmatter and fences the block for glow (`view::{with_created, fence_frontmatter}`); `App::store_provenance` (`Provenance`), `store info` `data_dir:`/`store.name:` lines and `{value, from}` JSON keys, doctor `location` check; 6 snapshots regenerated and reviewed; mutants `--no-config` on the touched CLI and TUI files, `--in-diff`: 30 mutants, 25 caught, 5 unviable, 0 missed (the config excludes `crates/cli` and `crates/tui`; core changed only an attribute) |
 | SV-011 | `tasq migrate <notebook> [--to] [--dry-run]` | ready | |
-| SV-012 | Docs, agent surfaces and the hand-over | blocked (SV-010, SV-011) | |
+| SV-012 | Docs, agent surfaces and the hand-over | blocked (SV-011) | |
 
 ## Learnings
 
@@ -340,7 +340,23 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   `docs/architecture.md` and the two example configs were updated where they named the changed
   keys; the full sweep (nb prose, `.index`, positional ids) stays SV-012's.
 
+- 2026-10-18 (SV-010): glow strips a frontmatter block, so since SV-009 a rendered `tasq view`
+  showed none of the v2 scalar fields. The glow input now has the block's `---` lines replaced
+  by code fences (`fence_frontmatter`); the plain path is unchanged. `created:` is added as the
+  block's last line only when stdout is a terminal: piped output stays the file byte for byte,
+  so an agent copying it never writes a `created:` key the format does not have, and `--raw`
+  no longer needs the task to parse. `docs/json.md` documents `created` and the two new `store
+  info` keys now, not in SV-012, because the JSON shape changed in this commit.
+
 ## Deviations
+
+- SV-010: `created` is `YYYY-MM-DD HH:MM` (minute precision), not "ISO local time" with the
+  ULID's milliseconds: `docs/json.md` says every JSON timestamp has that shape, and `closed_at`,
+  progress and sessions already use it. PLAN.md's criterion and decision were reworded. `store
+  info` and the doctor `location` check name the layer that set `data_dir` as `defaults` when
+  `$XDG_DATA_HOME` produced it (the default is derived from it, the layer is still the
+  defaults); naming the variable would need the loader to record it. The doctor check is a new
+  `location` line ahead of the store's own checks, which already print the directory.
 
 - SV-001's first criterion read "No file in the CLI crate names the nb store type". The
   construction site has to: `App::open_store` in `crates/cli/src/app.rs` is the one place that
@@ -455,5 +471,5 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 ## Blockers
 
 - One cargo build at a time on this machine (`scripts/guard`); independent sub-tasks (SV-001,
-  SV-002 and SV-003 were; SV-010 and SV-011 are now the frontier) are worked one after
+  SV-002 and SV-003 were; SV-011 is now the frontier) are worked one after
   another, not in parallel agents.
