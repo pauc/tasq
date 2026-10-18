@@ -439,7 +439,14 @@ shell-quoted, whether it succeeded, and its stdout and stderr. `launch.log` (or
 session opened from the TUI, which shows only the last line. A log file that cannot be written
 is ignored. Warnings that were silent before now say why: a herdr pane that could not be
 opened names herdr's error, a failed `focus` step is reported, and a failed `agent start`
-lists the error of both names it tried.
+lists the error of both names it tried. A new pane's shell takes a while to reach its prompt
+(zsh with rc files, direnv and gitstatus: 100-300 ms, more on a fresh worktree) and herdr
+refuses `agent start` with `agent_pane_busy` until then, so the launcher retries it every
+100 ms for up to 5 s; the trace keeps only the attempt that got through (or the last one)
+and adds `waited N ms for the pane's shell (K agent_pane_busy replies)`. A pane still busy
+after 5 s fails the launch with herdr's message, the time waited and the pane's foreground
+process from `herdr pane process-info` (`foreground: gitstatusd (pid 42)`), the thing to
+look at when a shell hangs on startup.
 
 The session's environment carries `TASQ_TASK_ID`, `TASQ_NOTEBOOK` and, when a profile is
 selected, `TASQ_PROFILE`. `--dry-run` prints the directory, the commands and the prompt

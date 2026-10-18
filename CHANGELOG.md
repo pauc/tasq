@@ -128,6 +128,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cargo workspace with the `tasq-core`, `tasq-store-nb`, `tasq-sources`,
   `tasq-launch`, `tasq` and `tasq-tui` crates, shared lints and quality gates.
 
+### Fixed
+
+- The herdr launcher no longer races the new pane's shell: `herdr agent start` was sent a
+  few milliseconds after `workspace create`, before zsh (rc files, direnv, gitstatus) reached
+  its prompt, and herdr answered `agent_pane_busy`; the name-collision retry 100 ms later
+  only masked it. A busy pane is now retried every 100 ms for up to 5 s. `launch.log` and
+  `-v` keep one `agent start` record per name plus a `waited N ms for the pane's shell`
+  note; a pane still busy after that fails with herdr's message, the wait and the pane's
+  foreground process from `herdr pane process-info` (`gitstatusd (pid 42)`).
+
 ### Removed
 
 - `work.worktree_manager`, `work.worktree_command` and their `TASQ_WORKTREE_MANAGER` and

@@ -372,6 +372,27 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   `launch/{registry,herdr,tmux}.rs` + `core/launch.rs`: 108 tested, 0 missed. Commit d7b39e3.
   Follow-up 8be3253: the herdr launcher focuses the workspace right after creating the pane,
   before `agent start` waits for Claude to be ready; the switch felt slow when it came last.
+  Follow-up 2026-10-18 (todo 55): `agent start` raced the new pane's shell. herdr checks once,
+  synchronously, that the pane's shell owns the foreground and answers `agent_pane_busy`
+  otherwise (JSON on stderr, `error.code`); `--timeout` only covers Claude's readiness after
+  the shell accepted the command, and herdr 0.9.3 has no wait-for-shell option. zsh here needs
+  100-300 ms to reach its prompt (rc files, direnv, gitstatus; more on a fresh worktree), the
+  launcher called at +6 ms, and the name-collision retry at +100 ms had been masking it.
+  `start_agent` now retries a busy reply every `SHELL_WAIT_INTERVAL` (100 ms) up to
+  `SHELL_WAIT_RETRIES` (50, so 5 s) with the budget shared by both names, through an injected
+  `HerdrLauncher::sleep` (tests record the durations, as `sources::http::Client` does). Only the
+  attempt that got through (or the last one) is traced, plus a `waited N ms for the pane's
+  shell (K agent_pane_busy replies)` note; a pane still busy runs `herdr pane process-info`
+  once and the error names the foreground process (`foreground: gitstatusd (pid 42)`, `, the
+  pane's shell` when it is `shell_pid`). `herdr_message` shows herdr's JSON `message` rather
+  than the raw line. Shape lesson: the first version was a `loop` with a counter, and
+  `cargo mutants` could only kill `||`→`&&` and `+=`→`*=` by timing out (an infinite loop);
+  a `for _ in retries..SHELL_WAIT_RETRIES` range with a per-name `waits` count folded into
+  the shared budget after the loop is bounded under every mutation (clippy's
+  `mut_range_bound` forbids assigning the bound inside the loop). Fake-herdr tests script
+  the `agent start` answers (`busy busy taken busy ok`) with a counter file; the sandbox PATH
+  holds only the fakes, so the script uses `read` and a `for` word loop, not `cat`/`cut`.
+  Mutants on `launch/herdr.rs`: 74 tested, 68 caught, 6 unviable, 0 missed, 0 timeouts.
 
 - **Relative, coloured due dates (follow-up 2026-10-06, ADR 0019, todo 26).** Due dates
   were dim whether three days past or three weeks away. `dates::Due::of(due, today)`

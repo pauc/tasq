@@ -8,6 +8,7 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Duration;
 
 use tasq_core::config::{EnvStrategy, Placement};
 use tasq_core::launch::{LaunchContext, LaunchError, LaunchOutcome, Launcher};
@@ -385,6 +386,7 @@ fn herdr(
         }),
         prompt: Box::new(|ctx| Ok(format!("prompt for {}", ctx.task.id))),
         trace: Trace::default(),
+        sleep: Box::new(|_| {}),
     };
     (launcher, calls)
 }
@@ -700,6 +702,211 @@ fn herdr_agent_failures_and_absence() {
     );
 }
 
+/// A fake herdr whose `agent start` answers follow `$HERDR_START_SCRIPT`
+/// (one word per call: `busy`, `taken` or `ok`; `$HERDR_START_DEFAULT`
+/// past its end), counting calls in `$HERDR_COUNT`, and whose
+/// `pane process-info` prints `$HERDR_PROCESS_INFO`.
+const HERDR_RACE_BODY: &str = r#"case "$1 $2" in
+  "workspace create") echo '{"workspace_id":"ws-new","pane_id":"pane-new"}' ;;
+  "agent start")
+    n=0; [ -f "$HERDR_COUNT" ] && read -r n < "$HERDR_COUNT"; n=$((n+1)); echo "$n" > "$HERDR_COUNT"
+    i=0; step=$HERDR_START_DEFAULT; for w in $HERDR_START_SCRIPT; do i=$((i+1)); [ "$i" = "$n" ] && step=$w; done
+    case "$step" in
+      busy) printf '{"error":{"code":"agent_pane_busy","message":"agent target pane %s is not an available shell"},"id":"cli:agent:start"}\n' "$7" >&2; exit 1 ;;
+      taken) echo "error: agent $3 already exists" >&2; exit 1 ;;
+      *) exit 0 ;;
+    esac ;;
+  "pane process-info") echo "$HERDR_PROCESS_INFO" ;;
+  *) exit 0 ;;
+esac"#;
+
+const PROCESS_INFO: &str = r#"{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":42,"foreground_processes":[{"argv":["gitstatusd"],"name":"gitstatusd","pid":42}],"pane_id":"pane-new","shell_pid":7},"type":"pane_process_info"}}"#;
+
+/// The herdr launcher over [`HERDR_RACE_BODY`] in the default project (no
+/// `worktree list`), recording every sleep and tracing to `launch.log`.
+fn racing_herdr(
+    sb: &Sandbox,
+    script: &str,
+    default: &str,
+) -> (HerdrLauncher, Rc<RefCell<Vec<Duration>>>, PathBuf) {
+    sb.fake("herdr", HERDR_RACE_BODY);
+    let (mut launcher, _) = herdr(sb, Some(&sb.work));
+    let count = sb.root.path().join("start.count");
+    launcher.env.extend([
+        ("HERDR_COUNT".to_owned(), count.display().to_string()),
+        ("HERDR_START_SCRIPT".to_owned(), script.to_owned()),
+        ("HERDR_START_DEFAULT".to_owned(), default.to_owned()),
+        ("HERDR_PROCESS_INFO".to_owned(), PROCESS_INFO.to_owned()),
+    ]);
+    let slept = Rc::new(RefCell::new(Vec::new()));
+    let record = Rc::clone(&slept);
+    launcher.sleep = Box::new(move |d| record.borrow_mut().push(d));
+    let log = sb.root.path().join("launch.log");
+    launcher.trace = Trace {
+        stderr: false,
+        file: Some(log.clone()),
+    };
+    (launcher, slept, log)
+}
+
+#[test]
+fn herdr_retries_agent_start_while_the_pane_shell_starts() {
+    let sb = Sandbox::new();
+    let (launcher, slept, log) = racing_herdr(&sb, "busy busy busy ok", "ok");
+    assert_eq!(
+        launcher.launch(&sb.ctx()).unwrap(),
+        LaunchOutcome::Opened(
+            "Opened herdr workspace ws-new (\"Fix the login\") with agent task-3".into()
+        )
+    );
+    assert_eq!(*slept.borrow(), vec![Duration::from_millis(100); 3]);
+    let starts: Vec<String> = sb
+        .log("herdr")
+        .into_iter()
+        .filter(|l| l.starts_with("agent start"))
+        .collect();
+    assert_eq!(starts.len(), 4, "{starts:?}");
+    assert!(
+        starts
+            .iter()
+            .all(|l| l.starts_with("agent start task-3 --kind")),
+        "{starts:?}"
+    );
+    // Only the attempt that got through is traced, plus the wait.
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(text.matches("$ herdr agent start").count(), 1, "{text}");
+    assert!(
+        text.ends_with(
+            "$ herdr workspace focus ws-new\n  ok\n\
+             $ herdr agent start task-3 --kind claude --pane pane-new --timeout 90000\n  ok\n\
+             waited 300 ms for the pane's shell (3 agent_pane_busy replies)\n\
+             $ herdr agent prompt task-3 'prompt for 3'\n  ok\n\
+             $ herdr agent focus task-3\n  ok\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn herdr_start_without_a_wait_leaves_no_note() {
+    let sb = Sandbox::new();
+    let (launcher, slept, log) = racing_herdr(&sb, "ok", "ok");
+    launcher.launch(&sb.ctx()).unwrap();
+    assert_eq!(*slept.borrow(), Vec::new());
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(!text.contains("waited"), "{text}");
+    assert_eq!(text.matches("$ herdr agent start").count(), 1, "{text}");
+}
+
+#[test]
+fn herdr_names_the_foreground_process_when_the_pane_stays_busy() {
+    let sb = Sandbox::new();
+    let (launcher, slept, log) = racing_herdr(&sb, "", "busy");
+    assert_eq!(
+        launcher.launch(&sb.ctx()).unwrap_err(),
+        LaunchError::Tool {
+            tool: "herdr agent start".into(),
+            message: "task-3: agent target pane pane-new is not an available shell after 5000 ms; \
+                      foreground: gitstatusd (pid 42)"
+                .into()
+        }
+    );
+    assert_eq!(*slept.borrow(), vec![Duration::from_millis(100); 50]);
+    let calls = sb.log("herdr");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|l| l.starts_with("agent start task-3 --kind"))
+            .count(),
+        51
+    );
+    // The second name is for a taken name, not a busy pane.
+    assert!(
+        !calls.iter().any(|l| l.starts_with("agent start task-3-")),
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|l| l.starts_with("pane process-info"))
+            .collect::<Vec<_>>(),
+        vec!["pane process-info --pane pane-new"]
+    );
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(text.matches("$ herdr agent start").count(), 1, "{text}");
+    assert!(
+        text.contains(&format!(
+            "$ herdr agent start task-3 --kind claude --pane pane-new --timeout 90000\n  failed\n  stderr:\n    \
+             {{\"error\":{{\"code\":\"agent_pane_busy\",\"message\":\"agent target pane pane-new is not an available shell\"}},\"id\":\"cli:agent:start\"}}\n\
+             waited 5000 ms for the pane's shell (50 agent_pane_busy replies)\n\
+             $ herdr pane process-info --pane pane-new\n  ok\n  stdout:\n    {PROCESS_INFO}\n"
+        )),
+        "{text}"
+    );
+}
+
+#[test]
+fn herdr_busy_pane_error_says_when_process_info_fails() {
+    let sb = Sandbox::new();
+    let (mut launcher, _, _) = racing_herdr(&sb, "", "busy");
+    launcher.env.retain(|(k, _)| k != "HERDR_PROCESS_INFO");
+    assert_eq!(
+        launcher.launch(&sb.ctx()).unwrap_err(),
+        LaunchError::Tool {
+            tool: "herdr agent start".into(),
+            message: "task-3: agent target pane pane-new is not an available shell after 5000 ms; \
+                      foreground: process-info failed: "
+                .into()
+        }
+    );
+}
+
+#[test]
+fn herdr_wait_budget_is_shared_across_both_names() {
+    let sb = Sandbox::new();
+    // The first name waits twice, is taken; the second waits once more.
+    let (launcher, slept, log) = racing_herdr(&sb, "busy busy taken busy ok", "ok");
+    let agent = format!("task-3-{}", std::process::id());
+    assert_eq!(
+        launcher.launch(&sb.ctx()).unwrap(),
+        LaunchOutcome::Opened(format!(
+            "Opened herdr workspace ws-new (\"Fix the login\") with agent {agent}"
+        ))
+    );
+    assert_eq!(*slept.borrow(), vec![Duration::from_millis(100); 3]);
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        text.contains(
+            "$ herdr agent start task-3 --kind claude --pane pane-new --timeout 90000\n  failed\n  \
+             stderr:\n    error: agent task-3 already exists\n\
+             waited 200 ms for the pane's shell (2 agent_pane_busy replies)\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "$ herdr agent start {agent} --kind claude --pane pane-new --timeout 90000\n  ok\n\
+             waited 100 ms for the pane's shell (1 agent_pane_busy replies)\n"
+        )),
+        "{text}"
+    );
+
+    // One wait on the first name leaves 49 for the second.
+    let sb = Sandbox::new();
+    let (launcher, slept, _) = racing_herdr(&sb, "busy taken", "busy");
+    assert_eq!(
+        launcher.launch(&sb.ctx()).unwrap_err(),
+        LaunchError::Tool {
+            tool: "herdr agent start".into(),
+            message: format!(
+                "task-3: error: agent task-3 already exists; then {agent}: agent target pane \
+                 pane-new is not an available shell after 4900 ms; foreground: gitstatusd (pid 42)"
+            )
+        }
+    );
+    assert_eq!(*slept.borrow(), vec![Duration::from_millis(100); 50]);
+}
+
 #[test]
 fn herdr_describe_lists_the_steps() {
     let sb = Sandbox::new();
@@ -707,6 +914,11 @@ fn herdr_describe_lists_the_steps() {
     let lines = launcher.describe(&sb.ctx()).unwrap();
     assert!(lines[0].starts_with("herdr worktree list --cwd"));
     assert!(lines[1].starts_with("herdr workspace create --label \"Fix the login\""));
+    assert_eq!(
+        lines[3],
+        "herdr agent start task-3 --kind claude --pane <pane> --timeout 90000   \
+         (retried every 100 ms, up to 5 s, while the pane's shell starts)"
+    );
     assert!(lines.iter().any(|l| l == "--- prompt ---"));
     assert_eq!(lines.last().map(String::as_str), Some("prompt for 3"));
     let (in_default, _) = herdr(&sb, Some(&sb.work));

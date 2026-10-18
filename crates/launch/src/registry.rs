@@ -132,6 +132,7 @@ fn herdr(
         fallback,
         prompt: Box::new(move |ctx| prompt_source.prompt(ctx)),
         trace: settings.trace.clone(),
+        sleep: Box::new(std::thread::sleep),
     }))
 }
 

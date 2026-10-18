@@ -6,6 +6,7 @@
 
 use std::fmt::{self, Debug};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde_json::Value;
 use tasq_core::config::Placement;
@@ -21,6 +22,13 @@ pub const ENV_HERDR: &str = "HERDR_ENV";
 pub const ENV_HERDR_WORKSPACE: &str = "HERDR_WORKSPACE_ID";
 /// Readiness timeout passed to `herdr agent start`, in milliseconds.
 pub const AGENT_TIMEOUT_MS: &str = "90000";
+/// herdr's error code when the pane's foreground is not an idle shell.
+pub const PANE_BUSY: &str = "agent_pane_busy";
+/// Pause between `agent start` attempts while the new pane's shell starts.
+pub const SHELL_WAIT_INTERVAL: Duration = Duration::from_millis(100);
+/// Attempts after the first one, so the shell gets up to 5 s to reach its
+/// prompt (zsh with rc files, direnv and gitstatus takes 100-300 ms here).
+pub const SHELL_WAIT_RETRIES: u32 = 50;
 
 /// Renders the prompt pasted into the agent.
 pub type PromptFn = Box<dyn Fn(&LaunchContext) -> Result<String, LaunchError>>;
@@ -40,6 +48,8 @@ pub struct HerdrLauncher {
     pub prompt: PromptFn,
     /// Records every `herdr` call and warning (`-v`, `launch.log`).
     pub trace: Trace,
+    /// Waits between `agent start` attempts (tests record it instead).
+    pub sleep: Box<dyn Fn(Duration)>,
 }
 
 /// The pane a session opens in.
@@ -92,6 +102,41 @@ pub fn field(text: &str, key: &str) -> Option<String> {
         .iter()
         .find_map(|v| find_string(v, key))
         .map(str::to_owned)
+}
+
+/// Whether `herdr agent start` refused because the pane's foreground is not
+/// an idle shell yet: `error.code` is [`PANE_BUSY`] on either stream.
+pub fn pane_busy(out: &Finished) -> bool {
+    !out.success
+        && [&out.stdout, &out.stderr]
+            .iter()
+            .any(|text| field(text, "code").as_deref() == Some(PANE_BUSY))
+}
+
+/// The line to show for a failed herdr call: the `message` of its JSON
+/// error when it printed one, else the usual stderr-or-stdout text.
+pub fn herdr_message(out: &Finished) -> String {
+    [&out.stderr, &out.stdout]
+        .iter()
+        .find_map(|text| field(text, "message"))
+        .unwrap_or_else(|| out.message())
+}
+
+/// What owns the pane's foreground, from `herdr pane process-info`:
+/// `<name> (pid N)`, marked as the pane's shell when it is `shell_pid`.
+pub fn foreground_process(text: &str) -> Option<String> {
+    values(text).iter().find_map(|v| {
+        let info = v.pointer("/result/process_info")?;
+        let front = info.pointer("/foreground_processes/0")?;
+        let name = front.get("name")?.as_str()?;
+        let pid = front.get("pid")?.as_u64()?;
+        let shell = info.get("shell_pid").and_then(Value::as_u64);
+        Some(if shell == Some(pid) {
+            format!("{name} (pid {pid}, the pane's shell)")
+        } else {
+            format!("{name} (pid {pid})")
+        })
+    })
 }
 
 /// The `open_workspace_id` of the worktree entry whose `path` is `path`
@@ -227,12 +272,20 @@ impl HerdrLauncher {
         }
     }
 
+    /// `herdr agent start` on `pane`, first as `task-<id>`, then as
+    /// `task-<id>-<pid>` when that name is taken. The pane was created
+    /// milliseconds ago and herdr refuses with [`PANE_BUSY`] until its shell
+    /// reaches the prompt, so a busy reply is retried every
+    /// [`SHELL_WAIT_INTERVAL`], [`SHELL_WAIT_RETRIES`] times in all. Only the
+    /// last attempt of each name is traced, plus a note of the wait; a pane
+    /// still busy at the end names its foreground process in the error.
     fn start_agent(&self, ctx: &LaunchContext, pane: &str) -> Result<String, LaunchError> {
         let first = format!("task-{}", ctx.task.id);
         let second = format!("task-{}-{}", ctx.task.id, std::process::id());
         let mut errors = Vec::new();
+        let mut retries = 0;
         for name in [&first, &second] {
-            let out = self.herdr(&[
+            let args = [
                 "agent",
                 "start",
                 name,
@@ -242,11 +295,43 @@ impl HerdrLauncher {
                 pane,
                 "--timeout",
                 AGENT_TIMEOUT_MS,
-            ]);
+            ];
+            let mut out = run("herdr", &args, None, &self.env, &[]);
+            // A bounded range, not a counter in a `loop`: the wait is shared
+            // by both names, and no mutation of it can spin forever.
+            let mut waits = 0;
+            for _ in retries..SHELL_WAIT_RETRIES {
+                if !pane_busy(&out) {
+                    break;
+                }
+                (self.sleep)(SHELL_WAIT_INTERVAL);
+                out = run("herdr", &args, None, &self.env, &[]);
+                waits += 1;
+            }
+            retries += waits;
+            self.trace.command("herdr", &args, &out);
+            let waited = SHELL_WAIT_INTERVAL * waits;
+            if waits > 0 {
+                self.trace.note(&format!(
+                    "waited {} ms for the pane's shell ({waits} {PANE_BUSY} replies)",
+                    waited.as_millis()
+                ));
+            }
             if out.success {
                 return Ok(name.clone());
             }
-            errors.push(format!("{name}: {}", out.message()));
+            if pane_busy(&out) {
+                let info = self.herdr(&["pane", "process-info", "--pane", pane]);
+                let foreground = foreground_process(&info.stdout)
+                    .unwrap_or_else(|| format!("process-info failed: {}", herdr_message(&info)));
+                errors.push(format!(
+                    "{name}: {} after {} ms; foreground: {foreground}",
+                    herdr_message(&out),
+                    waited.as_millis()
+                ));
+                break;
+            }
+            errors.push(format!("{name}: {}", herdr_message(&out)));
         }
         Err(LaunchError::Tool {
             tool: "herdr agent start".to_owned(),
@@ -298,8 +383,11 @@ impl Launcher for HerdrLauncher {
             lines.push("(no focus change: the session opens in the background)".to_owned());
         }
         lines.push(format!(
-            "herdr agent start task-{} --kind claude --pane <pane> --timeout {AGENT_TIMEOUT_MS}",
-            ctx.task.id
+            "herdr agent start task-{} --kind claude --pane <pane> --timeout {AGENT_TIMEOUT_MS}   \
+             (retried every {} ms, up to {} s, while the pane's shell starts)",
+            ctx.task.id,
+            SHELL_WAIT_INTERVAL.as_millis(),
+            (SHELL_WAIT_INTERVAL * SHELL_WAIT_RETRIES).as_secs()
         ));
         lines.push(format!(
             "herdr agent prompt task-{} \"<prompt below>\"",
@@ -408,6 +496,84 @@ mod tests {
             no_pane("tab create", &odd),
             "herdr tab create replied without the pane's ids: {\"ok\":true}"
         );
+    }
+
+    fn finished(success: bool, stdout: &str, stderr: &str) -> Finished {
+        Finished {
+            success,
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+        }
+    }
+
+    const BUSY: &str = "{\"error\":{\"code\":\"agent_pane_busy\",\"message\":\"agent target pane w14:p1 is not an available shell\"},\"id\":\"cli:agent:start\"}\n";
+
+    #[test]
+    fn pane_busy_is_the_error_code_on_either_stream_of_a_failure() {
+        assert!(pane_busy(&finished(false, "", BUSY)));
+        assert!(pane_busy(&finished(false, BUSY, "")));
+        assert!(!pane_busy(&finished(true, "", BUSY)));
+        assert!(!pane_busy(&finished(
+            false,
+            "",
+            "{\"error\":{\"code\":\"agent_pane_not_found\"}}"
+        )));
+        assert!(!pane_busy(&finished(false, "", "agent_pane_busy")));
+        assert!(!pane_busy(&finished(false, "", "")));
+    }
+
+    #[test]
+    fn herdr_message_prefers_the_json_message() {
+        assert_eq!(
+            herdr_message(&finished(false, "", BUSY)),
+            "agent target pane w14:p1 is not an available shell"
+        );
+        assert_eq!(
+            herdr_message(&finished(
+                false,
+                "{\"message\":\"out\"}",
+                "{\"message\":\"err\"}"
+            )),
+            "err"
+        );
+        assert_eq!(
+            herdr_message(&finished(false, "{\"message\":\"out\"}", "plain\n")),
+            "out"
+        );
+        assert_eq!(
+            herdr_message(&finished(false, "{\"ok\":false}\n", " plain \n")),
+            "plain"
+        );
+    }
+
+    #[test]
+    fn foreground_process_names_the_first_foreground_entry() {
+        let info = |front: &str, shell: &str| {
+            format!(
+                "{{\"id\":\"cli:pane:process_info\",\"result\":{{\"process_info\":{{\"foreground_process_group_id\":42,\"foreground_processes\":[{front}],\"pane_id\":\"w14:p1\",\"shell_pid\":{shell}}},\"type\":\"pane_process_info\"}}}}\n"
+            )
+        };
+        assert_eq!(
+            foreground_process(&info(
+                "{\"argv\":[\"gitstatusd\"],\"name\":\"gitstatusd\",\"pid\":42},{\"name\":\"zsh\",\"pid\":7}",
+                "7"
+            ))
+            .as_deref(),
+            Some("gitstatusd (pid 42)")
+        );
+        assert_eq!(
+            foreground_process(&info("{\"name\":\"zsh\",\"pid\":7}", "7")).as_deref(),
+            Some("zsh (pid 7, the pane's shell)")
+        );
+        assert_eq!(
+            foreground_process(&info("{\"name\":\"zsh\",\"pid\":7}", "null")).as_deref(),
+            Some("zsh (pid 7)")
+        );
+        assert_eq!(foreground_process(&info("", "7")), None);
+        assert_eq!(foreground_process(&info("{\"name\":\"zsh\"}", "7")), None);
+        assert_eq!(foreground_process(&info("{\"pid\":7}", "7")), None);
+        assert_eq!(foreground_process("{\"process_info\":{}}"), None);
+        assert_eq!(foreground_process("not json"), None);
     }
 
     #[test]
