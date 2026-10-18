@@ -5,7 +5,7 @@ use tasq_core::config::ForgeKind;
 use tasq_core::model::Origin;
 use tasq_core::source::{ItemState, Source, SourceError, SourceItem, SourceItemState, SyncContext};
 
-use crate::forge::{Forge, MrState};
+use crate::forge::{Forge, MergeRequest, MrState};
 use crate::http::HttpError;
 use crate::url::{ForgeRef, RefKind, parse_ref};
 
@@ -76,11 +76,32 @@ pub fn list_error(error: HttpError) -> SourceError {
     }
 }
 
+/// Which merge requests a source turns into tasks. Only `fetch` applies
+/// them: `check` keeps following every tracked task, so a task created
+/// before an author was excluded still closes when its MR merges.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Filters {
+    /// Drop merge requests by these authors (exact usernames).
+    pub exclude_authors: Vec<String>,
+    /// Keep drafts (`false`: dropped until marked ready).
+    pub drafts: bool,
+}
+
+impl Filters {
+    /// Whether `mr` passes every filter.
+    pub fn passes(&self, mr: &MergeRequest) -> bool {
+        let excluded = self.exclude_authors.contains(&mr.author);
+        let draft_ok = self.drafts || !mr.draft;
+        !excluded && draft_ok
+    }
+}
+
 /// Review requests on one forge.
 pub struct ReviewRequests {
     name: String,
     forge: Box<dyn Forge>,
     title: String,
+    filters: Filters,
 }
 
 impl std::fmt::Debug for ReviewRequests {
@@ -88,14 +109,15 @@ impl std::fmt::Debug for ReviewRequests {
         f.debug_struct("ReviewRequests")
             .field("name", &self.name)
             .field("title", &self.title)
+            .field("filters", &self.filters)
             .finish_non_exhaustive()
     }
 }
 
 impl ReviewRequests {
     /// A source called `name` over `forge`, with `title` as the template
-    /// (`None`: the forge's default).
-    pub fn new(name: &str, forge: Box<dyn Forge>, title: Option<&str>) -> Self {
+    /// (`None`: the forge's default) and `filters` on what `fetch` lists.
+    pub fn new(name: &str, forge: Box<dyn Forge>, title: Option<&str>, filters: Filters) -> Self {
         let title = title
             .unwrap_or_else(|| default_title(forge.kind()))
             .to_owned();
@@ -103,6 +125,7 @@ impl ReviewRequests {
             name: name.to_owned(),
             forge,
             title,
+            filters,
         }
     }
 }
@@ -112,12 +135,13 @@ impl Source for ReviewRequests {
         &self.name
     }
 
-    /// Every open merge request awaiting the user's review, as an open item
-    /// whose external id is `project!number`.
+    /// Every open merge request awaiting the user's review that passes the
+    /// filters, as an open item whose external id is `project!number`.
     fn fetch(&self, _ctx: &SyncContext) -> Result<Vec<SourceItem>, SourceError> {
         let mrs = self.forge.review_requests().map_err(list_error)?;
         Ok(mrs
             .iter()
+            .filter(|mr| self.filters.passes(mr))
             .map(|mr| {
                 SourceItem::new(
                     mr.short(),
@@ -162,7 +186,7 @@ impl Source for ReviewRequests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::forge::{MergeRequest, User, WorkItem};
+    use crate::forge::{User, WorkItem};
     use std::cell::RefCell;
 
     /// A forge answering from fixed data, recording the references asked.
@@ -242,7 +266,16 @@ mod tests {
             url: format!("https://gl/{project}/-/merge_requests/{number}"),
             state,
             draft: false,
+            author: "someone".into(),
             approved_by_me: approved,
+        }
+    }
+
+    fn by(author: &str, number: u64, draft: bool) -> MergeRequest {
+        MergeRequest {
+            author: author.into(),
+            draft,
+            ..mr("g/p", number, MrState::Open, false)
         }
     }
 
@@ -347,7 +380,7 @@ mod tests {
             review: vec![mr("g/p", 7, MrState::Open, false)],
             ..FakeForge::default()
         };
-        let source = ReviewRequests::new("rr", Box::new(forge), None);
+        let source = ReviewRequests::new("rr", Box::new(forge), None, Filters::default());
         assert_eq!(source.name(), "rr");
         let items = source.fetch(&SyncContext::default()).unwrap();
         assert_eq!(
@@ -364,6 +397,7 @@ mod tests {
                 ..FakeForge::default()
             }),
             Some("{project}!{iid}"),
+            Filters::default(),
         );
         assert_eq!(
             custom.fetch(&SyncContext::default()).unwrap()[0].title,
@@ -380,6 +414,7 @@ mod tests {
                 ..FakeForge::default()
             }),
             None,
+            Filters::default(),
         );
         assert!(matches!(
             failing.fetch(&SyncContext::default()).unwrap_err(),
@@ -392,8 +427,94 @@ mod tests {
                 ..FakeForge::default()
             }),
             None,
+            Filters::default(),
         );
         assert_eq!(github.title, "Review PR #{iid}: {title}");
+    }
+
+    #[test]
+    fn filters() {
+        let f = Filters::default();
+        assert!(f.passes(&by("dependabot", 1, false)));
+        assert!(
+            !f.passes(&by("dependabot", 1, true)),
+            "drafts off by default"
+        );
+        let f = Filters {
+            exclude_authors: vec!["dependabot".into(), "silverbot".into()],
+            drafts: false,
+        };
+        assert!(f.passes(&by("pau", 1, false)));
+        assert!(!f.passes(&by("dependabot", 1, false)));
+        assert!(!f.passes(&by("silverbot", 1, false)));
+        assert!(f.passes(&by("dependabot-x", 1, false)), "exact match only");
+        assert!(f.passes(&by("Dependabot", 1, false)), "case-sensitive");
+        assert!(!f.passes(&by("pau", 1, true)), "draft");
+        assert!(!f.passes(&by("dependabot", 1, true)), "draft and excluded");
+        let f = Filters {
+            exclude_authors: vec!["dependabot".into()],
+            drafts: true,
+        };
+        assert!(f.passes(&by("pau", 1, true)));
+        assert!(!f.passes(&by("dependabot", 1, true)));
+        assert!(
+            f.passes(&by("", 1, false)),
+            "an MR without an author is kept"
+        );
+        assert!(
+            !Filters {
+                exclude_authors: vec![String::new()],
+                drafts: true
+            }
+            .passes(&by("", 1, false)),
+            "unless the empty name is excluded"
+        );
+    }
+
+    #[test]
+    fn fetch_applies_filters_and_check_ignores_them() {
+        let forge = FakeForge {
+            review: vec![
+                by("pau", 1, false),
+                by("dependabot", 2, false),
+                by("pau", 3, true),
+                by("silverbot", 4, true),
+                by("ann", 5, false),
+            ],
+            ..FakeForge::default()
+        };
+        let filters = Filters {
+            exclude_authors: vec!["dependabot".into(), "silverbot".into()],
+            drafts: false,
+        };
+        let source = ReviewRequests::new("rr", Box::new(forge), None, filters.clone());
+        let ids: Vec<String> = source
+            .fetch(&SyncContext::default())
+            .unwrap()
+            .into_iter()
+            .map(|i| i.external_id)
+            .collect();
+        assert_eq!(ids, vec!["g/p!1", "g/p!5"]);
+        assert!(format!("{source:?}").contains("exclude_authors: [\"dependabot\", \"silverbot\"]"));
+        // check: a tracked task for an excluded author's draft is still followed.
+        let r = parse_ref("https://gl/g/p/-/merge_requests/2").unwrap();
+        let forge = FakeForge {
+            by_ref: vec![(
+                r,
+                Ok(MergeRequest {
+                    state: MrState::Merged,
+                    ..by("dependabot", 2, true)
+                }),
+            )],
+            ..FakeForge::default()
+        };
+        let source = ReviewRequests::new("rr", Box::new(forge), None, filters);
+        let states = source.check(&[origin("g/p!2", None)]).unwrap();
+        assert_eq!(states.len(), 1);
+        assert_eq!(
+            (states[0].state, states[0].note.as_deref()),
+            (ItemState::Done, Some("merged"))
+        );
     }
 
     #[test]
@@ -416,7 +537,7 @@ mod tests {
             ],
             ..FakeForge::default()
         };
-        let source = ReviewRequests::new("rr", Box::new(forge), None);
+        let source = ReviewRequests::new("rr", Box::new(forge), None, Filters::default());
         let origins: Vec<Origin> = (1..=5)
             .map(|n| {
                 origin(

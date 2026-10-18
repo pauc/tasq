@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Review-request sources skip draft merge requests unless `drafts = true`, and
+  `exclude_authors = ["dependabot"]` drops merge requests by those usernames (exact), as the
+  `/update-tasks` skill did; without it a first `tasq sync` against a busy GitLab creates a
+  task per dependency bump. Only listing is filtered: a tracked task still closes when its MR
+  merges. `tasq config show` prints both keys. The docs and examples now spell the GitLab
+  token command as `glab config get token --host <host>`: glab 1.118 has no `auth token`
+  subcommand and prints help with exit 0, which was sent as the token.
 - Manual order within a status group: `tasq move <id> --before <id>` / `--after <id>` places
   a task next to another task of its group, `--top` puts it first (above every priority) and
   `--unrank` hands it back to the priority, due, id order; `tasq list`, `tasq ui` and

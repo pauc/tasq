@@ -71,7 +71,7 @@ preset = "dark"              # dark, light, solarized, gruvbox or mono; see "Col
 # [forge.gitlab]            # kind and host inferred from the name when omitted
 # kind = "gitlab"           # gitlab | github; required when the block name is neither
 # host = "gitlab.example.com"
-# token_cmd = "glab auth token"      # else GITLAB_TOKEN / GITHUB_TOKEN
+# token_cmd = "glab config get token --host gitlab.example.com"  # else GITLAB_TOKEN / GITHUB_TOKEN
 # url = "https://gitlab.example.com/api/v4"   # API base; defaults from host
 
 # [[source]]
@@ -91,6 +91,8 @@ preset = "dark"              # dark, light, solarized, gruvbox or mono; see "Col
 # title = "Review MR !{iid}: {title}"  # {title} {iid} {project}
 # labels = ["team::core"]           # work items: include only these labels
 # exclude_labels = ["wontfix"]      # work items: skip these labels
+# exclude_authors = ["dependabot"]  # review requests: skip MRs by these usernames
+# drafts = false                    # review requests: true keeps draft MRs
 # projects = ["group/", "owner/repo"]  # allow-list; a trailing / matches a group
 
 [report.summary]
@@ -150,6 +152,8 @@ pre-launch = []
 | `source[].title` | string | per kind | Title template: `{title}`, `{iid}`, `{project}`. Defaults `Review MR !{iid}: {title}`, `Review PR #{iid}: {title}`, `#{iid}: {title}`. |
 | `source[].labels` | array of strings | `[]` | Work items: only those carrying one of these labels. |
 | `source[].exclude_labels` | array of strings | `[]` | Work items: skip those carrying one of these labels. |
+| `source[].exclude_authors` | array of strings | `[]` | Review requests: skip merge requests by these authors (exact usernames, `dependabot`). Tracked tasks still close when their MR merges. |
+| `source[].drafts` | bool | `false` | Review requests: `true` makes draft merge requests tasks too; `false` skips them until marked ready. |
 | `source[].projects` | array of strings | `[]` (every project) | `group/project`, a group prefix with a trailing `/`, or `owner/repo`. |
 | `report.summary.summarizer` | `raw` \| `llm` | `llm` | Print the notes, or distil them with `command`. |
 | `report.summary.command` | string | `claude -p` | Reads the rendered prompt on stdin, prints the summary. |

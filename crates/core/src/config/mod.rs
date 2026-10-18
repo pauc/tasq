@@ -681,7 +681,7 @@ impl ForgeKind {
 /// required ones are present (see [`SourceKind`]).
 #[allow(
     clippy::struct_excessive_bools,
-    reason = "four independent switches that a TOML table spells as booleans; an enum would not read better in the config file"
+    reason = "five independent switches that a TOML table spells as booleans; an enum would not read better in the config file"
 )]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -738,6 +738,14 @@ pub struct SourceConfig {
     /// Work items: skip those carrying one of these labels. Default: none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude_labels: Vec<String>,
+    /// Review requests: skip merge requests whose author has one of these
+    /// usernames (exact, `dependabot`). Default: none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_authors: Vec<String>,
+    /// Review requests: whether draft merge requests become tasks. Default:
+    /// `false` (skipped until marked ready).
+    #[serde(default)]
+    pub drafts: bool,
     /// Only items from these projects (`group/project`, a group prefix with a
     /// trailing `/`, or `owner/repo`). Default: every project.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

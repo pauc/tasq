@@ -42,6 +42,9 @@ pub struct MergeRequest {
     pub state: MrState,
     /// Marked as a draft / WIP.
     pub draft: bool,
+    /// Username of the author (GitLab `author.username`, GitHub
+    /// `user.login`); empty when the API leaves it out.
+    pub author: String,
     /// Whether the authenticated user has approved it (only filled by
     /// [`Forge::merge_request`]; lists leave it `false`).
     pub approved_by_me: bool,
@@ -129,6 +132,17 @@ pub fn bool_field(value: &Value, key: &str) -> bool {
     value.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
+/// The string at `value[key][inner]` (GitLab `author.username`, GitHub
+/// `user.login`), empty when absent or not a string.
+pub fn nested_str(value: &Value, key: &str, inner: &str) -> String {
+    value
+        .get(key)
+        .and_then(|v| v.get(inner))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
 /// The strings at `value[key][*][inner]` (GitHub `labels[].name`,
 /// GitLab `assignees[].username`).
 pub fn nested_strings(value: &Value, key: &str, inner: &str) -> Vec<String> {
@@ -203,7 +217,7 @@ mod tests {
     #[test]
     fn json_helpers() {
         let v: Value = serde_json::from_str(
-            "{\"title\":\"T\",\"iid\":3,\"draft\":true,\"labels\":[\"a\",\"b\"],\"assignees\":[{\"username\":\"me\"},{\"nope\":1}]}",
+            "{\"title\":\"T\",\"iid\":3,\"draft\":true,\"labels\":[\"a\",\"b\"],\"assignees\":[{\"username\":\"me\"},{\"nope\":1}],\"author\":{\"username\":\"bot\",\"id\":4}}",
         )
         .unwrap();
         assert_eq!(str_field(&v, "title", "u").unwrap(), "T");
@@ -214,6 +228,11 @@ mod tests {
         assert_eq!(strings(&v, "none"), Vec::<String>::new());
         assert_eq!(nested_strings(&v, "assignees", "username"), vec!["me"]);
         assert_eq!(nested_strings(&v, "labels", "name"), Vec::<String>::new());
+        assert_eq!(nested_str(&v, "author", "username"), "bot");
+        assert_eq!(nested_str(&v, "author", "id"), "", "not a string");
+        assert_eq!(nested_str(&v, "author", "login"), "", "no inner key");
+        assert_eq!(nested_str(&v, "user", "login"), "", "no outer key");
+        assert_eq!(nested_str(&v, "title", "x"), "", "outer is not an object");
         let err = str_field(&v, "iid", "https://api/x").unwrap_err();
         assert_eq!(
             err,
@@ -249,6 +268,7 @@ mod tests {
             url: String::new(),
             state: MrState::Open,
             draft: false,
+            author: String::new(),
             approved_by_me: false,
         };
         assert_eq!(mr.short(), "g/p!1");

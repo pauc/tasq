@@ -7,7 +7,7 @@ use tasq_core::config::ForgeKind;
 
 use crate::forge::{
     Forge, MergeRequest, MrState, User, WorkItem, bool_field, default_api_base, missing,
-    nested_strings, project_and_number, str_field, u64_field,
+    nested_str, nested_strings, project_and_number, str_field, u64_field,
 };
 use crate::http::{Client, HttpError, Transport};
 use crate::url::ForgeRef;
@@ -84,6 +84,7 @@ pub fn parse_pull_request(value: &Value, api_url: &str) -> Result<MergeRequest, 
         url: url.to_owned(),
         state,
         draft: bool_field(value, "draft"),
+        author: nested_str(value, "user", "login"),
         approved_by_me: false,
     })
 }
@@ -198,7 +199,7 @@ mod tests {
     }
 
     const USER: &str = "{\"id\":9,\"login\":\"pau\"}";
-    const PR: &str = "{\"number\":5,\"title\":\"Fix\",\"html_url\":\"https://github.com/owner/repo/pull/5\",\"state\":\"open\",\"draft\":true}";
+    const PR: &str = "{\"number\":5,\"title\":\"Fix\",\"html_url\":\"https://github.com/owner/repo/pull/5\",\"state\":\"open\",\"draft\":true,\"user\":{\"login\":\"dependabot[bot]\",\"id\":2}}";
 
     fn github(responses: Vec<HttpResponse>) -> GitHub {
         GitHub::new(
@@ -241,6 +242,7 @@ mod tests {
         assert_eq!(prs.len(), 1);
         assert_eq!(prs[0].short(), "owner/repo!5");
         assert!(prs[0].draft);
+        assert_eq!(prs[0].author, "dependabot[bot]");
         assert_eq!(prs[0].state, MrState::Open);
         let gh = github(vec![
             HttpResponse::new(200, USER),
@@ -290,6 +292,11 @@ mod tests {
         assert!(!gh.merge_request(&r).unwrap().approved_by_me);
         let weird: Value = serde_json::from_str(&PR.replace("\"open\"", "\"odd\"")).unwrap();
         assert!(parse_pull_request(&weird, "u").is_err());
+        let no_user: Value = serde_json::from_str(
+            &PR.replace(",\"user\":{\"login\":\"dependabot[bot]\",\"id\":2}", ""),
+        )
+        .unwrap();
+        assert_eq!(parse_pull_request(&no_user, "u").unwrap().author, "");
     }
 
     #[test]

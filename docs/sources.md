@@ -47,7 +47,11 @@ session).
 ## Forge sources
 
 `gitlab-review-requests` / `github-review-requests`: open merge requests where you are a
-requested reviewer. `check` reports done when the MR is merged, closed, approved by you, or
+requested reviewer. Drafts are skipped unless `drafts = true`, and `exclude_authors` drops
+merge requests by those usernames (exact; `["dependabot", "silverbot"]` keeps dependency bumps
+out, which labels cannot do reliably). Both filters apply only when listing: `check` keeps
+following every tracked task, so a task created before an author was excluded still closes
+when its MR merges. `check` reports done when the MR is merged, closed, approved by you, or
 gone. Default title `Review MR !{iid}: {title}` (`Review PR #{iid}: {title}` on GitHub).
 
 `gitlab-work-items` / `github-work-items`: open issues assigned to you, filtered by `labels`
@@ -57,7 +61,9 @@ title `#{iid}: {title}`.
 
 Both need a `[forge.<name>]` block with `host` (inferred as `gitlab.com` / `github.com` when
 the block is called `gitlab` or `github` and `host` is omitted) and a token: `token_cmd`
-(`glab auth token`, `gh auth token`) or `GITLAB_TOKEN` / `GITHUB_TOKEN`. Tokens are never printed. Requests retry on
+(`glab config get token --host <host>`, `gh auth token`) or `GITLAB_TOKEN` / `GITHUB_TOKEN`.
+glab 1.118 has no `auth token` subcommand: it prints the `glab auth` help with exit 0, which
+tasq would send as the token. Tokens are never printed. Requests retry on
 429 and 5xx with backoff, follow `Link` pagination, and never run during `cargo test`.
 
 ## The LLM bridge

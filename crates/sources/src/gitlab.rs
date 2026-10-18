@@ -7,7 +7,7 @@ use tasq_core::config::ForgeKind;
 
 use crate::forge::{
     Forge, MergeRequest, MrState, User, WorkItem, bool_field, default_api_base, missing,
-    nested_strings, project_and_number, str_field, strings, u64_field,
+    nested_str, nested_strings, project_and_number, str_field, strings, u64_field,
 };
 use crate::http::{Client, HttpError, Transport};
 use crate::url::ForgeRef;
@@ -95,6 +95,7 @@ pub fn parse_merge_request(value: &Value, api_url: &str) -> Result<MergeRequest,
         url: url.to_owned(),
         state,
         draft: bool_field(value, "draft") || bool_field(value, "work_in_progress"),
+        author: nested_str(value, "author", "username"),
         approved_by_me: false,
     })
 }
@@ -198,7 +199,7 @@ mod tests {
     use crate::url::parse_ref;
 
     const USER: &str = "{\"id\":42,\"username\":\"pau\"}";
-    const MR: &str = "{\"iid\":7,\"title\":\"Add parser\",\"web_url\":\"https://gl.example.com/group/project/-/merge_requests/7\",\"state\":\"opened\",\"draft\":false}";
+    const MR: &str = "{\"iid\":7,\"title\":\"Add parser\",\"web_url\":\"https://gl.example.com/group/project/-/merge_requests/7\",\"state\":\"opened\",\"draft\":false,\"author\":{\"id\":3,\"username\":\"dependabot\"}}";
 
     fn gitlab(responses: Vec<HttpResponse>) -> GitLab {
         GitLab::new(
@@ -246,6 +247,7 @@ mod tests {
                 url: "https://gl.example.com/group/project/-/merge_requests/7".into(),
                 state: MrState::Open,
                 draft: false,
+                author: "dependabot".into(),
                 approved_by_me: false,
             }]
         );
@@ -300,6 +302,11 @@ mod tests {
             parse_merge_request(&locked, "u").unwrap().state,
             MrState::Closed
         );
+        let no_author: Value = serde_json::from_str(
+            &MR.replace(",\"author\":{\"id\":3,\"username\":\"dependabot\"}", ""),
+        )
+        .unwrap();
+        assert_eq!(parse_merge_request(&no_author, "u").unwrap().author, "");
     }
 
     #[test]

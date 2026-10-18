@@ -2,7 +2,8 @@
 
 [forge.gitlab]
 host = "gitlab.example.com"
-token_cmd = "glab auth token"
+# glab 1.118 has no `auth token` subcommand (it prints help with exit 0), hence `config get`.
+token_cmd = "glab config get token --host gitlab.example.com"
 
 [[source]]
 name = "gitlab-review-requests"
@@ -11,6 +12,7 @@ forge = "gitlab"
 tags = ["gitlab", "review-request"]
 status = "ready"
 flag = "review-request"
+exclude_authors = ["dependabot"]   # dependency bumps are not reviews; drafts are skipped by default
 
 [[source]]
 name = "gitlab-work-items"

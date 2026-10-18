@@ -10,7 +10,7 @@ use crate::github::GitHub;
 use crate::gitlab::GitLab;
 use crate::http::Transport;
 use crate::llm_bridge::LlmBridge;
-use crate::review_requests::ReviewRequests;
+use crate::review_requests::{Filters as ReviewFilters, ReviewRequests};
 use crate::work_items::{Filters, WorkItems};
 
 /// Makes a fresh transport per forge client.
@@ -121,9 +121,17 @@ pub fn build_source(
         forge_client(forge_name, forge_cfg, env, transport)
     };
     let source: Box<dyn Source> = match cfg.kind {
-        SourceKind::GitlabReviewRequests | SourceKind::GithubReviewRequests => Box::new(
-            ReviewRequests::new(&cfg.name, forge(cfg)?, cfg.title.as_deref()),
-        ),
+        SourceKind::GitlabReviewRequests | SourceKind::GithubReviewRequests => {
+            Box::new(ReviewRequests::new(
+                &cfg.name,
+                forge(cfg)?,
+                cfg.title.as_deref(),
+                ReviewFilters {
+                    exclude_authors: cfg.exclude_authors.clone(),
+                    drafts: cfg.drafts,
+                },
+            ))
+        }
         SourceKind::GitlabWorkItems | SourceKind::GithubWorkItems => Box::new(WorkItems::new(
             &cfg.name,
             forge(cfg)?,
@@ -167,9 +175,10 @@ pub fn build_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http::ScriptedTransport;
+    use crate::http::{HttpResponse, ScriptedTransport};
     use tasq_core::config::LoadOptions;
     use tasq_core::model::Status;
+    use tasq_core::source::SyncContext;
 
     fn load(toml: &str) -> Config {
         let dir = tempfile::tempdir().unwrap();
@@ -198,6 +207,8 @@ forge = "gitlab"
 tags = ["gitlab", "review-request"]
 status = "ready"
 flag = "review-request"
+exclude_authors = ["dependabot", "silverbot"]
+drafts = true
 
 [[source]]
 name = "issues"
@@ -243,6 +254,51 @@ enabled = false
         assert!(format!("{issues:?}").starts_with("Built { name: \"issues\""));
         let inbox = built[2].1.as_ref().unwrap();
         assert_eq!(inbox.source.name(), "inbox");
+    }
+
+    /// `exclude_authors` and `drafts` reach the review-request source.
+    #[test]
+    fn review_request_filters_are_wired() {
+        let mr = |n: u64, author: &str, draft: bool| {
+            format!(
+                "{{\"iid\":{n},\"title\":\"T\",\"web_url\":\"https://gl.example.com/g/p/-/merge_requests/{n}\",\"state\":\"opened\",\"draft\":{draft},\"author\":{{\"username\":\"{author}\"}}}}"
+            )
+        };
+        let list = format!(
+            "[{},{},{},{}]",
+            mr(1, "pau", false),
+            mr(2, "dependabot", false),
+            mr(3, "pau", true),
+            mr(4, "silverbot", true)
+        );
+        let transport = move || -> Box<dyn Transport> {
+            Box::new(ScriptedTransport::new(vec![
+                HttpResponse::new(200, "{\"id\":1,\"username\":\"pau\"}"),
+                HttpResponse::new(200, list.clone()),
+            ]))
+        };
+        let ids = |cfg: &SourceConfig, config: &Config| -> Vec<String> {
+            let env = vec![("GITLAB_TOKEN".to_owned(), "a".to_owned())];
+            build_source(cfg, config, &env, &transport)
+                .unwrap()
+                .source
+                .fetch(&SyncContext::default())
+                .unwrap()
+                .into_iter()
+                .map(|i| i.external_id)
+                .collect()
+        };
+        let config = load(CONFIG);
+        let mut cfg = config.source[0].clone();
+        assert_eq!(
+            (cfg.exclude_authors.clone(), cfg.drafts),
+            (vec!["dependabot".to_owned(), "silverbot".to_owned()], true)
+        );
+        assert_eq!(ids(&cfg, &config), vec!["g/p!1", "g/p!3"]);
+        cfg.drafts = false;
+        assert_eq!(ids(&cfg, &config), vec!["g/p!1"]);
+        cfg.exclude_authors = Vec::new();
+        assert_eq!(ids(&cfg, &config), vec!["g/p!1", "g/p!2"]);
     }
 
     #[test]
