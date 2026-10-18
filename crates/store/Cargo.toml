@@ -13,6 +13,9 @@ authors.workspace = true
 
 [dependencies]
 tasq-core = { path = "../core", version = "0.1.0" }
+# The ULID timestamp (`created_at`) is a UTC millisecond shown in local
+# time; `clock` is what turns it into the machine's zone.
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 [dev-dependencies]
 tempfile = "3"

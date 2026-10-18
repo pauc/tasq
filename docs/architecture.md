@@ -16,7 +16,7 @@ flowchart TB
     end
 
     subgraph adapters["Adapters (the only crates that do I/O)"]
-        tstore["<b>tasq-store</b><br/>Store over a tasq directory<br/>(Revision, diff; ADR-0026)"]
+        tstore["<b>tasq-store</b><br/>Store over a tasq directory<br/>(ULID files, Revision, diff; ADR-0026)"]
         store["<b>tasq-store-nb</b><br/>Store over an nb notebook"]
         sources["<b>tasq-sources</b><br/>Source: GitLab, GitHub, LLM bridge"]
         launch["<b>tasq-launch</b><br/>Launcher, Summarizer"]
@@ -47,7 +47,7 @@ everything meets.
 | Crate | Package | Role | Talks to the world through |
 |---|---|---|---|
 | `crates/core` | `tasq-core` | Domain model, lossless markdown format, queries, config, clock, reconciliation, reports, and the `Store`, `Source`, `Launcher`, `Summarizer` traits; the worktree lifecycle decisions (`worktree`). | Nothing. No filesystem, no processes, no terminal, no network. |
-| `crates/store` | `tasq-store` | The tasq-owned `Store` (ADR-0026): a directory of `<ULID>.md` files with a frontmatter block, built in slices. Today: `Revision` (mtime, length, hash) and `diff::apply` (whole-task write to `format::ops` calls), moved out of the nb crate. | Files. |
+| `crates/store` | `tasq-store` | The tasq-owned `Store` (ADR-0026): `TasqStore` over a directory of `<ULID>.md` files with a frontmatter block, built in slices. Today: reads (the id map is the files' frontmatter, scanned on every call; the creation time is the ULID's), `doctor` checks, `Revision` (mtime, length, hash) and `diff::apply` (whole-task write to `format::ops` calls); writes come with the next slices. | Files. |
 | `crates/store-nb` | `tasq-store-nb` | The `Store` implementation: `*.todo.md` files in an nb notebook, `.index` ids, atomic writes, conflict detection, bookkeeping (`nb` or `git`), `tasq doctor` checks. | Files; `nb` and `git` child processes (only for bookkeeping, never for reads). |
 | `crates/sources` | `tasq-sources` | `Source` implementations: GitLab and GitHub review requests and work items over a shared forge client, and the LLM bridge that turns a command's JSON into items. | HTTPS (`ureq`); a child process for the LLM bridge and `token_cmd`. |
 | `crates/launch` | `tasq-launch` | `Launcher` implementations (shell, tmux, Claude Code, herdr), the command `Summarizer` behind `tasq summary`. | Child processes, with an explicitly injected environment. |
@@ -197,13 +197,20 @@ already on disk. A failed background job leaves its message in `.git/tasq/failed
 ## tasq-store
 
 The tasq-owned store of ADR-0026, built one slice at a time (`ruli/features/store-v2/PLAN.md`).
-It holds the two pieces any file-backed store needs, moved out of the nb crate so both stores
-share them:
+Reads scan the directory on every call: every non-dot `.md` file is read and parsed as a v2
+task file, the id map is the files' frontmatter, a file that is not a v2 task file is skipped
+by `list` and reported by `doctor`, an id claimed by two files is `StoreError::AmbiguousId`
+from `get` (both files named) and a warning from `list`. A directory that does not exist is
+an empty store; reads never lock and never create it. Writes are not implemented yet.
 
 | Module | What it holds |
 |---|---|
+| `store` | `TasqStore`: `list`, `get`, `file_of`, `describe` (`tasq`, stable ids), `doctor` (`store`, `task-file`, `ids` checks), warnings. |
+| `ulid` | `Ulid`: the file name; parse, render, and the millisecond timestamp that is the task's creation time. |
 | `revision` | `Revision`: mtime, length and a content hash, captured on read and compared on write; a mismatch is `StoreError::Conflict`. |
 | `diff` | `apply`: edits the stored `Document` with `format::ops` until its projection equals the requested `Task`, or names the fields it could not express (`StoreError::Unsupported` in the caller). |
+
+`revision` and `diff` were moved out of the nb crate so both stores share them.
 
 ## tasq-sources
 

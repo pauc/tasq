@@ -1,14 +1,18 @@
-//! The crate that becomes the tasq-owned [`Store`] of ADR-0026 (a directory
-//! of `<ULID>.md` task files with a frontmatter block, under
-//! `<data_dir>/<store.name>`), built in slices (`ruli/features/store-v2/PLAN.md`).
+//! The tasq-owned [`Store`] of ADR-0026: [`TasqStore`], a directory of
+//! `<ULID>.md` task files with a frontmatter block, under
+//! `<data_dir>/<store.name>`, built in slices (`ruli/features/store-v2/PLAN.md`).
 //!
-//! So far it holds the two pieces every file store needs, moved out of the nb
-//! store so both share them:
-//!
+//! - [`TasqStore`]: the store. Reads scan the directory on every call (the
+//!   id map is the files' frontmatter, there is no index), never lock and
+//!   never create it; a directory that does not exist is an empty store.
+//!   Writes come with the later slices.
+//! - [`ulid`]: the file name, whose timestamp is the task's creation time.
 //! - [`Revision`]: change detection for a task file (mtime, length, hash), so
 //!   an update refuses to overwrite a file that changed since it was read.
 //! - [`diff::apply`]: turns a whole-task write into the edit operations of
 //!   [`tasq_core::format::ops`] and reports the fields they could not express.
+//!
+//! The last two are shared with the nb store until it is deleted.
 //!
 //! [`Store`]: tasq_core::store::Store
 
@@ -16,5 +20,8 @@
 
 pub mod diff;
 pub mod revision;
+pub mod store;
+pub mod ulid;
 
 pub use self::revision::Revision;
+pub use self::store::TasqStore;
