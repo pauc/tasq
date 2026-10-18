@@ -18,6 +18,7 @@ refuse anything else; a future shape change bumps the number.
 | `tasq project <id>` (show) | `"task": Task`, `"default_project": path or null` |
 | `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool` (only with worktrees enabled), `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
 | `tasq store info` | `"store": {name, location, task_count, id_scheme, ids_may_change_on_reconcile}`, `"bookkeeper": the bookkeeper's name (`"native"`; `"none"` in tests), `null` for a store without one, `"data_dir": {value, from}` (the resolved directory and the layer that set it, as `tasq config show` names it: `defaults`, a file, `env`, `--set`), `"store_name": {value, from}` |
+| `tasq migrate` | `"dry_run"`, `"target"` (the store directory), `"tasks"`: `[{id, file, title, from}]` in id order (`file` the new `<ULID>.md` name, `from` the nb file), `"config"`: `{data_dir, store_name}` (the settings that select the target) |
 | `tasq doctor` | `"checks": [{name, status: "ok" \| "warn" \| "fail", detail, fix}]`, `"ok": bool` |
 | `tasq sync` | `"dry_run": bool`, `"ok": bool`, `"sources": [{name, changes: [string], applied: [{id, description}], error}]` |
 | `tasq summary` | `"day"`, `"header"` (`Friday 2026-10-02`), `"summarizer": "raw" \| "llm"`, `"tasks": [{id, title, done, notes: [string]}]`, `"notes"` (the raw text), `"summary"` (the distilled text, `null` when raw) |

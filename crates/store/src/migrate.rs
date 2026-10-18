@@ -40,6 +40,14 @@ const TODO_SUFFIX: &str = ".todo.md";
 /// Why a migration could not be planned or written.
 #[derive(Debug, Error)]
 pub enum MigrateError {
+    /// The notebook argument names no directory.
+    #[error("notebook {notebook:?} not found: {reason}")]
+    NoNotebook {
+        /// The notebook as given.
+        notebook: String,
+        /// Why it names no directory.
+        reason: String,
+    },
     /// The notebook directory has no `.index`.
     #[error("{}: not an nb notebook (no {INDEX})", path.display())]
     NotANotebook {
@@ -142,6 +150,60 @@ impl Plan {
                 .map_err(io_error(&path))?;
         }
         Ok(())
+    }
+}
+
+/// The directory of `notebook`, which must exist: a name is
+/// `<nb_dir>/<name>` (`NB_DIR`; empty is unset), else `<home>/.nb/<name>`;
+/// a value containing `/` is the directory itself, `~` expanded and a
+/// relative one taken from `cwd`. `nb` is never asked. This mirrors
+/// `tasq_store_nb::resolve::resolve_notebook` (which refuses a relative
+/// path) so the nb crate can go without taking it along.
+pub fn resolve_notebook(
+    notebook: &str,
+    cwd: &Path,
+    home: Option<&Path>,
+    nb_dir: Option<&Path>,
+) -> Result<PathBuf, MigrateError> {
+    let not_found = |reason: String| MigrateError::NoNotebook {
+        notebook: notebook.to_owned(),
+        reason,
+    };
+    if notebook.is_empty() {
+        return Err(not_found("the name is empty".to_owned()));
+    }
+    let candidate = if notebook.contains('/') || notebook == "~" {
+        let tilde = (notebook == "~")
+            .then_some("")
+            .or_else(|| notebook.strip_prefix("~/"));
+        match (tilde, home) {
+            (Some(rest), Some(home)) => home.join(rest),
+            (Some(_), None) => {
+                return Err(not_found(
+                    "it starts with ~ but there is no home directory".to_owned(),
+                ));
+            }
+            (None, _) => cwd.join(notebook).components().collect(),
+        }
+    } else {
+        let nb_dir = nb_dir
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .map(Path::to_owned)
+            .or_else(|| home.map(|home| home.join(".nb")));
+        let Some(nb_dir) = nb_dir else {
+            return Err(not_found(
+                "no NB_DIR or home directory to look in".to_owned(),
+            ));
+        };
+        nb_dir.join(notebook)
+    };
+    if candidate.is_dir() {
+        Ok(candidate)
+    } else {
+        Err(not_found(format!(
+            "{} is not a directory",
+            candidate.display()
+        )))
     }
 }
 

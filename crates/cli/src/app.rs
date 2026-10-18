@@ -123,6 +123,11 @@ pub fn run(cli: Cli) -> Result<()> {
                 Some(Command::Dates { spec }) => commands::dates::run(&app, &spec),
                 Some(Command::Ui) => commands::ui::run(&app),
                 Some(Command::Store(cmd)) => commands::store::run(&app, cmd),
+                Some(Command::Migrate {
+                    notebook,
+                    to,
+                    dry_run,
+                }) => commands::migrate::run(&app, &notebook, to.as_deref(), dry_run),
                 Some(Command::Config(cmd)) => commands::config::run(&app, cmd),
                 Some(Command::Plugins(cmd)) => commands::plugins::run(&app, cmd),
                 Some(Command::Doctor | Command::Completions { .. }) => {
@@ -209,6 +214,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::Dates { .. } => "dates",
         Command::Ui => "ui",
         Command::Store(_) => "store",
+        Command::Migrate { .. } => "migrate",
         Command::Doctor => "doctor",
         Command::Config(_) => "config",
         Command::Plugins(_) => "plugins",

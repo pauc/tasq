@@ -614,3 +614,90 @@ fn the_committed_fixture_store_is_the_migrated_nb_fixture() {
         .collect();
     assert_eq!(ids, vec!["1", "3", "4", "6", "7"]);
 }
+
+/// A temp tree holding `nb/Tasq`, `home/.nb/Tasq`, `cwd/rel/Tasq` and the
+/// file `home/file`, for the resolution tests.
+fn resolution_tree() -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    for dir in ["nb/Tasq", "home/.nb/Tasq", "cwd/rel/Tasq"] {
+        std::fs::create_dir_all(root.path().join(dir)).unwrap();
+    }
+    std::fs::write(root.path().join("home/file"), "").unwrap();
+    root
+}
+
+#[test]
+fn a_notebook_name_is_found_under_nb_dir_else_under_home() {
+    let root = resolution_tree();
+    let r = root.path();
+    let resolve = |nb_dir: Option<&Path>| {
+        migrate::resolve_notebook("Tasq", &r.join("cwd"), Some(&r.join("home")), nb_dir).unwrap()
+    };
+    assert_eq!(resolve(Some(&r.join("nb"))), r.join("nb/Tasq"));
+    assert_eq!(resolve(None), r.join("home/.nb/Tasq"));
+    assert_eq!(
+        resolve(Some(Path::new(""))),
+        r.join("home/.nb/Tasq"),
+        "an empty NB_DIR is unset, as in the shell's ${{NB_DIR:-...}}"
+    );
+}
+
+#[test]
+fn a_notebook_with_a_slash_is_a_directory() {
+    let root = resolution_tree();
+    let r = root.path();
+    let resolve = |notebook: &str| {
+        migrate::resolve_notebook(
+            notebook,
+            &r.join("cwd"),
+            Some(&r.join("home")),
+            Some(&r.join("nb")),
+        )
+        .unwrap()
+    };
+    assert_eq!(resolve("~/.nb/Tasq"), r.join("home/.nb/Tasq"));
+    assert_eq!(resolve("rel/Tasq"), r.join("cwd/rel/Tasq"));
+    assert_eq!(resolve("~"), r.join("home"));
+    assert_eq!(
+        resolve(&r.join("nb/Tasq").display().to_string()),
+        r.join("nb/Tasq")
+    );
+}
+
+#[test]
+fn a_notebook_that_is_not_a_directory_is_an_error_naming_it() {
+    let root = resolution_tree();
+    let r = root.path();
+    let error = |notebook: &str, home: Option<&Path>, nb_dir: Option<&Path>| {
+        migrate::resolve_notebook(notebook, &r.join("cwd"), home, nb_dir)
+            .unwrap_err()
+            .to_string()
+    };
+    let home = Some(r.join("home"));
+    assert_eq!(
+        error("Work", home.as_deref(), None),
+        format!(
+            "notebook \"Work\" not found: {} is not a directory",
+            r.join("home/.nb/Work").display()
+        )
+    );
+    assert_eq!(
+        error("~/file", home.as_deref(), None),
+        format!(
+            "notebook \"~/file\" not found: {} is not a directory",
+            r.join("home/file").display()
+        )
+    );
+    assert_eq!(
+        error("", home.as_deref(), None),
+        "notebook \"\" not found: the name is empty"
+    );
+    assert_eq!(
+        error("Tasq", None, None),
+        "notebook \"Tasq\" not found: no NB_DIR or home directory to look in"
+    );
+    assert_eq!(
+        error("~/.nb/Tasq", None, None),
+        "notebook \"~/.nb/Tasq\" not found: it starts with ~ but there is no home directory"
+    );
+}

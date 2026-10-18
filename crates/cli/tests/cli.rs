@@ -667,6 +667,271 @@ mod store_location {
     }
 }
 
+mod migrate {
+    use super::*;
+    use support::dir_bytes;
+
+    /// `text` with the random part of every ULID file name (the 16
+    /// characters after the 10 of the time) replaced by `<random>`.
+    fn redact(text: &str) -> String {
+        regex::Regex::new(r"\b([0-9A-HJKMNP-TV-Z]{10})[0-9A-HJKMNP-TV-Z]{16}\.md\b")
+            .unwrap()
+            .replace_all(text, "$1<random>.md")
+            .into_owned()
+    }
+
+    #[test]
+    fn converts_the_notebook_and_prints_the_mapping_and_the_config() {
+        let env = TestEnv::empty();
+        let notebook = env.notebook();
+        let before = dir_bytes(&notebook);
+        let target = env.root.path().join("stores").join("work");
+        let out = env
+            .tasq()
+            .args(["migrate", "home", "--to"])
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stderr(&out), "");
+        assert_snapshot!(redact(&env.normalize(&stdout(&out))));
+        assert_eq!(dir_bytes(&notebook), before, "the notebook is not written");
+        let names: Vec<String> = std::fs::read_dir(&target)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names.len(), 5, "{names:?}");
+        for name in &names {
+            assert!(stdout(&out).contains(name.as_str()), "{name} not printed");
+        }
+    }
+
+    #[test]
+    fn the_new_store_lists_the_same_ids_and_titles_as_the_notebook() {
+        let env = TestEnv::empty();
+        env.notebook();
+        let target = env.root.path().join("stores").join("work");
+        env.tasq()
+            .args(["migrate", "home", "--to"])
+            .arg(&target)
+            .assert()
+            .success();
+        let migrated = env
+            .tasq()
+            .env("TASQ_DATA_DIR", target.parent().unwrap())
+            .env("TASQ_STORE_NAME", "work")
+            .args(["list", "--all", "--json"])
+            .output()
+            .unwrap();
+        assert!(migrated.status.success(), "{}", stderr(&migrated));
+        let doc: serde_json::Value = serde_json::from_str(&stdout(&migrated)).unwrap();
+        let listed: Vec<(String, String)> = doc["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| {
+                (
+                    t["id"].as_str().unwrap().to_owned(),
+                    t["title"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        let expected: Vec<(String, String)> = [
+            ("1", "Rewrite the tasks script in Rust"),
+            ("3", "Answer the support ticket"),
+            ("4", "Ship the release notes"),
+            ("6", "Wait for the security review"),
+            ("7", "Task without a tags section"),
+        ]
+        .iter()
+        .map(|(id, title)| ((*id).to_owned(), (*title).to_owned()))
+        .collect();
+        let mut sorted = listed.clone();
+        sorted.sort_by_key(|(id, _)| id.parse::<u64>().unwrap());
+        assert_eq!(sorted, expected);
+        let fixture = TestEnv::fixture();
+        assert_eq!(
+            stdout(&migrated),
+            stdout(
+                &fixture
+                    .tasq()
+                    .args(["list", "--all", "--json"])
+                    .output()
+                    .unwrap()
+            ),
+            "the migrated store reads like the committed fixture store"
+        );
+    }
+
+    /// The mapping lines of a `migrate` output: everything before the
+    /// first blank line, file names redacted.
+    fn mapping(out: &std::process::Output) -> String {
+        redact(stdout(out).split("\n\n").next().unwrap())
+    }
+
+    #[test]
+    fn a_dry_run_prints_the_same_mapping_and_writes_nothing() {
+        let env = TestEnv::empty();
+        env.notebook();
+        let target = env.root.path().join("stores").join("work");
+        let dry = env
+            .tasq()
+            .args(["migrate", "home", "--dry-run", "--to"])
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(dry.status.success(), "{}", stderr(&dry));
+        assert!(!target.exists(), "a dry run leaves the target absent");
+        assert!(!env.store().exists(), "and writes no other store");
+        assert!(
+            env.normalize(&stdout(&dry)).contains(
+                "\nWould write 5 tasks to [ROOT]/stores/work (dry run: nothing written).\nTo use this store, set in the tasq config:\n\ndata_dir = \"[ROOT]/stores\"\n\n[store]\nname = \"work\"\n"
+            ),
+            "{}",
+            stdout(&dry)
+        );
+        let real = env
+            .tasq()
+            .args(["migrate", "home", "--to"])
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(real.status.success(), "{}", stderr(&real));
+        assert_eq!(mapping(&dry), mapping(&real));
+        assert_eq!(mapping(&dry).lines().count(), 5);
+    }
+
+    #[test]
+    fn a_target_that_is_not_empty_is_refused_before_anything_is_written() {
+        let env = TestEnv::empty();
+        env.notebook();
+        let target = env.root.path().join("work");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("keep.txt"), "mine\n").unwrap();
+        for dry_run in [false, true] {
+            let mut cmd = env.tasq();
+            cmd.args(["migrate", "home", "--to"]).arg(&target);
+            if dry_run {
+                cmd.arg("--dry-run");
+            }
+            let out = cmd.output().unwrap();
+            assert_eq!(out.status.code(), Some(1));
+            assert_eq!(stdout(&out), "");
+            assert_eq!(
+                env.normalize(&stderr(&out)),
+                "tasq: [ROOT]/work: the target exists and is not empty\n"
+            );
+        }
+        assert_eq!(
+            dir_bytes(&target),
+            vec![(target.join("keep.txt"), b"mine\n".to_vec())]
+        );
+    }
+
+    #[test]
+    fn without_to_the_target_is_the_configured_store() {
+        let env = TestEnv::empty();
+        env.notebook();
+        let out = env.tasq().args(["migrate", "home"]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(
+            env.normalize(&stdout(&out))
+                .contains("Wrote 5 tasks to [ROOT]/home/.local/share/tasq/stores/default.\n"),
+            "{}",
+            stdout(&out)
+        );
+        assert_eq!(env.task_files().len(), 5);
+        env.tasq()
+            .args(["view", "6"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("# Wait for the security review"));
+        let refused = env.tasq().args(["migrate", "home"]).output().unwrap();
+        assert_eq!(refused.status.code(), Some(1));
+        assert_eq!(
+            env.normalize(&stderr(&refused)),
+            "tasq: [ROOT]/home/.local/share/tasq/stores/default: the target exists and is not empty\n"
+        );
+    }
+
+    #[test]
+    fn a_notebook_is_found_under_nb_dir_or_by_path_and_no_git_runs() {
+        let env = TestEnv::empty();
+        let notebook = env.notebook();
+        let calls = env.root.path().join("git-calls");
+        let _ = std::fs::remove_file(env.bin.join("git"));
+        env.fake_tool(
+            "git",
+            &format!(
+                "[ -n \"$FAKE_PROBE\" ] || echo \"$@\" >> {}",
+                calls.display()
+            ),
+        );
+        env.tasq()
+            .env("NB_DIR", notebook.parent().unwrap())
+            .args(["migrate", "home", "--dry-run"])
+            .assert()
+            .success();
+        env.tasq()
+            .args([
+                "migrate",
+                "--dry-run",
+                "--to",
+                "relative/work",
+                "./.nb/home",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!(
+                "Would write 5 tasks to {}/relative/work ",
+                env.home.display()
+            )));
+        env.tasq().args(["migrate", "home"]).assert().success();
+        assert!(
+            !calls.exists(),
+            "git ran: {:?}",
+            std::fs::read_to_string(&calls)
+        );
+    }
+
+    #[test]
+    fn a_missing_notebook_is_an_error_naming_where_it_looked() {
+        let env = TestEnv::empty();
+        let out = env.tasq().args(["migrate", "Work"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            "tasq: notebook \"Work\" not found: [ROOT]/home/.nb/Work is not a directory\n"
+        );
+        std::fs::create_dir_all(env.home.join("plain")).unwrap();
+        let out = env.tasq().args(["migrate", "./plain"]).output().unwrap();
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            "tasq: [ROOT]/home/plain: not an nb notebook (no .index)\n"
+        );
+    }
+
+    #[test]
+    fn json_carries_the_mapping_and_the_config() {
+        let env = TestEnv::empty();
+        env.notebook();
+        let out = env
+            .tasq()
+            .args([
+                "migrate",
+                "home",
+                "--dry-run",
+                "--json",
+                "--to",
+                "/srv/stores/work",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_snapshot!(redact(&env.normalize(&stdout(&out))));
+    }
+}
+
 mod doctor {
     use super::*;
 
