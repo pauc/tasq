@@ -46,7 +46,7 @@ changed code fails the PR.
 | `cargo fmt --all --check` | No diff |
 | `cargo clippy --workspace --all-targets -- -D warnings` | `all` and `pedantic` enabled in `Cargo.toml`; the few allowed lints are listed there with a reason. Clippy 1.99: write `assert_eq!(v, Vec::new())`, not `assert!(v.is_empty())` |
 | `cargo test --workspace` | Offline. nb-gated tests skip silently without `nb` on `PATH`; set `TASQ_REQUIRE_NB=1` to make a skip a failure (CI does) |
-| `cargo doc --workspace --no-deps` | No warnings; `tasq-core` and `tasq-store-nb` have `#![warn(missing_docs)]` |
+| `cargo doc --workspace --no-deps` | No warnings; `tasq-core`, `tasq-store` and `tasq-store-nb` have `#![warn(missing_docs)]` |
 | `cargo deny check` | Every dependency GPL-3.0-compatible (`deny.toml`) |
 | Mutation testing | Zero missed mutants in the module touched (below) |
 
@@ -107,7 +107,7 @@ Conventional commits scoped by crate or area:
 
 | Prefix | Use |
 |---|---|
-| `feat(core):`, `feat(store-nb):`, `feat(sources):`, `feat(launch):`, `feat(cli):`, `feat(tui):` | New behaviour in that crate |
+| `feat(core):`, `feat(store):`, `feat(store-nb):`, `feat(sources):`, `feat(launch):`, `feat(cli):`, `feat(tui):` | New behaviour in that crate |
 | `fix(<crate>):` | Bug fix |
 | `test(<crate>):` | Tests only |
 | `docs(plan):` | Plan files (`PLAN.md`) |

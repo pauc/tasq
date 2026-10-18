@@ -197,6 +197,36 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_task_keeps_a_leading_status_tag_in_place() {
+        // `set_status` moves the tag to the end of the line, so an unchanged
+        // task must never reach it: only a real status change may.
+        let leading = "# [ ] T\n\n## Tags\n\n#ready #gitlab #B\n";
+        assert_eq!(apply_to(leading, |_| {}).unwrap(), leading);
+    }
+
+    #[test]
+    fn appends_next_to_existing_list_entries() {
+        let text = "# [ ] T\n\n## Related\n\n- https://rel/1\n\n### Merge requests\n\n- [One](https://mr/1)\n\n## Tags\n\n#B\n\n## Worktrees\n\n- /w1 (`b1`)\n\n## Sessions\n\n- 2026-10-04 10:20: `s1`\n";
+        let at = FixedClock::at("2026-10-05 09:00").0;
+        let out = apply_to(text, |t| {
+            t.add_related(Link::new("https://rel/2"));
+            t.add_merge_request(Link::labelled("https://mr/2", "Two"));
+            t.add_worktree(Worktree::on_branch("/w2", "b2"));
+            t.add_session(Session {
+                at,
+                id: "s2".into(),
+                launcher: None,
+                description: None,
+            });
+        })
+        .unwrap();
+        assert_eq!(
+            out,
+            "# [ ] T\n\n## Related\n\n- https://rel/1\n- https://rel/2\n\n### Merge requests\n\n- [One](https://mr/1)\n- [Two](https://mr/2)\n\n## Tags\n\n#B\n\n## Worktrees\n\n- /w1 (`b1`)\n- /w2 (`b2`)\n\n## Sessions\n\n- 2026-10-04 10:20: `s1`\n- 2026-10-05 09:00: `s2`\n"
+        );
+    }
+
+    #[test]
     fn status_and_priority_rewrite_the_tags_line() {
         let out = apply_to(TEXT, |t| {
             t.set_status(Status::BLOCKED);

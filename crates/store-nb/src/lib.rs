@@ -23,14 +23,12 @@
 
 pub mod bookkeeper;
 pub mod create;
-pub mod diff;
 pub mod doctor;
 pub mod git;
 pub mod index;
 pub mod job;
 pub mod native;
 pub mod resolve;
-pub mod revision;
 pub mod store;
 pub mod which;
 
@@ -39,6 +37,6 @@ pub use self::bookkeeper::{
 };
 pub use self::doctor::{Check, CheckStatus};
 pub use self::index::{Index, TODO_SUFFIX};
-pub use self::revision::Revision;
 pub use self::store::{DEFAULT_SYNC_INTERVAL, NbStore, NbStoreOptions, StoreWarning};
 pub use tasq_core::store::{BatchError, IdScheme, Store, StoreError, StoreInfo};
+pub use tasq_store::{Revision, diff, revision};

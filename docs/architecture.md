@@ -16,6 +16,7 @@ flowchart TB
     end
 
     subgraph adapters["Adapters (the only crates that do I/O)"]
+        tstore["<b>tasq-store</b><br/>Store over a tasq directory<br/>(Revision, diff; ADR-0026)"]
         store["<b>tasq-store-nb</b><br/>Store over an nb notebook"]
         sources["<b>tasq-sources</b><br/>Source: GitLab, GitHub, LLM bridge"]
         launch["<b>tasq-launch</b><br/>Launcher, Summarizer"]
@@ -25,6 +26,8 @@ flowchart TB
     core["<b>tasq-core</b> (crates/core)<br/>model · format · query · config · clock<br/>Store / Source / Launcher traits"]
 
     cli --> store
+    store --> tstore
+    tstore --> core
     cli --> sources
     cli --> launch
     cli --> worktree
@@ -36,12 +39,15 @@ flowchart TB
     launch --> core
 ```
 
-Dependencies flow one way, toward `tasq-core`. The adapters never depend on each other, and the
-TUI depends on core only; the CLI is the single place where everything meets.
+Dependencies flow one way, toward `tasq-core`. The adapters never depend on each other (the one
+exception is `tasq-store-nb` taking `Revision` and `diff` from `tasq-store` until the nb crate
+is deleted, ADR-0026), and the TUI depends on core only; the CLI is the single place where
+everything meets.
 
 | Crate | Package | Role | Talks to the world through |
 |---|---|---|---|
 | `crates/core` | `tasq-core` | Domain model, lossless markdown format, queries, config, clock, reconciliation, reports, and the `Store`, `Source`, `Launcher`, `Summarizer` traits; the worktree lifecycle decisions (`worktree`). | Nothing. No filesystem, no processes, no terminal, no network. |
+| `crates/store` | `tasq-store` | The tasq-owned `Store` (ADR-0026): a directory of `<ULID>.md` files with a frontmatter block, built in slices. Today: `Revision` (mtime, length, hash) and `diff::apply` (whole-task write to `format::ops` calls), moved out of the nb crate. | Files. |
 | `crates/store-nb` | `tasq-store-nb` | The `Store` implementation: `*.todo.md` files in an nb notebook, `.index` ids, atomic writes, conflict detection, bookkeeping (`nb` or `git`), `tasq doctor` checks. | Files; `nb` and `git` child processes (only for bookkeeping, never for reads). |
 | `crates/sources` | `tasq-sources` | `Source` implementations: GitLab and GitHub review requests and work items over a shared forge client, and the LLM bridge that turns a command's JSON into items. | HTTPS (`ureq`); a child process for the LLM bridge and `token_cmd`. |
 | `crates/launch` | `tasq-launch` | `Launcher` implementations (shell, tmux, Claude Code, herdr), the command `Summarizer` behind `tasq summary`. | Child processes, with an explicitly injected environment. |
@@ -175,8 +181,7 @@ sequenceDiagram
 | `store` | `NbStore`, `NbStoreOptions` (environment for `git`, home, sync interval), `StoreWarning`, `reconcile`. |
 | `resolve` | Notebook name or path → directory, as the script's `NB_HOME` block did. |
 | `index` | nb's `.index`: one filename per line, id = 1-based line number. Appended to; `reconcile` only blanks lines of missing files, never renumbers. |
-| `revision` | `Revision`: mtime plus content hash, the basis of `Conflict` detection. |
-| `diff` | Whole-task write → `format::ops` calls on the stored document. |
+| `revision`, `diff` | Re-exported from `tasq-store` (see below): `Revision`, the basis of `Conflict` detection, and the whole-task write → `format::ops` diff. |
 | `create` | New `YYYYMMDDHHMMSS.todo.md` file, registered through the bookkeeper, id read back from `.index`. |
 | `bookkeeper` | The `Bookkeeper` trait (`lock`, `register`, `checkpoint`, `take_failure`, `verify`, `sync`), `WriteLock`, `NoopBookkeeper` for tests. |
 | `native` | `NativeBookkeeper`: appends to `.index` byte-identically to `nb index add`, starts the background job, verifies the index, syncs on demand. |
@@ -188,6 +193,17 @@ sequenceDiagram
 Bookkeeping failure after a successful write is a warning carrying the manual fix; the file is
 already on disk. A failed background job leaves its message in `.git/tasq/failed` for the next
 `NbStore::open` to report. ADR-0023 explains why nb is not run and the job design.
+
+## tasq-store
+
+The tasq-owned store of ADR-0026, built one slice at a time (`ruli/features/store-v2/PLAN.md`).
+It holds the two pieces any file-backed store needs, moved out of the nb crate so both stores
+share them:
+
+| Module | What it holds |
+|---|---|
+| `revision` | `Revision`: mtime, length and a content hash, captured on read and compared on write; a mismatch is `StoreError::Conflict`. |
+| `diff` | `apply`: edits the stored `Document` with `format::ops` until its projection equals the requested `Task`, or names the fields it could not express (`StoreError::Unsupported` in the caller). |
 
 ## tasq-sources
 
@@ -367,6 +383,7 @@ The dependency direction is what makes the test strategy work:
 | Crate | How it is tested |
 |---|---|
 | `tasq-core` | Unit and integration tests, property tests (`proptest`) for format round trips, byte-identical fixtures in `tests/fixtures/*.md`. Mutation-tested with zero missed mutants as the acceptance bar. |
+| `tasq-store` | Unit tests on `revision` and `diff`, and a test of the public paths over a temporary directory; no `nb`, no `git`. Mutation-tested (`just mutants-in crates/store/src`). |
 | `tasq-store-nb` | Tests against a temp copy of the fixture notebook (`tests/support/mod.rs` builds an `NbEnv`), real `git` on temporary repositories and bare remotes, a slow fake `git` to prove writes do not wait. The nb parity tests run the real `nb` next to the store; they skip when it is absent, or fail with `TASQ_REQUIRE_NB=1`. Mutation-tested. |
 | `tasq-sources` | Unit tests with a scripted `Transport`; no network in `cargo test`. |
 | `tasq-launch` | Fake executables on an injected `PATH`; `insta` snapshots of the commands that would run. |

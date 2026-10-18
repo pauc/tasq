@@ -160,8 +160,9 @@ jobs:
           # `v0.2.0-rc.1` is a pre-release, `v0.2.0` is not.
           prerelease: ${{ contains(github.ref_name, '-') }}
 
-  # crates.io, in dependency order: tasq-core first, then the four crates that
-  # depend only on it, then the `tasq` binary crate. Each publish is skipped
+  # crates.io, in dependency order: tasq-core, then tasq-store (which
+  # tasq-store-nb needs), then the crates that depend on those, then the
+  # `tasq` binary crate. Each publish is skipped
   # when that version is already on crates.io (re-runs), and is followed by a
   # wait until the version is visible in the sparse index, because the next
   # crate's `cargo publish` verification build resolves its dependencies from
@@ -228,7 +229,7 @@ jobs:
             echo "$crate@$VERSION is in the index"
           }
 
-          for crate in tasq-core tasq-store-nb tasq-sources tasq-launch tasq-worktree tasq-tui tasq; do
+          for crate in tasq-core tasq-store tasq-store-nb tasq-sources tasq-launch tasq-worktree tasq-tui tasq; do
             echo "::group::$crate@$VERSION"
             if published "$crate" "$VERSION"; then
               echo "$crate@$VERSION is already on crates.io, skipping"

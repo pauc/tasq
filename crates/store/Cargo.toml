@@ -1,0 +1,21 @@
+[package]
+name = "tasq-store"
+description = "tasq-owned task Store: a directory of frontmatter task files (ADR-0026)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+authors.workspace = true
+
+[dependencies]
+tasq-core = { path = "../core", version = "0.1.0" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

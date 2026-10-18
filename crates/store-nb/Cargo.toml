@@ -13,6 +13,9 @@ authors.workspace = true
 
 [dependencies]
 tasq-core = { path = "../core", version = "0.1.0" }
+# The revision check and the diff-and-apply module moved to the tasq store
+# (ADR-0026, SV-002); re-exported here until this crate is deleted.
+tasq-store = { path = "../store", version = "0.1.0" }
 # Filenames are the creation timestamp (`YYYYMMDDHHMMSS.todo.md`); `clock`
 # reads the store's local-time `Clock` as an instant for the background job.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

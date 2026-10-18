@@ -23,7 +23,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 scripts/guard cargo fmt --all --check
 scripts/guard cargo clippy --workspace --all-targets -- -D warnings
 scripts/guard cargo test --workspace
-scripts/guard cargo doc --workspace --no-deps        # missing_docs is a warning in core and store-nb
+scripts/guard cargo doc --workspace --no-deps        # missing_docs is a warning in core, store and store-nb
 
 # One test, one crate, one integration test file
 scripts/guard cargo test -p tasq-core --test format_ops set_status
@@ -50,12 +50,13 @@ Rules that are easy to get wrong:
 
 ## Architecture
 
-Workspace of seven crates; dependencies flow one way, toward `tasq-core`.
+Workspace of eight crates; dependencies flow one way, toward `tasq-core`.
 
 | Crate | Role |
 |---|---|
 | `crates/core` (`tasq-core`) | Domain model, markdown format, queries, config, clock, and the `Store`/`Source`/`Launcher` traits. **No I/O, no process spawning, no terminal or network deps.** |
-| `crates/store-nb` | `Store` impl over an nb notebook plus the `Bookkeeper`, the background commit job and `doctor` checks. Runs `git` for bookkeeping; nothing runs `nb` (ADR-0023). |
+| `crates/store` (`tasq-store`) | The tasq-owned store (ADR-0026), built in slices under `ruli/features/store-v2/`. Holds the `Revision` check (mtime, length, hash) and `diff::apply` (whole task in, `format::ops` calls out); store-nb re-exports both. |
+| `crates/store-nb` | `Store` impl over an nb notebook plus the `Bookkeeper`, the background commit job and `doctor` checks. Runs `git` for bookkeeping; nothing runs `nb` (ADR-0023). Depends on `tasq-store` for `Revision` and `diff`. |
 | `crates/sources`, `crates/launch` | Stubs. Phase 5 (GitLab/GitHub/LLM-bridge sources) and Phase 4 (shell/tmux/claude/herdr launchers). |
 | `crates/worktree` (`tasq-worktree`) | Runs `git` for declared worktrees (ADR 0022): branch state, `git worktree add`, creating a task's worktree (`create::materialize`: provisioning, hooks, the trust store), releasing it at close (`release::release`: removal, branch deletion, remove hooks), the rows of `worktree ls` (`listing::rows`: scope, changes). The decisions live in `tasq_core::worktree`; the CLI passes in the terminal question (`hooks::Approver`). |
 | `crates/cli` (binary `tasq`) | Stub. Phase 3 (current). Must stay thin: every command is a core function plus rendering, and every command gets `--json`. |
@@ -71,7 +72,7 @@ The nb file encodes status and priority as `#tags` (`#gitlab #A #ready`). In the
 
 ### Store semantics
 
-`Store::update` takes the whole task; the nb store diffs it against disk (`store-nb/src/diff.rs`), applies ops, and writes atomically with `NamedTempFile::persist`. A `Revision` (mtime + length + hash) captured on read makes a later `update` fail with `Conflict` if the file changed. Task ids are `.index` line numbers (positional; `describe()` reports this so the CLI can warn).
+`Store::update` takes the whole task; the nb store diffs it against disk (`tasq_store::diff`, in `crates/store/src/diff.rs`), applies ops, and writes atomically with `NamedTempFile::persist`. A `Revision` (mtime + length + hash) captured on read makes a later `update` fail with `Conflict` if the file changed. Task ids are `.index` line numbers (positional; `describe()` reports this so the CLI can warn).
 
 Reads never spawn a process. A write takes `.git/tasq/lock` (`Bookkeeper::lock`, which waits for the previous job), writes the file, registers new files in `.index`, then `checkpoint` hands the lock to a detached `sh` job (`store-nb/src/job.rs`) that commits and, at most hourly (`DEFAULT_SYNC_INTERVAL`, the CLI's fixed choice since `store.sync_interval` went, ADR-0026), pulls and pushes. The command never waits for git, signing or the network. `NativeBookkeeper` is the only real strategy, `NoopBookkeeper` is for tests. A failed job writes `.git/tasq/failed`, reported as a warning by the next `NbStore::open`, never as data loss. `.index` is appended to and never renumbered; a missing `.index` is rebuilt from the files by `NbStore::open`. Tests that write to a repository call `wait_for_bookkeeping()` before reading `git log`.
 

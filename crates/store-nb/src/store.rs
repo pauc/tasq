@@ -16,11 +16,10 @@ use tasq_core::store::{BatchError, IdScheme, Store, StoreError, StoreInfo};
 
 use crate::bookkeeper::{Bookkeeper, NativeBookkeeper, WriteLock};
 use crate::create::{DEFAULT_NOTE, check_draft, free_file_name};
-use crate::diff;
 use crate::index::{Index, is_todo};
 use crate::native::{JOB_FIX, markdown_files, verify_index};
 use crate::resolve::{index_path, resolve_notebook};
-use crate::revision::Revision;
+use tasq_store::{Revision, diff};
 
 /// The interval the removed `store.sync_interval` key defaulted to: an
 /// hourly pull and push after a write, the `NB_AUTO_SYNC_SECONDS` the
