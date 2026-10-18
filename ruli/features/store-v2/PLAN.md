@@ -419,13 +419,13 @@ naming the file (the non-task-file and duplicate-id checks landed with SV-005).
 
 **Blocked by:** SV-006.
 
-**Status:** ready
+**Status:** done
 
-- [ ] Every scalar and list change made through `update` is visible on re-read and leaves unrelated lines untouched.
-- [ ] A change the ops cannot express is refused with `Unsupported` and writes nothing.
-- [ ] An external edit between read and write is a `Conflict`; the external edit survives.
-- [ ] Doctor on a clean store reports only `Ok` checks; on a store with a stale lock it reports it with the lock's path, next to SV-005's `task-file` and `ids` checks.
-- [ ] Zero missed mutants in the touched code.
+- [x] Every scalar and list change made through `update` is visible on re-read and leaves unrelated lines untouched.
+- [x] A change the ops cannot express is refused with `Unsupported` and writes nothing.
+- [x] An external edit between read and write is a `Conflict`; the external edit survives.
+- [x] Doctor on a clean store reports only `Ok` checks; on a store with a stale lock it reports it with the lock's path, next to SV-005's `task-file` and `ids` checks.
+- [x] Zero missed mutants in the touched code.
 
 ### SV-008: migrate as a library, and the committed v2 fixture store
 

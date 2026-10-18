@@ -12,9 +12,9 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 | SV-004 | Core writes v2: new documents and one op per key | done | dba6a08; `Document::from_task_v2`, `key::ORDER`, `ops::{set_key, clear_key, set_origin, clear_origin}`, every scalar op dispatches on the shape; `diff::apply` writes the origin on v2; `format_v2_write.rs` (28 tests), two v2 props; `mutants-in crates/core/src/format`: 415 mutants, 376 caught, 39 unviable, 0 missed (one `||` survivor in `clear_origin` fixed by reshaping it to a `map` over the three keys); `mutants-in crates/store/src`: 45 mutants, 0 missed |
 | SV-005 | The tasq store reads a directory | done | 5e1226b, 7e222fc; `TasqStore::new(dir, workflow)` (`crates/store/src/store.rs`), `tasq_store::ulid::Ulid`, `StoreError::AmbiguousId`; `tests/read.rs` (12 tests) over a temp directory; `mutants-in crates/store/src`: 127 mutants, 108 caught, 19 unviable, 0 missed; `--in-diff main` (before the review follow-ups): 276 mutants, 0 missed |
 | SV-006 | Create under the store lock | done | 840706a, 9de6066; `TasqStore::create` (`crates/store/src/store.rs`), `tasq_store::lock::StoreLock` (`.tasq/lock`), `tasq_store::draft::{check_draft, materialize, DEFAULT_NOTE}` (shared with store-nb), `TasqStore::{with_clock, with_random}`; `tests/create.rs` (12 tests) plus lock and draft unit tests; `mutants-in crates/store/src`: 153 mutants, 124 caught, 27 unviable, 2 timeouts (both make a loop infinite: the lock poll, the name-attempt counter), 0 missed |
-| SV-007 | Update with conflict detection, and doctor | ready | |
+| SV-007 | Update with conflict detection, and doctor | done | 9184e95; `TasqStore::{update, set_done}` (`crates/store/src/store.rs`), revisions remembered by `get`/`list`, `TasqStore::edit` (the shared edit-compare-write, with the invalid-UTF-8 refusal), doctor's `lock` check; `tests/update.rs` (14 tests); `mutants-in crates/store/src`: 164 mutants, 130 caught, 32 unviable, 2 timeouts (the same two loops as SV-006), 0 missed |
 | SV-008 | Migrate as a library, and the committed v2 fixture store | ready | |
-| SV-009 | The CLI opens the tasq store | blocked (SV-001, SV-007, SV-008) | |
+| SV-009 | The CLI opens the tasq store | blocked (SV-008) | |
 | SV-010 | Creation time and store provenance surfaces | blocked (SV-009) | |
 | SV-011 | `tasq migrate <notebook> [--to] [--dry-run]` | blocked (SV-008, SV-009) | |
 | SV-012 | Docs, agent surfaces and the hand-over | blocked (SV-010, SV-011) | |
@@ -221,6 +221,51 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   because `-E 'impl Debug'` matches the source text (SV-005's `Display` lesson); the first
   run reported the `fmt::Debug` form as a missed mutant.
 
+- 2026-10-18 (SV-007): `update` is take the lock, scan, `Scan::single`, the revision check,
+  then `TasqStore::edit` (a copy of the document, the ops, render-compare, `write_over` when
+  the bytes changed, the new `Revision` back); `set_done` is the same lock, scan, `single`
+  and `edit` with the done ops. The baseline is the
+  `Revision` remembered by `get` (the one file), `list` (every file read, listed or not) and
+  the read-back at the end of `create`; `describe`, `doctor` and the scan inside a write
+  remember nothing, so a `doctor` run between a `get` and an `update` cannot hide an
+  external edit. A store that never handed the task out has no baseline and the write is
+  judged on content, as in the nb store (`update_without_a_prior_read_in_this_store_is_not_
+  checked`). On success the written revision becomes the baseline, so the same reader keeps
+  writing; on conflict nothing is touched, so the stale task conflicts again until re-read.
+- 2026-10-18 (SV-007): `set_done(true)` writes `status: done` and stamps `closed` from the
+  store's clock (to the minute, as `Task::close` does) unless the task is already done, so a
+  repeated `set_done` moves nothing; `set_done(false)` drops both and restores no status. The
+  nb store wrote no `closed` because `nb todo do` did not; on v2 the plan's close semantics
+  (SV-004: "closing a task writes `status: done` and `closed`") apply to both write paths.
+  `set_done` leaves the baseline alone rather than dropping it as the nb store does. The nb rule ("without a baseline the write is judged on content") let a task
+  read before `set_done` reopen the task on its next `update`; keeping the old baseline makes
+  that update a `Conflict` until the task is re-read, and a `set_done` that changed nothing
+  (already in that state) still lets the earlier task through. The first cut recorded the
+  written revision as the new baseline, which is the one shape that gets it wrong: the stale
+  task then matched the file. No production caller chains `set_done` and `update` on one
+  task (the TUI's calls are on the in-memory double).
+- 2026-10-18 (SV-007): the SV-005 note on `from_utf8_lossy` is handled by refusing the write:
+  `TaskFile::invalid_utf8` is `matches!(text, Cow::Owned(_))` (the lossy conversion allocates
+  only when it replaced something), and `edit` turns it into `StoreError::Io` with
+  `InvalidData` ("not valid UTF-8; a write would replace the invalid bytes") only once the
+  rendered bytes differ, so an `update` with the task as read, or a `set_done` to the state
+  the file is in, still succeeds on such a file (a review follow-up: the first cut refused
+  before the compare). Reads, `list` and `doctor` are unchanged; the file counts as a task
+  file.
+- 2026-10-18 (SV-007): `write_over` mirrors the nb crate's `write_atomic` (temp file in the
+  directory, the existing file's permissions copied, `persist`) and returns the new
+  `Revision`; its directory is `self.dir`, not `path.parent()`, so there is no unreachable
+  "no parent" error branch to leave a missed mutant. The unchanged-write check compares the
+  rendered document before and after `diff::apply`, so an `update` with the task as read
+  never touches the file (pinned by the mtime set in the past).
+- 2026-10-18 (SV-007): doctor's `lock` check is `Ok` ("no write in progress") without a lock
+  file, `Ok` naming a live lock ("a write is in progress"), `Warn` naming a stale one
+  ("untouched for 2 minutes or more: its writer died"; fix: remove it or ignore it, the
+  next write removes it). Staleness is `lock::is_stale` against the store's clock, so the
+  test sets the lock's mtime relative to the fixed clock and pins the boundary (one
+  millisecond short is live). Doctor never removes the lock; a clean store now reports four
+  `Ok` checks, and `tasq doctor`'s exit code is unaffected by a `Warn`.
+
 ## Deviations
 
 - SV-001's first criterion read "No file in the CLI crate names the nb store type". The
@@ -288,9 +333,28 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   `NotFrontmatter` instead. The v2 file format is implemented but `docs/file-format.md` is
   SV-012's; the normative grammar lives in the `format::key` and `Frontmatter` doc comments
   until then.
+- SV-007: `update_many` keeps the trait's default (one `update`, and so one lock, per task):
+  there is no bookkeeping to batch, and the nb override existed for the single commit. The
+  `Unsupported` text names what the v2 ops cannot do ("cannot remove or rewrite related links,
+  merge requests, worktrees, sessions or progress entries"); every scalar, the title, the
+  description, the tags and the origin are expressible on v2, unlike v1.
+- SV-007: `set_done(true)` stamps `closed`, which the nb store's `set_done` never did (the
+  review flagged the parity reading against SV-004's "closing a task writes `status: done`
+  and `closed`"). No production caller is affected: the CLI closes through `update` and the
+  TUI's `set_done` calls are on the in-memory double. The read-side
+  `updates_are_not_supported_yet` test in `tests/read.rs` went with the stub it pinned.
+- SV-007 review follow-ups (same commit): `TasqStore::edit` is the one edit-render-compare-
+  write shape for both writes (the first cut had it twice, as the nb crate does); `write_over`
+  stays a near copy of the nb crate's `write_atomic` rather than a shared helper, since it is
+  I/O plumbing that goes with the nb crate (unlike `draft`, which held rules that could
+  drift); `update` holds its whole body under `let _lock` instead of the nb crate's
+  `write_task` split, which only `update_many` needed. Known and kept, as in the nb store:
+  the baseline is per id, so a `list` between a `get` and an `update` of the same task
+  refreshes it and an external edit in that window goes unreported; renaming over a
+  symlinked task file replaces the link with a regular file.
 
 ## Blockers
 
 - One cargo build at a time on this machine (`scripts/guard`); independent sub-tasks (SV-001,
-  SV-002 and SV-003 were; SV-007 and SV-008 are now the frontier) are worked one after
+  SV-002 and SV-003 were; SV-008 is now the frontier, SV-009 behind it) are worked one after
   another, not in parallel agents.
