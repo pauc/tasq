@@ -6,9 +6,9 @@
 //! the id and the scalar fields ([`key`]), `status: done` is the done marker,
 //! and the body is `# Title` plus the list sections. [`Document::parse`] reads
 //! both by the first line; [`parse`] projects either, [`parse_v2`] a v2 file
-//! only. Writing v2 files is the next slice (SV-004 in
-//! `ruli/features/store-v2/PLAN.md`); [`Document::from_task`] and the scalar
-//! [`ops`] write the v1 shape.
+//! only. [`Document::from_task_v2`] writes a task as a canonical v2 file,
+//! [`Document::from_task`] as a v1 one; the scalar [`ops`] edit whichever
+//! shape they are given (a frontmatter key on v2, a section or a tag on v1).
 //!
 //! Two layers (plan section 4.4, `docs/file-format.md`):
 //!
@@ -18,8 +18,9 @@
 //! - [`Task`] is the typed projection of a document, computed by [`parse`].
 //!   It is read-only with respect to the file: edits are expressed as
 //!   operations on the document (the [`ops`] module) that reproduce the
-//!   original script's insertion rules exactly, so the store layer applies
-//!   operations rather than diffing tasks. [`Document::from_task`] writes a
+//!   original script's insertion rules exactly (v1) or edit one frontmatter
+//!   line (v2), so the store layer applies operations rather than diffing
+//!   tasks. [`Document::from_task`] and [`Document::from_task_v2`] write a
 //!   whole task as a new file for creation.
 //!
 //! ```

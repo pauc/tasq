@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use proptest::prelude::*;
 use tasq_core::clock::{FixedClock, When};
-use tasq_core::format::{self, Document, ops};
+use tasq_core::format::{self, Document, key, ops};
 use tasq_core::model::{
     Link, Origin, Priority, ProgressEntry, Session, Status, Tag, Task, TaskId, Workflow, Worktree,
 };
@@ -87,6 +87,14 @@ fn origin() -> impl Strategy<Value = Origin> {
             external_id,
             url,
         })
+}
+
+/// The key of a `key: value` line, by the block's grammar: the text before
+/// the first colon, trimmed, when it is one word.
+fn key_of(line: &str) -> Option<&str> {
+    let (key, _) = line.split_once(':')?;
+    let key = key.trim();
+    (!key.is_empty() && !key.contains(char::is_whitespace)).then_some(key)
 }
 
 /// A line of a v2 frontmatter block that is not the `id` line: a known or
@@ -258,6 +266,89 @@ proptest! {
         let parsed = format::parse(&text, TaskId::from(1), &wf).unwrap();
         prop_assert_eq!(&parsed.task, &task, "{}", text);
         prop_assert_eq!(format::render(&parsed.document), text);
+    }
+
+    /// The v2 arm: a fresh v2 document reads back the same task, its block
+    /// has every key once in canonical order, and it is a v2 file only.
+    #[test]
+    fn tasks_written_from_scratch_as_v2_read_back_equal(task in task(), created in proptest::option::of(date_time())) {
+        let wf = workflow();
+        let mut task = task;
+        task.created_at = created;
+        let doc = Document::from_task_v2(&task);
+        let text = format::render(&doc);
+        let parsed = format::parse_v2(&text, created, &wf).unwrap();
+        prop_assert_eq!(&parsed.task, &task, "{}", text);
+        prop_assert_eq!(format::render(&parsed.document), text.clone());
+        let ranks: Vec<usize> = parsed.document.frontmatter().unwrap().entries()
+            .map(|(k, _)| key::ORDER.iter().position(|o| *o == k).unwrap())
+            .collect();
+        prop_assert!(ranks.windows(2).all(|w| w[0] < w[1]), "{:?} in {}", ranks, text);
+        prop_assert_eq!(ranks.first(), Some(&0), "id first");
+        prop_assert!(!text.contains("## Tags") && !text.contains("## Source") && !text.contains("## Closed"));
+    }
+
+    /// Any scalar op on any v2 block: the result re-parses, the body and the
+    /// lines of the other keys are untouched, and the key reads back.
+    #[test]
+    fn scalar_ops_on_any_v2_block_keep_every_other_line(
+        id in 1u64..100_000,
+        before in proptest::collection::vec(front_line(), 0..4),
+        after in proptest::collection::vec(front_line(), 0..4),
+        gap in "(\\r?\\n *){0,2}",
+        title in "[^\\r\\n]{1,20}",
+        body in "(\\r?\\n(## [A-Za-z ]{0,10}|### Merge requests|- .*|.*)){0,12}(\\r?\\n)?",
+        crlf in any::<bool>(),
+        n in 0usize..14,
+    ) {
+        let wf = workflow();
+        let nl = if crlf { "\r\n" } else { "\n" };
+        let block: Vec<String> = before.iter().cloned().chain([format!("id: {id}")]).chain(after.iter().cloned()).collect();
+        let text = format!("---{nl}{}{nl}---{gap}{nl}# {title}{body}", block.join(nl));
+        let mut doc = Document::parse(&text).unwrap();
+        let body_before: Vec<String> = doc.lines().map(str::to_owned).collect();
+        let origin = Origin { source: "gl".into(), external_id: "!1".into(), url: Some("https://gl.invalid/1".into()) };
+        let date = NaiveDate::from_ymd_opt(2026, 10, 4).unwrap();
+        // The keys the op owns and the value the first of them must read.
+        let (keys, value): (Vec<&str>, Option<&str>) = match n {
+            0 => { ops::set_status(&mut doc, &Status::READY, &wf); (vec![key::STATUS], Some("ready")) }
+            1 => { ops::set_priority(&mut doc, Priority::A, &wf); (vec![key::PRIORITY], Some("A")) }
+            2 => { ops::set_rank(&mut doc, -3); (vec![key::RANK], Some("-3")) }
+            3 => { ops::set_due(&mut doc, date); (vec![key::DUE], Some("2026-10-04")) }
+            4 => { ops::set_closed(&mut doc, date.and_time(NaiveTime::MIN)); (vec![key::CLOSED], Some("2026-10-04 00:00")) }
+            5 => { ops::set_project(&mut doc, Path::new("/p")); (vec![key::PROJECT], Some("/p")) }
+            6 => { ops::set_tags(&mut doc, &[Tag::new("a").unwrap()], &wf); (vec![key::TAGS], Some("[a]")) }
+            7 => { ops::set_done(&mut doc, &wf); (vec![key::STATUS], Some("done")) }
+            8 => { ops::set_origin(&mut doc, &origin); (vec![key::SOURCE, key::SOURCE_ID, key::SOURCE_URL], Some("gl")) }
+            9 => { ops::strip_status_tag(&mut doc, &wf); (vec![key::STATUS], None) }
+            10 => { ops::clear_rank(&mut doc); (vec![key::RANK], None) }
+            11 => { ops::set_tags(&mut doc, &[], &wf); (vec![key::TAGS], None) }
+            12 => { ops::clear_origin(&mut doc); (vec![key::SOURCE, key::SOURCE_ID, key::SOURCE_URL], None) }
+            _ => {
+                // `set_open` touches the block only when it said `done`.
+                let was_done = doc.is_done();
+                ops::set_open(&mut doc);
+                (if was_done { vec![key::STATUS] } else { Vec::new() }, None)
+            }
+        };
+        let rendered = format::render(&doc);
+        let again = Document::parse(&rendered).unwrap();
+        prop_assert_eq!(&again, &doc);
+        prop_assert_eq!(again.lines().collect::<Vec<_>>(), body_before.iter().map(String::as_str).collect::<Vec<_>>());
+        prop_assert_eq!(doc.ends_with_newline(), text.ends_with('\n'));
+        let front = doc.frontmatter().unwrap();
+        let owned = |line: &&str| key_of(line).is_some_and(|k| keys.contains(&k));
+        let others: Vec<&str> = front.lines().iter().filter(|l| !owned(l)).copied().collect();
+        let others_before: Vec<&str> = block.iter().map(String::as_str).filter(|l| !owned(l)).collect();
+        prop_assert_eq!(others, others_before);
+        if let Some(&first_key) = keys.first() {
+            prop_assert_eq!(front.get(first_key), value);
+            let count = front.entries().filter(|(k, _)| *k == first_key).count();
+            prop_assert_eq!(count, usize::from(value.is_some()));
+        }
+        if n == 13 {
+            prop_assert!(!doc.is_done());
+        }
     }
 }
 

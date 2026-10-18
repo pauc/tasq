@@ -102,8 +102,9 @@ pub fn apply(
     }
 }
 
-/// The one-value sections (`## Closed`, `## Rank`, `## Due`, `## Project`):
-/// each is set, replaced or removed when `wanted` differs from `current`.
+/// The one-value fields (`## Closed`, `## Rank`, `## Due`, `## Project` on
+/// v1; the frontmatter keys, origin included, on v2): each is set, replaced
+/// or removed when `wanted` differs from `current`.
 fn apply_scalars(doc: &mut Document, wanted: &Task, current: &Task) {
     // Against the task as read: reopening drops `## Closed` even though the
     // projection after `set_open` already reads `None`. A stale section on
@@ -138,6 +139,16 @@ fn apply_scalars(doc: &mut Document, wanted: &Task, current: &Task) {
             Some(project_dir) => ops::set_project(doc, project_dir),
             None => {
                 ops::clear_project(doc);
+            }
+        }
+    }
+    // The origin keys of a v2 document; on a v1 document the ops do nothing
+    // (no command ever rewrote `## Source`) and the field is reported.
+    if wanted.origin != current.origin {
+        match &wanted.origin {
+            Some(origin) => ops::set_origin(doc, origin),
+            None => {
+                ops::clear_origin(doc);
             }
         }
     }
@@ -441,6 +452,131 @@ mod tests {
             })
             .unwrap(),
             "# [ ] T\n\n## Tags\n\n#B\n"
+        );
+    }
+
+    // ---- v2 documents (ADR 0026): the same apply, the frontmatter ops ----
+
+    const V2: &str = "---\nid: 1\nstatus: ready\npriority: B\ntags: [gitlab]\n---\n# Title\n\n## Progress\n\n- 2026-10-01 09:00: created\n";
+
+    fn apply_v2(text: &str, edit: impl FnOnce(&mut Task)) -> Result<String, Vec<&'static str>> {
+        let p = format::parse_v2(text, None, &Workflow::default()).unwrap();
+        let (mut doc, mut task) = (p.document, p.task);
+        edit(&mut task);
+        apply(&mut doc, &task, &Workflow::default())?;
+        Ok(format::render(&doc))
+    }
+
+    #[test]
+    fn v2_unchanged_task_leaves_the_document_alone() {
+        assert_eq!(apply_v2(V2, |_| {}).unwrap(), V2);
+        let odd = "---\nowner: pau\nid: 1\n\nstatus: ready\n---\n\n# T\n";
+        assert_eq!(apply_v2(odd, |_| {}).unwrap(), odd);
+    }
+
+    #[test]
+    fn v2_closing_writes_status_done_and_closed_and_reopening_undoes_it() {
+        let clock = FixedClock::at("2026-10-07 14:32");
+        let closed = apply_v2(V2, |t| t.close(&clock)).unwrap();
+        assert_eq!(
+            closed,
+            "---\nid: 1\nstatus: done\npriority: B\nclosed: 2026-10-07 14:32\ntags: [gitlab]\n---\n# Title\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+        );
+        let reopened = apply_v2(&closed, |t| {
+            t.done = false;
+            t.closed_at = None;
+            t.set_status(Status::READY);
+        })
+        .unwrap();
+        assert_eq!(reopened, V2);
+        // Reopened without a status: no status line at all.
+        assert_eq!(
+            apply_v2(&closed, |t| {
+                t.done = false;
+                t.closed_at = None;
+            })
+            .unwrap(),
+            "---\nid: 1\npriority: B\ntags: [gitlab]\n---\n# Title\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+        );
+        // Done with a status, or open with a closing time, cannot be written.
+        assert_eq!(apply_v2(V2, |t| t.done = true), Err(vec!["status"]));
+        assert_eq!(
+            apply_v2(V2, |t| t.closed_at = Some(clock.now())),
+            Err(vec!["closed_at"])
+        );
+    }
+
+    #[test]
+    fn v2_scalars_and_lists_are_written_as_keys_and_sections() {
+        let at = FixedClock::at("2026-10-04 10:15").0;
+        let out = apply_v2(V2, |t| {
+            t.title = "Other".into();
+            t.set_status(Status::BLOCKED);
+            t.set_priority(Priority::A);
+            t.rank = Some(7);
+            t.due = Some(FixedClock::at("2026-10-04 10:15").today());
+            t.project = Some(PathBuf::from("/proj"));
+            t.tags = vec![Tag::new("x").unwrap(), Tag::new("y").unwrap()];
+            t.description = Some("Why.".into());
+            t.add_related(Link::new("https://rel"));
+            t.add_merge_request(Link::labelled("https://mr/1", "MR"));
+            t.add_worktree(Worktree::on_branch("/w", "b"));
+            t.add_session(Session::new(at, "s1"));
+            t.progress.push(ProgressEntry::new(at, "more"));
+        })
+        .unwrap();
+        assert_eq!(
+            out,
+            concat!(
+                "---\nid: 1\nstatus: blocked\npriority: A\nrank: 7\ndue: 2026-10-04\nproject: /proj\ntags: [x, y]\n---\n",
+                "# Other\n\n## Description\n\nWhy.\n\n## Related\n\n- https://rel\n\n### Merge requests\n\n- [MR](https://mr/1)\n\n",
+                "## Worktrees\n\n- /w (`b`)\n\n## Sessions\n\n- 2026-10-04 10:15: `s1`\n\n",
+                "## Progress\n\n- 2026-10-01 09:00: created\n- 2026-10-04 10:15: more\n"
+            )
+        );
+        let cleared = apply_v2(&out, |t| {
+            t.clear_status();
+            t.rank = None;
+            t.due = None;
+            t.project = None;
+            t.tags.clear();
+            t.description = None;
+        })
+        .unwrap();
+        assert!(
+            cleared.starts_with("---\nid: 1\npriority: A\n---\n# Other\n\n## Related\n"),
+            "{cleared}"
+        );
+    }
+
+    #[test]
+    fn v2_origin_is_written_replaced_and_removed() {
+        let origin = tasq_core::model::Origin {
+            source: "gitlab".into(),
+            external_id: "!7".into(),
+            url: Some("https://gl.invalid/7".into()),
+        };
+        let with = apply_v2(V2, |t| t.origin = Some(origin.clone())).unwrap();
+        assert_eq!(
+            with,
+            V2.replace(
+                "priority: B\n",
+                "priority: B\nsource: gitlab\nsource_id: !7\nsource_url: https://gl.invalid/7\n"
+            )
+        );
+        let moved = apply_v2(&with, |t| t.origin.as_mut().unwrap().url = None).unwrap();
+        assert_eq!(
+            moved,
+            V2.replace(
+                "priority: B\n",
+                "priority: B\nsource: gitlab\nsource_id: !7\n"
+            )
+        );
+        assert_eq!(apply_v2(&moved, |t| t.origin = None).unwrap(), V2);
+        // On a v1 document nothing rewrites `## Source`, so it is reported.
+        assert_eq!(
+            apply_to(TEXT, |t| t.origin = Some(origin)),
+            Err(vec!["origin"])
         );
     }
 

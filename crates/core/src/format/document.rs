@@ -148,6 +148,12 @@ pub mod key {
     pub const SOURCE_URL: &str = "source_url";
     /// `tags`: the topic tags as a one-line list, `[a, b]`, without `#`.
     pub const TAGS: &str = "tags";
+    /// The keys in canonical order: the order a fresh block is written in,
+    /// and the place a key added to an existing block takes among the
+    /// known keys present.
+    pub const ORDER: [&str; 11] = [
+        ID, STATUS, PRIORITY, RANK, DUE, CLOSED, PROJECT, SOURCE, SOURCE_ID, SOURCE_URL, TAGS,
+    ];
 }
 
 /// A task file, byte for byte.
@@ -436,7 +442,7 @@ impl Document {
     }
 
     /// Whether the file has a frontmatter block.
-    fn is_v2(&self) -> bool {
+    pub(super) fn is_v2(&self) -> bool {
         !self.front.is_empty()
     }
 
@@ -593,6 +599,70 @@ impl Document {
     /// Marks every line as terminated, as any `awk` rewrite of the file does.
     pub(super) fn terminate(&mut self) {
         self.trailing_newline = true;
+    }
+
+    // ---- frontmatter editing used by `ops` (v2 only) ----------------------
+
+    /// Indices in `front` of the entry lines for `key`, in order; `close` is
+    /// the closing fence.
+    fn key_lines(&self, close: usize, key: &str) -> Vec<usize> {
+        (1..close)
+            .filter(|&i| key_value(&self.front[i].text).is_some_and(|(k, _)| k == key))
+            .collect()
+    }
+
+    /// Writes `key: value` into the block: the first line of `key` is
+    /// replaced and any later line of it removed; a missing key is added
+    /// after the last line whose key precedes it in [`key::ORDER`] (`id`,
+    /// always present, precedes every other known key), or, for a key not
+    /// in that order, right before the closing fence. No other line
+    /// changes, the body included. A v1 document has no block and is left
+    /// alone.
+    pub(super) fn set_key(&mut self, key: &str, value: &str) {
+        let Some(close) = closing_fence(&self.front) else {
+            return;
+        };
+        let text = format!("{key}: {value}");
+        let found = self.key_lines(close, key);
+        if let Some((&first, rest)) = found.split_first() {
+            self.front[first].text = text;
+            for &i in rest.iter().rev() {
+                self.front.remove(i);
+            }
+            return;
+        }
+        let at = match key::ORDER.iter().position(|k| *k == key) {
+            None => close,
+            Some(rank) => {
+                let before = &key::ORDER[..rank];
+                (1..close)
+                    .rev()
+                    .find(|&i| {
+                        key_value(&self.front[i].text).is_some_and(|(k, _)| before.contains(&k))
+                    })
+                    .map_or(1, |i| i + 1)
+            }
+        };
+        self.front.insert(
+            at,
+            Line {
+                text,
+                ending: self.newline,
+            },
+        );
+    }
+
+    /// Removes every line of `key` from the block. Returns whether there
+    /// was one; `false` on a v1 document, which has no block.
+    pub(super) fn clear_key(&mut self, key: &str) -> bool {
+        let Some(close) = closing_fence(&self.front) else {
+            return false;
+        };
+        let found = self.key_lines(close, key);
+        for &i in found.iter().rev() {
+            self.front.remove(i);
+        }
+        !found.is_empty()
     }
 }
 
