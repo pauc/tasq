@@ -1,4 +1,4 @@
-Work with me on my next task: todo [{{id}}] from my nb notebook (file: {{file}}).
+Work with me on my next task: todo [{{id}}] from my tasq store (file: {{file}}).
 
 {{markdown}}
 

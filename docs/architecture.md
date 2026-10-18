@@ -187,7 +187,6 @@ sequenceDiagram
 | `native` | `NativeBookkeeper`: appends to `.index` byte-identically to `nb index add`, starts the background job, verifies the index, syncs on demand. |
 | `job` | The detached `sh` job (`git add -A`, `git commit`, throttled `git pull --rebase` + `git push`) and its files in `.git/tasq/`: `lock`, `failed`, `last-sync`. |
 | `git` | Running `git` inside the notebook with an injected environment, for the bookkeeper and the diagnostics. |
-| `which` | Finding executables on an injected `PATH`, for `doctor`'s tool checks. |
 | `doctor` | The store's checks for `tasq doctor`: notebook, index, ids, bookkeeper, git identity. |
 
 Bookkeeping failure after a successful write is a warning carrying the manual fix; the file is
@@ -289,6 +288,7 @@ Process-running adapters. Every process gets an explicitly injected environment,
 | `env` | Environment strategy: run through `direnv exec` so the session gets the target directory's `.envrc`, or inherit. |
 | `summarizer` | `CommandSummarizer`: the configured command (default `claude -p`) that distils a day's notes for `tasq summary`. |
 | `process` | Running external programs with an injected environment. |
+| `which` | `find_in_path` and `tool_check`: finding the optional tools on an injected `PATH`, for `tasq doctor`'s tool checks and `glow` in `tasq view`. |
 
 The pure part of launching, where a session starts (`resolve_workdir`), lives in
 `tasq_core::launch`; this crate only runs things.
@@ -345,14 +345,14 @@ flowchart TB
     argv["argv"] --> dispatch{"built-in<br/>command?"}
     dispatch -->|"no, and tasq-&lt;name&gt; is on PATH"| plugin["exec tasq-&lt;name&gt;<br/>(plugins.rs)"]
     dispatch -->|"yes"| app["app.rs<br/>LoadOptions → Config → App"]
-    app --> open["NbStore::open<br/>(tasq-store-nb)"]
+    app --> open["TasqStore::new(&lt;data_dir&gt;/&lt;store.name&gt;)<br/>(tasq-store)"]
     app --> cmd["commands/&lt;name&gt;.rs"]
     cmd -->|"list, view, set, log, done,<br/>create, apply, project, worktree,<br/>session, mr"| core["tasq-core<br/>query / edit / model"]
     cmd -->|"sync"| src["tasq-sources<br/>build_sources"]
     cmd -->|"next, pick, session,<br/>worktree, summary"| lnch["tasq-launch<br/>launcher_for, summarizer_for"]
     cmd -->|"next, pick, worktree"| wt["tasq-worktree<br/>Git"]
     cmd -->|"ui"| tui["tasq-tui::run<br/>+ CliHost"]
-    cmd -->|"doctor, store"| store_doc["Store::doctor, Store::describe<br/>(the nb store's checks)"]
+    cmd -->|"doctor, store"| store_doc["Store::doctor, Store::describe<br/>(the tasq store's checks)"]
     core -->|"through the Store trait"| open
     cmd --> out["output.rs / json.rs<br/>human or --json, pager, colour"]
     cmd --> hooks["hooks: post-create,<br/>post-done, pre-launch"]

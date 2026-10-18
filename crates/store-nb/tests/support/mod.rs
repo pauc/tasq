@@ -23,7 +23,6 @@ use std::process::Command;
 use std::time::SystemTime;
 
 use sanitize::strip_ansi;
-use tasq_core::config::StoreConfig;
 use tasq_core::model::Workflow;
 use tasq_store_nb::{NbStore, NbStoreOptions};
 use tempfile::TempDir;
@@ -244,7 +243,7 @@ impl NbEnv {
     /// seconds after a write.
     pub fn open_syncing(&self, sync_interval: u64) -> NbStore {
         let options = self.options().with_sync_interval(sync_interval);
-        NbStore::open(&StoreConfig::default(), &options).expect("fixture notebook opens")
+        NbStore::open("home", &options).expect("fixture notebook opens")
     }
 
     /// This environment with `dir` first on `PATH`, for fake tools.
@@ -347,8 +346,7 @@ fn copy_dir(from: &Path, to: &Path) {
 
 /// Whether `nb` is on the current `PATH`.
 pub fn nb_available() -> bool {
-    std::env::var("PATH")
-        .is_ok_and(|path| tasq_store_nb::which::find_in_path(&path, "nb").is_some())
+    std::env::var("PATH").is_ok_and(|path| tasq_launch::find_in_path(&path, "nb").is_some())
 }
 
 /// `true` when the test may run. Without `nb`, prints a notice and returns
@@ -421,7 +419,7 @@ pub fn fake_tool(name: &str, body: &str) -> TempDir {
 /// runs the real git.
 pub fn slow_git(seconds: u32) -> TempDir {
     let path = std::env::var("PATH").unwrap_or_default();
-    let real = tasq_store_nb::which::find_in_path(&path, "git").expect("git is on PATH");
+    let real = tasq_launch::find_in_path(&path, "git").expect("git is on PATH");
     fake_tool(
         "git",
         &format!(

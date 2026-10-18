@@ -11,9 +11,10 @@ expression: env.normalize(&stdout(&out))
 #   4. env
 #   5. --set
 
+data_dir = "[ROOT]/home/.local/share/tasq/stores" # defaults
+
 [store]
-kind = "nb"                                  # defaults
-notebook = "home"                            # defaults
+name = "default"                             # defaults
 
 [workflow]
 default_status = "ready"                     # defaults

@@ -2,12 +2,14 @@
 //! `App` into an open store, and the parsed command line into a command.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use tasq_core::clock::{Clock, FixedClock, SystemClock, When, parse_timestamp};
 use tasq_core::config::{Config, LoadOptions, Loaded};
+use tasq_core::launch::{ENV_DATA_DIR, ENV_STORE_NAME};
 use tasq_core::model::{TaskId, Workflow};
 use tasq_core::store::Store;
-use tasq_store_nb::{DEFAULT_SYNC_INTERVAL, NbStore, NbStoreOptions};
+use tasq_store::TasqStore;
 use tasq_worktree::Git;
 
 use crate::cli::{Cli, Command, EditCommand, GlobalArgs, ListArgs};
@@ -274,22 +276,37 @@ impl App {
         }
     }
 
-    /// Store options from the config and the process environment: `NB_DIR`
-    /// is looked up in this environment, `git` runs with it, the file that
-    /// set `store.notebook` is recorded for error messages, and the notebook
-    /// keeps pulling and pushing at the rate the removed `store.sync_interval`
-    /// defaulted to (ADR-0026 brings sync back as a feature of the new store).
-    pub fn store_options(&self) -> NbStoreOptions {
-        let mut options = NbStoreOptions::new(self.workflow())
-            .with_env(self.env_vec())
-            .with_sync_interval(DEFAULT_SYNC_INTERVAL);
-        if let Some(home) = &self.opts.home {
-            options = options.with_home(home);
-        }
-        if let Some(file) = self.loaded.file_for("store.notebook") {
-            options = options.with_config_file(file);
-        }
-        options
+    /// The resolved `data_dir`, absolute: a relative one (from `--set` or
+    /// `TASQ_DATA_DIR`) is taken from the working directory. An error when
+    /// the config could not derive a default (no `$XDG_DATA_HOME`, no home).
+    pub fn data_dir(&self) -> Result<PathBuf> {
+        let Some(dir) = &self.config().data_dir else {
+            return Err(CliError::user(
+                "data_dir is unknown: neither XDG_DATA_HOME nor HOME is set; set data_dir in the config or TASQ_DATA_DIR",
+            ));
+        };
+        Ok(if dir.is_relative() {
+            self.opts.cwd.join(dir)
+        } else {
+            dir.clone()
+        })
+    }
+
+    /// The store directory, `<data_dir>/<store.name>` (ADR-0026).
+    pub fn store_dir(&self) -> Result<PathBuf> {
+        Ok(self.data_dir()?.join(&self.config().store.name))
+    }
+
+    /// The variables that point a launched session's `tasq` at this store:
+    /// [`ENV_DATA_DIR`] (resolved, absolute) and [`ENV_STORE_NAME`].
+    pub fn store_env(&self) -> Result<Vec<(String, String)>> {
+        Ok(vec![
+            (
+                ENV_DATA_DIR.to_owned(),
+                self.data_dir()?.display().to_string(),
+            ),
+            (ENV_STORE_NAME.to_owned(), self.config().store.name.clone()),
+        ])
     }
 
     /// The clock that stamps notes, sessions and new files: the system
@@ -312,13 +329,12 @@ impl App {
     }
 
     /// Opens the configured store as a [`Store`] trait object: this is the
-    /// one place that knows which implementation backs the commands.
-    /// Warnings raised while opening (a rebuilt index, the previous
-    /// command's failed background commit) go to stderr.
+    /// one place that knows which implementation backs the commands (the
+    /// tasq store at [`App::store_dir`], ADR-0026). Warnings raised while
+    /// opening go to stderr.
     pub fn open_store(&self) -> Result<Box<dyn Store>> {
-        let mut store: Box<dyn Store> = Box::new(
-            NbStore::open(&self.config().store, &self.store_options())?.with_clock(self.clock()?),
-        );
+        let mut store: Box<dyn Store> =
+            Box::new(TasqStore::new(self.store_dir()?, self.workflow()).with_clock(self.clock()?));
         for warning in store.take_warnings() {
             self.out.warn(&warning);
         }

@@ -16,8 +16,8 @@ notebook files directly.
 
 1. Use `$id` when the skill was given one.
 2. Otherwise use the `TASQ_TASK_ID` environment variable (`tasq next` and `tasq pick` set it,
-   together with `TASQ_NOTEBOOK` and `TASQ_PROFILE`, so `tasq` already points at the right
-   notebook).
+   together with `TASQ_DATA_DIR`, `TASQ_STORE_NAME` and `TASQ_PROFILE`, so `tasq` already
+   points at the right store).
 3. Otherwise run `tasq list --status in-progress --json` and ask the user which task this
    session was about. Never guess an id.
 

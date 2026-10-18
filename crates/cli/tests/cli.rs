@@ -1,6 +1,7 @@
-//! Integration tests: the `tasq` binary against a temporary fixture
-//! notebook. Output is snapshotted with `insta` (`cargo insta review`, or
-//! `INSTA_UPDATE=always cargo test -p tasq` to accept everything).
+//! Integration tests: the `tasq` binary against a temporary copy of the v2
+//! fixture store (ids 1, 3, 4, 6 and 7). Output is snapshotted with `insta`
+//! (`cargo insta review`, or `INSTA_UPDATE=always cargo test -p tasq` to
+//! accept everything).
 
 #![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
 
@@ -10,7 +11,7 @@ use std::path::Path;
 
 use insta::assert_snapshot;
 use predicates::prelude::*;
-use support::{TestEnv, stderr, stdout};
+use support::{TestEnv, stderr, stdout, ulid_name, v2};
 
 mod help {
     use super::*;
@@ -45,27 +46,31 @@ mod help {
 mod errors {
     use super::*;
 
+    /// A store directory that does not exist is an empty store, not an
+    /// error, and a read does not create it (ADR-0026).
     #[test]
-    fn unknown_notebook_is_a_user_error() {
+    fn a_missing_store_is_empty() {
         let env = TestEnv::fixture();
-        let out = env.tasq().env("TASQ_NOTEBOOK", "nope").output().unwrap();
-        assert_eq!(out.status.code(), Some(1));
-        assert_eq!(stdout(&out), "");
-        let err = stderr(&out);
-        assert!(err.starts_with("tasq: store.notebook"), "{err}");
-        assert!(err.contains("nope"), "{err}");
+        let nowhere = env.home.join("nowhere");
+        env.tasq()
+            .env("TASQ_DATA_DIR", &nowhere)
+            .assert()
+            .success()
+            .stdout("No open todos.\n")
+            .stderr("");
+        assert!(!nowhere.exists(), "a read creates nothing");
     }
 
     #[test]
     fn broken_config_names_file_and_line() {
         let env = TestEnv::fixture();
-        let file = env.write_global_config("[store]\nnotbook = \"home\"\n");
+        let file = env.write_global_config("[store]\nnmae = \"default\"\n");
         let out = env.tasq().output().unwrap();
         assert_eq!(out.status.code(), Some(1));
         let err = stderr(&out);
         assert!(
             err.starts_with(&format!(
-                "tasq: {}:2:1: unknown field `notbook`",
+                "tasq: {}:2:1: unknown field `nmae`",
                 file.display()
             )),
             "{err}"
@@ -170,30 +175,35 @@ mod list {
         assert_eq!(stdout(&explicit), stdout(&out));
     }
 
-    /// A hand-written `## Rank` puts a `#C` task above the `#A` one of its
+    /// A hand-written `rank` puts a `#C` task above the `#A` one of its
     /// status group, in text and JSON alike; the rank itself is not shown.
     #[test]
     fn ranked_tasks_come_first_in_their_group() {
         let env = TestEnv::fixture();
         env.write_task(
-            "20260907150000.todo.md",
-            "# [ ] Ranked\n\n## Rank\n\n1024\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
+            &ulid_name("2026-09-07 15:00", 8),
+            &v2(
+                8,
+                "status: in-progress\npriority: C\nrank: 1024\n",
+                "# Ranked\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
+            ),
         );
         env.write_task(
-            "20260908160000.todo.md",
-            "# [ ] Ranked first\n\n## Rank\n\n-1024\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-08 16:00: created\n",
+            &ulid_name("2026-09-08 16:00", 9),
+            &v2(
+                9,
+                "status: in-progress\npriority: C\nrank: -1024\n",
+                "# Ranked first\n\n## Progress\n\n- 2026-10-08 16:00: created\n",
+            ),
         );
         env.write_task(
-            "20260909170000.todo.md",
-            "# [ ] Rank by hand\n\n## Rank\n\nsoon\n\n## Tags\n\n#A #in-progress\n\n## Progress\n\n- 2026-10-09 17:00: created\n",
+            &ulid_name("2026-09-09 17:00", 10),
+            &v2(
+                10,
+                "status: in-progress\npriority: A\nrank: soon\n",
+                "# Rank by hand\n\n## Progress\n\n- 2026-10-09 17:00: created\n",
+            ),
         );
-        for name in [
-            "20260907150000.todo.md",
-            "20260908160000.todo.md",
-            "20260909170000.todo.md",
-        ] {
-            env.register(name);
-        }
         let out = env.tasq().arg("in-progress").output().unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(
@@ -309,16 +319,19 @@ mod list {
         assert_eq!(tasks.last().unwrap()["done"], true, "done tasks come last");
     }
 
-    /// A closed task keeps its `## Rank` for when it is reopened, but the
+    /// A closed task keeps its `rank` for when it is reopened, but the
     /// done list does not follow it.
     #[test]
     fn done_list_ignores_a_kept_rank() {
         let env = TestEnv::fixture();
         env.write_task(
-            "20260907150000.todo.md",
-            "# [x] Closed with a rank\n\n## Rank\n\n-1024\n\n## Tags\n\n#C\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
+            &ulid_name("2026-09-07 15:00", 8),
+            &v2(
+                8,
+                "status: done\npriority: C\nrank: -1024\n",
+                "# Closed with a rank\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
+            ),
         );
-        env.register("20260907150000.todo.md");
         let out = env.tasq().args(["list", "--done"]).output().unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(
@@ -368,7 +381,7 @@ mod list {
     }
 
     #[test]
-    fn empty_notebook() {
+    fn empty_store() {
         let env = TestEnv::empty();
         env.tasq().assert().success().stdout("No open todos.\n");
         env.tasq()
@@ -419,19 +432,9 @@ mod list {
             "[workflow]\nstatuses = [\"in-progress\", \"review\", \"ready\"]\ndefault_status = \"ready\"\n\n[ui.colors]\nreview = \"208\"\n",
         );
         env.write_task(
-            "20260907150000.todo.md",
-            "# [ ] Needs a review\n\n## Tags\n\n#review\n",
+            &ulid_name("2026-09-07 15:00", 8),
+            &v2(8, "status: review\n", "# Needs a review\n"),
         );
-        std::fs::OpenOptions::new()
-            .append(true)
-            .open(env.notebook().join(".index"))
-            .unwrap();
-        let index = std::fs::read_to_string(env.notebook().join(".index")).unwrap();
-        std::fs::write(
-            env.notebook().join(".index"),
-            format!("{index}20260907150000.todo.md\n"),
-        )
-        .unwrap();
         let out = env.tasq().args(["--color", "always"]).output().unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         assert_snapshot!(stdout(&out));
@@ -483,8 +486,140 @@ mod store {
         let out = env.tasq().args(["-v", "store", "info"]).output().unwrap();
         assert_eq!(
             env.normalize(&stderr(&out)),
-            "tasq: store: nb at [ROOT]/nb/home\n"
+            "tasq: store: tasq at [ROOT]/home/.local/share/tasq/stores/default\n"
         );
+    }
+}
+
+/// Where the store is: `<data_dir>/<store.name>`, `data_dir` defaulting to
+/// `$XDG_DATA_HOME/tasq/stores` (`~/.local/share/tasq/stores`), each
+/// settable from every config layer (ADR-0026).
+mod store_location {
+    use super::*;
+
+    /// The `location:` line of `tasq store info`.
+    fn location(env: &TestEnv, cmd: &mut assert_cmd::Command) -> String {
+        let out = cmd.args(["store", "info"]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let text = env.normalize(&stdout(&out));
+        text.lines()
+            .find_map(|l| l.strip_prefix("location:"))
+            .unwrap_or_else(|| panic!("no location in {text}"))
+            .trim()
+            .to_owned()
+    }
+
+    #[test]
+    fn defaults_to_the_xdg_data_directory_under_home() {
+        let env = TestEnv::fixture();
+        assert_eq!(
+            location(&env, &mut env.tasq()),
+            "[ROOT]/home/.local/share/tasq/stores/default"
+        );
+        assert_eq!(
+            location(&env, env.tasq().env("XDG_DATA_HOME", env.home.join("xdg"))),
+            "[ROOT]/home/xdg/tasq/stores/default"
+        );
+    }
+
+    #[test]
+    fn every_layer_overrides_the_one_before() {
+        let env = TestEnv::fixture();
+        env.write_global_config(
+            "data_dir = \"~/global\"\n\n[store]\nname = \"g\"\n\n\
+             [profile.work]\ndata_dir = \"~/profile\"\n[profile.work.store]\nname = \"p\"\n",
+        );
+        assert_eq!(location(&env, &mut env.tasq()), "[ROOT]/home/global/g");
+        env.write_project_config("[store]\nname = \"project\"\n");
+        assert_eq!(
+            location(&env, &mut env.tasq()),
+            "[ROOT]/home/global/project"
+        );
+        assert_eq!(
+            location(&env, env.tasq().args(["--profile", "work"])),
+            "[ROOT]/home/profile/p"
+        );
+        assert_eq!(
+            location(
+                &env,
+                env.tasq()
+                    .args(["--profile", "work"])
+                    .env("TASQ_DATA_DIR", env.home.join("env"))
+                    .env("TASQ_STORE_NAME", "e")
+            ),
+            "[ROOT]/home/env/e"
+        );
+        assert_eq!(
+            location(
+                &env,
+                env.tasq()
+                    .env("TASQ_DATA_DIR", env.home.join("env"))
+                    .env("TASQ_STORE_NAME", "e")
+                    .args(["--set", "data_dir=~/flag", "--set", "store.name=f"])
+            ),
+            "[ROOT]/home/flag/f"
+        );
+    }
+
+    #[test]
+    fn a_relative_data_dir_is_taken_from_the_working_directory() {
+        let env = TestEnv::fixture();
+        assert_eq!(
+            location(&env, env.tasq().env("TASQ_DATA_DIR", "stores")),
+            "[ROOT]/home/stores/default"
+        );
+    }
+
+    #[test]
+    fn the_selected_store_is_the_one_read() {
+        let env = TestEnv::fixture();
+        let other = env.home.join("other");
+        support::copy_dir(&support::fixture_dir(), &other.join("work"));
+        let out = env
+            .tasq()
+            .env("TASQ_DATA_DIR", &other)
+            .env("TASQ_STORE_NAME", "work")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(
+            stdout(&out).contains("Answer the support ticket"),
+            "{}",
+            stdout(&out)
+        );
+        env.tasq()
+            .env("TASQ_DATA_DIR", &other)
+            .assert()
+            .success()
+            .stdout("No open todos.\n");
+    }
+
+    #[test]
+    fn a_store_name_with_a_slash_is_a_config_error() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env("TASQ_STORE_NAME", "a/b")
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr("tasq: store.name = \"a/b\" (set by env): a store name must not contain '/'\n");
+    }
+
+    #[test]
+    fn without_home_and_xdg_data_home_the_store_is_unknown() {
+        let env = TestEnv::fixture();
+        env.tasq()
+            .env_remove("HOME")
+            .assert()
+            .code(1)
+            .stderr(
+                "tasq: data_dir is unknown: neither XDG_DATA_HOME nor HOME is set; set data_dir in the config or TASQ_DATA_DIR\n",
+            );
+        env.tasq()
+            .env_remove("HOME")
+            .env("TASQ_DATA_DIR", env.data_dir())
+            .assert()
+            .success();
     }
 }
 
@@ -492,26 +627,28 @@ mod doctor {
     use super::*;
 
     #[test]
-    fn fails_on_an_inconsistent_index() {
-        // The fixture index names a file that does not exist.
+    fn passes_on_a_clean_store() {
         let env = TestEnv::fixture();
-        let out = env.tasq().arg("doctor").output().unwrap();
-        assert_eq!(out.status.code(), Some(1));
-        assert_snapshot!(env.normalize(&stdout(&out)));
-    }
-
-    #[test]
-    fn passes_once_the_index_is_consistent() {
-        let env = TestEnv::fixture();
-        env.write_task("20260905130000.todo.md", "# [ ] Restored\n");
         let out = env.tasq().arg("doctor").output().unwrap();
         assert!(out.status.success(), "{}", stdout(&out));
         assert_snapshot!(env.normalize(&stdout(&out)));
     }
 
     #[test]
+    fn fails_on_a_markdown_file_that_is_not_a_task() {
+        let env = TestEnv::fixture();
+        env.write_task("notes.md", "# Notes\n\nNot a task.\n");
+        let out = env.tasq().arg("doctor").output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_snapshot!(env.normalize(&stdout(&out)));
+        // The file is skipped by reads rather than failing them.
+        env.tasq().assert().success();
+    }
+
+    #[test]
     fn json() {
         let env = TestEnv::fixture();
+        env.write_task("notes.md", "# Notes\n");
         let out = env.tasq().args(["doctor", "--json"]).output().unwrap();
         assert_eq!(out.status.code(), Some(1));
         let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -523,35 +660,33 @@ mod doctor {
         assert!(
             checks
                 .iter()
-                .any(|c| c["name"] == "index" && c["status"] == "fail")
+                .any(|c| c["name"] == "task-file" && c["status"] == "fail")
         );
     }
 
     #[test]
     fn reports_a_broken_config_instead_of_dying() {
         let env = TestEnv::fixture();
-        env.write_global_config("[store]\nnotebook = 3\n");
+        env.write_global_config("[store]\nname = 3\n");
         let out = env.tasq().arg("doctor").output().unwrap();
         assert_eq!(out.status.code(), Some(1));
         assert_eq!(stderr(&out), "");
         let text = env.normalize(&stdout(&out));
         assert!(text.starts_with("FAIL  config"), "{text}");
         assert!(
-            !text.contains("notebook at"),
+            !text.contains("task-files"),
             "store checks must be skipped: {text}"
         );
         assert!(text.contains("WARN  glow"), "{text}");
     }
 
     #[test]
-    fn reports_a_missing_notebook() {
-        let env = TestEnv::fixture();
-        let out = env
-            .tasq()
-            .env("TASQ_NOTEBOOK", "nope")
-            .arg("doctor")
-            .output()
-            .unwrap();
+    fn reports_a_store_that_cannot_be_read() {
+        // A file where the store directory should be.
+        let env = TestEnv::empty();
+        std::fs::create_dir_all(env.data_dir()).unwrap();
+        std::fs::write(env.store(), "").unwrap();
+        let out = env.tasq().arg("doctor").output().unwrap();
         assert_eq!(out.status.code(), Some(1));
         let text = stdout(&out);
         assert!(text.contains("FAIL  store"), "{text}");
@@ -573,7 +708,7 @@ mod config {
     fn show_with_layers() {
         let env = TestEnv::fixture();
         env.write_global_config(
-            "[ui]\npager = \"cat\"\n\n[profile.work]\n[profile.work.store]\nnotebook = \"work\"\n",
+            "[ui]\npager = \"cat\"\n\n[profile.work]\n[profile.work.store]\nname = \"work\"\n",
         );
         env.write_project_config("[work]\ndefault_project = \"~/code/x\"\n");
         let out = env
@@ -586,28 +721,43 @@ mod config {
         assert_snapshot!(env.normalize(&stdout(&out)));
     }
 
-    /// `store.sync_interval` went with git sync (ADR-0026); a config that
-    /// still sets it fails naming the file, line and column.
+    /// `store.kind`, `store.notebook` and `store.sync_interval` went with
+    /// the nb store (ADR-0026); a config that still sets one fails naming
+    /// the file, line and column, and the message names the replacement.
     #[test]
-    fn sync_interval_is_an_unknown_key() {
-        let env = TestEnv::fixture();
-        let file = env.write_global_config("[store]\nnotebook = \"home\"\nsync_interval = 60\n");
-        let out = env.tasq().args(["config", "show"]).output().unwrap();
-        assert_eq!(out.status.code(), Some(1));
-        assert!(
-            stderr(&out).starts_with(&format!(
-                "tasq: {}:3:1: unknown field `sync_interval`",
-                file.display()
-            )),
-            "{}",
-            stderr(&out)
-        );
+    fn removed_store_keys_name_the_replacement() {
+        for (key, replacement) in [
+            (
+                "kind = \"nb\"",
+                "store.kind was removed (ADR-0026): tasq always opens its own store at <data_dir>/<store.name>",
+            ),
+            (
+                "notebook = \"home\"",
+                "store.notebook was removed (ADR-0026): tasks live in <data_dir>/<store.name>; convert the notebook once with `tasq migrate <notebook>`",
+            ),
+            (
+                "sync_interval = 60",
+                "store.sync_interval was removed (ADR-0026): the store does not run git; sync comes back as a feature of its own",
+            ),
+        ] {
+            let env = TestEnv::fixture();
+            let file = env.write_global_config(&format!("[store]\nname = \"default\"\n{key}\n"));
+            let out = env.tasq().args(["config", "show"]).output().unwrap();
+            assert_eq!(out.status.code(), Some(1), "{key}");
+            let err = stderr(&out);
+            let value_column = key.find('=').unwrap() + 3;
+            assert!(
+                err.starts_with(&format!("tasq: {}:3:{value_column}: ", file.display())),
+                "{key}: {err}"
+            );
+            assert!(err.trim_end().ends_with(replacement), "{key}: {err}");
+        }
     }
 
     #[test]
     fn show_json_with_profile() {
         let env = TestEnv::fixture();
-        env.write_global_config("[profile.work]\n[profile.work.store]\nnotebook = \"work\"\n");
+        env.write_global_config("[profile.work]\n[profile.work.store]\nname = \"work\"\n");
         let out = env
             .tasq()
             .args(["--profile", "work", "config", "show", "--json"])
@@ -617,7 +767,7 @@ mod config {
         let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(value["schema"], 1);
         assert_eq!(value["profile"], "work");
-        assert_eq!(value["config"]["store"]["notebook"], "work");
+        assert_eq!(value["config"]["store"]["name"], "work");
         assert_eq!(value["layers"][0]["origin"], "defaults");
         assert_eq!(value["layers"].as_array().unwrap().len(), 3);
     }
@@ -637,11 +787,11 @@ mod completions {
     }
 
     #[test]
-    fn needs_no_config_or_notebook() {
+    fn needs_no_config_or_store() {
         let env = TestEnv::empty();
         env.write_global_config("not toml at all [[[");
         env.tasq()
-            .env("TASQ_NOTEBOOK", "nope")
+            .env("TASQ_DATA_DIR", "/definitely/not/here")
             .args(["completions", "zsh"])
             .assert()
             .success()
@@ -666,7 +816,7 @@ mod edit {
     use super::*;
 
     fn support_file(env: &TestEnv) -> String {
-        std::fs::read_to_string(env.notebook().join("20260902100000.todo.md")).unwrap()
+        env.read_task(3)
     }
 
     #[test]
@@ -763,20 +913,18 @@ mod edit {
     #[test]
     fn done_on_a_done_task_is_refused() {
         let env = TestEnv::fixture();
-        let before =
-            std::fs::read_to_string(env.notebook().join("20260903110000.todo.md")).unwrap();
+        let before = env.read_task(4);
         env.tasq()
             .args(["done", "4", "--note", "again"])
             .assert()
             .code(1)
             .stdout("")
             .stderr("tasq: task 4 is already done\n");
-        let after = std::fs::read_to_string(env.notebook().join("20260903110000.todo.md")).unwrap();
-        assert_eq!(after, before);
+        assert_eq!(env.read_task(4), before);
     }
 
     fn release_file(env: &TestEnv) -> String {
-        std::fs::read_to_string(env.notebook().join("20260903110000.todo.md")).unwrap()
+        env.read_task(4)
     }
 
     #[test]
@@ -790,7 +938,8 @@ mod edit {
             .stdout("[4] reopened -> ready: Ship the release notes\n");
         assert_eq!(
             release_file(&env),
-            "# [ ] Ship the release notes\n\n## Tags\n\n#gitlab #C #ready\n\n## Progress\n\n\
+            "---\nid: 4\nstatus: ready\npriority: C\ntags: [gitlab]\n---\n\
+             # Ship the release notes\n\n## Progress\n\n\
              - 2026-10-03 11:00: created via tasks create\n- 2026-10-03 16:30: shipped\n\
              - 2026-10-07 09:30: reopened\n"
         );
@@ -811,8 +960,9 @@ mod edit {
             .success()
             .stdout("[4] reopened -> blocked: Ship the release notes\n");
         let file = release_file(&env);
-        assert!(file.starts_with("# [ ] Ship the release notes\n"), "{file}");
-        assert!(file.contains("\n#gitlab #C #blocked\n"), "{file}");
+        assert!(file.contains("\n# Ship the release notes\n"), "{file}");
+        assert!(file.contains("\nstatus: blocked\n"), "{file}");
+        assert!(!file.contains("closed:"), "{file}");
         assert!(
             file.ends_with("- 2026-10-07 09:30: typo in the notes\n"),
             "{file}"
@@ -936,23 +1086,29 @@ mod edit {
 mod rank {
     use super::*;
 
-    /// Task 1, the fixture's `#A` in-progress task.
-    const FIRST: &str = "20260901090000.todo.md";
-    /// Task 8, the `#C` in-progress task the tests add below task 1.
-    const SECOND: &str = "20260907150000.todo.md";
-
-    /// The fixture plus task 8, a `#C` in-progress task below task 1, with
-    /// `rank_section` (`## Rank` and its body, or nothing) in its file.
-    fn env_with_a_second_in_progress_task(rank_section: &str) -> TestEnv {
+    /// The fixture plus task 8, a `#C` in-progress task below task 1
+    /// (the fixture's `#A` in-progress task), with `rank_line` (a `rank:`
+    /// line, or nothing) in its frontmatter.
+    fn env_with_a_second_in_progress_task(rank_line: &str) -> TestEnv {
         let env = TestEnv::fixture();
         env.write_task(
-            SECOND,
-            &format!(
-                "# [ ] Second\n\n{rank_section}## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n"
+            &ulid_name("2026-09-07 15:00", 8),
+            &v2(
+                8,
+                &format!("status: in-progress\npriority: C\n{rank_line}"),
+                "# Second\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
             ),
         );
-        env.register(SECOND);
         env
+    }
+
+    /// Task 8 as written with `rank_line` in its frontmatter.
+    fn second(rank_line: &str) -> String {
+        v2(
+            8,
+            &format!("status: in-progress\npriority: C\n{rank_line}"),
+            "# Second\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
+        )
     }
 
     fn next_task(env: &TestEnv) -> String {
@@ -978,10 +1134,7 @@ mod rank {
             .assert()
             .success()
             .stdout("[8] moved to the top\n");
-        assert_eq!(
-            env.read_task(SECOND),
-            "# [ ] Second\n\n## Rank\n\n1024\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n"
-        );
+        assert_eq!(env.read_task(8), second("rank: 1024\n"));
         assert_eq!(next_task(&env), "Task: [8] Second");
         // Now task 1 goes above it.
         env.tasq()
@@ -990,9 +1143,9 @@ mod rank {
             .success()
             .stdout("[1] moved to the top\n");
         assert!(
-            env.read_task(FIRST).contains("## Rank\n\n0\n"),
+            env.read_task(1).contains("\nrank: 0\n"),
             "{}",
-            env.read_task(FIRST)
+            env.read_task(1)
         );
         assert_eq!(
             next_task(&env),
@@ -1002,18 +1155,15 @@ mod rank {
 
     #[test]
     fn top_overwrites_an_invalid_hand_written_rank() {
-        // A non-integer `## Rank` reads as unranked (ADR 0025) and the move
-        // replaces its body rather than adding a second section.
-        let env = env_with_a_second_in_progress_task("## Rank\n\nsoon\n\n");
+        // A non-integer `rank` reads as unranked (ADR 0025) and the move
+        // replaces its line rather than adding a second one.
+        let env = env_with_a_second_in_progress_task("rank: soon\n");
         env.tasq()
             .args(["move", "8", "--top"])
             .assert()
             .success()
             .stdout("[8] moved to the top\n");
-        assert_eq!(
-            env.read_task(SECOND),
-            "# [ ] Second\n\n## Rank\n\n1024\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n"
-        );
+        assert_eq!(env.read_task(8), second("rank: 1024\n"));
     }
 
     #[test]
@@ -1037,8 +1187,8 @@ mod rank {
             .assert()
             .success()
             .stdout("[8] unranked\n");
-        let before = env.read_task(SECOND);
-        assert!(!before.contains("## Rank"), "{before}");
+        let before = env.read_task(8);
+        assert!(!before.contains("rank:"), "{before}");
         assert_eq!(
             next_task(&env),
             "Task: [1] Rewrite the tasks script in Rust"
@@ -1048,19 +1198,19 @@ mod rank {
             .assert()
             .success()
             .stdout("[8] already unranked\n");
-        assert_eq!(env.read_task(SECOND), before);
+        assert_eq!(env.read_task(8), before);
     }
 
     #[test]
     fn a_move_that_changes_nothing_writes_nothing() {
         let env = env_with_a_second_in_progress_task("");
-        let before = env.read_task(FIRST);
+        let before = env.read_task(1);
         env.tasq()
             .args(["move", "1", "--top"])
             .assert()
             .success()
             .stdout("[1] already at the top\n");
-        assert_eq!(env.read_task(FIRST), before);
+        assert_eq!(env.read_task(1), before);
         let out = env
             .tasq()
             .args(["move", "1", "--top", "--json"])
@@ -1073,7 +1223,7 @@ mod rank {
         assert_eq!(value["task"].get("rank"), None);
         assert_eq!(value["changed"], serde_json::json!([]));
         assert_eq!(value["ranked"], serde_json::json!([]));
-        let second = env.read_task(SECOND);
+        let second = env.read_task(8);
         let out = env
             .tasq()
             .args(["move", "8", "--unrank", "--json"])
@@ -1083,14 +1233,14 @@ mod rank {
         let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(value["changed"], serde_json::json!([]));
         assert_eq!(value["ranked"], serde_json::json!([]));
-        assert_eq!(env.read_task(FIRST), before);
-        assert_eq!(env.read_task(SECOND), second);
+        assert_eq!(env.read_task(1), before);
+        assert_eq!(env.read_task(8), second);
     }
 
     #[test]
     fn a_done_or_missing_task_is_refused() {
         let env = TestEnv::fixture();
-        let before = env.read_task("20260903110000.todo.md");
+        let before = env.read_task(4);
         env.tasq()
             .args(["move", "4", "--top"])
             .assert()
@@ -1102,7 +1252,7 @@ mod rank {
             .assert()
             .code(1)
             .stderr("tasq: task 4 is done\n");
-        assert_eq!(env.read_task("20260903110000.todo.md"), before);
+        assert_eq!(env.read_task(4), before);
         env.tasq()
             .args(["move", "99", "--top"])
             .assert()
@@ -1110,20 +1260,21 @@ mod rank {
             .stderr("tasq: no task with id 99\n");
     }
 
-    /// Task 9, a second `#C` in-progress task, below task 8 by id.
-    const THIRD: &str = "20260908160000.todo.md";
+    /// Task 9, a second `#C` in-progress task below task 8 by id, as
+    /// written with `rank_line` in its frontmatter.
+    fn third(rank_line: &str) -> String {
+        v2(
+            9,
+            &format!("status: in-progress\npriority: C\n{rank_line}"),
+            "# Third\n\n## Progress\n\n- 2026-10-08 16:00: created\n",
+        )
+    }
 
     /// [`env_with_a_second_in_progress_task`] plus task 9, another `#C`
-    /// in-progress task, with `rank_9` in its file.
+    /// in-progress task, with `rank_9` in its frontmatter.
     fn env_with_three_in_progress_tasks(rank_8: &str, rank_9: &str) -> TestEnv {
         let env = env_with_a_second_in_progress_task(rank_8);
-        env.write_task(
-            THIRD,
-            &format!(
-                "# [ ] Third\n\n{rank_9}## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-08 16:00: created\n"
-            ),
-        );
-        env.register(THIRD);
+        env.write_task(&ulid_name("2026-09-08 16:00", 9), &third(rank_9));
         env
     }
 
@@ -1135,10 +1286,7 @@ mod rank {
             .assert()
             .success()
             .stdout("[9] moved before task 1\n");
-        assert_eq!(
-            env.read_task(THIRD),
-            "# [ ] Third\n\n## Rank\n\n1024\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-08 16:00: created\n"
-        );
+        assert_eq!(env.read_task(9), third("rank: 1024\n"));
         assert_eq!(next_task(&env), "Task: [9] Third");
         // Into the unranked part: tasks 1 and 8 get ranks first.
         env.tasq()
@@ -1146,24 +1294,24 @@ mod rank {
             .assert()
             .success()
             .stdout("[9] moved after task 8 (also ranked: 1, 8)\n");
-        assert!(env.read_task(FIRST).contains("## Rank\n\n1024\n"));
-        assert!(env.read_task(SECOND).contains("## Rank\n\n2048\n"));
-        assert!(env.read_task(THIRD).contains("## Rank\n\n3072\n"));
+        assert!(env.read_task(1).contains("\nrank: 1024\n"));
+        assert!(env.read_task(8).contains("\nrank: 2048\n"));
+        assert!(env.read_task(9).contains("\nrank: 3072\n"));
         assert_eq!(
             next_task(&env),
             "Task: [1] Rewrite the tasks script in Rust"
         );
         // Between two ranked neighbours: the midpoint, one file written.
-        let first = env.read_task(FIRST);
-        let second = env.read_task(SECOND);
+        let first = env.read_task(1);
+        let second = env.read_task(8);
         env.tasq()
             .args(["move", "9", "--before", "8"])
             .assert()
             .success()
             .stdout("[9] moved before task 8\n");
-        assert!(env.read_task(THIRD).contains("## Rank\n\n1536\n"));
-        assert_eq!(env.read_task(FIRST), first);
-        assert_eq!(env.read_task(SECOND), second);
+        assert!(env.read_task(9).contains("\nrank: 1536\n"));
+        assert_eq!(env.read_task(1), first);
+        assert_eq!(env.read_task(8), second);
     }
 
     #[test]
@@ -1181,8 +1329,8 @@ mod rank {
     #[test]
     fn a_task_already_beside_its_anchor_is_left_alone() {
         let env = env_with_three_in_progress_tasks("", "");
-        let first = env.read_task(FIRST);
-        let second = env.read_task(SECOND);
+        let first = env.read_task(1);
+        let second = env.read_task(8);
         env.tasq()
             .args(["move", "8", "--after", "1"])
             .assert()
@@ -1203,14 +1351,14 @@ mod rank {
         assert_eq!(value["changed"], serde_json::json!([]));
         assert_eq!(value["ranked"], serde_json::json!([]));
         assert_eq!(value["task"].get("rank"), None);
-        assert_eq!(env.read_task(FIRST), first);
-        assert_eq!(env.read_task(SECOND), second);
+        assert_eq!(env.read_task(1), first);
+        assert_eq!(env.read_task(8), second);
     }
 
     #[test]
     fn an_anchor_outside_the_group_is_refused() {
         let env = env_with_a_second_in_progress_task("");
-        let before = env.read_task(SECOND);
+        let before = env.read_task(8);
         env.tasq()
             .args(["move", "8", "--before", "8"])
             .assert()
@@ -1237,13 +1385,13 @@ mod rank {
             .assert()
             .code(1)
             .stderr("tasq: no task with id 99\n");
-        assert_eq!(env.read_task(SECOND), before);
+        assert_eq!(env.read_task(8), before);
     }
 
     #[test]
     fn a_slot_with_no_rank_left_renumbers_the_group() {
-        let env = env_with_three_in_progress_tasks("## Rank\n\n1024\n\n", "## Rank\n\n1025\n\n");
-        let second = env.read_task(SECOND);
+        let env = env_with_three_in_progress_tasks("rank: 1024\n", "rank: 1025\n");
+        let second = env.read_task(8);
         let out = env
             .tasq()
             .args(["move", "1", "--after", "8", "--json"])
@@ -1256,12 +1404,9 @@ mod rank {
         assert_eq!(value["task"]["rank"], serde_json::json!(2048));
         // 8 already holds 1024 and is not rewritten; 1 takes 2048 and 9
         // moves down to 3072.
-        assert_eq!(env.read_task(SECOND), second);
-        assert!(env.read_task(FIRST).contains("## Rank\n\n2048\n"));
-        assert_eq!(
-            env.read_task(THIRD),
-            "# [ ] Third\n\n## Rank\n\n3072\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-08 16:00: created\n"
-        );
+        assert_eq!(env.read_task(8), second);
+        assert!(env.read_task(1).contains("\nrank: 2048\n"));
+        assert_eq!(env.read_task(9), third("rank: 3072\n"));
         let out = env.tasq().args(["list", "--json"]).output().unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -1307,10 +1452,15 @@ mod rank {
 mod fields {
     use super::*;
 
-    const SUPPORT: &str = "20260902100000.todo.md";
+    /// Task 3's frontmatter, as in the fixture.
+    const SUPPORT_FRONT: &str = "status: ready\npriority: B\ntags: [support]\n";
+    /// Task 3's body, as in the fixture.
+    const SUPPORT_BODY: &str = "# Answer the support ticket\n\n## Description\n\n\
+                                Customer asks about the export format.\n\n\
+                                ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n";
 
     fn support(env: &TestEnv) -> String {
-        env.read_task(SUPPORT)
+        env.read_task(3)
     }
 
     fn json(out: &std::process::Output) -> serde_json::Value {
@@ -1330,9 +1480,11 @@ mod fields {
             .stdout("[3] renamed\n");
         assert_eq!(
             support(&env),
-            "# [ ] Answer the export question\n\n## Description\n\n\
-             Customer asks about the export format.\n\n## Tags\n\n#support #B #ready\n\n\
-             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+            v2(
+                3,
+                SUPPORT_FRONT,
+                &SUPPORT_BODY.replace("Answer the support ticket", "Answer the export question")
+            )
         );
     }
 
@@ -1357,7 +1509,7 @@ mod fields {
     }
 
     #[test]
-    fn due_sets_a_date_after_the_description() {
+    fn due_sets_a_date_in_the_frontmatter() {
         let env = TestEnv::fixture();
         env.tasq()
             .args(["due", "3", "2026-10-17"])
@@ -1366,10 +1518,11 @@ mod fields {
             .stdout("[3] due 2026-10-17\n");
         assert_eq!(
             support(&env),
-            "# [ ] Answer the support ticket\n\n## Description\n\n\
-             Customer asks about the export format.\n\n## Due\n\n2026-10-17\n\n\
-             ## Tags\n\n#support #B #ready\n\n\
-             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+            v2(
+                3,
+                "status: ready\npriority: B\ndue: 2026-10-17\ntags: [support]\n",
+                SUPPORT_BODY
+            )
         );
     }
 
@@ -1401,10 +1554,10 @@ mod fields {
             .assert()
             .success()
             .stdout("[1] due cleared\n");
-        let file = env.read_task("20260901090000.todo.md");
-        assert!(!file.contains("## Due"), "{file}");
+        let file = env.read_task(1);
+        assert!(!file.contains("due:"), "{file}");
         assert!(
-            file.contains("## Project\n\n/home/pau/code/tasks\n\n## Related\n"),
+            file.contains("priority: A\nproject: /home/pau/code/tasks\ntags: [gitlab]\n---\n"),
             "{file}"
         );
     }
@@ -1442,10 +1595,11 @@ mod fields {
             .stdout("[3] tags: +needs-info -support +urgent\n");
         assert_eq!(
             support(&env),
-            "# [ ] Answer the support ticket\n\n## Description\n\n\
-             Customer asks about the export format.\n\n## Tags\n\n\
-             #needs-info #urgent #B #ready\n\n\
-             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+            v2(
+                3,
+                "status: ready\npriority: B\ntags: [needs-info, urgent]\n",
+                SUPPORT_BODY
+            )
         );
     }
 
@@ -1468,7 +1622,7 @@ mod fields {
             .assert()
             .success()
             .stdout("[3] tags: +support\n");
-        assert!(support(&env).contains("\n#support #B #ready\n"));
+        assert!(support(&env).contains("\ntags: [support]\n"));
         assert!(support(&env).ends_with("- 2026-10-07 09:30: again\n"));
     }
 
@@ -1488,13 +1642,13 @@ mod fields {
             .success()
             .stdout("[3] tags: +new\n");
         assert!(
-            support(&env).contains("\n#support #new #B #ready\n"),
+            support(&env).contains("\ntags: [support, new]\n"),
             "order kept"
         );
     }
 
     #[test]
-    fn tag_adds_a_tags_section_when_there_is_none() {
+    fn tag_adds_the_tags_key_when_there_is_none() {
         let env = TestEnv::fixture();
         env.tasq()
             .args(["tag", "7", "new"])
@@ -1502,9 +1656,13 @@ mod fields {
             .success()
             .stdout("[7] tags: +new\n");
         assert_eq!(
-            env.read_task("20260906140000.todo.md"),
-            "# [ ] Task without a tags section\n\n## Progress\n\n\
-             - 2026-10-06 14:00: created via tasks create\n\n## Tags\n\n#new\n"
+            env.read_task(7),
+            v2(
+                7,
+                "priority: B\ntags: [new]\n",
+                "# Task without a tags section\n\n## Progress\n\n\
+                 - 2026-10-06 14:00: created via tasks create\n"
+            )
         );
     }
 
@@ -1543,8 +1701,6 @@ mod fields {
             .stderr("tasq: no task with id 99\n");
     }
 
-    const NO_TAGS: &str = "20260906140000.todo.md";
-
     #[test]
     fn desc_sets_the_description() {
         let env = TestEnv::fixture();
@@ -1555,9 +1711,14 @@ mod fields {
             .stdout("[3] description updated\n");
         assert_eq!(
             support(&env),
-            "# [ ] Answer the support ticket\n\n## Description\n\n\
-             Export as CSV.\n\nThey use Excel.\n\n## Tags\n\n#support #B #ready\n\n\
-             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+            v2(
+                3,
+                SUPPORT_FRONT,
+                &SUPPORT_BODY.replace(
+                    "Customer asks about the export format.",
+                    "Export as CSV.\n\nThey use Excel."
+                )
+            )
         );
         env.tasq()
             .args(["desc", "7", "New"])
@@ -1565,9 +1726,13 @@ mod fields {
             .success()
             .stdout("[7] description updated\n");
         assert_eq!(
-            env.read_task(NO_TAGS),
-            "# [ ] Task without a tags section\n\n## Description\n\nNew\n\n## Progress\n\n\
-             - 2026-10-06 14:00: created via tasks create\n"
+            env.read_task(7),
+            v2(
+                7,
+                "priority: B\n",
+                "# Task without a tags section\n\n## Description\n\nNew\n\n## Progress\n\n\
+                 - 2026-10-06 14:00: created via tasks create\n"
+            )
         );
     }
 
@@ -1605,8 +1770,8 @@ mod fields {
             ))
             .env_clear()
             .env("TASQ_NOW", NOW)
+            .env("TZ", "UTC")
             .env("HOME", &env.home)
-            .env("NB_DIR", &env.nb_dir)
             .env("PATH", &env.bin)
             .current_dir(&env.home)
             .output()
@@ -1616,7 +1781,7 @@ mod fields {
     #[test]
     fn desc_dash_conflicts_when_the_task_changed_while_stdin_was_open() {
         let env = TestEnv::fixture();
-        let file = env.notebook().join(SUPPORT);
+        let file = env.file_of(3);
         let out = desc_from_pipe(
             &env,
             &format!(
@@ -1688,8 +1853,12 @@ mod fields {
             .stdout("[3] description cleared\n");
         assert_eq!(
             support(&env),
-            "# [ ] Answer the support ticket\n\n## Tags\n\n#support #B #ready\n\n\
-             ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+            v2(
+                3,
+                SUPPORT_FRONT,
+                "# Answer the support ticket\n\n\
+                 ## Progress\n\n- 2026-10-02 10:00: created via tasks create\n"
+            )
         );
         env.tasq()
             .args(["desc", "1", "-"])
@@ -1966,7 +2135,7 @@ mod fields {
     #[test]
     fn desc_edit_conflicts_when_the_task_changed_meanwhile() {
         let env = TestEnv::fixture();
-        let file = env.notebook().join(SUPPORT);
+        let file = env.file_of(3);
         let assert = edit_with(
             &env,
             &format!(
@@ -2046,12 +2215,6 @@ mod fields {
 mod create {
     use super::*;
 
-    const NEW_FILE: &str = "20261007093000.todo.md";
-
-    fn index(env: &TestEnv) -> String {
-        std::fs::read_to_string(env.notebook().join(".index")).unwrap()
-    }
-
     #[test]
     fn every_section() {
         let env = TestEnv::fixture();
@@ -2090,9 +2253,8 @@ mod create {
             stdout(&out),
             "[8] created: Reply to the auditor (#waiting #A)\n"
         );
-        assert!(index(&env).ends_with(&format!("20260906140000.todo.md\n{NEW_FILE}\n")));
-        let file = std::fs::read_to_string(env.notebook().join(NEW_FILE)).unwrap();
-        assert_snapshot!(env.normalize(&file));
+        assert_eq!(env.task_files().len(), 6);
+        assert_snapshot!(env.normalize(&env.read_task(8)));
     }
 
     #[test]
@@ -2105,10 +2267,20 @@ mod create {
             .success()
             .stdout("[8] created: Minimal (#ready #B)\n");
         // Without --project the task tracks the directory tasq ran in.
-        let file = std::fs::read_to_string(env.notebook().join(NEW_FILE)).unwrap();
         assert_eq!(
-            env.normalize(&file),
-            "# [ ] Minimal\n\n## Project\n\n[ROOT]/home\n\n## Tags\n\n#B #ready\n\n## Progress\n\n- 2026-10-07 09:30: created via tasq create\n"
+            env.normalize(&env.read_task(8)),
+            "---\nid: 8\nstatus: ready\npriority: B\nproject: [ROOT]/home\n---\n# Minimal\n\n## Progress\n\n- 2026-10-07 09:30: created via tasq create\n"
+        );
+        // The file is named by a ULID minted from the clock (UTC in these tests).
+        let name = env
+            .file_of(8)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            name.starts_with(&ulid_name(NOW, 0)[..10]),
+            "{name} does not start with the clock's time"
         );
         // The new task shows up in the list under READY with its id.
         let out = env.tasq().arg("ready").output().unwrap();
@@ -2116,7 +2288,7 @@ mod create {
     }
 
     #[test]
-    fn same_second_bumps_the_filename() {
+    fn the_same_second_gives_two_files_and_two_ids() {
         let env = TestEnv::fixture();
         for (id, title) in [("8", "First"), ("9", "Second")] {
             env.tasq()
@@ -2126,8 +2298,8 @@ mod create {
                 .success()
                 .stdout(format!("[{id}] created: {title} (#ready #B)\n"));
         }
-        assert!(env.notebook().join(NEW_FILE).is_file());
-        assert!(env.notebook().join("20261007093001.todo.md").is_file());
+        assert_ne!(env.file_of(8), env.file_of(9));
+        assert_eq!(env.task_files().len(), 7);
     }
 
     #[test]
@@ -2139,9 +2311,10 @@ mod create {
             .assert()
             .success()
             .stdout("[8] created: Already done (done, #C)\n");
-        let file = std::fs::read_to_string(env.notebook().join(NEW_FILE)).unwrap();
-        assert!(file.starts_with("# [x] Already done\n"), "{file}");
-        assert!(file.contains("\n## Tags\n\n#C\n"), "{file}");
+        let file = env.read_task(8);
+        assert!(file.contains("\nstatus: done\npriority: C\n"), "{file}");
+        assert!(file.contains("\n---\n# Already done\n"), "{file}");
+        assert!(!file.contains("tags:"), "{file}");
     }
 
     #[test]
@@ -2174,8 +2347,7 @@ mod create {
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(stderr(&out), "", "no forge configured: silent fallback");
-        let file = std::fs::read_to_string(env.notebook().join(NEW_FILE)).unwrap();
-        assert_snapshot!(env.normalize(&file));
+        assert_snapshot!(env.normalize(&env.read_task(8)));
         env.tasq()
             .args(["create", "Other", "--mr", "https://example.invalid/x"])
             .assert()
@@ -2188,7 +2360,7 @@ mod create {
     #[test]
     fn errors_write_nothing() {
         let env = TestEnv::fixture();
-        let before = index(&env);
+        let before = env.task_files();
         env.tasq()
             .args(["create", "X", "--project", "/definitely/not/here"])
             .assert()
@@ -2210,22 +2382,19 @@ mod create {
             .code(1)
             .stderr("tasq: priority must be A, B or C\n");
         env.tasq().args(["create"]).assert().code(2);
-        assert_eq!(index(&env), before);
-        assert!(!env.notebook().join(NEW_FILE).exists());
+        assert_eq!(env.task_files(), before);
     }
 }
 
 mod view {
     use super::*;
 
-    const FULL: &str = "20260901090000.todo.md";
-
     #[test]
     fn piped_output_is_the_plain_file() {
         let env = TestEnv::fixture();
         let out = env.tasq().args(["view", "1"]).output().unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
-        assert_eq!(stdout(&out), env.read_task(FULL));
+        assert_eq!(stdout(&out), env.read_task(1));
     }
 
     #[test]
@@ -2233,7 +2402,7 @@ mod view {
         let env = TestEnv::fixture();
         env.fake_tool("glow", "echo rendered");
         let out = env.tasq().args(["view", "1", "--raw"]).output().unwrap();
-        assert_eq!(stdout(&out), env.read_task(FULL));
+        assert_eq!(stdout(&out), env.read_task(1));
     }
 
     #[test]
@@ -2290,7 +2459,7 @@ mod project {
             env.normalize(&stdout(&out)),
             "[3] project: [ROOT]/home/proj\n"
         );
-        assert_snapshot!(env.normalize(&env.read_task("20260902100000.todo.md")));
+        assert_snapshot!(env.normalize(&env.read_task(3)));
         env.tasq()
             .args(["project", "3"])
             .assert()
@@ -2337,12 +2506,9 @@ mod worktree {
             env.normalize(&stdout(&out)),
             "[3] worktree: [ROOT]/home/wt (feature/x)\n"
         );
+        assert!(env.read_task(3).contains("\n## Worktrees\n\n- "),);
         assert!(
-            env.read_task("20260902100000.todo.md")
-                .contains("\n## Worktrees\n\n- "),
-        );
-        assert!(
-            env.normalize(&env.read_task("20260902100000.todo.md"))
+            env.normalize(&env.read_task(3))
                 .contains("- [ROOT]/home/wt (`feature/x`)\n"),
         );
         let again = env
@@ -2424,13 +2590,12 @@ mod worktree {
              (3-answer-the-support-ticket)\n"
         );
         assert!(
-            env.normalize(&env.read_task("20260902100000.todo.md"))
-                .contains(
-                    "\n## Worktrees\n\n- [ROOT]/home/proj-feature_x (`feature/x`)\n\
+            env.normalize(&env.read_task(3)).contains(
+                "\n## Worktrees\n\n- [ROOT]/home/proj-feature_x (`feature/x`)\n\
                  - [ROOT]/home/proj-3_answer_the_support_ticket (`3-answer-the-support-ticket`)\n"
-                ),
+            ),
             "{}",
-            env.read_task("20260902100000.todo.md")
+            env.read_task(3)
         );
         assert!(!env.home.join("proj-feature_x").exists(), "nothing on disk");
         env.tasq_wt()
@@ -2556,7 +2721,7 @@ mod worktree {
     #[test]
     fn create_checks_the_flag_before_writing() {
         let env = TestEnv::fixture();
-        let index = env.read_task(".index");
+        let files = env.task_files();
         env.tasq_wt()
             .args(["create", "T", "--worktree", "a b"])
             .assert()
@@ -2567,7 +2732,7 @@ mod worktree {
             .assert()
             .code(1)
             .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
-        assert_eq!(env.read_task(".index"), index, "nothing created");
+        assert_eq!(env.task_files(), files, "nothing created");
         // Disabled, a git checkout gets no worktree.
         let project = env.home.join("proj");
         env.git_repo(&project);
@@ -2606,7 +2771,7 @@ mod worktree {
         );
         assert!(env.home.join("proj-feature_y").join("README").is_file());
         assert!(
-            env.normalize(&env.read_task("20260902100000.todo.md"))
+            env.normalize(&env.read_task(3))
                 .contains("- [ROOT]/home/proj-feature_y (`feature/y`)\n")
         );
         env.tasq_wt()
@@ -3117,10 +3282,10 @@ mod session {
             .success()
             .stdout("[3] session: sess-1 (resume: claude --resume sess-1)\n");
         assert!(
-            env.read_task("20260902100000.todo.md")
+            env.read_task(3)
                 .contains("\n## Sessions\n\n- 2026-10-07 09:30: `sess-1` \u{2014} first look\n"),
             "{}",
-            env.read_task("20260902100000.todo.md")
+            env.read_task(3)
         );
         env.tasq()
             .args(["session", "3", "sess-1"])
@@ -3168,7 +3333,7 @@ mod mr {
             .assert()
             .success()
             .stdout("[3] MR: Reviewed by hand\n");
-        assert_snapshot!(env.read_task("20260902100000.todo.md"));
+        assert_snapshot!(env.read_task(3));
         env.tasq()
             .args(["mr", "3", "https://example.invalid/review/2"])
             .assert()
@@ -3195,7 +3360,7 @@ mod apply {
     #[test]
     fn view_json_piped_back_is_a_no_op() {
         let env = TestEnv::fixture();
-        let file = env.notebook().join("20260901090000.todo.md");
+        let file = env.file_of(1);
         let before = std::fs::read_to_string(&file).unwrap();
         let mtime = std::fs::metadata(&file).unwrap().modified().unwrap();
         let json = env.tasq().args(["view", "1", "--json"]).output().unwrap();
@@ -3210,12 +3375,12 @@ mod apply {
     }
 
     /// Task 3 (`ready`, `#B`) with a hand-written rank.
-    const RANKED: &str = "# [ ] Answer the support ticket\n\n## Description\n\nCustomer asks about the export format.\n\n## Rank\n\n1024\n\n## Tags\n\n#support #B #ready\n\n## Progress\n\n- 2026-10-02 10:00: created via tasks create\n";
+    const RANKED: &str = "---\nid: 3\nstatus: ready\npriority: B\nrank: 1024\ntags: [support]\n---\n# Answer the support ticket\n\n## Description\n\nCustomer asks about the export format.\n\n## Progress\n\n- 2026-10-02 10:00: created via tasks create\n";
 
     #[test]
     fn rank_is_a_number_in_json_kept_without_the_key_and_cleared_by_null() {
         let env = TestEnv::fixture();
-        env.write_task("20260902100000.todo.md", RANKED);
+        std::fs::write(env.file_of(3), RANKED).unwrap();
         let json = env.tasq().args(["view", "3", "--json"]).output().unwrap();
         let mut value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
         assert_eq!(value["task"]["rank"], 1024);
@@ -3226,7 +3391,7 @@ mod apply {
             .assert()
             .success()
             .stdout("[3] applied\n");
-        assert_eq!(env.read_task("20260902100000.todo.md"), RANKED);
+        assert_eq!(env.read_task(3), RANKED);
         // A document without the key (older or hand-written) keeps the rank.
         value["task"].as_object_mut().unwrap().remove("rank");
         value["task"]["priority"] = "A".into();
@@ -3236,8 +3401,8 @@ mod apply {
             .assert()
             .success();
         assert_eq!(
-            env.read_task("20260902100000.todo.md"),
-            RANKED.replace("#support #B #ready", "#support #ready #A")
+            env.read_task(3),
+            RANKED.replace("priority: B", "priority: A")
         );
         // An unranked task has no `rank` key, and `null` clears the rank.
         let unranked = env.tasq().args(["view", "1", "--json"]).output().unwrap();
@@ -3250,12 +3415,7 @@ mod apply {
             .write_stdin(value.to_string())
             .assert()
             .success();
-        assert_eq!(
-            env.read_task("20260902100000.todo.md"),
-            RANKED
-                .replace("## Rank\n\n1024\n\n", "")
-                .replace("#support #B #ready", "#support #ready #B")
-        );
+        assert_eq!(env.read_task(3), RANKED.replace("rank: 1024\n", ""));
         // And a number sets it, at the same place in the file.
         value["task"]["rank"] = 2048.into();
         env.tasq()
@@ -3263,12 +3423,7 @@ mod apply {
             .write_stdin(value.to_string())
             .assert()
             .success();
-        assert_eq!(
-            env.read_task("20260902100000.todo.md"),
-            RANKED
-                .replace("1024", "2048")
-                .replace("#support #B #ready", "#support #ready #B")
-        );
+        assert_eq!(env.read_task(3), RANKED.replace("1024", "2048"));
     }
 
     #[test]
@@ -3292,7 +3447,7 @@ mod apply {
         assert!(out.status.success(), "{}", stderr(&out));
         let back: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(back["task"]["status"], "blocked");
-        assert_snapshot!(env.read_task("20260902100000.todo.md"));
+        assert_snapshot!(env.read_task(3));
     }
 
     #[test]
@@ -3301,7 +3456,7 @@ mod apply {
         let json = env.tasq().args(["view", "3", "--json"]).output().unwrap();
         let mut value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
         value["task"]["progress"] = serde_json::json!([]);
-        let before = env.read_task("20260902100000.todo.md");
+        let before = env.read_task(3);
         env.tasq()
             .arg("apply")
             .write_stdin(value.to_string())
@@ -3310,7 +3465,7 @@ mod apply {
             .stderr(predicate::str::starts_with(
                 "tasq: unsupported: changing progress of task 3",
             ));
-        assert_eq!(env.read_task("20260902100000.todo.md"), before);
+        assert_eq!(env.read_task(3), before);
         env.tasq()
             .arg("apply")
             .write_stdin("{\"schema\": 2, \"task\": {}}")
@@ -3335,7 +3490,7 @@ mod launch {
     #[test]
     fn pick_dry_run_shows_the_plan_without_writing() {
         let env = TestEnv::fixture();
-        let before = env.read_task("20260902100000.todo.md");
+        let before = env.read_task(3);
         let out = env
             .tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
@@ -3345,7 +3500,7 @@ mod launch {
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(stderr(&out), "");
         assert_snapshot!(env.normalize(&stdout(&out)));
-        assert_eq!(env.read_task("20260902100000.todo.md"), before);
+        assert_eq!(env.read_task(3), before);
     }
 
     #[test]
@@ -3355,7 +3510,7 @@ mod launch {
         env.fake_tool(
             "claude",
             &format!(
-                "[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\n{{ echo \"cwd=$PWD\"; echo \"id=$TASQ_TASK_ID nb=$TASQ_NOTEBOOK\"; echo \"argc=$#\"; printf '%.60s\\n' \"$1\"; }} > '{}'",
+                "[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\n{{ echo \"cwd=$PWD\"; echo \"id=$TASQ_TASK_ID store=$TASQ_STORE_NAME dir=$TASQ_DATA_DIR\"; echo \"argc=$#\"; printf '%.60s\\n' \"$1\"; }} > '{}'",
                 log.display()
             ),
         );
@@ -3375,13 +3530,10 @@ mod launch {
         assert_eq!(
             logged,
             format!(
-                "cwd=[ROOT]/home\nid=3 nb=home\nargc=1\n{PROMPT_START} from my nb notebook (\n"
+                "cwd=[ROOT]/home\nid=3 store=default dir=[ROOT]/home/.local/share/tasq/stores\nargc=1\n{PROMPT_START} from my tasq store (f\n"
             )
         );
-        assert!(
-            env.read_task("20260902100000.todo.md")
-                .contains("#support #B #in-progress"),
-        );
+        assert!(env.read_task(3).contains("\nstatus: in-progress\n"));
         // Already in progress: no status line the second time.
         let out = env
             .tasq()
@@ -3409,7 +3561,7 @@ mod launch {
         );
         assert_eq!(
             env.normalize(&stdout(&out)),
-            "Task: [1] Rewrite the tasks script in Rust\nStarting in project: [ROOT]/home\nLauncher: shell (dry run)\ncd [ROOT]/home\nTASQ_TASK_ID=1 TASQ_NOTEBOOK=home exec sh\n"
+            "Task: [1] Rewrite the tasks script in Rust\nStarting in project: [ROOT]/home\nLauncher: shell (dry run)\ncd [ROOT]/home\nTASQ_TASK_ID=1 TASQ_DATA_DIR=[ROOT]/home/.local/share/tasq/stores TASQ_STORE_NAME=default exec sh\n"
         );
     }
 
@@ -3417,10 +3569,13 @@ mod launch {
     fn next_picks_the_top_ranked_task_of_the_group() {
         let env = TestEnv::fixture();
         env.write_task(
-            "20260907150000.todo.md",
-            "# [ ] Ranked\n\n## Rank\n\n1024\n\n## Tags\n\n#C #in-progress\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
+            &ulid_name("2026-09-07 15:00", 8),
+            &v2(
+                8,
+                "status: in-progress\npriority: C\nrank: 1024\n",
+                "# Ranked\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
+            ),
         );
-        env.register("20260907150000.todo.md");
         let out = env
             .tasq()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
@@ -3482,7 +3637,7 @@ mod launch {
              Launcher: shell (dry run)\n\
              create worktree [ROOT]/home/proj-feat_x on feat/x (new from HEAD)\n\
              cd [ROOT]/home/proj-feat_x\n\
-             TASQ_TASK_ID=3 TASQ_NOTEBOOK=home exec sh\n"
+             TASQ_TASK_ID=3 TASQ_DATA_DIR=[ROOT]/home/.local/share/tasq/stores TASQ_STORE_NAME=default exec sh\n"
         );
         assert!(
             stderr(&dry).contains("origin/HEAD is not set; feat/x starts from HEAD"),
@@ -3530,7 +3685,7 @@ mod launch {
         let env = TestEnv::fixture();
         // `main` is checked out in the project itself.
         declared(&env, "main");
-        let before = env.read_task("20260902100000.todo.md");
+        let before = env.read_task(3);
         env.tasq_wt()
             .env("SHELL", env.bin.join("fakesh"))
             .args(["pick", "3", "--launcher", "shell"])
@@ -3541,11 +3696,7 @@ mod launch {
                 predicate::str::starts_with("tasq: git worktree add ")
                     .and(predicate::str::contains("'main'")),
             );
-        assert_eq!(
-            env.read_task("20260902100000.todo.md"),
-            before,
-            "the task is not set in-progress"
-        );
+        assert_eq!(env.read_task(3), before, "the task is not set in-progress");
         assert!(!env.home.join("proj-main").exists());
     }
 
@@ -3858,7 +4009,7 @@ mod launch {
         assert!(out.status.success(), "{}", stderr(&out));
         let text = env.normalize(&stdout(&out));
         assert!(
-            text.contains("TASQ_TASK_ID=3 TASQ_NOTEBOOK=home TASQ_PROFILE=work exec claude"),
+            text.contains("TASQ_TASK_ID=3 TASQ_DATA_DIR=[ROOT]/home/.local/share/tasq/stores TASQ_STORE_NAME=default TASQ_PROFILE=work exec claude"),
             "{text}"
         );
         assert!(
@@ -3936,7 +4087,7 @@ mod sync {
             stdout(&out),
             "inbox: 1 change(s)\n  [8] created: Reply to Ana\n"
         );
-        assert_snapshot!(env.read_task("20261007093000.todo.md"));
+        assert_snapshot!(env.read_task(8));
         // The same items again: matched by `## Source`, nothing to do.
         env.tasq()
             .env("TASQ_NOW", NOW)
@@ -3962,16 +4113,13 @@ mod sync {
             "inbox-bridge",
             "status = \"later\"",
         ));
-        let before = std::fs::read_to_string(env.notebook().join(".index")).unwrap();
+        let before = env.task_files();
         env.tasq()
             .args(["sync", "--dry-run"])
             .assert()
             .success()
             .stdout("inbox: 1 change(s) (dry run)\n  create: Reply to Ana\n");
-        assert_eq!(
-            std::fs::read_to_string(env.notebook().join(".index")).unwrap(),
-            before
-        );
+        assert_eq!(env.task_files(), before);
         let out = env
             .tasq()
             .env("TASQ_NOW", NOW)
@@ -3986,10 +4134,12 @@ mod sync {
         assert_eq!(value["sources"][0]["name"], "inbox");
         assert_eq!(value["sources"][0]["applied"][0]["id"], "8");
         assert_eq!(value["sources"][0]["error"], serde_json::Value::Null);
+        let file = env.read_task(8);
         assert!(
-            env.read_task("20261007093000.todo.md")
-                .contains("#inbox #slack #A #ready") // the item's status wins over the source default
+            file.contains("\nstatus: ready\npriority: A\n"), // the item's status wins over the source default
+            "{file}"
         );
+        assert!(file.contains("\ntags: [inbox, slack]\n"), "{file}");
     }
 
     #[test]
@@ -4139,7 +4289,7 @@ mod sync {
             "gitlab-review-requests: 1 change(s)\n  [8] created: Review MR !7: Add parser\n"
         );
         assert_eq!(open.requests(), vec!["/api/v4/user", LIST]);
-        assert_snapshot!(env.read_task("20261007093000.todo.md"));
+        assert_snapshot!(env.read_task(8));
         // Later the MR is merged: the sweep no longer lists it and the
         // individual check closes the task.
         let merged = FakeHttp::start(vec![
@@ -4161,18 +4311,16 @@ mod sync {
             stdout(&out),
             "gitlab-review-requests: 1 change(s)\n  [8] done: sync(gitlab-review-requests): merged\n"
         );
-        let file = env.read_task("20261007093000.todo.md");
-        assert!(
-            file.starts_with("# [x] Review MR !7: Add parser\n"),
-            "{file}"
-        );
+        let file = env.read_task(8);
+        assert!(file.contains("\n# Review MR !7: Add parser\n"), "{file}");
+        assert!(file.contains("\nstatus: done\n"), "{file}");
         assert!(
             file.contains("- 2026-10-08 10:00: sync(gitlab-review-requests): merged\n"),
             "{file}"
         );
         assert!(
-            file.contains("\n#gitlab #review-request #B\n"),
-            "status tag stripped: {file}"
+            file.contains("\ntags: [gitlab, review-request]\n"),
+            "{file}"
         );
         // A third sweep: the done task is matched and left alone.
         env.tasq()
@@ -4264,10 +4412,10 @@ mod sync {
         assert_eq!(stderr(&out), "");
         assert_eq!(
             env.normalize(&stdout(&out)),
-            "Launcher: claude (dry run)\ncd [ROOT]/home\nTASQ_NOTEBOOK=home exec claude \"/tasq:sync\"\n"
+            "Launcher: claude (dry run)\ncd [ROOT]/home\nTASQ_DATA_DIR=[ROOT]/home/.local/share/tasq/stores TASQ_STORE_NAME=default exec claude \"/tasq:sync\"\n"
         );
         // The default strategy with an allowed .envrc wraps in direnv exec;
-        // the profile travels with the notebook.
+        // the profile travels with the store.
         std::fs::write(env.home.join(".envrc"), "").unwrap();
         env.fake_tool("direnv", "echo 'Found RC allowed true'");
         env.write_project_config("[profile.work]\n");
@@ -4295,16 +4443,21 @@ mod sync {
             value["command"],
             serde_json::json!(["direnv", "exec", home, "claude", "/tasq:sync"])
         );
+        let data_dir = env.data_dir().display().to_string();
         assert_eq!(
             value["env"],
-            serde_json::json!([["TASQ_NOTEBOOK", "home"], ["TASQ_PROFILE", "work"]])
+            serde_json::json!([
+                ["TASQ_DATA_DIR", data_dir],
+                ["TASQ_STORE_NAME", "default"],
+                ["TASQ_PROFILE", "work"]
+            ])
         );
         assert_eq!(
             value["steps"],
             serde_json::json!([
                 format!("cd {home}"),
                 format!(
-                    "TASQ_NOTEBOOK=home TASQ_PROFILE=work exec direnv exec {home} claude \"/tasq:sync\""
+                    "TASQ_DATA_DIR={data_dir} TASQ_STORE_NAME=default TASQ_PROFILE=work exec direnv exec {home} claude \"/tasq:sync\""
                 ),
             ])
         );
@@ -4322,7 +4475,7 @@ mod sync {
             "Launcher: claude (dry run)\n\
              warning: [ROOT]/home/.envrc is not allowed by direnv; run: direnv allow [ROOT]/home\n\
              cd [ROOT]/home\n\
-             TASQ_NOTEBOOK=home exec claude \"/tasq:sync\"\n"
+             TASQ_DATA_DIR=[ROOT]/home/.local/share/tasq/stores TASQ_STORE_NAME=default exec claude \"/tasq:sync\"\n"
         );
     }
 
@@ -4335,7 +4488,7 @@ mod sync {
         env.fake_tool(
             "claude",
             &format!(
-                "[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\n{{ echo \"cwd=$PWD\"; echo \"nb=$TASQ_NOTEBOOK task=${{TASQ_TASK_ID:-unset}}\"; echo \"argc=$#\"; echo \"$1\"; }} > '{}'",
+                "[ -n \"${{FAKE_PROBE:-}}\" ] && exit 0\n{{ echo \"cwd=$PWD\"; echo \"store=$TASQ_STORE_NAME task=${{TASQ_TASK_ID:-unset}}\"; echo \"argc=$#\"; echo \"$1\"; }} > '{}'",
                 log.display()
             ),
         );
@@ -4351,7 +4504,7 @@ mod sync {
         assert_eq!(stderr(&out), "");
         assert_eq!(
             env.normalize(&std::fs::read_to_string(&log).unwrap()),
-            "cwd=[ROOT]/home/project\nnb=home task=unset\nargc=1\n/tasq:sync\n"
+            "cwd=[ROOT]/home/project\nstore=default task=unset\nargc=1\n/tasq:sync\n"
         );
         // A .envrc direnv refuses: the warning goes to stderr, claude still runs.
         std::fs::write(project.join(".envrc"), "").unwrap();
@@ -5102,7 +5255,7 @@ mod plugins {
             .env("TLOGS_HOURS", "6")
             .args([
                 "--set",
-                "store.notebook=home",
+                "store.name=default",
                 "tlogs",
                 "--propose",
                 "--json",
@@ -5134,9 +5287,7 @@ mod plugins {
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(
             stdout(&out),
-            format!(
-                "cd {project} && TASKS_NB_NOTEBOOK=home claude /time-logs\\ 2026-10-02\\ 2026-10-03 \n"
-            )
+            format!("cd {project} && claude /time-logs\\ 2026-10-02\\ 2026-10-03 \n")
         );
         // Without a directory it refuses, naming the key to set.
         let out = env
@@ -5233,7 +5384,7 @@ mod worktrees_disabled {
     #[test]
     fn apply_without_the_key_keeps_the_stored_worktrees() {
         let env = TestEnv::fixture();
-        let before = env.read_task("20260901090000.todo.md");
+        let before = env.read_task(1);
         let json = env.tasq().args(["view", "1", "--json"]).output().unwrap();
         assert!(!mentions_worktrees(&stdout(&json)));
         env.tasq()
@@ -5242,7 +5393,7 @@ mod worktrees_disabled {
             .assert()
             .success()
             .stdout("[1] applied\n");
-        assert_eq!(env.read_task("20260901090000.todo.md"), before);
+        assert_eq!(env.read_task(1), before);
         let on = env
             .tasq_wt()
             .args(["view", "1", "--json"])
@@ -5289,8 +5440,6 @@ mod worktrees_disabled {
 mod worktree_release {
     use super::*;
 
-    const TASK: &str = "20260902100000.todo.md";
-
     /// Task 3 in a repository at `<home>/proj` (`.tasq.toml` from
     /// `repo_config`, ignored), with worktree `b` declared and created at
     /// `<home>/proj-b`.
@@ -5329,7 +5478,7 @@ mod worktree_release {
     }
 
     fn worktrees_section(env: &TestEnv) -> String {
-        let text = env.read_task(TASK);
+        let text = env.read_task(3);
         let start = text.find("## Worktrees").expect("a Worktrees section");
         text[start..].to_owned()
     }
@@ -5390,7 +5539,7 @@ mod worktree_release {
         // Clean and merged now, so a release would remove both.
         env.git(&wt, &["checkout", "--", "README"]);
         env.git(&project, &["merge", "-q", "--no-ff", "-m", "merge b", "b"]);
-        let before = env.read_task(TASK);
+        let before = env.read_task(3);
         env.tasq_wt()
             .args(["done", "3"])
             .assert()
@@ -5399,7 +5548,7 @@ mod worktree_release {
             .stderr("tasq: task 3 is already done\n");
         assert!(wt.is_dir(), "a refused done releases nothing");
         assert_eq!(branches(&env, &project), "b\nmain\n");
-        assert_eq!(env.read_task(TASK), before);
+        assert_eq!(env.read_task(3), before);
     }
 
     #[test]
@@ -5565,13 +5714,13 @@ mod worktree_release {
         let env = TestEnv::fixture();
         // Task 1 of the fixture declares a worktree in a real project of
         // the author's; prune must never reach it (see worktree_nav).
-        let full = "20260901090000.todo.md";
-        let text = env.read_task(full).replace(
+        let full = env.file_of(1);
+        let text = std::fs::read_to_string(&full).unwrap().replace(
             "## Worktrees\n\n- /home/pau/code/tasks-wt/feature-a (`feature-a`)\n\n",
             "",
         );
         assert!(!text.contains("Worktrees"), "the fixture changed: {text}");
-        env.write_task(full, &text);
+        std::fs::write(&full, text).unwrap();
         // Task 3 closed with on_done = "keep": its clean worktree stays.
         let (project, wt) = released_project(&env, "[worktree]\non_done = \"keep\"\n");
         run(&env, &["done", "3"]);
@@ -5713,13 +5862,13 @@ mod worktree_nav {
         // Task 1 of the fixture declares a worktree under the author's real
         // home; a test that lists or creates every task's worktrees must
         // never see it.
-        let full = "20260901090000.todo.md";
-        let text = env.read_task(full).replace(
+        let full = env.file_of(1);
+        let text = std::fs::read_to_string(&full).unwrap().replace(
             "## Worktrees\n\n- /home/pau/code/tasks-wt/feature-a (`feature-a`)\n\n",
             "",
         );
         assert!(!text.contains("Worktrees"), "the fixture changed: {text}");
-        env.write_task(full, &text);
+        std::fs::write(&full, text).unwrap();
         let project = env.home.join("proj");
         env.git_repo(&project);
         std::fs::write(

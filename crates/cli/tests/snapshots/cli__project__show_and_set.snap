@@ -1,20 +1,19 @@
 ---
 source: crates/cli/tests/cli.rs
-expression: "env.normalize(&env.read_task(\"20260902100000.todo.md\"))"
+expression: env.normalize(&env.read_task(3))
 ---
-# [ ] Answer the support ticket
+---
+id: 3
+status: ready
+priority: B
+project: [ROOT]/home/proj
+tags: [support]
+---
+# Answer the support ticket
 
 ## Description
 
 Customer asks about the export format.
-
-## Project
-
-[ROOT]/home/proj
-
-## Tags
-
-#support #B #ready
 
 ## Progress
 

@@ -6,7 +6,7 @@
 mod support;
 
 use tasq_core::model::Workflow;
-use tasq_store_nb::doctor::{any_failed, checks, tool_check};
+use tasq_store_nb::doctor::{any_failed, checks};
 use tasq_store_nb::{Check, CheckStatus, NbStore, NbStoreOptions, Store};
 
 use support::NbEnv;
@@ -157,14 +157,4 @@ fn missing_identity_is_a_warning() {
     );
 
     assert!(!any_failed(&report));
-}
-
-#[test]
-fn tool_checks_use_the_store_environment_shape() {
-    let nb = NbEnv::fixture();
-    let git = tool_check("git", &nb.env, "install git");
-    assert_eq!(git.status, CheckStatus::Ok);
-    let missing = tool_check("definitely-not-a-tool", &nb.env, "install it");
-    assert_eq!(missing.status, CheckStatus::Warn);
-    assert_eq!(missing.fix.as_deref(), Some("install it"));
 }

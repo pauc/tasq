@@ -3,7 +3,6 @@
 
 use serde_json::Value;
 use tasq_core::config::ENV_PROFILE;
-use tasq_core::launch::ENV_NOTEBOOK;
 use tasq_core::model::{Origin, Status, Task, TaskId};
 use tasq_core::query::Filter;
 use tasq_core::source::{self, Applied, Change, Defaults, SyncContext};
@@ -141,7 +140,7 @@ pub fn interactive(app: &App, dry_run: bool) -> Result<()> {
         app.config().launch.env,
         &env,
     );
-    let mut extra = vec![(ENV_NOTEBOOK.to_owned(), app.config().store.notebook.clone())];
+    let mut extra = app.store_env()?;
     if let Some(profile) = &app.loaded.profile {
         extra.push((ENV_PROFILE.to_owned(), profile.clone()));
     }

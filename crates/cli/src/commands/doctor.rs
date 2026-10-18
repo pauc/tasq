@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use serde_json::Value;
 use tasq_core::config::{Config, LoadOptions, UiConfig};
 use tasq_core::doctor::{Check, CheckStatus, any_failed};
-use tasq_store_nb::doctor::tool_check;
+use tasq_launch::tool_check;
 
 use crate::app::{App, env_vec};
 use crate::cli::GlobalArgs;
@@ -21,10 +21,7 @@ use crate::output::{Color, Output, Style};
 
 /// Optional tools and what each one is for.
 pub const TOOLS: &[(&str, &str)] = &[
-    (
-        "git",
-        "install git; tasq needs it to commit and sync the notebook",
-    ),
+    ("git", "install git; the worktree commands run it"),
     (
         "glow",
         "install glow (https://github.com/charmbracelet/glow) for rendered `tasq view`",
@@ -81,7 +78,7 @@ pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
             Err(e) => checks.push(Check::fail(
                 "store",
                 e.to_string(),
-                "point store.notebook at an existing notebook (tasq config show)",
+                "check data_dir and store.name (tasq config show)",
             )),
         }
     }

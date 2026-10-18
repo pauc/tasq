@@ -19,11 +19,11 @@ use clap_complete::Shell;
 pub use crate::commands::worktree_nav::InitShell;
 
 const LONG_ABOUT: &str = "\
-Terminal task manager over nb markdown todos.
+Terminal task manager over markdown task files.
 
-Tasks are the `*.todo.md` files of an nb notebook; `tasq` reads and writes
-them directly, in the same format the original `tasks` script used, without
-running nb. Writes are committed with git in the background.
+Tasks are the markdown files of a tasq store, a directory under
+~/.local/share/tasq/stores (data_dir, store.name); `tasq` reads and writes
+them directly and keeps everything it did not change byte for byte.
 
 Every command accepts --json for machine-readable output. Exit codes: 0 on
 success, 1 for an error you can fix (`tasq: <message>` on stderr), 2 for a
@@ -50,7 +50,7 @@ Examples:
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
   tasq store info            where the tasks live
-  tasq doctor                check config, notebook, git and optional tools
+  tasq doctor                check config, the store and optional tools
   tasq plugins list          tasq-<name> executables on PATH and the hooks
   tasq <name> [args]         run the plugin tasq-<name> (see docs/plugins.md)";
 
@@ -90,7 +90,7 @@ pub struct GlobalArgs {
     #[arg(long, global = true, value_name = "FILE")]
     pub config: Option<PathBuf>,
 
-    /// Override one config key, e.g. --set store.notebook=work. Repeatable.
+    /// Override one config key, e.g. --set store.name=work. Repeatable.
     #[arg(long = "set", global = true, value_name = "KEY=VALUE", value_parser = parse_key_value)]
     pub set: Vec<(String, String)>,
 
@@ -332,7 +332,7 @@ pub enum Command {
     #[command(subcommand)]
     Store(StoreCommand),
 
-    /// Check the configuration, the notebook, git and optional tools.
+    /// Check the configuration, the store and optional tools.
     ///
     /// Prints one line per check (OK, WARN or FAIL) with a hint for anything
     /// that is not OK, and exits 1 when any check failed.
@@ -605,7 +605,7 @@ herdr, else claude. --detached uses launch.detached instead (herdr, tmux,
 or auto for whichever the terminal runs in) and --no-focus leaves the new
 window in the background; launch.herdr.placement says whether a herdr
 window is a workspace or a tab. The session gets TASQ_TASK_ID,
-TASQ_NOTEBOOK and, when selected, TASQ_PROFILE.";
+TASQ_DATA_DIR, TASQ_STORE_NAME and, when selected, TASQ_PROFILE.";
 
 /// [`LAUNCH_HELP`] when worktrees are enabled.
 const LAUNCH_HELP_WORKTREES: &str = "\
@@ -633,8 +633,9 @@ only those tasks are re-checked. See docs/sources.md.
 `--interactive` is the morning briefing in one command (the script's
 `tasks update`): it replaces this process with `claude \"/tasq:sync\"` in
 work.default_project, through `direnv exec` when launch.env is `direnv`
-and the directory's .envrc is allowed, with TASQ_NOTEBOOK (and
-TASQ_PROFILE) set so the session's `tasq` sees the same notebook. The
+and the directory's .envrc is allowed, with TASQ_DATA_DIR and
+TASQ_STORE_NAME (and TASQ_PROFILE) set so the session's `tasq` sees the
+same store. The
 skill then runs `tasq sync` itself and reports. `--dry-run` prints the
 command instead.";
 
@@ -916,7 +917,7 @@ pub struct ListArgs {
 /// `tasq store ...`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
 pub enum StoreCommand {
-    /// Print the notebook path, task count and how ids behave.
+    /// Print the store directory, task count and how ids behave.
     Info,
 }
 
@@ -1220,7 +1221,7 @@ mod tests {
         let cli = Cli::try_parse_from([
             "tasq",
             "--set",
-            "store.notebook=work",
+            "store.name=work",
             "--set",
             "ui.no_osc8=true",
         ])
@@ -1228,7 +1229,7 @@ mod tests {
         assert_eq!(
             cli.global.set,
             vec![
-                ("store.notebook".to_owned(), "work".to_owned()),
+                ("store.name".to_owned(), "work".to_owned()),
                 ("ui.no_osc8".to_owned(), "true".to_owned())
             ]
         );

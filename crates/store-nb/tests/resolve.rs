@@ -7,18 +7,10 @@ mod support;
 
 use std::path::PathBuf;
 
-use tasq_core::config::StoreConfig;
 use tasq_core::model::Workflow;
 use tasq_store_nb::{NbStore, NbStoreOptions, Store, StoreError, StoreWarning};
 
 use support::{NbEnv, fake_calls, fake_tool};
-
-fn config(notebook: &str) -> StoreConfig {
-    StoreConfig {
-        notebook: notebook.to_owned(),
-        ..StoreConfig::default()
-    }
-}
 
 fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
     pairs
@@ -36,7 +28,7 @@ fn resolves_under_nb_dir_without_running_nb() {
         ("NB_DIR", &nb.nb_dir.display().to_string()),
         ("PATH", &fake.path().display().to_string()),
     ]));
-    let store = NbStore::open(&config("home"), &options).unwrap();
+    let store = NbStore::open("home", &options).unwrap();
     assert_eq!(store.dir(), nb.notebook());
     assert_eq!(fake_calls(&fake), Vec::<String>::new());
     assert!(!store.rebuilt_index());
@@ -51,7 +43,7 @@ fn defaults_nb_dir_to_dot_nb_under_home() {
     std::fs::create_dir_all(&home).unwrap();
     std::fs::rename(&nb.nb_dir, home.join(".nb")).unwrap();
     let options = NbStoreOptions::new(Workflow::default()).with_home(&home);
-    let store = NbStore::open(&config("home"), &options).unwrap();
+    let store = NbStore::open("home", &options).unwrap();
     assert_eq!(store.dir(), home.join(".nb").join("home"));
 }
 
@@ -65,9 +57,9 @@ fn a_path_names_a_notebook_outside_nb_dir() {
     let options = NbStoreOptions::new(Workflow::default())
         .with_env(env(&[("NB_DIR", &nb.nb_dir.display().to_string())]))
         .with_home(nb.root.path().join("user"));
-    let store = NbStore::open(&config("~/notes"), &options).unwrap();
+    let store = NbStore::open("~/notes", &options).unwrap();
     assert_eq!(store.dir(), elsewhere);
-    let store = NbStore::open(&config(&elsewhere.display().to_string()), &options).unwrap();
+    let store = NbStore::open(&elsewhere.display().to_string(), &options).unwrap();
     assert_eq!(store.dir(), elsewhere);
 }
 
@@ -77,7 +69,7 @@ fn missing_notebook_names_the_setting_and_the_config_file() {
     let options = NbStoreOptions::new(Workflow::default())
         .with_env(env(&[("NB_DIR", &nb.nb_dir.display().to_string())]))
         .with_config_file("/etc/tasq/config.toml");
-    let err = NbStore::open(&config("work"), &options).unwrap_err();
+    let err = NbStore::open("work", &options).unwrap_err();
     let StoreError::Config {
         setting,
         file,
@@ -112,7 +104,7 @@ fn missing_index_is_rebuilt_from_the_files_in_name_order() {
         ("NB_DIR", &nb.nb_dir.display().to_string()),
         ("PATH", &fake.path().display().to_string()),
     ]));
-    let mut store = NbStore::open(&config("home"), &options).unwrap();
+    let mut store = NbStore::open("home", &options).unwrap();
     assert_eq!(fake_calls(&fake), Vec::<String>::new());
     assert!(store.rebuilt_index());
     assert_eq!(

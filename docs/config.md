@@ -23,12 +23,15 @@ text otherwise. A key that does not exist is an error.
 
 Serialising the default configuration gives this document. Keys whose default is unset
 (`work.default_project`, `worktree.ports`, `launch.claude.prompt_file`,
-`report.summary.model`, `report.summary.prompt_file`) are shown commented out.
+`report.summary.model`, `report.summary.prompt_file`) are shown commented out. `data_dir`
+has no built-in value: loading fills it in from the environment (`$XDG_DATA_HOME/tasq/stores`,
+else `~/.local/share/tasq/stores`), so `tasq config show` prints it as a default.
 
 ```toml
+# data_dir = "~/.local/share/tasq/stores"   # $XDG_DATA_HOME/tasq/stores when set
+
 [store]
-kind = "nb"                  # the only store today
-notebook = "home"
+name = "default"             # the store directory is <data_dir>/<name>
 
 [workflow]
 statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
@@ -110,8 +113,8 @@ pre-launch = []
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `store.kind` | `nb` | `nb` | Store implementation. Only nb-compatible notebooks exist. |
-| `store.notebook` | string | `home` | nb notebook: a name is `$NB_DIR/<name>` (default `~/.nb/<name>`); a value containing `/` is the directory itself (`~/` expanded, otherwise absolute). nb is never asked (ADR-0023). |
+| `data_dir` | path | `$XDG_DATA_HOME/tasq/stores`, else `~/.local/share/tasq/stores` | The directory holding the stores (ADR-0026). `~` expanded; a relative path is taken from the working directory. |
+| `store.name` | string | `default` | The store's directory name under `data_dir`: one path component, neither empty nor `.`/`..`, no `/`. A store that does not exist yet is empty; the first write creates it. |
 | `workflow.statuses` | array of strings | `["in-progress", "ready", "waiting", "blocked", "later"]` | Statuses in display and `next` search order. Lowercase kebab-case. |
 | `workflow.default_status` | string | `ready` | Status of new tasks. Must be one of `statuses`. |
 | `work.default_project` | path | unset | Directory a session starts in when the task tracks neither a worktree nor a project. `~` expanded. |
@@ -171,7 +174,8 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_CONFIG` | replaces the global file (must exist) |
 | `TASQ_PROFILE` | selects `[profile.<name>]` |
 | `TASQ_SET` | newline-separated `key=value` overrides, applied like `--set` (any key); part of the env layer, wins over the `TASQ_*` variables below for the same key, loses to `--set` flags. `tasq` sets it for the plugins and hooks it runs, so they see the same `--set` overrides |
-| `TASQ_NOTEBOOK` | `store.notebook` |
+| `TASQ_DATA_DIR` | `data_dir` |
+| `TASQ_STORE_NAME` | `store.name` |
 | `TASQ_DEFAULT_PROJECT` | `work.default_project` |
 | `TASQ_LAUNCHER` | `launch.default` |
 | `TASQ_LAUNCH_DETACHED` | `launch.detached` |
@@ -197,17 +201,28 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_WORKTREE_ON_DONE` | `worktree.on_done` |
 | `TASQ_WORKTREE_DELETE_BRANCH` | `worktree.delete_branch` |
 
-Empty values count as unset. `XDG_CONFIG_HOME` is honoured for the global file location.
+Empty values count as unset. `XDG_CONFIG_HOME` is honoured for the global file location,
+`XDG_DATA_HOME` for the default `data_dir`.
 
-Variables that are not configuration: `NO_COLOR` turns colour off; `NB_DIR` is where notebooks
-live (nb's own variable); `TASQ_NOW="YYYY-MM-DD HH:MM"` fixes the clock (see
-`docs/testing.md`); `TASQ_TASK_ID`, `TASQ_NOTEBOOK` and `TASQ_PROFILE` are set in launched
-sessions; `TASQ_BIN`, `TASQ_HOOK` and `TASQ_TASK_ID` are set for plugins and hooks (see
-`docs/plugins.md`).
+Removed keys (ADR-0026): `store.kind`, `store.notebook` and `store.sync_interval`, and the
+`TASQ_NOTEBOOK` variable. A file that still sets one of the keys fails with the file, line and
+column and a message naming the replacement; convert an nb notebook once with `tasq migrate
+<notebook>`.
+
+Variables that are not configuration: `NO_COLOR` turns colour off; `TASQ_NOW="YYYY-MM-DD
+HH:MM"` fixes the clock (see `docs/testing.md`); `TASQ_TASK_ID`, `TASQ_DATA_DIR`,
+`TASQ_STORE_NAME` and `TASQ_PROFILE` are set in launched sessions (the first two double as the
+overrides above, so the session's `tasq` opens the same store); `TASQ_BIN`, `TASQ_HOOK` and
+`TASQ_TASK_ID` are set for plugins and hooks (see `docs/plugins.md`).
 
 ## Validation
 
 - `workflow.default_status` must be one of `workflow.statuses`.
+- `store.name` is one directory name: not empty, not `.` or `..`, no `/`; the error names the
+  layer that set it.
+- `store.kind`, `store.notebook` and `store.sync_interval` no longer exist (ADR-0026); setting
+  one is an error naming the file, line and column and the replacement (`data_dir`,
+  `store.name`, `tasq migrate`).
 - `[worktree.ports]` needs `block` of at least 1, `span` of at least `block`, and
   `base + span` at most 65536.
 - `work.worktree_manager` and `work.worktree_command` no longer exist; setting them is an error
@@ -445,8 +460,8 @@ after 5 s fails the launch with herdr's message, the time waited and the pane's 
 process from `herdr pane process-info` (`foreground: gitstatusd (pid 42)`), the thing to
 look at when a shell hangs on startup.
 
-The session's environment carries `TASQ_TASK_ID`, `TASQ_NOTEBOOK` and, when a profile is
-selected, `TASQ_PROFILE`. `--dry-run` prints the directory, the commands and the prompt
+The session's environment carries `TASQ_TASK_ID`, `TASQ_DATA_DIR` (resolved, absolute),
+`TASQ_STORE_NAME` and, when a profile is selected, `TASQ_PROFILE`. `--dry-run` prints the directory, the commands and the prompt
 without launching (with `--json`: `task`, `workdir`, `in_worktree`, `launcher`, `env`, `steps`)
 and skips the `pre-launch` hooks.
 

@@ -21,12 +21,19 @@ pub const ENV_PROFILE: &str = "TASQ_PROFILE";
 /// same way `--set` does. It is how `tasq` hands its `--set` flags to the
 /// plugins and hooks it runs (see [`parse_env_set`]).
 pub const ENV_SET: &str = "TASQ_SET";
+/// Environment variable overriding `data_dir` (also what a launched session
+/// receives, resolved and absolute).
+pub const ENV_DATA_DIR: &str = "TASQ_DATA_DIR";
+/// Environment variable overriding `store.name` (also what a launched
+/// session receives).
+pub const ENV_STORE_NAME: &str = "TASQ_STORE_NAME";
 
 /// Environment variables that override single keys, as `(variable, key)`.
 ///
 /// | Variable | Key |
 /// |----------|-----|
-/// | `TASQ_NOTEBOOK` | `store.notebook` |
+/// | `TASQ_DATA_DIR` | `data_dir` |
+/// | `TASQ_STORE_NAME` | `store.name` |
 /// | `TASQ_DEFAULT_PROJECT` | `work.default_project` |
 /// | `TASQ_LAUNCHER` | `launch.default` |
 /// | `TASQ_LAUNCH_DETACHED` | `launch.detached` |
@@ -58,7 +65,8 @@ pub const ENV_SET: &str = "TASQ_SET";
 /// [`ENV_SET`] entries belong to the same layer as these variables and win
 /// over them for the same key.
 pub const ENV_KEYS: &[(&str, &str)] = &[
-    ("TASQ_NOTEBOOK", "store.notebook"),
+    (ENV_DATA_DIR, "data_dir"),
+    (ENV_STORE_NAME, "store.name"),
     ("TASQ_DEFAULT_PROJECT", "work.default_project"),
     ("TASQ_LAUNCHER", "launch.default"),
     ("TASQ_LAUNCH_DETACHED", "launch.detached"),
@@ -194,7 +202,7 @@ impl fmt::Display for Origin {
 pub struct Layer {
     /// Where it came from.
     pub origin: Origin,
-    /// Leaf key paths the layer set (`store.notebook`, `forge.gitlab.host`,
+    /// Leaf key paths the layer set (`store.name`, `forge.gitlab.host`,
     /// `source`), sorted. Arrays and empty tables count as leaves.
     pub keys: Vec<String>,
 }
@@ -213,7 +221,7 @@ pub struct Loaded {
 }
 
 impl Loaded {
-    /// The layer that decided `key`, a dotted path such as `store.notebook`.
+    /// The layer that decided `key`, a dotted path such as `store.name`.
     ///
     /// Also answers for prefixes (`store`) and for paths below a leaf
     /// (`source.0.name` when a layer set `source`). `None` means no layer,
@@ -278,6 +286,17 @@ pub fn global_file(opts: &LoadOptions) -> Option<PathBuf> {
     Some(dir.join("tasq").join(GLOBAL_FILE))
 }
 
+/// The default `data_dir`: `$XDG_DATA_HOME/tasq/stores`, else
+/// `~/.local/share/tasq/stores`, else `None` when neither is known
+/// (ADR-0026).
+pub fn default_data_dir(opts: &LoadOptions) -> Option<PathBuf> {
+    let dir = match opts.env_nonempty("XDG_DATA_HOME") {
+        Some(xdg) => PathBuf::from(xdg),
+        None => opts.home.as_ref()?.join(".local").join("share"),
+    };
+    Some(dir.join("tasq").join("stores"))
+}
+
 /// Shape of one file: a partial [`Config`] plus `[profile.<name>]` blocks.
 ///
 /// Mirrors the sections of [`Config`] so that each file is checked for
@@ -286,6 +305,7 @@ pub fn global_file(opts: &LoadOptions) -> Option<PathBuf> {
 #[derive(Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct FileSchema {
+    data_dir: Option<PathBuf>,
     store: super::StoreConfig,
     workflow: super::WorkflowConfig,
     work: super::WorkConfig,
@@ -302,6 +322,7 @@ struct FileSchema {
 impl Default for FileSchema {
     fn default() -> Self {
         let Config {
+            data_dir,
             store,
             workflow,
             work,
@@ -314,6 +335,7 @@ impl Default for FileSchema {
             worktree,
         } = Config::default();
         Self {
+            data_dir,
             store,
             workflow,
             work,
@@ -441,7 +463,10 @@ fn leaf_keys(table: &Table) -> Vec<String> {
 /// A table with every optional key present, used to type and recognise
 /// `--set`/env keys. Map-valued keys hold one `<name>` wildcard entry.
 fn template() -> Table {
-    let mut config = Config::default();
+    let mut config = Config {
+        data_dir: Some(PathBuf::from("~")),
+        ..Config::default()
+    };
     config.work.default_project = Some(PathBuf::from("~"));
     config.worktree.ports = Some(super::PortsConfig {
         base: 0,
@@ -630,6 +655,12 @@ impl Config {
     /// the layer order) and records where every key came from.
     pub fn load(opts: &LoadOptions) -> Result<Loaded, ConfigError> {
         let mut merged = Table::try_from(Self::default()).expect("Config serialises to a table");
+        if let Some(dir) = default_data_dir(opts) {
+            merged.insert(
+                "data_dir".to_owned(),
+                Value::String(dir.to_string_lossy().into_owned()),
+            );
+        }
         let mut layers = vec![Layer {
             origin: Origin::Defaults,
             keys: leaf_keys(&merged),
@@ -719,6 +750,7 @@ impl Config {
             profiles,
         };
         finalize(&mut loaded, opts.home.as_deref())?;
+        check_store_name(&loaded)?;
         Ok(loaded)
     }
 }
@@ -730,7 +762,6 @@ impl Config {
 fn check_worktree_templates(loaded: &Loaded) -> Result<(), ConfigError> {
     use crate::worktree::hooks::Kind;
     use crate::worktree::vars::{Scope, check, is_builtin};
-    let origin_of = |key: &str| loaded.explain(key).cloned().unwrap_or(Origin::Defaults);
     let worktree = &loaded.config.worktree;
     for name in worktree.variables.keys() {
         let reason = if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
@@ -743,7 +774,7 @@ fn check_worktree_templates(loaded: &Loaded) -> Result<(), ConfigError> {
         return Err(ConfigError::BadWorktreeVariable {
             name: name.clone(),
             reason,
-            origin: origin_of(&format!("worktree.variables.{name}")),
+            origin: origin_of(loaded, &format!("worktree.variables.{name}")),
         });
     }
     let ports = worktree.ports.is_some();
@@ -770,7 +801,7 @@ fn check_worktree_templates(loaded: &Loaded) -> Result<(), ConfigError> {
         for text in texts {
             check(text, scope, ports, &worktree.variables).map_err(|source| {
                 ConfigError::UnknownTemplateVariable {
-                    origin: origin_of(&key),
+                    origin: origin_of(loaded, &key),
                     key: key.clone(),
                     source,
                 }
@@ -780,11 +811,39 @@ fn check_worktree_templates(loaded: &Loaded) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// Checks that `store.name` is one directory name, so the store is a
+/// subdirectory of `data_dir` (ADR-0026: a mistyped name makes a harmless
+/// empty directory there and nothing else).
+fn check_store_name(loaded: &Loaded) -> Result<(), ConfigError> {
+    let name = &loaded.config.store.name;
+    let reason = if name.is_empty() {
+        "a store name must not be empty"
+    } else if name == "." || name == ".." {
+        "a store name must not be '.' or '..'"
+    } else if name.contains('/') {
+        "a store name must not contain '/'"
+    } else {
+        return Ok(());
+    };
+    Err(ConfigError::BadStoreName {
+        name: name.clone(),
+        reason,
+        origin: origin_of(loaded, "store.name"),
+    })
+}
+
+/// The layer that set `key`, the defaults when none did (a cross-key rule
+/// that fails on a default value blames the defaults).
+fn origin_of(loaded: &Loaded, key: &str) -> Origin {
+    loaded.explain(key).cloned().unwrap_or(Origin::Defaults)
+}
+
 /// Expands `~`, fills in forge defaults and checks cross-key rules.
 fn finalize(loaded: &mut Loaded, home: Option<&Path>) -> Result<(), ConfigError> {
-    let origin_of =
-        |loaded: &Loaded, key: &str| loaded.explain(key).cloned().unwrap_or(Origin::Defaults);
     let config = &mut loaded.config;
+    if let Some(p) = &config.data_dir {
+        config.data_dir = Some(expand_tilde(p, home));
+    }
     if let Some(p) = &config.work.default_project {
         config.work.default_project = Some(expand_tilde(p, home));
     }

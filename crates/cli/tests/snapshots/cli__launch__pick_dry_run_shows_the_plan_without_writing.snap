@@ -7,20 +7,22 @@ Task: [3] Answer the support ticket
 Starting in project: [ROOT]/home
 Launcher: claude (dry run)
 cd [ROOT]/home
-TASQ_TASK_ID=3 TASQ_NOTEBOOK=home exec claude "<prompt below>"
+TASQ_TASK_ID=3 TASQ_DATA_DIR=[ROOT]/home/.local/share/tasq/stores TASQ_STORE_NAME=default exec claude "<prompt below>"
 
 --- prompt ---
-Work with me on my next task: todo [3] from my nb notebook (file: [ROOT]/nb/home/20260902100000.todo.md).
+Work with me on my next task: todo [3] from my tasq store (file: [ROOT]/home/.local/share/tasq/stores/default/01M1GRZA800000000000000002.md).
 
-# [ ] Answer the support ticket
+---
+id: 3
+status: ready
+priority: B
+tags: [support]
+---
+# Answer the support ticket
 
 ## Description
 
 Customer asks about the export format.
-
-## Tags
-
-#support #B #ready
 
 ## Progress
 

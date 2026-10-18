@@ -63,13 +63,16 @@ the tests rely on (renumbering on `nb index reconcile`, blank index lines accept
 `nb index verify`, the git-identity requirement) are recorded under "nb facts" in
 `ruli/features/rust-rewrite/PROGRESS.md`; check there before assuming how nb behaves.
 
-The CLI harness (`crates/cli/tests/support/mod.rs`, `TestEnv`) copies the same fixture
-notebook, sets `HOME` to an isolated directory and `PATH` to a directory holding only a `git`
-symlink, so the binary never sees the real config or a real `nb` and its output is identical
-whether or not nb is installed. `fake_tool(name,
-body)` installs a script on that `PATH` to stand in for `claude`, `glow`, `tmux` or `herdr`;
-fakes must use absolute paths for anything that is not a shell builtin. Snapshots
-normalise the temp root to `[ROOT]`.
+The CLI harness (`crates/cli/tests/support/mod.rs`, `TestEnv`) copies the v2 fixture store
+(above) to `<home>/.local/share/tasq/stores/default`, the default store under an isolated
+`HOME`, sets `PATH` to a directory holding only a `git` symlink and `TZ=UTC` (minted file
+names are ULIDs of the clock's time), so the binary never sees the real store, the real config
+or the machine's zone. `TestEnv::empty()` has no store directory at all, which is an empty
+store. Tests place a task by hand with `write_task(ulid_name(when, n), v2(id, front, body))`
+and read one back by id (`read_task(id)`, `file_of(id)`: the store names files, not the test).
+`fake_tool(name, body)` installs a script on that `PATH` to stand in for `claude`, `glow`,
+`tmux` or `herdr`; fakes must use absolute paths for anything that is not a shell builtin.
+Snapshots normalise the temp root to `[ROOT]`.
 
 ## Claude Code plugin
 

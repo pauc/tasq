@@ -7,7 +7,7 @@
 //!
 //! # Layers
 //!
-//! Later layers win, key by key (a file that sets only `store.notebook`
+//! Later layers win, key by key (a file that sets only `store.name`
 //! leaves every other key alone):
 //!
 //! 1. built-in defaults ([`Config::default`]);
@@ -33,12 +33,14 @@
 //! Serialising [`Config::default`] yields the reference document below.
 //! Keys whose default is "unset" (`work.default_project`, `launch.log`,
 //! `launch.claude.prompt_file`, `report.summary.model`,
-//! `report.summary.prompt_file`) are simply absent.
+//! `report.summary.prompt_file`) are simply absent. So is `data_dir`, whose
+//! default depends on the environment: [`Config::load`] fills it in with
+//! `$XDG_DATA_HOME/tasq/stores`, else `~/.local/share/tasq/stores`
+//! ([`default_data_dir`]), and records it in the defaults layer.
 //!
 //! ```toml
 //! [store]
-//! kind = "nb"
-//! notebook = "home"
+//! name = "default"
 //!
 //! [workflow]
 //! statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
@@ -120,8 +122,9 @@ use crate::worktree::lifecycle::DeleteBranch;
 
 pub use self::error::ConfigError;
 pub use self::load::{
-    ENV_CONFIG, ENV_KEYS, ENV_PROFILE, ENV_SET, GLOBAL_FILE, Layer, LoadOptions, Loaded, Origin,
-    PROJECT_FILE, global_file, parse_env_set, project_file,
+    ENV_CONFIG, ENV_DATA_DIR, ENV_KEYS, ENV_PROFILE, ENV_SET, ENV_STORE_NAME, GLOBAL_FILE, Layer,
+    LoadOptions, Loaded, Origin, PROJECT_FILE, default_data_dir, global_file, parse_env_set,
+    project_file,
 };
 pub use self::path::{contract_tilde, expand_tilde};
 
@@ -133,7 +136,14 @@ pub use self::path::{contract_tilde, expand_tilde};
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    /// Where tasks live and who maintains the notebook's bookkeeping.
+    /// The directory holding the stores, each a subdirectory named by
+    /// `store.name` (ADR-0026). `~` is expanded. Default: unset here,
+    /// `$XDG_DATA_HOME/tasq/stores` (else `~/.local/share/tasq/stores`)
+    /// after [`Config::load`]; `None` after a load only when neither
+    /// `$XDG_DATA_HOME` nor a home directory is known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_dir: Option<PathBuf>,
+    /// Which store under `data_dir` the tasks live in.
     pub store: StoreConfig,
     /// The status workflow.
     pub workflow: WorkflowConfig,
@@ -156,34 +166,56 @@ pub struct Config {
     pub worktree: WorktreeConfig,
 }
 
-/// `[store]`: where tasks live.
+/// `[store]`: which store the tasks live in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct StoreConfig {
-    /// Store implementation. Default: `nb`.
-    pub kind: StoreKind,
-    /// nb notebook: a name under `$NB_DIR` (default `~/.nb/<notebook>`), or
-    /// a directory path when it contains a `/` (`~/` expanded).
-    /// Default: `home`, as in the original script.
-    pub notebook: String,
+    /// The store's directory name under `data_dir`: one path component,
+    /// neither empty nor `.`/`..`, no `/` ([`Config::load`] checks).
+    /// Default: `default`.
+    pub name: String,
+    /// Removed with ADR 0026; setting it is an error naming the replacement.
+    #[serde(skip_serializing, deserialize_with = "removed_store_kind")]
+    kind: Removed,
+    /// Removed with ADR 0026; setting it is an error naming the replacement.
+    #[serde(skip_serializing, deserialize_with = "removed_store_notebook")]
+    notebook: Removed,
+    /// Removed with ADR 0026; setting it is an error naming the reason.
+    #[serde(skip_serializing, deserialize_with = "removed_store_sync_interval")]
+    sync_interval: Removed,
 }
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
-            kind: StoreKind::Nb,
-            notebook: "home".to_owned(),
+            name: "default".to_owned(),
+            kind: Removed,
+            notebook: Removed,
+            sync_interval: Removed,
         }
     }
 }
 
-/// Store implementations. Only nb-compatible notebooks exist today.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum StoreKind {
-    /// An nb notebook: markdown todos plus a `.index` file.
-    #[default]
-    Nb,
+fn removed_store_kind<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Removed, D::Error> {
+    Err(serde::de::Error::custom(
+        "store.kind was removed (ADR-0026): tasq always opens its own store at <data_dir>/<store.name>",
+    ))
+}
+
+fn removed_store_notebook<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Removed, D::Error> {
+    Err(serde::de::Error::custom(
+        "store.notebook was removed (ADR-0026): tasks live in <data_dir>/<store.name>; \
+         convert the notebook once with `tasq migrate <notebook>`",
+    ))
+}
+
+fn removed_store_sync_interval<'de, D: serde::Deserializer<'de>>(
+    _: D,
+) -> Result<Removed, D::Error> {
+    Err(serde::de::Error::custom(
+        "store.sync_interval was removed (ADR-0026): the store does not run git; \
+         sync comes back as a feature of its own",
+    ))
 }
 
 /// `[workflow]`: the ordered status list.

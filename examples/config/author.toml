@@ -1,4 +1,4 @@
-# The author's setup: an nb notebook synced to GitHub, a self-hosted GitLab, worktrees per task,
+# The author's setup: one tasq store, a self-hosted GitLab, worktrees per task,
 # Claude Code sessions (herdr when inside herdr), an LLM-summarised standup
 # and a time-log plugin fed by hooks. Plan section 4.6, with the key names
 # the tool actually has. Full reference: docs/config.md.
@@ -6,8 +6,7 @@
 # Secrets never live here: the GitLab token comes from `glab config get token`.
 
 [store]
-kind = "nb"
-notebook = "home"
+name = "home"                # ~/.local/share/tasq/stores/home
 
 [workflow]
 statuses = ["in-progress", "ready", "waiting", "blocked", "later"]

@@ -65,12 +65,12 @@ Every document carries `"schema": 1`; check it and refuse anything else. Exit co
 
 `examples/plugins/tasq-tlogs` (bash and jq) is the author's time-log tool, the replacement for
 `tasks tlogs`. `tasq tlogs [SPEC...]` resolves the range with `tasq dates --json`, reads
-`work.default_project`, `store.notebook` and `launch.env` from `tasq config show --json`, and
-replaces itself with a Claude session in that directory:
+`work.default_project` and `launch.env` from `tasq config show --json`, and replaces itself
+with a Claude session in that directory:
 
 ```
 $ tasq tlogs last week --dry-run
-cd /home/me/code/app && TASKS_NB_NOTEBOOK=home direnv exec /home/me/code/app claude /time-logs\ 2026-09-28\ 2026-10-02
+cd /home/me/code/app && direnv exec /home/me/code/app claude /time-logs\ 2026-09-28\ 2026-10-02
 ```
 
 The session runs `/time-logs <from> <to>`, a personal skill that is not shipped here (it reads
@@ -78,9 +78,7 @@ HiBob, GitLab activity, Google Calendar and Slack, proposes a breakdown per day 
 with `/spend`). Write your own under that name, or edit the prompt in the script. The command
 is wrapped in `direnv exec` when `launch.env` is `direnv`, `direnv` is on `PATH` and the
 directory's `.envrc` is allowed (a `.envrc` that direnv refuses is a warning on stderr and
-a bare `claude`). `TASKS_NB_NOTEBOOK` is set to the configured notebook so a skill written
-for the old script reads the same tasks. `work.default_project` unset or missing is exit 1
-with the key to set.
+a bare `claude`). `work.default_project` unset or missing is exit 1 with the key to set.
 
 `--propose` launches nothing: for every working day of the range it lists the tasks that
 received a progress note (`tasq summary --json --raw <day>`) and splits `TLOGS_HOURS` (default

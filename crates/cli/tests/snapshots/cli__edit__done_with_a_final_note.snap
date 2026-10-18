@@ -2,19 +2,18 @@
 source: crates/cli/tests/cli.rs
 expression: support_file(&env)
 ---
-# [x] Answer the support ticket
+---
+id: 3
+status: done
+priority: B
+closed: 2026-10-07 09:30
+tags: [support]
+---
+# Answer the support ticket
 
 ## Description
 
 Customer asks about the export format.
-
-## Closed
-
-2026-10-07 09:30
-
-## Tags
-
-#support #B
 
 ## Progress
 

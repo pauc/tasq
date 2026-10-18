@@ -653,7 +653,7 @@ post-create = [
         let global = GlobalArgs {
             profile: Some("work".into()),
             config: Some("/etc/tasq.toml".into()),
-            set: vec![("store.notebook".into(), "x".into())],
+            set: vec![("store.name".into(), "x".into())],
             json: true,
             no_color: true,
             ..GlobalArgs::default()
@@ -666,7 +666,7 @@ post-create = [
                 "--config",
                 "/etc/tasq.toml",
                 "--set",
-                "store.notebook=x"
+                "store.name=x"
             ]
         );
     }

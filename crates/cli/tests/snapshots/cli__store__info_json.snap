@@ -3,13 +3,13 @@ source: crates/cli/tests/cli.rs
 expression: env.normalize(&stdout(&out))
 ---
 {
-  "bookkeeper": "native",
+  "bookkeeper": null,
   "schema": 1,
   "store": {
-    "id_scheme": "positional",
-    "ids_may_change_on_reconcile": true,
-    "location": "[ROOT]/nb/home",
-    "name": "nb",
+    "id_scheme": "stable",
+    "ids_may_change_on_reconcile": false,
+    "location": "[ROOT]/home/.local/share/tasq/stores/default",
+    "name": "tasq",
     "task_count": 5
   }
 }

@@ -3,11 +3,10 @@ source: crates/cli/tests/cli.rs
 expression: env.normalize(&stdout(&out))
 ---
 OK    config       loaded from defaults
-OK    notebook     notebook at [ROOT]/nb/home, not a git repository (no commits or sync)
-OK    index        [ROOT]/nb/home/.index: index matches the files
-WARN  ids          ids are positions in .index (6 tasks) and can change when another tool rewrites it (nb index reconcile)
-                   fix: refer to tasks by title in notes you keep outside tasq
-OK    bookkeeper   bookkeeper: native, syncing at most every 3600 s after a write
+OK    store        store at [ROOT]/home/.local/share/tasq/stores/default, 5 task file(s)
+OK    task-files   every .md file is a v2 task file
+OK    ids          ids are stable and no id is claimed twice
+OK    lock         no write in progress
 OK    git          git found at [ROOT]/bin/git
 WARN  glow         glow is not on PATH
                    fix: install glow (https://github.com/charmbracelet/glow) for rendered `tasq view`

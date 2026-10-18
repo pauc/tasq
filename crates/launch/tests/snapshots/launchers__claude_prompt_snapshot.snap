@@ -2,7 +2,7 @@
 source: crates/launch/tests/launchers.rs
 expression: normalized
 ---
-Work with me on my next task: todo [3] from my nb notebook (file: /nb/home/20260902100000.todo.md).
+Work with me on my next task: todo [3] from my tasq store (file: /nb/home/20260902100000.todo.md).
 
 # [ ] Fix the login form validation
 

@@ -52,28 +52,29 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    ```
 
    One line per check (`OK`, `WARN`, `FAIL`) with a fix for anything that is not OK: the
-   config files, the notebook and its `.index`, nb, git identity and the optional tools.
-   Exit code 1 when a check failed.
+   config files, the store directory and its task files, and the optional tools. Exit code 1
+   when a check failed.
 
-2. List the open tasks of the `home` notebook, grouped by status:
+2. List the open tasks of the default store, grouped by status:
 
    ```sh
    tasq
    ```
 
-   The notebook is nb's `home` (`~/.nb/home`, or `$NB_DIR/home`). Another notebook, for one
-   command or for the shell session:
+   The store is `~/.local/share/tasq/stores/default` (`$XDG_DATA_HOME/tasq/stores/default`
+   when set); it is created by the first `tasq create`. Another store, for one command or for
+   the shell session:
 
    ```sh
-   tasq --set store.notebook=work
-   TASQ_NOTEBOOK=work tasq
+   tasq --set store.name=work
+   TASQ_STORE_NAME=work tasq
    ```
 
-   Permanently, in `~/.config/tasq/config.toml`:
+   Permanently, in `~/.config/tasq/config.toml` (or a `.tasq.toml` in a project):
 
    ```toml
    [store]
-   notebook = "work"
+   name = "work"
    ```
 
    `tasq ready`, `tasq gitlab` and `tasq A` print one status group, the tasks carrying a tag,
@@ -188,7 +189,8 @@ tracked tasks the sweep no longer lists. Each task remembers its origin in a `##
 **Launchers** open a work session on a task: `claude` (Claude Code with a prompt from a
 template, through `direnv exec` when the directory has an allowed `.envrc`), `shell`, `tmux`
 (new window), `herdr` (workspace with a Claude agent) and `auto` (herdr inside herdr, else
-claude). The session gets `TASQ_TASK_ID` and `TASQ_NOTEBOOK` in its environment.
+claude). The session gets `TASQ_TASK_ID`, `TASQ_DATA_DIR` and `TASQ_STORE_NAME` in its
+environment.
 
 **Plugins and hooks.** `tasq <name> [args...]` runs an executable `tasq-<name>` found on
 `PATH` when `<name>` is not a built-in command, passing the remaining arguments verbatim and
@@ -233,8 +235,8 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq summary [DAY] [--raw]` | Standup summary of a day's progress notes |
 | `tasq dates [SPEC]...` | Resolve `today`, `last week`, `last 7 days`, ... to `FROM TO` |
 | `tasq ui` | Full-screen terminal UI |
-| `tasq store info` | Notebook path, task count, how ids behave |
-| `tasq doctor` | Check config, notebook, git and optional tools |
+| `tasq store info` | Store directory, task count, how ids behave |
+| `tasq doctor` | Check config, the store and optional tools |
 | `tasq config show` | Effective configuration with the layer that set each key |
 | `tasq plugins list` | Discovered `tasq-*` plugins and configured hooks |
 | `tasq completions SHELL` | Completion script for bash, zsh, fish and others |

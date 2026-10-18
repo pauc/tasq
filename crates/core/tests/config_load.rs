@@ -107,8 +107,8 @@ fn empty_environment_yields_defaults() {
     assert_eq!(loaded.layers[0].origin, Origin::Defaults);
     assert_eq!(loaded.profile, None);
     assert_eq!(loaded.profiles, Vec::<String>::new());
-    assert_eq!(loaded.explain("store.notebook"), Some(&Origin::Defaults));
-    assert_eq!(loaded.file_for("store.notebook"), None);
+    assert_eq!(loaded.explain("store.name"), Some(&Origin::Defaults));
+    assert_eq!(loaded.file_for("store.name"), None);
     // An unset optional key next to set ones is not explained. (`[work]` is
     // an empty table by default, and an empty table explains its children.)
     assert_eq!(loaded.explain("report.summary.model"), None);
@@ -118,7 +118,8 @@ fn empty_environment_yields_defaults() {
 #[test]
 fn defaults_match_the_script() {
     let c = Config::default();
-    assert_eq!(c.store.notebook, "home");
+    assert_eq!(c.data_dir, None);
+    assert_eq!(c.store.name, "default");
     assert_eq!(c.workflow.statuses, Status::DEFAULTS.to_vec());
     assert_eq!(c.workflow.default_status, Status::READY);
     assert_eq!(c.workflow.workflow(), tasq_core::model::Workflow::default());
@@ -169,8 +170,7 @@ fn default_config_round_trips_through_toml_and_matches_the_module_docs() {
     // The reference document in the module docs is this serialisation.
     let expected = "\
 [store]
-kind = \"nb\"
-notebook = \"home\"
+name = \"default\"
 
 [workflow]
 statuses = [\"in-progress\", \"ready\", \"waiting\", \"blocked\", \"later\"]
@@ -462,9 +462,9 @@ fn tasq_set_env_is_a_line_separated_set() {
     use tasq_core::config::{ENV_SET, parse_env_set};
     assert_eq!(ENV_SET, "TASQ_SET");
     assert_eq!(
-        parse_env_set("store.notebook=work\n\n ui.no_osc8 =true\n").unwrap(),
+        parse_env_set("store.name=work\n\n ui.no_osc8 =true\n").unwrap(),
         vec![
-            ("store.notebook".to_owned(), "work".to_owned()),
+            ("store.name".to_owned(), "work".to_owned()),
             ("ui.no_osc8".to_owned(), "true".to_owned()),
         ]
     );
@@ -483,21 +483,21 @@ fn tasq_set_env_is_a_line_separated_set() {
     );
 
     let sb = Sandbox::new();
-    sb.write_project("[store]\nnotebook = \"file\"\n");
+    sb.write_project("[store]\nname = \"file\"\n");
     let mut opts = sb.opts();
-    // TASQ_SET beats TASQ_NOTEBOOK for the same key and is part of the env layer.
+    // TASQ_SET beats TASQ_STORE_NAME for the same key and is part of the env layer.
     opts.env = env(&[
-        ("TASQ_NOTEBOOK", "env"),
-        ("TASQ_SET", "store.notebook=set\nui.no_osc8=1"),
+        ("TASQ_STORE_NAME", "env"),
+        ("TASQ_SET", "store.name=set\nui.no_osc8=1"),
     ]);
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.notebook, "set");
+    assert_eq!(loaded.config.store.name, "set");
     assert!(loaded.config.ui.no_osc8);
-    assert_eq!(loaded.explain("store.notebook"), Some(&Origin::Env));
+    assert_eq!(loaded.explain("store.name"), Some(&Origin::Env));
     assert_eq!(loaded.explain("ui.no_osc8"), Some(&Origin::Env));
     // `--set` still wins.
-    opts.overrides = vec![("store.notebook".to_owned(), "flag".to_owned())];
-    assert_eq!(Config::load(&opts).unwrap().config.store.notebook, "flag");
+    opts.overrides = vec![("store.name".to_owned(), "flag".to_owned())];
+    assert_eq!(Config::load(&opts).unwrap().config.store.name, "flag");
     // Errors name env, not --set.
     opts.env = env(&[("TASQ_SET", "store.nope=1")]);
     assert_eq!(
@@ -511,7 +511,7 @@ fn tasq_set_env_is_a_line_separated_set() {
     );
     // Empty is unset.
     opts.env = env(&[("TASQ_SET", "")]);
-    assert_eq!(Config::load(&opts).unwrap().config.store.notebook, "flag");
+    assert_eq!(Config::load(&opts).unwrap().config.store.name, "flag");
 }
 
 #[test]
@@ -519,7 +519,13 @@ fn empty_file_is_the_defaults() {
     let sb = Sandbox::new();
     let path = sb.write_global("");
     let loaded = Config::load(&sb.opts()).unwrap();
-    assert_eq!(loaded.config, Config::default());
+    assert_eq!(
+        loaded.config,
+        Config {
+            data_dir: Some(sb.home.join(".local/share/tasq/stores")),
+            ..Config::default()
+        }
+    );
     assert_eq!(loaded.layers[1].origin, Origin::File(path));
     assert_eq!(loaded.layers[1].keys, Vec::<String>::new());
 }
@@ -563,84 +569,80 @@ fn ui_keys_take_a_string_or_a_list_and_merge_per_action() {
 #[test]
 fn global_file_alone() {
     let sb = Sandbox::new();
-    let path = sb.write_global("[store]\nnotebook = \"work\"\n[ui]\nno_osc8 = true\n");
+    let path = sb.write_global("[store]\nname = \"work\"\n[ui]\nno_osc8 = true\n");
     let loaded = Config::load(&sb.opts()).unwrap();
-    assert_eq!(loaded.config.store.notebook, "work");
+    assert_eq!(loaded.config.store.name, "work");
     assert!(loaded.config.ui.no_osc8);
     assert_eq!(
         loaded.config.ui.pager, "less -RFX",
         "untouched keys keep defaults"
     );
     assert_eq!(
-        loaded.explain("store.notebook"),
+        loaded.explain("store.name"),
         Some(&Origin::File(path.clone()))
     );
-    assert_eq!(loaded.file_for("store.notebook"), Some(path.as_path()));
-    assert_eq!(loaded.explain("store.kind"), Some(&Origin::Defaults));
-    assert_eq!(loaded.layers[1].keys, vec!["store.notebook", "ui.no_osc8"]);
+    assert_eq!(loaded.file_for("store.name"), Some(path.as_path()));
+    assert_eq!(loaded.explain("ui.glow_style"), Some(&Origin::Defaults));
+    assert_eq!(loaded.layers[1].keys, vec!["store.name", "ui.no_osc8"]);
 }
 
 #[test]
 fn xdg_config_home_replaces_dot_config() {
     let sb = Sandbox::new();
-    sb.write_global("[store]\nnotebook = \"from-dot-config\"\n");
+    sb.write_global("[store]\nname = \"from-dot-config\"\n");
     let xdg = sb.home.join("xdg");
     fs::create_dir_all(xdg.join("tasq")).unwrap();
     fs::write(
         xdg.join("tasq/config.toml"),
-        "[store]\nnotebook = \"from-xdg\"\n",
+        "[store]\nname = \"from-xdg\"\n",
     )
     .unwrap();
     let mut opts = sb.opts();
     opts.env = env(&[("XDG_CONFIG_HOME", xdg.to_str().unwrap())]);
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.notebook, "from-xdg");
+    assert_eq!(loaded.config.store.name, "from-xdg");
 
     // An empty XDG_CONFIG_HOME is ignored, as the spec says.
     opts.env = env(&[("XDG_CONFIG_HOME", "")]);
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.notebook, "from-dot-config");
+    assert_eq!(loaded.config.store.name, "from-dot-config");
 }
 
 #[test]
 fn without_home_there_is_no_global_file_but_xdg_still_works() {
     let sb = Sandbox::new();
-    sb.write_global("[store]\nnotebook = \"global\"\n");
+    sb.write_global("[store]\nname = \"global\"\n");
     let mut opts = sb.opts();
     opts.home = None;
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.notebook, "home");
+    assert_eq!(loaded.config.store.name, "default");
 
     let xdg = sb.home.join("xdg");
     fs::create_dir_all(xdg.join("tasq")).unwrap();
-    fs::write(
-        xdg.join("tasq/config.toml"),
-        "[store]\nnotebook = \"xdg\"\n",
-    )
-    .unwrap();
+    fs::write(xdg.join("tasq/config.toml"), "[store]\nname = \"xdg\"\n").unwrap();
     opts.env = env(&[("XDG_CONFIG_HOME", xdg.to_str().unwrap())]);
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.notebook, "xdg");
+    assert_eq!(loaded.config.store.name, "xdg");
 }
 
 #[test]
 fn project_file_overrides_global_field_wise() {
     let sb = Sandbox::new();
     let global = sb.write_global(
-        "[store]\nnotebook = \"global\"\nkind = \"nb\"\n[ui]\nglow_style = \"light\"\nweek_start = \"sunday\"\n",
+        "[store]\nname = \"global\"\n[ui]\nglow_style = \"light\"\nweek_start = \"sunday\"\n",
     );
-    let project = sb.write_project("[store]\nnotebook = \"project\"\n");
+    let project = sb.write_project("[store]\nname = \"project\"\n[ui]\nglow_style = \"dark\"\n");
     let loaded = Config::load(&sb.opts()).unwrap();
-    assert_eq!(loaded.config.store.notebook, "project");
-    assert_eq!(loaded.config.ui.glow_style, "light");
+    assert_eq!(loaded.config.store.name, "project");
+    assert_eq!(loaded.config.ui.glow_style, "dark");
     assert_eq!(loaded.config.ui.week_start, WeekStart::Sunday);
     assert_eq!(loaded.config.ui.week_start.weekday(), chrono::Weekday::Sun);
     assert_eq!(
-        loaded.explain("store.notebook"),
+        loaded.explain("store.name"),
         Some(&Origin::File(project.clone()))
     );
     assert_eq!(
-        loaded.explain("store.kind"),
+        loaded.explain("ui.week_start"),
         Some(&Origin::File(global.clone())),
         "sibling key survives"
     );
@@ -653,20 +655,20 @@ fn project_file_overrides_global_field_wise() {
 #[test]
 fn project_file_is_found_from_a_nested_cwd() {
     let sb = Sandbox::new();
-    let project = sb.write_project("[store]\nnotebook = \"nested\"\n");
+    let project = sb.write_project("[store]\nname = \"nested\"\n");
     let loaded = Config::load(&sb.opts_in(&sb.project.join("sub"))).unwrap();
-    assert_eq!(loaded.config.store.notebook, "nested");
-    assert_eq!(loaded.file_for("store.notebook"), Some(project.as_path()));
+    assert_eq!(loaded.config.store.name, "nested");
+    assert_eq!(loaded.file_for("store.name"), Some(project.as_path()));
 }
 
 #[test]
 fn nearest_project_file_wins_and_only_one_is_read() {
     let sb = Sandbox::new();
-    sb.write_project("[store]\nnotebook = \"outer\"\n[ui]\nno_osc8 = true\n");
+    sb.write_project("[store]\nname = \"outer\"\n[ui]\nno_osc8 = true\n");
     let inner = sb.project.join("sub/.tasq.toml");
-    fs::write(&inner, "[store]\nnotebook = \"inner\"\n").unwrap();
+    fs::write(&inner, "[store]\nname = \"inner\"\n").unwrap();
     let loaded = Config::load(&sb.opts_in(&sb.project.join("sub"))).unwrap();
-    assert_eq!(loaded.config.store.notebook, "inner");
+    assert_eq!(loaded.config.store.name, "inner");
     assert!(!loaded.config.ui.no_osc8, "the outer file is not merged");
     assert_eq!(loaded.layers.len(), 2);
 }
@@ -674,26 +676,22 @@ fn nearest_project_file_wins_and_only_one_is_read() {
 #[test]
 fn walk_up_checks_home_itself_but_stops_there() {
     let sb = Sandbox::new();
-    fs::write(
-        sb.home.join(".tasq.toml"),
-        "[store]\nnotebook = \"in-home\"\n",
-    )
-    .unwrap();
+    fs::write(sb.home.join(".tasq.toml"), "[store]\nname = \"in-home\"\n").unwrap();
     let loaded = Config::load(&sb.opts()).unwrap();
-    assert_eq!(loaded.config.store.notebook, "in-home");
+    assert_eq!(loaded.config.store.name, "in-home");
 
     // A file above the home directory is never picked up.
     fs::remove_file(sb.home.join(".tasq.toml")).unwrap();
     let above = sb.home.parent().unwrap().join(".tasq.toml");
-    fs::write(&above, "[store]\nnotebook = \"above-home\"\n").unwrap();
+    fs::write(&above, "[store]\nname = \"above-home\"\n").unwrap();
     let loaded = Config::load(&sb.opts()).unwrap();
-    assert_eq!(loaded.config.store.notebook, "home");
+    assert_eq!(loaded.config.store.name, "default");
 
     // ... unless the cwd is outside the home directory altogether.
     let outside = sb.home.parent().unwrap().join("outside");
     fs::create_dir_all(&outside).unwrap();
     let loaded = Config::load(&sb.opts_in(&outside)).unwrap();
-    assert_eq!(loaded.config.store.notebook, "above-home");
+    assert_eq!(loaded.config.store.name, "above-home");
     let direct = tasq_core::config::project_file(&outside, Some(&sb.home));
     assert_eq!(direct, Some(above));
     assert_eq!(
@@ -706,23 +704,23 @@ fn walk_up_checks_home_itself_but_stops_there() {
 fn a_directory_named_like_the_project_file_is_skipped() {
     let sb = Sandbox::new();
     fs::create_dir(sb.project.join("sub/.tasq.toml")).unwrap();
-    sb.write_project("[store]\nnotebook = \"real\"\n");
+    sb.write_project("[store]\nname = \"real\"\n");
     let loaded = Config::load(&sb.opts_in(&sb.project.join("sub"))).unwrap();
-    assert_eq!(loaded.config.store.notebook, "real");
+    assert_eq!(loaded.config.store.name, "real");
 }
 
 #[test]
 fn explicit_file_replaces_the_global_file_and_must_exist() {
     let sb = Sandbox::new();
-    sb.write_global("[store]\nnotebook = \"global\"\n[ui]\nno_osc8 = true\n");
+    sb.write_global("[store]\nname = \"global\"\n[ui]\nno_osc8 = true\n");
     let explicit = sb.home.join("explicit.toml");
-    fs::write(&explicit, "[store]\nnotebook = \"explicit\"\n").unwrap();
+    fs::write(&explicit, "[store]\nname = \"explicit\"\n").unwrap();
     sb.write_project("[ui]\nglow_style = \"light\"\n");
 
     let mut opts = sb.opts();
     opts.explicit_file = Some(explicit.clone());
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.notebook, "explicit");
+    assert_eq!(loaded.config.store.name, "explicit");
     assert!(!loaded.config.ui.no_osc8, "global file is not read");
     assert_eq!(
         loaded.config.ui.glow_style, "light",
@@ -733,7 +731,7 @@ fn explicit_file_replaces_the_global_file_and_must_exist() {
     opts.explicit_file = None;
     opts.env = env(&[("TASQ_CONFIG", "~/explicit.toml")]);
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.file_for("store.notebook"), Some(explicit.as_path()));
+    assert_eq!(loaded.file_for("store.name"), Some(explicit.as_path()));
 
     opts.env = env(&[("TASQ_CONFIG", "~/missing.toml")]);
     let err = Config::load(&opts).unwrap_err();
@@ -769,7 +767,7 @@ fn explicit_file_replaces_the_global_file_and_must_exist() {
     opts.explicit_file = None;
     opts.env = env(&[("TASQ_CONFIG", "")]);
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.notebook, "global");
+    assert_eq!(loaded.config.store.name, "global");
 }
 
 #[test]
@@ -790,7 +788,7 @@ fn unreadable_file_names_the_file() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let unreadable = sb.write_project("[store]\nnotebook = \"x\"\n");
+        let unreadable = sb.write_project("[store]\nname = \"x\"\n");
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
         let result = Config::load(&sb.opts());
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
@@ -813,7 +811,7 @@ fn unreadable_file_names_the_file() {
 #[test]
 fn unknown_key_names_file_line_and_column() {
     let sb = Sandbox::new();
-    let path = sb.write_global("[store]\nnotebook = \"x\"\nnotbook = \"typo\"\n");
+    let path = sb.write_global("[store]\nname = \"x\"\nnotbook = \"typo\"\n");
     let err = Config::load(&sb.opts()).unwrap_err();
     match &err {
         ConfigError::Parse {
@@ -826,7 +824,7 @@ fn unknown_key_names_file_line_and_column() {
             assert_eq!((*line, *column), (3, 1));
             assert!(message.contains("unknown field `notbook`"), "{message}");
             assert!(
-                message.contains("`notebook`"),
+                message.contains("`name`"),
                 "lists the valid keys: {message}"
             );
         }
@@ -866,32 +864,200 @@ fn unknown_section_and_nested_unknown_key_are_errors() {
     );
 }
 
-/// `store.sync_interval` went with git sync (ADR-0026): a file that still
-/// sets it fails like any unknown key, naming the file, line and column.
+/// `store.kind`, `store.notebook` and `store.sync_interval` went with the
+/// nb store (ADR-0026): a file that still sets one fails naming the file,
+/// line and column, and the message names the replacement.
 #[test]
-fn sync_interval_is_an_unknown_key() {
-    let sb = Sandbox::new();
-    let path = sb.write_global("[store]\nnotebook = \"home\"\nsync_interval = 3600\n");
-    let err = Config::load(&sb.opts()).unwrap_err();
+fn removed_store_keys_name_the_replacement() {
+    for (key, tail) in [
+        (
+            "kind = \"nb\"",
+            ": store.kind was removed (ADR-0026): tasq always opens its own store at <data_dir>/<store.name>",
+        ),
+        (
+            "notebook = \"home\"",
+            ": store.notebook was removed (ADR-0026): tasks live in <data_dir>/<store.name>; convert the notebook once with `tasq migrate <notebook>`",
+        ),
+        (
+            "sync_interval = 3600",
+            ": store.sync_interval was removed (ADR-0026): the store does not run git; sync comes back as a feature of its own",
+        ),
+    ] {
+        let sb = Sandbox::new();
+        let path = sb.write_global(&format!("[store]\nname = \"work\"\n{key}\n"));
+        let err = Config::load(&sb.opts()).unwrap_err();
+        // The span is the value's (the deserializer rejects what it is given).
+        let value_column = key.find('=').unwrap() + 3;
+        match &err {
+            ConfigError::Parse {
+                file, line, column, ..
+            } => {
+                assert_eq!(file, &path, "{key}");
+                assert_eq!((*line, *column), (3, value_column), "{key}");
+            }
+            other => panic!("{key}: {other:?}"),
+        }
+        let err = err.to_string();
+        assert!(
+            err.starts_with(&format!("{}:3:{value_column}: ", path.display())),
+            "{key}: {err}"
+        );
+        assert!(err.ends_with(tail), "{key}: {err}");
+    }
     assert!(
-        err.to_string().starts_with(&format!(
-            "{}:3:1: unknown field `sync_interval`",
-            path.display()
-        )),
-        "{err}"
+        !tasq_core::config::ENV_KEYS.iter().any(|(var, key)| {
+            matches!(*var, "TASQ_NOTEBOOK" | "TASQ_SYNC_INTERVAL")
+                || matches!(
+                    *key,
+                    "store.kind" | "store.notebook" | "store.sync_interval"
+                )
+        }),
+        "no environment variable maps to a removed key"
     );
-    assert!(
-        !tasq_core::config::ENV_KEYS
-            .iter()
-            .any(|(var, key)| *var == "TASQ_SYNC_INTERVAL" || *key == "store.sync_interval"),
-        "no environment variable maps to the removed key"
+}
+
+// --- data_dir and store.name ------------------------------------------------
+
+/// Where the default store directory is: `$XDG_DATA_HOME/tasq/stores`,
+/// else `~/.local/share/tasq/stores`, else unknown.
+#[test]
+fn data_dir_defaults_to_the_xdg_data_directory() {
+    let sb = Sandbox::new();
+    let loaded = Config::load(&sb.opts()).unwrap();
+    assert_eq!(
+        loaded.config.data_dir,
+        Some(sb.home.join(".local/share/tasq/stores"))
+    );
+    assert_eq!(loaded.config.store.name, "default");
+    assert_eq!(loaded.explain("data_dir"), Some(&Origin::Defaults));
+    assert_eq!(loaded.explain("store.name"), Some(&Origin::Defaults));
+    assert!(loaded.layers[0].keys.contains(&"data_dir".to_owned()));
+
+    let mut opts = sb.opts();
+    opts.env = env(&[("XDG_DATA_HOME", "/srv/data")]);
+    let loaded = Config::load(&opts).unwrap();
+    assert_eq!(
+        loaded.config.data_dir,
+        Some(PathBuf::from("/srv/data/tasq/stores"))
+    );
+    assert_eq!(loaded.explain("data_dir"), Some(&Origin::Defaults));
+
+    // An empty XDG_DATA_HOME is unset, as the spec says.
+    opts.env = env(&[("XDG_DATA_HOME", "")]);
+    let loaded = Config::load(&opts).unwrap();
+    assert_eq!(
+        loaded.config.data_dir,
+        Some(sb.home.join(".local/share/tasq/stores"))
+    );
+
+    // Without a home and without XDG_DATA_HOME nothing can be derived.
+    opts.home = None;
+    let loaded = Config::load(&opts).unwrap();
+    assert_eq!(loaded.config.data_dir, None);
+    assert_eq!(loaded.explain("data_dir"), None);
+    assert!(!loaded.layers[0].keys.contains(&"data_dir".to_owned()));
+    opts.env = env(&[("XDG_DATA_HOME", "/srv/data")]);
+    assert_eq!(
+        Config::load(&opts).unwrap().config.data_dir,
+        Some(PathBuf::from("/srv/data/tasq/stores"))
+    );
+}
+
+#[test]
+fn data_dir_and_store_name_come_from_every_layer() {
+    let sb = Sandbox::new();
+    let global = sb.write_global(
+        "data_dir = \"~/tasks\"\n\n[store]\nname = \"global\"\n\n[profile.work]\ndata_dir = \"/srv/work\"\n[profile.work.store]\nname = \"work\"\n",
+    );
+    let loaded = Config::load(&sb.opts()).unwrap();
+    assert_eq!(loaded.config.data_dir, Some(sb.home.join("tasks")));
+    assert_eq!(loaded.config.store.name, "global");
+    assert_eq!(
+        loaded.explain("data_dir"),
+        Some(&Origin::File(global.clone()))
+    );
+    assert_eq!(loaded.file_for("store.name"), Some(global.as_path()));
+
+    let project = sb.write_project("[store]\nname = \"project\"\n");
+    let loaded = Config::load(&sb.opts()).unwrap();
+    assert_eq!(loaded.config.data_dir, Some(sb.home.join("tasks")));
+    assert_eq!(loaded.config.store.name, "project");
+    assert_eq!(loaded.file_for("store.name"), Some(project.as_path()));
+
+    let mut opts = sb.opts();
+    opts.profile = Some("work".to_owned());
+    let loaded = Config::load(&opts).unwrap();
+    assert_eq!(loaded.config.data_dir, Some(PathBuf::from("/srv/work")));
+    assert_eq!(loaded.config.store.name, "work");
+
+    opts.env = env(&[("TASQ_DATA_DIR", "~/env"), ("TASQ_STORE_NAME", "env")]);
+    let loaded = Config::load(&opts).unwrap();
+    assert_eq!(loaded.config.data_dir, Some(sb.home.join("env")));
+    assert_eq!(loaded.config.store.name, "env");
+    assert_eq!(loaded.explain("data_dir"), Some(&Origin::Env));
+    assert_eq!(loaded.explain("store.name"), Some(&Origin::Env));
+
+    opts.overrides = vec![
+        ("data_dir".to_owned(), "/tmp/flag".to_owned()),
+        ("store.name".to_owned(), "flag".to_owned()),
+    ];
+    let loaded = Config::load(&opts).unwrap();
+    assert_eq!(loaded.config.data_dir, Some(PathBuf::from("/tmp/flag")));
+    assert_eq!(loaded.config.store.name, "flag");
+    assert_eq!(loaded.explain("data_dir"), Some(&Origin::Overrides));
+}
+
+/// A store name is one directory component: a mistyped one makes a
+/// harmless empty directory under the stores root, so nothing may escape it.
+#[test]
+fn store_name_must_be_a_single_directory_name() {
+    for (name, reason) in [
+        ("", "a store name must not be empty"),
+        ("a/b", "a store name must not contain '/'"),
+        ("..", "a store name must not be '.' or '..'"),
+        (".", "a store name must not be '.' or '..'"),
+    ] {
+        let sb = Sandbox::new();
+        let file = sb.write_project(&format!("[store]\nname = {name:?}\n"));
+        let err = Config::load(&sb.opts()).unwrap_err();
+        match &err {
+            ConfigError::BadStoreName {
+                name: n,
+                reason: r,
+                origin,
+            } => {
+                assert_eq!(n, name);
+                assert_eq!(*r, reason);
+                assert_eq!(origin, &Origin::File(file.clone()));
+            }
+            other => panic!("{name:?}: {other:?}"),
+        }
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "store.name = {name:?} (set by {}): {reason}",
+                file.display()
+            )
+        );
+    }
+    let mut opts = LoadOptions::new("/nonexistent");
+    opts.env = env(&[("TASQ_STORE_NAME", "x/y")]);
+    assert_eq!(
+        Config::load(&opts).unwrap_err().to_string(),
+        "store.name = \"x/y\" (set by env): a store name must not contain '/'"
+    );
+    opts.env = env(&[("TASQ_STORE_NAME", "work.2026")]);
+    assert_eq!(
+        Config::load(&opts).unwrap().config.store.name,
+        "work.2026",
+        "dots inside a name are fine"
     );
 }
 
 #[test]
 fn syntax_error_names_file_and_line() {
     let sb = Sandbox::new();
-    let path = sb.write_project("[store]\nnotebook = \n");
+    let path = sb.write_project("[store]\nname = \n");
     let err = Config::load(&sb.opts()).unwrap_err();
     match &err {
         ConfigError::Parse { file, line, .. } => {
@@ -1008,11 +1174,12 @@ fn default_status_must_be_in_the_workflow() {
 #[test]
 fn env_overrides_files() {
     let sb = Sandbox::new();
-    sb.write_global("[store]\nnotebook = \"global\"\n");
-    sb.write_project("[store]\nnotebook = \"project\"\n[ui]\npager = \"more\"\n");
+    sb.write_global("[store]\nname = \"global\"\n");
+    sb.write_project("[store]\nname = \"project\"\n[ui]\npager = \"more\"\n");
     let mut opts = sb.opts();
     opts.env = env(&[
-        ("TASQ_NOTEBOOK", "env"),
+        ("TASQ_STORE_NAME", "env"),
+        ("TASQ_DATA_DIR", "~/data"),
         ("TASQ_DEFAULT_PROJECT", "~/code/x"),
         ("TASQ_WORKTREE_ENABLED", "true"),
         (
@@ -1044,7 +1211,8 @@ fn env_overrides_files() {
     ]);
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
-    assert_eq!(c.store.notebook, "env");
+    assert_eq!(c.store.name, "env");
+    assert_eq!(c.data_dir, Some(sb.home.join("data")));
     assert_eq!(c.work.default_project, Some(sb.home.join("code/x")));
     assert!(c.worktree.enabled);
     assert_eq!(c.worktree.path, "{{project}}/.worktrees/{{branch_safe}}");
@@ -1079,11 +1247,11 @@ fn env_overrides_files() {
         c.report.summary.prompt_file,
         Some(sb.home.join("prompts/standup.md"))
     );
-    assert_eq!(loaded.explain("store.notebook"), Some(&Origin::Env));
+    assert_eq!(loaded.explain("store.name"), Some(&Origin::Env));
     assert_eq!(loaded.explain("ui.pager"), Some(&Origin::Env));
     let env_layer = loaded.layers.last().unwrap();
     assert_eq!(env_layer.origin, Origin::Env);
-    assert_eq!(env_layer.keys.len(), 25);
+    assert_eq!(env_layer.keys.len(), 26);
     assert_eq!(Origin::Env.to_string(), "env");
 }
 
@@ -1120,11 +1288,12 @@ fn every_documented_env_key_is_a_real_key() {
         opts.env = env(&[(var, value)]);
         let loaded = Config::load(&opts).unwrap_or_else(|e| panic!("{var}: {e}"));
         assert_eq!(loaded.explain(key), Some(&Origin::Env), "{var} sets {key}");
-        let section = key.split('.').next().unwrap();
-        assert!(
-            template.contains(&format!("[{section}")),
-            "{key} is a real section"
-        );
+        if let Some((section, _)) = key.split_once('.') {
+            assert!(
+                template.contains(&format!("[{section}")),
+                "{key} is a real section"
+            );
+        }
     }
 }
 
@@ -1132,7 +1301,7 @@ fn every_documented_env_key_is_a_real_key() {
 fn empty_env_values_are_ignored() {
     let mut opts = LoadOptions::new("/nonexistent");
     opts.env = env(&[
-        ("TASQ_NOTEBOOK", ""),
+        ("TASQ_STORE_NAME", ""),
         ("TASQ_PROFILE", ""),
         ("TASQ_NO_OSC8", ""),
     ]);
@@ -1196,9 +1365,9 @@ fn overrides_win_over_everything_and_are_typed_by_key() {
     let sb = Sandbox::new();
     sb.write_project("[ui]\nno_osc8 = true\n");
     let mut opts = sb.opts();
-    opts.env = env(&[("TASQ_NOTEBOOK", "env")]);
+    opts.env = env(&[("TASQ_STORE_NAME", "env")]);
     opts.overrides = vec![
-        ("store.notebook".to_owned(), "flag".to_owned()),
+        ("store.name".to_owned(), "flag".to_owned()),
         ("ui.no_osc8".to_owned(), "false".to_owned()),
         (
             "workflow.statuses".to_owned(),
@@ -1212,7 +1381,7 @@ fn overrides_win_over_everything_and_are_typed_by_key() {
     ];
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
-    assert_eq!(c.store.notebook, "flag");
+    assert_eq!(c.store.name, "flag");
     assert!(!c.ui.no_osc8);
     assert_eq!(
         c.workflow.statuses,
@@ -1222,7 +1391,7 @@ fn overrides_win_over_everything_and_are_typed_by_key() {
     assert_eq!(c.forge["gl"].host.as_deref(), Some("gitlab.example.com"));
     assert_eq!(c.forge["gl"].kind, Some(ForgeKind::Gitlab));
     assert_eq!(c.ui.colors["title"], "red");
-    assert_eq!(loaded.explain("store.notebook"), Some(&Origin::Overrides));
+    assert_eq!(loaded.explain("store.name"), Some(&Origin::Overrides));
     assert_eq!(loaded.explain("ui.no_osc8"), Some(&Origin::Overrides));
     assert_eq!(loaded.explain("forge.gl.host"), Some(&Origin::Overrides));
     assert_eq!(loaded.explain("forge.gl"), Some(&Origin::Overrides));
@@ -1236,9 +1405,9 @@ fn overrides_win_over_everything_and_are_typed_by_key() {
 fn unknown_override_key_is_an_error() {
     let mut opts = LoadOptions::new("/nonexistent");
     for key in [
-        "store.notbook",
+        "store.nmae",
         "nope",
-        "store.notebook.deeper",
+        "store.name.deeper",
         "ui.colors",
         "forge.x.nope",
     ] {
@@ -1280,8 +1449,8 @@ fn override_can_set_a_key_a_file_made_scalar_or_table() {
 fn profile_overlay_from_flag_and_env() {
     let sb = Sandbox::new();
     let global = sb.write_global(
-        "[store]\nnotebook = \"home\"\n\n[profile.work]\n[profile.work.store]\nnotebook = \"work\"\n\
-         [profile.work.ui]\nglow_style = \"light\"\n\n[profile.play]\n[profile.play.store]\nnotebook = \"play\"\n",
+        "[store]\nname = \"home\"\n\n[profile.work]\n[profile.work.store]\nname = \"work\"\n\
+         [profile.work.ui]\nglow_style = \"light\"\n\n[profile.play]\n[profile.play.store]\nname = \"play\"\n",
     );
     let project = sb.write_project(
         "[ui]\nno_osc8 = true\n[profile.work.launch]\ndefault = \"shell\"\n[profile.other]\n",
@@ -1289,7 +1458,7 @@ fn profile_overlay_from_flag_and_env() {
     let mut opts = sb.opts();
     let loaded = Config::load(&opts).unwrap();
     assert_eq!(
-        loaded.config.store.notebook, "home",
+        loaded.config.store.name, "home",
         "no profile without selection"
     );
     assert_eq!(loaded.profile, None);
@@ -1299,7 +1468,7 @@ fn profile_overlay_from_flag_and_env() {
     opts.profile = Some("work".to_owned());
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
-    assert_eq!(c.store.notebook, "work");
+    assert_eq!(c.store.name, "work");
     assert_eq!(c.ui.glow_style, "light");
     assert!(c.ui.no_osc8, "project keys outside the profile still apply");
     assert_eq!(
@@ -1315,7 +1484,7 @@ fn profile_overlay_from_flag_and_env() {
         name: "work".to_owned(),
         file: project.clone(),
     };
-    assert_eq!(loaded.explain("store.notebook"), Some(&work_in_global));
+    assert_eq!(loaded.explain("store.name"), Some(&work_in_global));
     assert_eq!(loaded.explain("launch.default"), Some(&work_in_project));
     assert_eq!(loaded.file_for("launch.default"), Some(project.as_path()));
     assert_eq!(
@@ -1338,16 +1507,16 @@ fn profile_overlay_from_flag_and_env() {
     opts.profile = None;
     opts.env = env(&[("TASQ_PROFILE", "play")]);
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.notebook, "play");
+    assert_eq!(loaded.config.store.name, "play");
     assert_eq!(loaded.config.launch.default, "claude");
     opts.profile = Some("work".to_owned());
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.notebook, "work");
+    assert_eq!(loaded.config.store.name, "work");
 
     // Env overrides still beat the profile.
-    opts.env = env(&[("TASQ_NOTEBOOK", "env")]);
+    opts.env = env(&[("TASQ_STORE_NAME", "env")]);
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.notebook, "env");
+    assert_eq!(loaded.config.store.name, "env");
 }
 
 #[test]
@@ -1602,7 +1771,7 @@ fn plan_section_4_6_example_loads_as_is() {
     let path = sb.write_project(&fixture("plan-4.6.toml"));
     let loaded = Config::load(&sb.opts()).unwrap();
     let c = &loaded.config;
-    assert_eq!(c.store.notebook, "home");
+    assert_eq!(c.store.name, "home");
     assert_eq!(c.workflow.statuses.len(), 5);
     assert_eq!(
         c.work.default_project,
@@ -1635,7 +1804,7 @@ fn plan_section_4_6_example_loads_as_is() {
     assert_eq!(c.report.summary.summarizer, Summarizer::Llm);
     assert_eq!(c.report.summary.command, "claude -p --model sonnet");
     assert_eq!(c.report.summary.model, None);
-    assert_eq!(loaded.file_for("store.notebook"), Some(path.as_path()));
+    assert_eq!(loaded.file_for("store.name"), Some(path.as_path()));
     assert_eq!(
         loaded.explain("forge.gitlab.host"),
         Some(&Origin::File(path.clone()))
@@ -1704,15 +1873,15 @@ fn load_options_new_and_display_of_origins() {
 #[test]
 fn explain_matches_prefixes_but_not_lookalike_keys() {
     let sb = Sandbox::new();
-    let path = sb.write_project("[store]\nnotebook = \"x\"\n");
+    let path = sb.write_project("[store]\nname = \"x\"\n");
     let loaded = Config::load(&sb.opts()).unwrap();
     let file = Origin::File(path);
-    assert_eq!(loaded.explain("store.notebook"), Some(&file));
+    assert_eq!(loaded.explain("store.name"), Some(&file));
     assert_eq!(loaded.explain("store"), Some(&file));
-    assert_eq!(loaded.explain("store.notebook.x"), Some(&file));
-    assert_eq!(loaded.explain("store.notebooks"), None);
+    assert_eq!(loaded.explain("store.name.x"), Some(&file));
+    assert_eq!(loaded.explain("store.names"), None);
     assert_eq!(loaded.explain("stor"), None);
-    assert_eq!(loaded.explain("store.kind"), Some(&Origin::Defaults));
+    assert_eq!(loaded.explain("ui.pager"), Some(&Origin::Defaults));
 }
 
 // --- acceptance: plan requirements pinned ----------------------------------
@@ -1722,7 +1891,7 @@ fn env_vars_named_by_the_plan_are_all_supported() {
     use tasq_core::config::{ENV_CONFIG, ENV_KEYS, ENV_PROFILE};
     let keyed: Vec<&str> = ENV_KEYS.iter().map(|(var, _)| *var).collect();
     for var in [
-        "TASQ_NOTEBOOK",
+        "TASQ_STORE_NAME",
         "TASQ_DEFAULT_PROJECT",
         "TASQ_PAGER",
         "TASQ_NO_OSC8",
@@ -1743,33 +1912,32 @@ fn env_vars_named_by_the_plan_are_all_supported() {
 #[test]
 fn all_six_layers_stack_field_wise_in_documented_order() {
     let sb = Sandbox::new();
-    // Every layer sets `store.notebook`; each also owns one private key.
+    // Every layer sets `store.name`; each also owns one private key.
     let global = sb.write_global(
-        "[store]\nnotebook = \"global\"\n[hooks]\npost-done = [\"echo done\"]\n\
-         [profile.p.store]\nnotebook = \"profile\"\n[profile.p.ui]\nglow_style = \"light\"\n",
+        "[store]\nname = \"global\"\n[hooks]\npost-done = [\"echo done\"]\n\
+         [profile.p.store]\nname = \"profile\"\n[profile.p.ui]\nglow_style = \"light\"\n",
     );
-    let project = sb.write_project("[store]\nnotebook = \"project\"\n[ui]\npager = \"more\"\n");
+    let project = sb.write_project("[store]\nname = \"project\"\n[ui]\npager = \"more\"\n");
     let mut opts = sb.opts();
     opts.profile = Some("p".to_owned());
-    opts.env = env(&[("TASQ_NOTEBOOK", "env"), ("TASQ_LAUNCHER", "shell")]);
+    opts.env = env(&[("TASQ_STORE_NAME", "env"), ("TASQ_LAUNCHER", "shell")]);
     opts.overrides = vec![
-        ("store.notebook".to_owned(), "override".to_owned()),
+        ("store.name".to_owned(), "override".to_owned()),
         ("launch.env".to_owned(), "inherit".to_owned()),
     ];
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
-    assert_eq!(c.store.notebook, "override");
+    assert_eq!(c.store.name, "override");
     assert_eq!(c.ui.pager, "more");
     assert_eq!(c.ui.glow_style, "light");
     assert_eq!(c.launch.default, "shell");
     assert_eq!(c.launch.env, EnvStrategy::Inherit);
-    assert_eq!(c.store.kind, tasq_core::config::StoreKind::Nb);
 
     let profile = Origin::Profile {
         name: "p".to_owned(),
         file: global.clone(),
     };
-    assert_eq!(loaded.explain("store.notebook"), Some(&Origin::Overrides));
+    assert_eq!(loaded.explain("store.name"), Some(&Origin::Overrides));
     assert_eq!(
         loaded.explain("hooks.post-done"),
         Some(&Origin::File(global.clone()))
@@ -1781,8 +1949,8 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     assert_eq!(loaded.explain("ui.glow_style"), Some(&profile));
     assert_eq!(loaded.explain("launch.default"), Some(&Origin::Env));
     assert_eq!(loaded.explain("launch.env"), Some(&Origin::Overrides));
-    assert_eq!(loaded.explain("store.kind"), Some(&Origin::Defaults));
-    assert_eq!(loaded.file_for("store.notebook"), None);
+    assert_eq!(loaded.explain("ui.no_osc8"), Some(&Origin::Defaults));
+    assert_eq!(loaded.file_for("store.name"), None);
     assert_eq!(loaded.file_for("ui.glow_style"), Some(global.as_path()));
 
     let origins: Vec<&Origin> = loaded.layers.iter().map(|l| &l.origin).collect();
@@ -1799,19 +1967,13 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     );
     // Dropping the overrides exposes the env value, and so on down the stack.
     opts.overrides.clear();
-    assert_eq!(Config::load(&opts).unwrap().config.store.notebook, "env");
-    opts.env.remove("TASQ_NOTEBOOK");
-    assert_eq!(
-        Config::load(&opts).unwrap().config.store.notebook,
-        "profile"
-    );
+    assert_eq!(Config::load(&opts).unwrap().config.store.name, "env");
+    opts.env.remove("TASQ_STORE_NAME");
+    assert_eq!(Config::load(&opts).unwrap().config.store.name, "profile");
     opts.profile = None;
-    assert_eq!(
-        Config::load(&opts).unwrap().config.store.notebook,
-        "project"
-    );
+    assert_eq!(Config::load(&opts).unwrap().config.store.name, "project");
     fs::remove_file(sb.project.join(".tasq.toml")).unwrap();
-    assert_eq!(Config::load(&opts).unwrap().config.store.notebook, "global");
+    assert_eq!(Config::load(&opts).unwrap().config.store.name, "global");
 }
 
 #[test]

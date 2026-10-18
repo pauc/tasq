@@ -41,7 +41,7 @@ pub enum ConfigError {
         /// 1-based column.
         column: usize,
         /// Parser message, for example
-        /// ``unknown field `notbook`, expected one of `kind`, `notebook` ``.
+        /// ``unknown field `nmae`, expected one of `name`, ... ``.
         message: String,
     },
     /// A value set by the environment or `--set` could not be used.
@@ -104,6 +104,17 @@ pub enum ConfigError {
         /// The name and what was available.
         source: crate::worktree::vars::UnknownVariable,
         /// Where the key was set.
+        origin: Origin,
+    },
+    /// `store.name` is not one directory name: empty, `.`, `..` or with a
+    /// `/` in it, so the store would not sit under `data_dir`.
+    #[error("store.name = {name:?} (set by {origin}): {reason}")]
+    BadStoreName {
+        /// The name as written.
+        name: String,
+        /// What is wrong with it.
+        reason: &'static str,
+        /// Where it was set.
         origin: Origin,
     },
     /// A `[worktree.variables]` name that cannot be used in a template.

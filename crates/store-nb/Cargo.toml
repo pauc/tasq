@@ -31,6 +31,8 @@ thiserror = "2"
 [dev-dependencies]
 serde_json = "1"
 tempfile = "3"
+# `find_in_path`, to locate the real `nb` and `git` on the test process's PATH.
+tasq-launch = { path = "../launch", version = "0.1.0" }
 
 [lints]
 workspace = true

@@ -30,7 +30,6 @@ pub mod job;
 pub mod native;
 pub mod resolve;
 pub mod store;
-pub mod which;
 
 pub use self::bookkeeper::{
     Bookkeeper, NativeBookkeeper, NoopBookkeeper, SyncOutcome, Verification, WriteLock,

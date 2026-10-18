@@ -1,6 +1,5 @@
 [store]
-kind = "nb"
-notebook = "home"            # resolves ~/.nb/<notebook>, or a path
+name = "home"               # the store directory <data_dir>/home
 
 [workflow]
 statuses = ["in-progress", "ready", "waiting", "blocked", "later"]

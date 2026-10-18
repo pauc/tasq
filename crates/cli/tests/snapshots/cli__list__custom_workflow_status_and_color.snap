@@ -1,6 +1,5 @@
 ---
 source: crates/cli/tests/cli.rs
-assertion_line: 359
 expression: stdout(&out)
 ---
 [1;34mIN PROGRESS[0m
@@ -13,5 +12,5 @@ expression: stdout(&out)
   [2m[ 3][0m [2m#B[0m Answer the support ticket [48;5;24m[38;5;231m #support [0m
 
 [1;2mNO STATUS[0m
-  [2m[ 6][0m [2m#B[0m Wait for the security review [48;5;24m[38;5;231m #waiting [0m
+  [2m[ 6][0m [2m#B[0m Wait for the security review
   [2m[ 7][0m [2m#B[0m Task without a tags section

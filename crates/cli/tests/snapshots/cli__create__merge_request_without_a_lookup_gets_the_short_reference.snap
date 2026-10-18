@@ -1,16 +1,14 @@
 ---
 source: crates/cli/tests/cli.rs
-expression: env.normalize(&file)
+expression: env.normalize(&env.read_task(8))
 ---
-# [ ] Review it
-
-## Project
-
-[ROOT]/home
-
-## Tags
-
-#B #ready
+---
+id: 8
+status: ready
+priority: B
+project: [ROOT]/home
+---
+# Review it
 
 ## Related
 

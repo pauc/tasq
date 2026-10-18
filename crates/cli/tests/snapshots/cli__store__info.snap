@@ -2,8 +2,7 @@
 source: crates/cli/tests/cli.rs
 expression: env.normalize(&stdout(&out))
 ---
-store:       nb
-location:    [ROOT]/nb/home
+store:       tasq
+location:    [ROOT]/home/.local/share/tasq/stores/default
 tasks:       5 (open and done)
-ids:         positional (line numbers in .index); they can change when another tool rewrites .index (nb index reconcile)
-bookkeeper:  native
+ids:         stable

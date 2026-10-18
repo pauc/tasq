@@ -1,8 +1,7 @@
 //! The store's part of `tasq doctor` (plan T-205): a list of [`Check`]s
 //! about the notebook, its index, the bookkeeper and the git identity,
 //! reached through [`Store::doctor`]. The CLI prints them as OK/WARN/FAIL
-//! lines or as JSON and adds its own checks for optional tools through
-//! [`tool_check`].
+//! lines or as JSON.
 
 use std::path::Path;
 
@@ -10,22 +9,8 @@ use tasq_core::store::{IdScheme, Store};
 
 use crate::git::Git;
 use crate::store::NbStore;
-use crate::which::find_in_path;
 
 pub use tasq_core::doctor::{Check, CheckStatus, any_failed};
-
-/// Whether an executable called `name` is on the `PATH` entry of `env`.
-/// `Ok` with its path, otherwise `Warn` with `fix` (how to install it).
-pub fn tool_check(name: &str, env: &[(String, String)], fix: &str) -> Check {
-    let path_var = env
-        .iter()
-        .find(|(k, _)| k == "PATH")
-        .map_or("", |(_, v)| v.as_str());
-    match find_in_path(path_var, name) {
-        Some(found) => Check::ok(name, format!("{name} found at {}", found.display())),
-        None => Check::warn(name, format!("{name} is not on PATH"), fix),
-    }
-}
 
 /// The checks for an opened store, in display order:
 ///
@@ -140,28 +125,6 @@ fn identity_check(git: &Git, bookkeeper: &str) -> Option<Check> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    #[cfg(unix)]
-    fn tool_check_looks_in_the_given_path() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let tool = dir.path().join("glow");
-        std::fs::write(&tool, "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let env = vec![("PATH".to_owned(), dir.path().display().to_string())];
-        let c = tool_check("glow", &env, "install glow");
-        assert_eq!(c.status, CheckStatus::Ok);
-        assert_eq!(c.name, "glow");
-        assert_eq!(c.detail, format!("glow found at {}", tool.display()));
-        assert_eq!(c.fix, None);
-        let c = tool_check("gh", &env, "install gh");
-        assert_eq!(c.status, CheckStatus::Warn);
-        assert_eq!(c.detail, "gh is not on PATH");
-        assert_eq!(c.fix.as_deref(), Some("install gh"));
-        let c = tool_check("glow", &[], "install glow");
-        assert_eq!(c.status, CheckStatus::Warn, "no PATH at all");
-    }
 
     #[test]
     fn notebook_check_mentions_git() {

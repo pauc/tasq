@@ -59,7 +59,7 @@ pub enum StoreError {
         source: FormatError,
     },
     /// A configuration value could not be resolved (a notebook that does not
-    /// exist, no home directory, ...).
+    /// exist, no home directory, ...). Raised by the nb store only.
     #[error("{setting}{}: {message}", file.as_deref().map(|f| format!(" (set in {})", f.display())).unwrap_or_default())]
     Config {
         /// The dotted config key, for example `store.notebook`.
@@ -151,7 +151,7 @@ pub enum IdScheme {
 /// What a store says about itself (`tasq store info`, `tasq doctor`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoreInfo {
-    /// Implementation name (`nb`).
+    /// Implementation name (`tasq`, or `nb` for the notebook store).
     pub name: String,
     /// Where the tasks live.
     pub location: PathBuf,

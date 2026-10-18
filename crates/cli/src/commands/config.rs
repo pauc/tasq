@@ -69,6 +69,12 @@ pub fn render(loaded: &Loaded) -> Result<String> {
     for (i, layer) in loaded.layers.iter().enumerate() {
         let _ = writeln!(out, "#   {}. {}", i + 1, layer.origin);
     }
+    if table
+        .values()
+        .any(|v| !v.is_table() && !is_array_of_tables(v))
+    {
+        out.push('\n');
+    }
     write_table(table, "", loaded, &mut out);
     Ok(out)
 }
@@ -223,7 +229,7 @@ mod tests {
             config: Config::default(),
             layers: vec![Layer {
                 origin: Origin::Defaults,
-                keys: vec!["store.notebook".into(), "ui.pager".into()],
+                keys: vec!["store.name".into(), "ui.pager".into()],
             }],
             profile: None,
             profiles: vec!["work".into()],
@@ -237,12 +243,15 @@ mod tests {
         assert!(
             text.contains(&format!(
                 "{:<COMMENT_COLUMN$} # defaults\n",
-                "notebook = \"home\""
+                "name = \"default\""
             )),
             "{text}"
         );
         assert!(
-            text.contains(&format!("{:<COMMENT_COLUMN$} # unset\n", "kind = \"nb\"")),
+            text.contains(&format!(
+                "{:<COMMENT_COLUMN$} # unset\n",
+                "default_status = \"ready\""
+            )),
             "{text}"
         );
         assert!(

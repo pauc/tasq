@@ -5,15 +5,13 @@
 # `tasks tlogs`. Put it on PATH and run it as `tasq tlogs [SPEC...]`: `tasq tlogs`,
 # `tasq tlogs yesterday`, `tasq tlogs last week`, `tasq tlogs 2026-09-01 2026-09-05`
 # (SPEC is whatever `tasq dates` accepts). It talks to tasq only through
-# `$TASQ_BIN ... --json`, so it sees the same notebook, profile and --set overrides
+# `$TASQ_BIN ... --json`, so it sees the same store, profile and --set overrides
 # as the `tasq` that ran it.
 #
 # Default: resolve the range, cd to `work.default_project` and replace itself with
 # `claude "/time-logs <from> <to>"`, through `direnv exec` when `launch.env` is
 # `direnv` and the directory's .envrc is allowed. The /time-logs skill (personal,
 # not shipped here) reads HiBob, GitLab, Calendar and Slack and posts /spend.
-# The session gets TASKS_NB_NOTEBOOK=<store.notebook> so a skill written for the
-# old script reads the same notebook.
 #
 #   --propose    Do not launch anything: for every working day, list the tasks
 #                that received a progress note and split TLOGS_HOURS (default 8)
@@ -105,7 +103,6 @@ if [ ! -d "$dir" ]; then
   echo "tasq-tlogs: work.default_project not found: $dir" >&2
   exit 1
 fi
-notebook=$(jq -r '.config.store.notebook // empty' <<<"$config")
 env_strategy=$(jq -r '.config.launch.env // "direnv"' <<<"$config")
 
 cmd=(claude "/time-logs $from $to")
@@ -123,12 +120,10 @@ fi
 
 if [ "$dry_run" = 1 ]; then
   printf 'cd %q && ' "$dir"
-  [ -z "$notebook" ] || printf 'TASKS_NB_NOTEBOOK=%q ' "$notebook"
   printf '%q ' "${cmd[@]}"
   echo
   exit 0
 fi
 
 cd "$dir"
-[ -z "$notebook" ] || export TASKS_NB_NOTEBOOK="${TASKS_NB_NOTEBOOK:-$notebook}"
 exec "${cmd[@]}"

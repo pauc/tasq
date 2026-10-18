@@ -2,7 +2,8 @@
 # Claude Code status line showing the tasq task of this session.
 #
 # Sessions started by `tasq next` / `tasq pick` carry TASQ_TASK_ID (and
-# TASQ_NOTEBOOK / TASQ_PROFILE, so `tasq view` reads the right notebook).
+# TASQ_DATA_DIR / TASQ_STORE_NAME / TASQ_PROFILE, so `tasq view` reads the
+# right store).
 # The line is `[id] title`; outside a tasq session it is the current
 # directory. Install it with, in ~/.claude/settings.json:
 #

@@ -5,7 +5,7 @@
 //! function (or a `Store` call) followed by rendering. Nothing in this crate
 //! is mutation-tested; behaviour is pinned by the integration tests under
 //! `tests/`, which run the binary against a temporary copy of the fixture
-//! notebook and snapshot its output with `insta`.
+//! store and snapshot its output with `insta`.
 //!
 //! Exit codes: `0` success, `1` a user error (`tasq: <message>` on stderr:
 //! bad config, unknown task, invalid value), `2` a usage error (clap's own

@@ -7,7 +7,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use tasq_core::clock::{Clock, SystemClock};
-use tasq_core::config::StoreConfig;
 use tasq_core::doctor::Check;
 use tasq_core::format::{self, Document, FormatError, Parsed};
 use tasq_core::model::{Task, TaskDraft, TaskId, Workflow};
@@ -166,9 +165,10 @@ impl fmt::Debug for NbStore {
 }
 
 impl NbStore {
-    /// Resolves `config.notebook` (see [`crate::resolve`]) and opens it.
-    pub fn open(config: &StoreConfig, options: &NbStoreOptions) -> Result<Self, StoreError> {
-        let dir = resolve_notebook(&config.notebook, options)?;
+    /// Resolves `notebook`, a name under `NB_DIR` or a path (see
+    /// [`crate::resolve`]), and opens it.
+    pub fn open(notebook: &str, options: &NbStoreOptions) -> Result<Self, StoreError> {
+        let dir = resolve_notebook(notebook, options)?;
         Self::open_dir(dir, options)
     }
 

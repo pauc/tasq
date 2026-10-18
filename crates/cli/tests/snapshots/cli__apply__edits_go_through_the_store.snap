@@ -1,16 +1,18 @@
 ---
 source: crates/cli/tests/cli.rs
-expression: "env.read_task(\"20260902100000.todo.md\")"
+expression: env.read_task(3)
 ---
-# [ ] Answer the support ticket
+---
+id: 3
+status: blocked
+priority: A
+tags: [support]
+---
+# Answer the support ticket
 
 ## Description
 
 Customer asks about the export format.
-
-## Tags
-
-#support #A #blocked
 
 ## Progress
 

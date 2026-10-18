@@ -92,9 +92,11 @@ Conventions, with examples, in [`docs/testing.md`](docs/testing.md). The short v
   `tests/fixtures/nb/home` with `NB_DIR`, `NBRC_PATH`, `HOME` (holding a `.gitconfig`) and
   `NB_AUTO_SYNC=0`, so the real `nb` only ever sees that copy. Fixture ids are the constants in
   `support::id`. Tests that need the real `nb` call `nb_or_skip`.
-- The CLI tests use `TestEnv` (`crates/cli/tests/support/mod.rs`): the same fixture notebook,
-  an isolated `HOME` and a `PATH` holding only `git`, so output is identical with or without nb
-  installed. `TASQ_NOW="YYYY-MM-DD HH:MM"` pins timestamps.
+- The CLI tests use `TestEnv` (`crates/cli/tests/support/mod.rs`): a copy of the v2 fixture
+  store (`crates/store/tests/fixtures/stores/default`) as the default store under an isolated
+  `HOME`, a `PATH` holding only `git` and `TZ=UTC`, so the binary never sees the real store or
+  config. `TASQ_NOW="YYYY-MM-DD HH:MM"` pins timestamps; tasks placed by hand are
+  `write_task(ulid_name(when, n), v2(id, front, body))` and read back by id.
 - Snapshots are `insta`; accept changes with `INSTA_UPDATE=always scripts/guard cargo test -p
   <crate>` (no `cargo insta` needed), then review the diff.
 - No test touches the network. HTTP goes through an injected `Transport`.

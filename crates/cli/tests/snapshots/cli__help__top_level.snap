@@ -2,11 +2,11 @@
 source: crates/cli/tests/cli.rs
 expression: stdout(&out)
 ---
-Terminal task manager over nb markdown todos.
+Terminal task manager over markdown task files.
 
-Tasks are the `*.todo.md` files of an nb notebook; `tasq` reads and writes
-them directly, in the same format the original `tasks` script used, without
-running nb. Writes are committed with git in the background.
+Tasks are the markdown files of a tasq store, a directory under
+~/.local/share/tasq/stores (data_dir, store.name); `tasq` reads and writes
+them directly and keeps everything it did not change byte for byte.
 
 Every command accepts --json for machine-readable output. Exit codes: 0 on
 success, 1 for an error you can fix (`tasq: <message>` on stderr), 2 for a
@@ -38,7 +38,7 @@ Commands:
   dates        Resolve a day or a date range to `FROM TO`, for scripts and plugins
   ui           Browse and edit the open tasks in a full-screen terminal UI
   store        The store behind the tasks: where it is
-  doctor       Check the configuration, the notebook, git and optional tools
+  doctor       Check the configuration, the store and optional tools
   config       Show the effective configuration
   plugins      Plugins: `tasq-<name>` executables on PATH and the configured hooks
   completions  Print a shell completion script to stdout
@@ -56,7 +56,7 @@ Options:
           Use FILE instead of the global config file (also TASQ_CONFIG)
 
       --set <KEY=VALUE>
-          Override one config key, e.g. --set store.notebook=work. Repeatable
+          Override one config key, e.g. --set store.name=work. Repeatable
 
       --json
           Print machine-readable JSON (every document carries "schema": 1)
@@ -106,6 +106,6 @@ Examples:
   tasq summary               standup notes for the last working day
   tasq dates last week       the Monday and Friday, for scripts
   tasq store info            where the tasks live
-  tasq doctor                check config, notebook, git and optional tools
+  tasq doctor                check config, the store and optional tools
   tasq plugins list          tasq-<name> executables on PATH and the hooks
   tasq <name> [args]         run the plugin tasq-<name> (see docs/plugins.md)

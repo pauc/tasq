@@ -1,8 +1,9 @@
-//! Harness for the CLI integration tests: a temporary copy of the nb store's
-//! fixture notebook, an isolated `HOME` and a `PATH` holding only `git`, so
-//! the binary under test never sees the real `~/.nb`, the real config or a
-//! real `nb` (which keeps the output identical whether or not nb is
-//! installed).
+//! Harness for the CLI integration tests: a temporary copy of the v2 fixture
+//! store as the default store under an isolated `HOME`
+//! (`~/.local/share/tasq/stores/default`, ADR-0026), a `PATH` holding only
+//! `git`, and `TZ=UTC` (file names are ULIDs minted from the clock), so the
+//! binary under test never sees the real store, the real config or the
+//! machine's zone.
 
 #![allow(
     dead_code,
@@ -18,8 +19,6 @@ use tempfile::TempDir;
 pub struct TestEnv {
     /// Owns the temporary tree.
     pub root: TempDir,
-    /// `<root>/nb`, what `NB_DIR` points at.
-    pub nb_dir: PathBuf,
     /// `<root>/home`, what `HOME` points at; also the working directory.
     pub home: PathBuf,
     /// `<root>/bin`, the only `PATH` entry.
@@ -27,19 +26,17 @@ pub struct TestEnv {
 }
 
 impl TestEnv {
-    /// A copy of `crates/store-nb/tests/fixtures/nb/home` as notebook `home`.
+    /// A copy of `crates/store/tests/fixtures/stores/default` as the
+    /// default store (ids 1, 3, 4, 6 and 7).
     pub fn fixture() -> Self {
         let env = Self::bare();
-        copy_dir(&fixture_dir(), &env.notebook());
+        copy_dir(&fixture_dir(), &env.store());
         env
     }
 
-    /// A notebook `home` with an empty index and no tasks.
+    /// No store at all: the directory does not exist until the first write.
     pub fn empty() -> Self {
-        let env = Self::bare();
-        std::fs::create_dir_all(env.notebook()).unwrap();
-        std::fs::write(env.notebook().join(".index"), "").unwrap();
-        env
+        Self::bare()
     }
 
     fn bare() -> Self {
@@ -47,7 +44,6 @@ impl TestEnv {
         // Canonical, so paths the binary canonicalizes (project, worktree)
         // normalise the same way as the ones it is given.
         let root_path = root.path().canonicalize().unwrap();
-        let nb_dir = root_path.join("nb");
         let home = root_path.join("home");
         let bin = root_path.join("bin");
         std::fs::create_dir_all(&home).unwrap();
@@ -60,28 +56,33 @@ impl TestEnv {
         if let Some(git) = find_on_path("git") {
             std::os::unix::fs::symlink(git, bin.join("git")).unwrap();
         }
-        Self {
-            root,
-            nb_dir,
-            home,
-            bin,
-        }
+        Self { root, home, bin }
     }
 
-    /// `<root>/nb/home`.
-    pub fn notebook(&self) -> PathBuf {
-        self.nb_dir.join("home")
+    /// The default `data_dir` under this `HOME`:
+    /// `<home>/.local/share/tasq/stores`.
+    pub fn data_dir(&self) -> PathBuf {
+        self.home
+            .join(".local")
+            .join("share")
+            .join("tasq")
+            .join("stores")
+    }
+
+    /// The default store, `<data_dir>/default`.
+    pub fn store(&self) -> PathBuf {
+        self.data_dir().join("default")
     }
 
     /// The binary under test with only this environment, run from `home`,
     /// on a fixed day (`TASQ_NOW`, overridable) so relative due dates do
-    /// not move.
+    /// not move, in UTC so minted file names do not depend on the zone.
     pub fn tasq(&self) -> assert_cmd::Command {
         let mut cmd = assert_cmd::Command::new(env!("CARGO_BIN_EXE_tasq"));
         cmd.env_clear()
             .env("TASQ_NOW", "2026-10-06 09:00")
+            .env("TZ", "UTC")
             .env("HOME", &self.home)
-            .env("NB_DIR", &self.nb_dir)
             .env("PATH", &self.bin)
             .current_dir(&self.home);
         // Under `cargo llvm-cov` the binary is instrumented: without this it
@@ -100,23 +101,58 @@ impl TestEnv {
         cmd
     }
 
-    /// Writes a file inside the notebook.
+    /// Writes a file called `name` inside the store, creating the store
+    /// directory when it does not exist yet (a task placed by hand, or a
+    /// stray markdown file).
     pub fn write_task(&self, name: &str, text: &str) {
-        std::fs::write(self.notebook().join(name), text).unwrap();
+        std::fs::create_dir_all(self.store()).unwrap();
+        std::fs::write(self.store().join(name), text).unwrap();
     }
 
-    /// Appends `name` to the notebook's `.index`, giving the file the next
-    /// id: what registering a write does, for tests that place a file by
-    /// hand with [`Self::write_task`].
-    pub fn register(&self, name: &str) {
-        let path = self.notebook().join(".index");
-        let mut index = std::fs::read_to_string(&path).unwrap();
-        if !index.is_empty() && !index.ends_with('\n') {
-            index.push('\n');
+    /// The task files of the store (`*.md`, not dot files), sorted by
+    /// name; empty when the store does not exist.
+    pub fn task_files(&self) -> Vec<PathBuf> {
+        let Ok(entries) = std::fs::read_dir(self.store()) else {
+            return Vec::new();
+        };
+        let mut files: Vec<PathBuf> = entries
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                p.extension().is_some_and(|e| e == "md")
+                    && !p
+                        .file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+            })
+            .collect();
+        files.sort();
+        files
+    }
+
+    /// The one file in the store whose frontmatter says `id: <id>`.
+    pub fn file_of(&self, id: u64) -> PathBuf {
+        let line = format!("id: {id}");
+        let found: Vec<PathBuf> = self
+            .task_files()
+            .into_iter()
+            .filter(|p| {
+                std::fs::read_to_string(p)
+                    .unwrap()
+                    .lines()
+                    .skip(1)
+                    .take_while(|l| *l != "---")
+                    .any(|l| l.trim() == line)
+            })
+            .collect();
+        match found.as_slice() {
+            [one] => one.clone(),
+            [] => panic!("no task file with id {id} in {}", self.store().display()),
+            many => panic!("id {id} is claimed by {many:?}"),
         }
-        index.push_str(name);
-        index.push('\n');
-        std::fs::write(&path, index).unwrap();
+    }
+
+    /// Contents of the file of task `id`.
+    pub fn read_task(&self, id: u64) -> String {
+        std::fs::read_to_string(self.file_of(id)).unwrap()
     }
 
     /// Writes `<home>/.tasq.toml`.
@@ -138,11 +174,6 @@ impl TestEnv {
         let canonical = self.root.path().canonicalize().unwrap();
         text.replace(&canonical.display().to_string(), "[ROOT]")
             .replace(&self.root.path().display().to_string(), "[ROOT]")
-    }
-
-    /// Contents of a notebook file.
-    pub fn read_task(&self, name: &str) -> String {
-        std::fs::read_to_string(self.notebook().join(name)).unwrap()
     }
 
     /// Runs `git <args>` in `dir` with this environment; panics on failure.
@@ -191,6 +222,32 @@ impl TestEnv {
         }
         panic!("fake {name} never became runnable");
     }
+}
+
+/// A v2 task file: the frontmatter block (`id` first, then `front`: zero or
+/// more `key: value` lines, each ending in `\n`) and `body`, which starts
+/// with the `# Title` line and ends in `\n`.
+pub fn v2(id: u64, front: &str, body: &str) -> String {
+    assert!(
+        front.is_empty() || front.ends_with('\n'),
+        "front must end in a newline: {front:?}"
+    );
+    format!("---\nid: {id}\n{front}---\n{body}")
+}
+
+/// The ULID file name for a task created at `when` (`YYYY-MM-DD HH:MM`,
+/// UTC) whose random part is the number `n`: what the store would mint at
+/// that time, with a predictable tail (the fixture store's names have
+/// tails 1 to 5).
+pub fn ulid_name(when: &str, n: u64) -> String {
+    let millis = chrono::NaiveDateTime::parse_from_str(when, "%Y-%m-%d %H:%M")
+        .unwrap()
+        .and_utc()
+        .timestamp_millis();
+    format!(
+        "{}.md",
+        tasq_store::ulid::Ulid::from_parts(u64::try_from(millis).unwrap(), u128::from(n))
+    )
 }
 
 /// A loopback HTTP server answering GET requests from a fixed route table
@@ -263,15 +320,16 @@ pub fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-/// The nb store's fixture notebook in the source tree.
+/// The v2 fixture store in the source tree.
 pub fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../store-nb/tests/fixtures/nb/home")
+        .join("../store/tests/fixtures/stores/default")
         .canonicalize()
-        .expect("fixture notebook exists")
+        .expect("fixture store exists")
 }
 
-fn copy_dir(from: &Path, to: &Path) {
+/// Copies `from` into `to` recursively (`to` is created).
+pub fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
     for entry in std::fs::read_dir(from).unwrap() {
         let entry = entry.unwrap();

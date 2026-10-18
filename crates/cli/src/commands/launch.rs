@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 use tasq_core::config::ENV_PROFILE;
-use tasq_core::launch::{ENV_NOTEBOOK, ENV_TASK_ID, LaunchContext, LaunchOutcome, resolve_workdir};
+use tasq_core::launch::{ENV_TASK_ID, LaunchContext, LaunchOutcome, resolve_workdir};
 use tasq_core::model::{Status, TaskId};
 use tasq_core::query::{self, Filter};
 use tasq_core::store::{Store, StoreError};
@@ -227,10 +227,8 @@ fn open_session(
         )?;
     }
 
-    let mut env = vec![
-        (ENV_TASK_ID.to_owned(), id.to_string()),
-        (ENV_NOTEBOOK.to_owned(), app.config().store.notebook.clone()),
-    ];
+    let mut env = vec![(ENV_TASK_ID.to_owned(), id.to_string())];
+    env.extend(app.store_env()?);
     if let Some(profile) = &app.loaded.profile {
         env.push((ENV_PROFILE.to_owned(), profile.clone()));
     }

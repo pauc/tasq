@@ -14,7 +14,7 @@ Options:
           Use FILE instead of the global config file (also TASQ_CONFIG)
 
       --set <KEY=VALUE>
-          Override one config key, e.g. --set store.notebook=work. Repeatable
+          Override one config key, e.g. --set store.name=work. Repeatable
 
       --json
           Print machine-readable JSON (every document carries "schema": 1)

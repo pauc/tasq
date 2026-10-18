@@ -1,28 +1,24 @@
 ---
 source: crates/cli/tests/cli.rs
-expression: env.normalize(&file)
+expression: env.normalize(&env.read_task(8))
 ---
-# [ ] Reply to the auditor
+---
+id: 8
+status: waiting
+priority: A
+due: 2026-10-08
+project: [ROOT]/home/proj
+tags: [audit, support]
+---
+# Reply to the auditor
 
 ## Description
 
 They asked for the Q3 export.
 
-## Project
-
-[ROOT]/home/proj
-
-## Due
-
-2026-10-08
-
 ## Related
 
 - https://example.invalid/ticket/9
-
-## Tags
-
-#audit #support #A #waiting
 
 ## Progress
 

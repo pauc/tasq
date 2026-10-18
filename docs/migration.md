@@ -88,8 +88,8 @@ names below are from `crates/core/src/config/mod.rs`.
 
 | Script | Default in the script | `tasq` key | `tasq` env |
 |---|---|---|---|
-| `TASKS_NB_NOTEBOOK` | `home` | `store.notebook` | `TASQ_NOTEBOOK` |
-| `NB_DIR` | `~/.nb` | honoured as is (notebook dir is `$NB_DIR/<name>`; `store.notebook` may also be a path) | `NB_DIR` |
+| `TASKS_NB_NOTEBOOK` | `home` | `store.name` (a tasq store under `data_dir`, ADR-0026; convert the notebook once with `tasq migrate <notebook>`) | `TASQ_STORE_NAME` |
+| `NB_DIR` | `~/.nb` | read by `tasq migrate <name>` only (`$NB_DIR/<name>`); tasks live in `data_dir` (default `~/.local/share/tasq/stores`) | `TASQ_DATA_DIR` |
 | `TASKS_DEFAULT_WORKTREE` | `~/code/SF/silverfin_worspace/silverfin` | `work.default_project` (no default: unset means "no fallback directory") | `TASQ_DEFAULT_PROJECT` |
 | `TASKS_PAGER` | `less -RFX` | `ui.pager` | `TASQ_PAGER` |
 | `TASKS_GLOW_STYLE` | `dark` | `ui.glow_style` | `TASQ_GLOW_STYLE` |
@@ -127,8 +127,8 @@ model = "sonnet"
 ```
 
 `export TASKS_NB_NOTEBOOK=Zantop` per project becomes a `.tasq.toml` in that
-project with `[store] notebook = "Zantop"`, or a `[profile.zantop]` block and
-`--profile zantop` / `TASQ_PROFILE`.
+project with `[store] name = "Zantop"` (after `tasq migrate Zantop`), or a
+`[profile.zantop]` block and `--profile zantop` / `TASQ_PROFILE`.
 
 ## What each tool writes that the other does not know about
 

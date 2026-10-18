@@ -16,10 +16,11 @@ use crate::model::{Task, Worktree};
 /// Environment variable carrying the task id into the session (the status
 /// line and the wrap-up skill read it).
 pub const ENV_TASK_ID: &str = "TASQ_TASK_ID";
-/// Environment variable carrying the notebook into the session, so the
-/// session's own `tasq` calls hit the same notebook even when the session
-/// does not inherit the launching shell's environment (herdr panes).
-pub const ENV_NOTEBOOK: &str = "TASQ_NOTEBOOK";
+/// The config overrides for `data_dir` and `store.name`, which a launched
+/// session also receives (the directory resolved and absolute), so the
+/// session's own `tasq` calls hit the same store even when the session does
+/// not inherit the launching shell's environment (herdr panes).
+pub use crate::config::{ENV_DATA_DIR, ENV_STORE_NAME};
 
 /// Everything a launcher needs to open a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,7 +39,8 @@ pub struct LaunchContext {
     /// says nothing about them.
     pub worktrees: bool,
     /// Variables to set in the session on top of its environment
-    /// ([`ENV_TASK_ID`], [`ENV_NOTEBOOK`], the profile when selected).
+    /// ([`ENV_TASK_ID`], [`ENV_DATA_DIR`], [`ENV_STORE_NAME`], the profile
+    /// when selected).
     pub env: Vec<(String, String)>,
     /// Status names of the workflow, for the prompt.
     pub statuses: Vec<String>,

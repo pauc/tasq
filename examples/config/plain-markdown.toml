@@ -1,23 +1,18 @@
-# tasq configuration for a machine WITHOUT nb installed.
+# tasq configuration for a plain setup: one store, no sources, no worktrees.
 #
 # Copy to ~/.config/tasq/config.toml (or $XDG_CONFIG_HOME/tasq/config.toml).
 # Every key below is a real key; an unknown key is an error naming the file,
 # line and column. Keys left at their default are shown anyway so the file
 # documents itself. Full reference: docs/config.md.
 #
-# The notebook is a directory of `*.todo.md` files plus a `.index` file,
-# exactly what nb would create. Make it once:
-#
-#     mkdir -p ~/.nb/home          # or $NB_DIR/home
-#     git init -q ~/.nb/home       # optional: tasq then commits every write in the background
-#
-# `tasq create` writes the first task; a missing `.index` is created from the
-# files on first use. Check with `tasq doctor`. tasq never runs nb, so
-# nothing here changes when nb is installed later.
+# The store is a directory of `<ULID>.md` task files, each starting with a
+# small `key: value` block (ADR-0026). Nothing to set up: the first
+# `tasq create` makes the directory. Check with `tasq doctor`.
+
+data_dir = "~/.local/share/tasq/stores"   # the default: $XDG_DATA_HOME/tasq/stores
 
 [store]
-kind = "nb"                  # the nb-compatible markdown store, the only one today
-notebook = "home"            # ~/.nb/home, or $NB_DIR/home
+name = "default"             # the store directory is <data_dir>/<name>
 
 [workflow]
 statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
