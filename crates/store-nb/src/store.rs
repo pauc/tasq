@@ -15,7 +15,7 @@ use tasq_core::query::Filter;
 use tasq_core::store::{BatchError, IdScheme, Store, StoreError, StoreInfo};
 
 use crate::bookkeeper::{Bookkeeper, NativeBookkeeper, WriteLock};
-use crate::create::{DEFAULT_NOTE, check_draft, free_file_name};
+use crate::create::{check_draft, free_file_name};
 use crate::index::{Index, is_todo};
 use crate::native::{JOB_FIX, markdown_files, verify_index};
 use crate::resolve::{index_path, resolve_notebook};
@@ -488,14 +488,10 @@ impl NbStore {
     }
 
     /// The text [`Store::create`] writes for `draft`: the draft as a task
-    /// with the id still unknown, its note (or [`DEFAULT_NOTE`]) stamped
+    /// with the id still unknown, its note (or [`tasq_store::draft::DEFAULT_NOTE`]) stamped
     /// at `now`, rendered by [`Document::from_task`].
     fn render_draft(&self, draft: TaskDraft) -> String {
-        let mut draft = draft;
-        if draft.note.is_none() {
-            draft.note = Some(DEFAULT_NOTE.to_owned());
-        }
-        let task = draft.into_task(TaskId::from(0), self.clock.as_ref());
+        let task = tasq_store::draft::materialize(draft, TaskId::from(0), self.clock.as_ref());
         format::render(&Document::from_task(&task, &self.workflow))
     }
 
