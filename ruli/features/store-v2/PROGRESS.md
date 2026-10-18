@@ -10,8 +10,8 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 | SV-002 | `tasq-store` crate skeleton, revision and diff moved (prefactor) | done | 7920eb3; `crates/store` (`tasq-store`, deps: core only); `revision.rs` and `diff.rs` moved with their 16 unit tests, store-nb re-exports `Revision`, `diff`, `revision`; `mutants-in crates/store/src`: 44 mutants, 42 caught, 2 unviable, 0 missed (two tests added) |
 | SV-003 | Core reads and renders a v2 task file | done | 710f1ff, c1d2bf1; `Document` keeps the block as a `front` region ahead of the body, `format::parse_v2(text, created_at, workflow)`, `Document::{frontmatter, id}`, `format::key`, `Task::created_at`; nine v2 fixtures under `crates/core/tests/fixtures/v2/`, `format_v2.rs` (23 tests), a v2 arm in `format_props.rs`; `mutants-in crates/core/src/format`: 385 mutants, 347 caught, 38 unviable, 0 missed |
 | SV-004 | Core writes v2: new documents and one op per key | done | dba6a08; `Document::from_task_v2`, `key::ORDER`, `ops::{set_key, clear_key, set_origin, clear_origin}`, every scalar op dispatches on the shape; `diff::apply` writes the origin on v2; `format_v2_write.rs` (28 tests), two v2 props; `mutants-in crates/core/src/format`: 415 mutants, 376 caught, 39 unviable, 0 missed (one `||` survivor in `clear_origin` fixed by reshaping it to a `map` over the three keys); `mutants-in crates/store/src`: 45 mutants, 0 missed |
-| SV-005 | The tasq store reads a directory | ready | |
-| SV-006 | Create under the store lock | blocked (SV-005) | |
+| SV-005 | The tasq store reads a directory | done | 5e1226b, 7e222fc; `TasqStore::new(dir, workflow)` (`crates/store/src/store.rs`), `tasq_store::ulid::Ulid`, `StoreError::AmbiguousId`; `tests/read.rs` (12 tests) over a temp directory; `mutants-in crates/store/src`: 127 mutants, 108 caught, 19 unviable, 0 missed; `--in-diff main` (before the review follow-ups): 276 mutants, 0 missed |
+| SV-006 | Create under the store lock | ready | |
 | SV-007 | Update with conflict detection, and doctor | blocked (SV-006) | |
 | SV-008 | Migrate as a library, and the committed v2 fixture store | blocked (SV-006) | |
 | SV-009 | The CLI opens the tasq store | blocked (SV-001, SV-007, SV-008) | |
@@ -136,6 +136,43 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   fixtures' tasks round-trip through a v2 document too, including the v1 `source` fixture
   whose url-shaped id became an explicit `source_url`.
 
+- 2026-10-18 (SV-005): the read path is one function, `TasqStore::scan`: `read_dir`, keep
+  the non-dot names whose extension is `md` (ignoring case, clippy's
+  `case_sensitive_file_extension_comparisons`), sort them, read each one and classify the
+  error (`NotFound` and `IsADirectory` are dropped: a file that vanished, a dangling symlink,
+  a directory named `x.md`; anything else is `StoreError::Io` naming the file), then
+  `format::parse_v2`. A parse failure of any variant is "not a v2 task file": skipped by
+  `list`, `NotFound` to `get`, a `task-file` `Fail` in `doctor`. Reading first and checking
+  the error, instead of `file_type()` then read, is what makes the vanished-file branch
+  reachable from a test (a dangling symlink); with `file_type()` first it was a missed
+  mutant. A symlink to a task file is a task file; `file_of` returns the link.
+- 2026-10-18 (SV-005): `created_at` is the ULID's millisecond timestamp converted with
+  `chrono::Local` (`store::local_time`), the one zone-dependent conversion in the store crate:
+  the model's timestamps are local wall-clock naive times (`tasq_core::clock`), and the
+  file name is UTC by the ULID spec. The tests compute the expectation with the same
+  conversion from the known millisecond, so they hold in any `TZ`; SV-006 needs the inverse
+  for minting. A `.md` file that parses as v2 but whose stem is not a ULID (uppercase
+  Crockford, 26 chars, first at most `7`) is a task with `created_at: None`, not a skipped
+  file: doctor's definition of a task file is "frontmatter with an id", and a stray copy
+  (`x (copy).md`) is then reported as a duplicate id instead of silently ignored.
+- 2026-10-18 (SV-005): `ulid::Ulid` is parse, `from_parts`, `timestamp` and `Display`, no
+  crate. The spec's example `01ARZ3NDEKTSV4RRFFQ69G5FAV` decodes to 1469922850259 ms
+  (2016-07-30 23:54:10.259 UTC), checked with an independent Python decode before it became
+  the test constant (the first guess, 1469918176385, was the spec's monotonicity example).
+  The base32 accumulation is `(value << 5) + digit`, not `| digit`: `|` has the equivalent
+  mutant `^` (the low bits are zero after the shift), `+` has none.
+- 2026-10-18 (SV-005): an id claimed by two files is `StoreError::AmbiguousId { id, paths }`
+  (new in core, `"id 7 is claimed by more than one file: a.md, b.md"`) from `get` and
+  `file_of`; `list` returns both tasks and queues one warning per such id (the store keeps
+  `RefCell<Vec<String>>` because `list` takes `&self`), which also gives `take_warnings` a
+  real test instead of the `Vec::new()`/`vec![]` equivalent-mutant problem of SV-001.
+- 2026-10-18 (SV-005): `cargo mutants -E 'impl Display'` does not exclude a `impl
+  fmt::Display for Ulid` block: the pattern matches the text as written in the source.
+- 2026-10-18 (SV-005, for SV-007): `scan` reads a file with `String::from_utf8_lossy`, as the
+  nb store does. An `update` that diffs against the lossy text and writes it back would
+  replace invalid bytes with U+FFFD; SV-007 should refuse (or keep the bytes) rather than
+  rewrite them. Reads are unaffected.
+
 ## Deviations
 
 - SV-001's first criterion read "No file in the CLI crate names the nb store type". The
@@ -171,6 +208,22 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   scalar ops (one op per command is the module's rule; a dispatch helper would hide which key
   each writes), and the `map_or(1, ..)` top-of-block fallback in `Document::set_key`
   (unreachable after parse, 0 missed mutants).
+- SV-005: `Store::doctor` is required by the trait, and a stub returning `Vec::new()` fails
+  the zero-missed bar, so two of SV-007's three checks landed here: `store` (the directory:
+  absent, unreadable, or its task file count), one `task-file` `Fail` per `.md` that is not a
+  v2 task file (or `task-files` `Ok`) and one `ids` `Fail` per duplicated id (or `ids`
+  `Ok`). The stale-lock check waits for the lock (SV-006). `create`, `update` and `set_done`
+  return `StoreError::Unsupported` ("the tasq store does not write yet") until SV-006 and
+  SV-007. `TasqStore` has no `dir()`/`workflow()` accessors: nothing needed them and the
+  untested `workflow()` was a missed mutant; `describe().location` is the directory.
+- SV-005 review follow-ups (same commit): `StoreError::AmbiguousId` is built once
+  (`Scan::single`) and its `Display` is the `get` error, the `list` warning (plus "; see
+  'tasq doctor'") and the doctor `ids` detail, so the wording has one pin (`error_messages`
+  in core); `describe` on a directory it cannot read reports `0` and queues the I/O error as
+  a warning, so `tasq store info` does not pass a permission problem off as an empty store;
+  the `task-file` fix text follows the parse error (five variants, each pinned);
+  `docs/architecture.md` describes the crate's read path and the two new modules. SV-007's
+  text in PLAN.md was narrowed to the stale-lock check.
 - SV-003: `FormatError::NotATask`'s message still names only the v1 title shapes; the CLI and
   store-nb snapshots pin it, and the tasq store (SV-005) classifies files through
   `NotFrontmatter` instead. The v2 file format is implemented but `docs/file-format.md` is
@@ -180,5 +233,5 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 ## Blockers
 
 - One cargo build at a time on this machine (`scripts/guard`); independent sub-tasks (SV-001,
-  SV-002 and SV-003 were; SV-005 is now the frontier, SV-006 waits on it only) are worked
+  SV-002 and SV-003 were; SV-006 is now the frontier, SV-007 and SV-008 wait on it) are worked
   one after another, not in parallel agents.

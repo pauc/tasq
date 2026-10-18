@@ -383,14 +383,14 @@ is not a v2 task file is skipped, and a directory that does not exist is an empt
 
 **Blocked by:** SV-002, SV-003.
 
-**Status:** ready
+**Status:** done
 
-- [ ] `list` on an absent directory is empty and creates nothing; `describe` reports it.
-- [ ] `get` returns the task whose frontmatter id matches, with `created_at` equal to the ULID's time.
-- [ ] Two files with the same id: `get` and any id-taking call fail naming both files; `list` returns both.
-- [ ] A non-task `.md`, a non-`.md` file and the `.tasq/` directory are ignored by reads.
-- [ ] `describe` reports stable ids and that ids never change on reconcile.
-- [ ] Zero missed mutants in the touched code.
+- [x] `list` on an absent directory is empty and creates nothing; `describe` reports it.
+- [x] `get` returns the task whose frontmatter id matches, with `created_at` equal to the ULID's time.
+- [x] Two files with the same id: `get` and any id-taking call fail naming both files; `list` returns both.
+- [x] A non-task `.md`, a non-`.md` file and the `.tasq/` directory are ignored by reads.
+- [x] `describe` reports stable ids and that ids never change on reconcile.
+- [x] Zero missed mutants in the touched code.
 
 ### SV-006: create under the store lock
 
@@ -401,7 +401,7 @@ all succeed. A stale lock is broken, a live one is waited on.
 
 **Blocked by:** SV-004, SV-005.
 
-**Status:** blocked
+**Status:** ready
 
 - [ ] Creating in an absent directory creates it and the task gets id 1.
 - [ ] Ids are highest-plus-one; a deleted file's id is not reused when a higher one exists.
@@ -414,8 +414,8 @@ all succeed. A stale lock is broken, a live one is waited on.
 
 **What to build:** `update` takes the whole task under the lock, diffs it against the file,
 applies the v2 ops, re-parses and refuses with `Unsupported` when the result still differs,
-and fails with `Conflict` when the file changed since it was read. Doctor reports files without
-frontmatter or id, duplicate ids and a stale lock, naming the files.
+and fails with `Conflict` when the file changed since it was read. Doctor reports a stale lock,
+naming the file (the non-task-file and duplicate-id checks landed with SV-005).
 
 **Blocked by:** SV-006.
 
@@ -424,7 +424,7 @@ frontmatter or id, duplicate ids and a stale lock, naming the files.
 - [ ] Every scalar and list change made through `update` is visible on re-read and leaves unrelated lines untouched.
 - [ ] A change the ops cannot express is refused with `Unsupported` and writes nothing.
 - [ ] An external edit between read and write is a `Conflict`; the external edit survives.
-- [ ] Doctor on a clean store reports nothing; on a store with a frontmatter-less file, a duplicate id and a stale lock it reports the three findings with their paths.
+- [ ] Doctor on a clean store reports only `Ok` checks; on a store with a stale lock it reports it with the lock's path, next to SV-005's `task-file` and `ids` checks.
 - [ ] Zero missed mutants in the touched code.
 
 ### SV-008: migrate as a library, and the committed v2 fixture store
