@@ -290,7 +290,8 @@ fn ranked() {
 #[test]
 fn source() {
     let task = parse(&fixture("source")).task;
-    // A `source_id` that is a url is the url too, as the v1 line was.
+    // Unlike the v1 `## Source` line, a url-shaped `source_id` is not the
+    // url: only `source_url` is (the writer always writes it).
     assert_eq!(
         task.origin,
         Some(Origin {
@@ -511,8 +512,9 @@ fn origin_needs_a_source_and_an_id() {
         Some(Origin {
             source: "http".into(),
             external_id: "http://x.invalid/1".into(),
-            url: Some("http://x.invalid/1".into()),
-        })
+            url: None,
+        }),
+        "a url-shaped id is not the url: absent means unset"
     );
     assert_eq!(origin("source: gitlab"), None);
     assert_eq!(origin("source: gitlab\nsource_id:"), None);
@@ -676,9 +678,26 @@ fn a_v1_file_is_not_a_v2_file_and_vice_versa() {
     let doc = Document::parse(v1).unwrap();
     assert_eq!(doc.id(), None);
     assert_eq!(doc.frontmatter(), None);
-    // A frontmatter-less file whose first line is a v2 title is no task at all.
+    // Any other markdown file is not a v2 task file either.
+    for text in [
+        "# T\n",
+        "# Notes\n\nsome notes\n",
+        "",
+        "\n",
+        "--- \n",
+        "---x\n",
+    ] {
+        assert_eq!(
+            format::parse_v2(text, None, &wf).unwrap_err(),
+            FormatError::NotFrontmatter {
+                first_line: text.lines().next().unwrap_or("").into()
+            },
+            "{text:?}"
+        );
+    }
+    // `Document::parse` still says what such a file is not.
     assert_eq!(
-        format::parse_v2("# T\n", None, &wf).unwrap_err(),
+        Document::parse("# T\n").unwrap_err(),
         FormatError::NotATask {
             first_line: "# T".into()
         }

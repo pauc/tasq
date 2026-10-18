@@ -18,36 +18,8 @@ use std::str::FromStr;
 use crate::clock::{When, parse_date, parse_timestamp};
 use crate::model::{Origin, Priority, Tag, Task, TaskId, Workflow};
 
-use super::document::{Document, Frontmatter, Section};
+use super::document::{Document, Frontmatter, Section, key};
 use super::entry;
-
-/// Names of the frontmatter keys of a v2 task file (ADR 0026).
-pub mod key {
-    /// `id`: the task's id, a positive integer; required.
-    pub const ID: &str = "id";
-    /// `status`: a workflow status name, or [`DONE_STATUS`].
-    pub const STATUS: &str = "status";
-    /// The `status` value of a done task.
-    pub const DONE_STATUS: &str = "done";
-    /// `priority`: `A`, `B` or `C`.
-    pub const PRIORITY: &str = "priority";
-    /// `rank`: an integer (ADR 0025).
-    pub const RANK: &str = "rank";
-    /// `due`: `YYYY-MM-DD`.
-    pub const DUE: &str = "due";
-    /// `closed`: `YYYY-MM-DD HH:MM`, read on done tasks only.
-    pub const CLOSED: &str = "closed";
-    /// `project`: a directory path.
-    pub const PROJECT: &str = "project";
-    /// `source`: the origin's source name.
-    pub const SOURCE: &str = "source";
-    /// `source_id`: the origin's external id.
-    pub const SOURCE_ID: &str = "source_id";
-    /// `source_url`: the origin's url.
-    pub const SOURCE_URL: &str = "source_url";
-    /// `tags`: the topic tags as a one-line list, `[a, b]`, without `#`.
-    pub const TAGS: &str = "tags";
-}
 
 /// Names of the sections the format layer understands.
 pub mod section {
@@ -103,30 +75,7 @@ pub fn project(doc: &Document, id: TaskId, workflow: &Workflow) -> Task {
                 .extend(section.body.iter().filter_map(|l| entry::parse_session(l))),
             // The scalar sections of v1 are unknown sections in a v2 body.
             _ if front.is_some() => {}
-            section::PROJECT => {
-                if task.project.is_none() {
-                    task.project = first_non_empty(&section).map(PathBuf::from);
-                }
-            }
-            section::DUE => {
-                if task.due.is_none() {
-                    task.due = first_non_empty(&section).and_then(|l| parse_date(l).ok());
-                }
-            }
-            section::TAGS => read_tags(&section, workflow, &mut task),
-            section::SOURCE if task.origin.is_none() => {
-                task.origin = section.body.iter().find_map(|l| entry::parse_origin(l));
-            }
-            section::CLOSED if task.closed_at.is_none() => {
-                task.closed_at = first_non_empty(&section).and_then(|l| match parse_timestamp(l) {
-                    Ok(When::DateTime(at)) => Some(at),
-                    Ok(When::Date(_)) | Err(_) => None,
-                });
-            }
-            section::RANK if task.rank.is_none() => {
-                task.rank = first_non_empty(&section).and_then(|l| l.trim().parse().ok());
-            }
-            _ => {}
+            _ => read_v1_scalar(&section, workflow, &mut task),
         }
     }
     if task.done {
@@ -139,6 +88,38 @@ pub fn project(doc: &Document, id: TaskId, workflow: &Workflow) -> Task {
         task.closed_at = None;
     }
     task
+}
+
+/// The one-value and tag sections of a v1 file (`## Project`, `## Due`,
+/// `## Tags`, `## Source`, `## Closed`, `## Rank`); any other name is an
+/// unknown section.
+fn read_v1_scalar(section: &Section<'_>, workflow: &Workflow, task: &mut Task) {
+    match section.name {
+        section::PROJECT => {
+            if task.project.is_none() {
+                task.project = first_non_empty(section).map(PathBuf::from);
+            }
+        }
+        section::DUE => {
+            if task.due.is_none() {
+                task.due = first_non_empty(section).and_then(|l| parse_date(l).ok());
+            }
+        }
+        section::TAGS => read_tags(section, workflow, task),
+        section::SOURCE if task.origin.is_none() => {
+            task.origin = section.body.iter().find_map(|l| entry::parse_origin(l));
+        }
+        section::CLOSED if task.closed_at.is_none() => {
+            task.closed_at = first_non_empty(section).and_then(|l| match parse_timestamp(l) {
+                Ok(When::DateTime(at)) => Some(at),
+                Ok(When::Date(_)) | Err(_) => None,
+            });
+        }
+        section::RANK if task.rank.is_none() => {
+            task.rank = first_non_empty(section).and_then(|l| l.trim().parse().ok());
+        }
+        _ => {}
+    }
 }
 
 /// The scalar fields of a v2 task, from the block. `status: done` is the
@@ -158,13 +139,10 @@ fn read_frontmatter(front: &Frontmatter<'_>, workflow: &Workflow, task: &mut Tas
     });
     task.project = get(key::PROJECT).map(PathBuf::from);
     task.origin = get(key::SOURCE).and_then(|source| {
-        let external_id = get(key::SOURCE_ID)?;
         Some(Origin {
             source: source.to_owned(),
-            external_id: external_id.to_owned(),
-            url: get(key::SOURCE_URL)
-                .or_else(|| entry::is_url(external_id).then_some(external_id))
-                .map(str::to_owned),
+            external_id: get(key::SOURCE_ID)?.to_owned(),
+            url: get(key::SOURCE_URL).map(str::to_owned),
         })
     });
     for tag in get(key::TAGS).map(parse_tag_list).unwrap_or_default() {

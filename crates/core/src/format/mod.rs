@@ -47,10 +47,10 @@ mod write;
 
 pub use self::document::{
     DONE_PREFIX, Document, FENCE, FormatError, Frontmatter, Newline, OPEN_PREFIX, Section,
-    TITLE_PREFIX,
+    TITLE_PREFIX, key,
 };
 pub use self::entry::{SESSION_SEPARATOR, format_session, format_worktree};
-pub use self::read::{key, section};
+pub use self::read::section;
 
 use chrono::NaiveDateTime;
 
@@ -77,19 +77,23 @@ pub fn parse(text: &str, id: TaskId, workflow: &Workflow) -> Result<Parsed, Form
 
 /// Parses a v2 task file (ADR 0026): the id comes from the frontmatter and
 /// `created_at` is what the caller knows (a tasq store reads it from the
-/// ULID file name). A file that does not start with `---` is
-/// [`FormatError::NotFrontmatter`].
+/// ULID file name). Any file whose first line is not `---`, a v1 task file
+/// or some other markdown file alike, is [`FormatError::NotFrontmatter`].
 pub fn parse_v2(
     text: &str,
     created_at: Option<NaiveDateTime>,
     workflow: &Workflow,
 ) -> Result<Parsed, FormatError> {
-    let document = Document::parse(text)?;
-    let Some(id) = document.id() else {
+    let first_line = text.lines().next().unwrap_or_default();
+    if first_line != FENCE {
         return Err(FormatError::NotFrontmatter {
-            first_line: document.title_line().to_owned(),
+            first_line: first_line.to_owned(),
         });
-    };
+    }
+    let document = Document::parse(text)?;
+    let id = document
+        .id()
+        .expect("a document that opens with the fence is v2 and the parse checked its id");
     let mut task = read::project(&document, id, workflow);
     task.created_at = created_at;
     Ok(Parsed { document, task })

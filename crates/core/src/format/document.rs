@@ -30,8 +30,6 @@ use thiserror::Error;
 
 use crate::model::TaskId;
 
-use super::read::key::{DONE_STATUS, ID as ID_KEY, STATUS as STATUS_KEY};
-
 /// Errors from parsing a task file.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum FormatError {
@@ -45,7 +43,8 @@ pub enum FormatError {
         /// The offending first line, without its line ending.
         first_line: String,
     },
-    /// The first line is not `---`, so the file is not a v2 task file.
+    /// The first line is not `---`, so the file is not a v2 task file: a
+    /// v1 task file or any other markdown file.
     ///
     /// Raised by [`super::parse_v2`] only; [`Document::parse`] reads the
     /// v1 shape instead.
@@ -122,6 +121,34 @@ pub const DONE_PREFIX: &str = "# [x] ";
 pub const TITLE_PREFIX: &str = "# ";
 /// The line that opens and closes the frontmatter block.
 pub const FENCE: &str = "---";
+
+/// Names of the frontmatter keys of a v2 task file (ADR 0026).
+pub mod key {
+    /// `id`: the task's id, a positive integer; required.
+    pub const ID: &str = "id";
+    /// `status`: a workflow status name, or [`DONE_STATUS`].
+    pub const STATUS: &str = "status";
+    /// The `status` value of a done task.
+    pub const DONE_STATUS: &str = "done";
+    /// `priority`: `A`, `B` or `C`.
+    pub const PRIORITY: &str = "priority";
+    /// `rank`: an integer (ADR 0025).
+    pub const RANK: &str = "rank";
+    /// `due`: `YYYY-MM-DD`.
+    pub const DUE: &str = "due";
+    /// `closed`: `YYYY-MM-DD HH:MM`, read on done tasks only.
+    pub const CLOSED: &str = "closed";
+    /// `project`: a directory path.
+    pub const PROJECT: &str = "project";
+    /// `source`: the origin's source name.
+    pub const SOURCE: &str = "source";
+    /// `source_id`: the origin's external id.
+    pub const SOURCE_ID: &str = "source_id";
+    /// `source_url`: the origin's url.
+    pub const SOURCE_URL: &str = "source_url";
+    /// `tags`: the topic tags as a one-line list, `[a, b]`, without `#`.
+    pub const TAGS: &str = "tags";
+}
 
 /// A task file, byte for byte.
 ///
@@ -247,7 +274,7 @@ impl<'a> Frontmatter<'a> {
 
     /// Every `key: value` entry, in file order, duplicates included.
     pub fn entries(&self) -> impl Iterator<Item = (&'a str, &'a str)> + '_ {
-        self.lines.iter().filter_map(|line| entry(line))
+        self.lines.iter().filter_map(|line| key_value(line))
     }
 
     /// The value of the first entry for `key`.
@@ -257,7 +284,7 @@ impl<'a> Frontmatter<'a> {
 }
 
 /// Splits a `key: value` line; `None` for lines of any other shape.
-pub(super) fn entry(line: &str) -> Option<(&str, &str)> {
+pub(super) fn key_value(line: &str) -> Option<(&str, &str)> {
     let (key, value) = line.split_once(':')?;
     let key = key.trim();
     if key.is_empty() || key.contains(char::is_whitespace) {
@@ -300,15 +327,10 @@ impl Document {
                 trailing_newline,
             });
         }
-        let close = lines
-            .iter()
-            .skip(1)
-            .position(|l| l.text == FENCE)
-            .map(|i| i + 1)
-            .ok_or(FormatError::UnterminatedFrontmatter)?;
+        let close = closing_fence(&lines).ok_or(FormatError::UnterminatedFrontmatter)?;
         match lines[1..close].iter().enumerate().find_map(|(i, l)| {
-            entry(&l.text)
-                .filter(|(k, _)| *k == ID_KEY)
+            key_value(&l.text)
+                .filter(|(k, _)| *k == key::ID)
                 .map(|(_, v)| (i + 1, v))
         }) {
             None => return Err(FormatError::MissingId { line: close + 1 }),
@@ -361,7 +383,7 @@ impl Document {
 
     /// The frontmatter block of a v2 file; `None` for a v1 file.
     pub fn frontmatter(&self) -> Option<Frontmatter<'_>> {
-        let close = self.front.iter().skip(1).position(|l| l.text == FENCE)? + 1;
+        let close = closing_fence(&self.front)?;
         Some(Frontmatter {
             lines: self.front[1..close]
                 .iter()
@@ -373,7 +395,7 @@ impl Document {
     /// The id written in the frontmatter of a v2 file (always present, the
     /// parse checked it); `None` for a v1 file, which does not know its id.
     pub fn id(&self) -> Option<TaskId> {
-        self.frontmatter()?.get(ID_KEY).and_then(parse_id)
+        self.frontmatter()?.get(key::ID).and_then(parse_id)
     }
 
     /// The ending used for lines this document creates.
@@ -406,18 +428,23 @@ impl Document {
     /// The title text after the `# [ ] ` / `# [x] ` marker (v1) or after
     /// `# ` (v2).
     pub fn title(&self) -> &str {
-        if self.front.is_empty() {
-            title_of(self.title_line()).map_or("", |(_, t)| t)
-        } else {
+        if self.is_v2() {
             v2_title_of(self.title_line()).unwrap_or_default()
+        } else {
+            title_of(self.title_line()).map_or("", |(_, t)| t)
         }
+    }
+
+    /// Whether the file has a frontmatter block.
+    fn is_v2(&self) -> bool {
+        !self.front.is_empty()
     }
 
     /// Whether the task is done: the title line carries `# [x]` (v1) or the
     /// frontmatter says `status: done` (v2).
     pub fn is_done(&self) -> bool {
         match self.frontmatter() {
-            Some(front) => front.get(STATUS_KEY) == Some(DONE_STATUS),
+            Some(front) => front.get(key::STATUS) == Some(key::DONE_STATUS),
             None => title_of(self.title_line()).is_some_and(|(done, _)| done),
         }
     }
@@ -585,6 +612,16 @@ pub(super) fn title_of(line: &str) -> Option<(bool, &str)> {
         None => (true, line.strip_prefix(DONE_PREFIX)?),
     };
     (!title.is_empty()).then_some((done, title))
+}
+
+/// Index of the line that closes a block opened on line 0: the first
+/// `---` after it.
+fn closing_fence(lines: &[Line]) -> Option<usize> {
+    lines
+        .iter()
+        .skip(1)
+        .position(|l| l.text == FENCE)
+        .map(|i| i + 1)
 }
 
 /// The title of a v2 title line (`# Title`), or `None`. Like [`title_of`],
