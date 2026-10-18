@@ -7,6 +7,7 @@ expression: text
   "tasks": [
     {
       "closed_at": null,
+      "created": "2026-09-01 09:00",
       "description": "Port the bash script to a Rust workspace.\nKeep the nb files unchanged.",
       "done": false,
       "due": "2026-10-10",
@@ -56,6 +57,7 @@ expression: text
     },
     {
       "closed_at": null,
+      "created": "2026-09-02 10:00",
       "description": "Customer asks about the export format.",
       "done": false,
       "due": null,
@@ -80,6 +82,7 @@ expression: text
     },
     {
       "closed_at": null,
+      "created": "2026-09-04 12:00",
       "description": null,
       "done": false,
       "due": null,
@@ -102,6 +105,7 @@ expression: text
     },
     {
       "closed_at": null,
+      "created": "2026-09-06 14:00",
       "description": null,
       "done": false,
       "due": null,

@@ -13,6 +13,7 @@ expression: stdout(&out)
   "schema": 1,
   "task": {
     "closed_at": null,
+    "created": "2026-09-01 09:00",
     "description": "Port the bash script to a Rust workspace.\nKeep the nb files unchanged.",
     "done": false,
     "due": "2026-10-10",

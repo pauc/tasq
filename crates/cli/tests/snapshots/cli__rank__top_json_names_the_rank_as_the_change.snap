@@ -10,6 +10,7 @@ expression: stdout(&out)
   "schema": 1,
   "task": {
     "closed_at": null,
+    "created": "2026-09-07 15:00",
     "description": null,
     "done": false,
     "due": null,

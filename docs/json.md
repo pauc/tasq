@@ -17,7 +17,7 @@ refuse anything else; a future shape change bumps the number.
 | `tasq worktree trust` | `"file"`: the repository's `.tasq.toml` (its main checkout when it has none), `"approved": [{kind, line}]`: each hook line now approved, `kind` one of `"pre-create"`, `"post-create"`, `"pre-remove"`, `"post-remove"` (in that order, then the lines in file order); `[]` when the file sets no hooks |
 | `tasq project <id>` (show) | `"task": Task`, `"default_project": path or null` |
 | `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool` (only with worktrees enabled), `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
-| `tasq store info` | `"store": {name, location, task_count, id_scheme, ids_may_change_on_reconcile}`, `"bookkeeper": the bookkeeper's name (`"native"`; `"none"` in tests), `null` for a store without one |
+| `tasq store info` | `"store": {name, location, task_count, id_scheme, ids_may_change_on_reconcile}`, `"bookkeeper": the bookkeeper's name (`"native"`; `"none"` in tests), `null` for a store without one, `"data_dir": {value, from}` (the resolved directory and the layer that set it, as `tasq config show` names it: `defaults`, a file, `env`, `--set`), `"store_name": {value, from}` |
 | `tasq doctor` | `"checks": [{name, status: "ok" \| "warn" \| "fail", detail, fix}]`, `"ok": bool` |
 | `tasq sync` | `"dry_run": bool`, `"ok": bool`, `"sources": [{name, changes: [string], applied: [{id, description}], error}]` |
 | `tasq summary` | `"day"`, `"header"` (`Friday 2026-10-02`), `"summarizer": "raw" \| "llm"`, `"tasks": [{id, title, done, notes: [string]}]`, `"notes"` (the raw text), `"summary"` (the distilled text, `null` when raw) |
@@ -53,7 +53,8 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
   ],
   "origin": null,
   "closed_at": null,
-  "rank": 1024
+  "rank": 1024,
+  "created": "2026-10-04 10:15"
 }
 ```
 
@@ -69,6 +70,8 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
 - `worktrees` is present only when worktrees are enabled (`worktree.enabled`, ADR 0022), in
   every document that carries a task, hook documents included. It may be left out on input,
   which leaves the stored worktrees unchanged.
+- `created` is when the task was created (`YYYY-MM-DD HH:MM`, local time), read from the task
+  file's name (ADR 0026). It is left out when the store does not know it, and ignored on input.
 - `rank` is the task's manual place within its status group (ADR 0025), an integer, smaller
   first; ranked tasks come before unranked ones. It is left out when the task has none. On
   input a missing `rank` leaves the stored rank unchanged and `"rank": null` clears it.

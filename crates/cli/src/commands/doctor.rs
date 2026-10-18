@@ -13,7 +13,7 @@ use tasq_core::config::{Config, LoadOptions, UiConfig};
 use tasq_core::doctor::{Check, CheckStatus, any_failed};
 use tasq_launch::tool_check;
 
-use crate::app::{App, env_vec};
+use crate::app::{App, Provenance, env_vec};
 use crate::cli::GlobalArgs;
 use crate::error::{CliError, Result};
 use crate::json;
@@ -73,6 +73,11 @@ pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
     let out = Output::from_process(&global, &ui, &opts.env);
     if let Some(loaded) = loaded {
         let app = App::new(global, opts, loaded, out.clone());
+        // Fails only when data_dir is unknown, which `open_store` reports
+        // as the `store` check just below.
+        if let Ok(provenance) = app.store_provenance() {
+            checks.push(location_check(&provenance));
+        }
         match app.open_store() {
             Ok(store) => checks.extend(store.doctor()),
             Err(e) => checks.push(Check::fail(
@@ -99,6 +104,19 @@ pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
     } else {
         Ok(())
     }
+}
+
+/// The store directory and the layers that set its two parts.
+fn location_check(provenance: &Provenance) -> Check {
+    Check::ok(
+        "location",
+        format!(
+            "{} (data_dir from {}, store.name from {})",
+            provenance.dir().display(),
+            provenance.data_dir_from,
+            provenance.name_from
+        ),
+    )
 }
 
 fn describe_layers(loaded: &tasq_core::config::Loaded) -> String {

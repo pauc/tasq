@@ -4,6 +4,10 @@ expression: env.normalize(&stdout(&out))
 ---
 {
   "bookkeeper": null,
+  "data_dir": {
+    "from": "defaults",
+    "value": "[ROOT]/home/.local/share/tasq/stores"
+  },
   "schema": 1,
   "store": {
     "id_scheme": "stable",
@@ -11,5 +15,9 @@ expression: env.normalize(&stdout(&out))
     "location": "[ROOT]/home/.local/share/tasq/stores/default",
     "name": "tasq",
     "task_count": 5
+  },
+  "store_name": {
+    "from": "defaults",
+    "value": "default"
   }
 }

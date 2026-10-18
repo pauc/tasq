@@ -191,12 +191,14 @@ pub enum Command {
     /// become OSC 8 hyperlinks (label only, URL hidden; GitLab merge requests
     /// and issues show as !123 / #123). Set ui.no_osc8 = true if your
     /// terminal cannot follow them: long lines then list their URLs below.
-    /// Without glow, or when piped, the file is printed as is.
+    /// Without glow the file is printed as is. On a terminal the frontmatter
+    /// shows a `created:` line, the time the store read from the file name;
+    /// it is not in the file, and piped output leaves it out.
     View {
         /// Task id.
         #[arg(value_name = "ID")]
         id: String,
-        /// Print the file verbatim, never render.
+        /// Print the file verbatim (no `created:` line), never render.
         #[arg(long)]
         raw: bool,
     },

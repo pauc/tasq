@@ -21,6 +21,27 @@ use crate::output::Output;
 /// timestamp `tasq` writes; for tests and reproducible demos.
 pub const ENV_NOW: &str = "TASQ_NOW";
 
+/// The two settings that make up the store directory, and where each was
+/// set ([`App::store_provenance`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Provenance {
+    /// The resolved, absolute `data_dir`.
+    pub data_dir: PathBuf,
+    /// The layer that set `data_dir`.
+    pub data_dir_from: String,
+    /// `store.name`.
+    pub name: String,
+    /// The layer that set `store.name`.
+    pub name_from: String,
+}
+
+impl Provenance {
+    /// The store directory, `<data_dir>/<store.name>`.
+    pub fn dir(&self) -> PathBuf {
+        self.data_dir.join(&self.name)
+    }
+}
+
 /// Everything a command needs: flags, loaded configuration and output.
 #[derive(Debug)]
 pub struct App {
@@ -295,6 +316,23 @@ impl App {
     /// The store directory, `<data_dir>/<store.name>` (ADR-0026).
     pub fn store_dir(&self) -> Result<PathBuf> {
         Ok(self.data_dir()?.join(&self.config().store.name))
+    }
+
+    /// Where the store directory came from: the resolved `data_dir` and
+    /// `store.name`, each with the layer that set it (`defaults`, a file,
+    /// `env`, `--set`), as `tasq config show` names them.
+    pub fn store_provenance(&self) -> Result<Provenance> {
+        let from = |key: &str| {
+            self.loaded
+                .explain(key)
+                .map_or_else(|| "unset".to_owned(), ToString::to_string)
+        };
+        Ok(Provenance {
+            data_dir: self.data_dir()?,
+            data_dir_from: from("data_dir"),
+            name: self.config().store.name.clone(),
+            name_from: from("store.name"),
+        })
     }
 
     /// The variables that point a launched session's `tasq` at this store:

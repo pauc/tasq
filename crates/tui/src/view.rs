@@ -663,8 +663,16 @@ fn detail<'a>(model: &Model, task: &'a Task) -> (Vec<Line<'a>>, Vec<DetailLink<'
         }
         lines.push(Line::from(spans));
     }
-    if let Some(project) = &task.project {
+    if task.created_at.is_some() || task.project.is_some() {
         lines.push(Line::default());
+    }
+    if let Some(at) = task.created_at {
+        lines.push(Line::from(vec![
+            Span::styled("Created: ", header(model)),
+            Span::raw(format_timestamp(at)),
+        ]));
+    }
+    if let Some(project) = &task.project {
         lines.push(Line::from(vec![
             Span::styled("Project: ", header(model)),
             Span::raw(contract_tilde(project, model.home.as_deref())),

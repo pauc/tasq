@@ -236,9 +236,14 @@ pub struct Task {
     /// When the task was created, to the millisecond (local time), for a
     /// task whose store knows it: a v2 store reads it from the task file's
     /// ULID name (ADR 0026). `None` for a v1 (nb) task. Not a field of the
-    /// file, so edits never compare it; left out of JSON until SV-010
-    /// decides its shape.
-    #[serde(skip)]
+    /// file, so edits never compare it. `created` in JSON, to the minute,
+    /// left out when unknown; ignored on input (`tasq apply`).
+    #[serde(
+        rename = "created",
+        skip_deserializing,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::clock::timestamp_serde::option::serialize"
+    )]
     pub created_at: Option<NaiveDateTime>,
 }
 
@@ -981,6 +986,16 @@ mod tests {
         assert_eq!(back.rank, None);
         let null: Task = serde_json::from_str(&json.replace("-1024", "null")).unwrap();
         assert_eq!(null.rank, None);
+        // `created` is written when known and never read back: it is the
+        // store's to say, not an edit.
+        t.created_at = Some(clock().now());
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(
+            json.ends_with(",\"rank\":-1024,\"created\":\"2026-10-04 10:15\"}"),
+            "{json}"
+        );
+        let back: Task = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.created_at, None);
         let draft = TaskDraft::new("T").with_tag(tag("x"));
         let back: TaskDraft =
             serde_json::from_str(&serde_json::to_string(&draft).unwrap()).unwrap();

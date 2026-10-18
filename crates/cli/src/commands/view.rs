@@ -19,7 +19,10 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 
+use chrono::NaiveDateTime;
 use regex::{Captures, Regex};
+use tasq_core::clock::format_timestamp;
+use tasq_core::format::FENCE;
 use tasq_core::model::shortref;
 use tasq_core::store::{Store, StoreError};
 use tasq_core::theme::{Color, Role, Theme};
@@ -69,10 +72,80 @@ pub fn run(app: &App, id: &str, raw: bool) -> Result<()> {
             .out
             .json(&json::document([("task", app.task_json(&task))]));
     }
-    if raw {
+    if raw || !std::io::stdout().is_terminal() {
+        // Piped, the file as it is: a `created:` line there could be
+        // copied back into a file, and `--json` carries the time.
         return app.out.print(&text);
     }
-    show_markdown(app, &text)
+    let shown = with_created(&text, store.get(&id)?.created_at);
+    show_rendered(app, &shown, &fence_frontmatter(&shown))
+}
+
+/// `text` with `created: <time>` as the last line of its frontmatter, for
+/// display: the creation time is the file name's (ADR-0026), never a line
+/// of the file. A file without a closed block, or a task whose store does
+/// not know the time, is returned as it is.
+fn with_created(text: &str, created: Option<NaiveDateTime>) -> String {
+    match (created, frontmatter(text)) {
+        (Some(at), Some(block)) => format!(
+            "{}created: {}{}{}",
+            &text[..block.close],
+            format_timestamp(at),
+            block.ending,
+            &text[block.close..]
+        ),
+        _ => text.to_owned(),
+    }
+}
+
+/// `text` with the `---` lines around its frontmatter replaced by code
+/// fences: glow drops a frontmatter block, and the block is where the id,
+/// status and the other fields of a v2 file are.
+fn fence_frontmatter(text: &str) -> String {
+    let Some(block) = frontmatter(text) else {
+        return text.to_owned();
+    };
+    let ending = block.ending;
+    let after = &text[block.close + FENCE.len()..];
+    let after = after.strip_prefix(ending).unwrap_or(after);
+    format!(
+        "```{ending}{}```{ending}{after}",
+        &text[block.open..block.close]
+    )
+}
+
+/// Where a frontmatter block's lines are: from `open` (after the first
+/// line) to `close` (the start of the closing fence line), and the line
+/// ending of its first line.
+struct Block {
+    open: usize,
+    close: usize,
+    ending: &'static str,
+}
+
+/// The frontmatter block `text` opens with, if its first line is
+/// [`FENCE`] and a later line closes it.
+fn frontmatter(text: &str) -> Option<Block> {
+    let is_fence = |line: &str| line.trim_end_matches(['\n', '\r']) == FENCE;
+    let mut lines = text.split_inclusive('\n');
+    let first = lines.next().filter(|line| is_fence(line))?;
+    let ending = if first.ends_with("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut at = first.len();
+    for line in lines {
+        if is_fence(line) {
+            return Some(Block {
+                open: first.len(),
+                close: at,
+                ending,
+            });
+        }
+        at += line.len();
+    }
+    None
 }
 
 /// Shows `markdown` the way `view` does: rendered by `glow` with OSC 8
@@ -80,6 +153,12 @@ pub fn run(app: &App, id: &str, raw: bool) -> Result<()> {
 /// as is; paged either way. `tasq summary` uses it for the distilled
 /// summary. A glow failure is a warning and the plain markdown is shown.
 pub fn show_markdown(app: &App, markdown: &str) -> Result<()> {
+    show_rendered(app, markdown, markdown)
+}
+
+/// [`show_markdown`] with a separate text for glow (`for_glow`) and for
+/// the plain display (`plain`).
+fn show_rendered(app: &App, plain: &str, for_glow: &str) -> Result<()> {
     let env = app.env_vec();
     let path_var = env
         .iter()
@@ -91,14 +170,14 @@ pub fn show_markdown(app: &App, markdown: &str) -> Result<()> {
         None
     };
     let Some(glow) = glow else {
-        return app.out.page(markdown);
+        return app.out.page(plain);
     };
     let width = terminal_width(&env, stdout_columns());
     let ui = &app.config().ui;
     let rendered = if ui.no_osc8 {
-        render_with_glow(&glow, &unwrap_urls(markdown, width), &ui.glow_style, width)
+        render_with_glow(&glow, &unwrap_urls(for_glow, width), &ui.glow_style, width)
     } else {
-        let (marked, urls) = linkify_pre(markdown);
+        let (marked, urls) = linkify_pre(for_glow);
         let link = Theme::from_config(ui).color(Role::Link);
         render_with_glow(&glow, &marked, &ui.glow_style, width)
             .map(|r| linkify_post(&r, &urls, link))
@@ -108,7 +187,7 @@ pub fn show_markdown(app: &App, markdown: &str) -> Result<()> {
         Err(e) => {
             app.out
                 .warn(&format!("glow failed ({e}); showing the plain markdown"));
-            app.out.page(markdown)
+            app.out.page(plain)
         }
     }
 }
@@ -355,6 +434,49 @@ mod tests {
 
     const GL: &str = "https://gitlab.example.com/group/project/-/merge_requests/123";
     const ISSUE: &str = "https://gitlab.example.com/group/project/-/issues/42";
+
+    const V2: &str = "---\nid: 1\nstatus: ready\n---\n# T\n\n---\n";
+
+    #[test]
+    fn with_created_closes_the_frontmatter_with_the_creation_time() {
+        let at = chrono::NaiveDate::from_ymd_opt(2026, 9, 1)
+            .unwrap()
+            .and_hms_milli_opt(9, 0, 5, 123)
+            .unwrap();
+        assert_eq!(
+            with_created(V2, Some(at)),
+            "---\nid: 1\nstatus: ready\ncreated: 2026-09-01 09:00\n---\n# T\n\n---\n"
+        );
+        assert_eq!(with_created(V2, None), V2);
+        // A v1 file, or a block that never closes, is shown as it is.
+        assert_eq!(with_created("# [ ] T\n---\n", Some(at)), "# [ ] T\n---\n");
+        assert_eq!(with_created("---\nid: 1\n", Some(at)), "---\nid: 1\n");
+    }
+
+    #[test]
+    fn fence_frontmatter_turns_the_block_into_code_glow_keeps() {
+        assert_eq!(
+            fence_frontmatter(V2),
+            "```\nid: 1\nstatus: ready\n```\n# T\n\n---\n"
+        );
+        assert_eq!(fence_frontmatter("# [ ] T\n---\n"), "# [ ] T\n---\n");
+        assert_eq!(fence_frontmatter("---\nid: 1\n"), "---\nid: 1\n");
+        assert_eq!(fence_frontmatter("---\nid: 1\n---"), "```\nid: 1\n```\n");
+    }
+
+    #[test]
+    fn a_crlf_block_keeps_its_line_endings() {
+        let crlf = "---\r\nid: 1\r\n---\r\n# T\r\n";
+        let at = chrono::NaiveDate::from_ymd_opt(2026, 9, 1)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
+        assert_eq!(
+            with_created(crlf, Some(at)),
+            "---\r\nid: 1\r\ncreated: 2026-09-01 09:00\r\n---\r\n# T\r\n"
+        );
+        assert_eq!(fence_frontmatter(crlf), "```\r\nid: 1\r\n```\r\n# T\r\n");
+    }
 
     #[test]
     fn linkify_pre_marks_markdown_links_and_bare_urls() {

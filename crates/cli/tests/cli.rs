@@ -464,6 +464,50 @@ mod store {
         assert_snapshot!(env.normalize(&stdout(&out)));
     }
 
+    /// `data_dir` and `store.name`, each with the layer that set it, the way
+    /// `tasq config show` annotates them.
+    #[test]
+    fn info_says_where_data_dir_and_the_name_came_from() {
+        let env = TestEnv::fixture();
+        let out = env.tasq().args(["store", "info"]).output().unwrap();
+        let text = env.normalize(&stdout(&out));
+        assert!(
+            text.contains(
+                "data_dir:    [ROOT]/home/.local/share/tasq/stores (from defaults)\nstore.name:  default (from defaults)\n"
+            ),
+            "{text}"
+        );
+        env.write_global_config("[store]\nname = \"g\"\n");
+        let out = env
+            .tasq()
+            .env("TASQ_DATA_DIR", env.home.join("env"))
+            .args(["store", "info"])
+            .output()
+            .unwrap();
+        let text = env.normalize(&stdout(&out));
+        assert!(
+            text.contains(
+                "data_dir:    [ROOT]/home/env (from env)\nstore.name:  g (from [ROOT]/home/.config/tasq/config.toml)\n"
+            ),
+            "{text}"
+        );
+        let out = env
+            .tasq()
+            .args(["store", "info", "--json"])
+            .output()
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["data_dir"]["from"], "defaults");
+        assert_eq!(value["store_name"]["value"], "g");
+        assert!(
+            value["store_name"]["from"]
+                .as_str()
+                .unwrap()
+                .ends_with("/home/.config/tasq/config.toml"),
+            "{value}"
+        );
+    }
+
     /// `tasq store sync` and `tasq store reconcile` went with git sync
     /// (ADR-0026): clap rejects them like any unknown subcommand.
     #[test]
@@ -632,6 +676,25 @@ mod doctor {
         let out = env.tasq().arg("doctor").output().unwrap();
         assert!(out.status.success(), "{}", stdout(&out));
         assert_snapshot!(env.normalize(&stdout(&out)));
+    }
+
+    /// The `location` check: the store directory, and where `data_dir` and
+    /// `store.name` were set.
+    #[test]
+    fn names_the_store_directory_and_where_it_came_from() {
+        let env = TestEnv::fixture();
+        let out = env
+            .tasq()
+            .args(["--set", "store.name=other", "doctor"])
+            .output()
+            .unwrap();
+        let text = env.normalize(&stdout(&out));
+        assert!(
+            text.contains(
+                "OK    location     [ROOT]/home/.local/share/tasq/stores/other (data_dir from defaults, store.name from --set)\n"
+            ),
+            "{text}"
+        );
     }
 
     #[test]
@@ -2389,6 +2452,8 @@ mod create {
 mod view {
     use super::*;
 
+    /// Piped, the file as it is: the `created:` line a terminal shows is not
+    /// part of it.
     #[test]
     fn piped_output_is_the_plain_file() {
         let env = TestEnv::fixture();
@@ -2403,6 +2468,25 @@ mod view {
         env.fake_tool("glow", "echo rendered");
         let out = env.tasq().args(["view", "1", "--raw"]).output().unwrap();
         assert_eq!(stdout(&out), env.read_task(1));
+    }
+
+    /// The creation time is the file name's ULID (ADR-0026), in local time
+    /// (`TZ=UTC` in the harness), to the minute like every timestamp.
+    #[test]
+    fn json_carries_the_creation_time() {
+        let env = TestEnv::fixture();
+        let out = env.tasq().args(["view", "1", "--json"]).output().unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["task"]["created"], "2026-09-01 09:00");
+        let list = env.tasq().args(["--json"]).output().unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+        let first = value["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == "1")
+            .unwrap();
+        assert_eq!(first["created"], "2026-09-01 09:00");
     }
 
     #[test]

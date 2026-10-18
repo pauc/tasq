@@ -867,6 +867,38 @@ fn paths_under_home_start_with_a_tilde() {
     );
 }
 
+/// The creation time (a v2 store's, ADR-0026) sits with the project, under
+/// a blank line; a task whose store does not know it has no such line.
+#[test]
+fn the_detail_shows_when_the_task_was_created() {
+    let model = fixture(true);
+    let mut task = tasks()[0].clone();
+    task.created_at = Some(FixedClock::at("2026-09-01 09:00").0);
+    let lines = detail_text(&model, &task);
+    let created = lines
+        .iter()
+        .position(|l| l == "Created: 2026-09-01 09:00")
+        .unwrap_or_else(|| panic!("{lines:?}"));
+    assert_eq!(
+        lines[created - 1..=created + 1],
+        [
+            "",
+            "Created: 2026-09-01 09:00",
+            "Project: /home/me/code/app"
+        ]
+    );
+    task.project = None;
+    let lines = detail_text(&model, &task);
+    assert_eq!(
+        lines[created - 1..=created],
+        ["", "Created: 2026-09-01 09:00"]
+    );
+    assert_eq!(lines[created + 1], "");
+    assert_eq!(lines[created + 2], "Description");
+    let lines = detail_text(&model, &tasks()[0]);
+    assert!(!lines.iter().any(|l| l.starts_with("Created")), "{lines:?}");
+}
+
 const MR7: &str = "https://gitlab.example.com/g/p/-/merge_requests/7";
 
 /// The characters of the cells that link to `url`, in reading order,
