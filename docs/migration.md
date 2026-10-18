@@ -100,7 +100,7 @@ names below are from `crates/core/src/config/mod.rs`.
 | `direnv exec <dir>` when `.envrc` is allowed | hard-coded | `launch.env` (`direnv`, the default, or `inherit`) | `TASQ_LAUNCH_ENV` |
 | session prompt text in `open_session` | hard-coded | `launch.claude.prompt_file` | |
 | `STATUSES=(in-progress ready waiting blocked later)` | hard-coded | `workflow.statuses`, `workflow.default_status` (`ready`) | |
-| `glab api` for MR titles, `gitlab.silverfin.com` | hard-coded | `[forge.gitlab] host`, `token_cmd = "glab auth token"` (or `GITLAB_TOKEN`) | |
+| `glab api` for MR titles, `gitlab.silverfin.com` | hard-coded | `[forge.gitlab] host`, `token_cmd = "glab config get token --host gitlab.silverfin.com"` (or `GITLAB_TOKEN`) | |
 | `/update-tasks` skill (GitLab, Slack, Gmail) | Claude session | `[[source]]` blocks (`gitlab-review-requests`, `gitlab-work-items`, `github-*`, `llm-bridge`) | |
 | `FRESHDESK_API_KEY`, `bin/freshdesk` | | none (Non-Goal) | |
 | `nb` bookkeeping, `NB_AUTO_SYNC_SECONDS` | always through nb, sync on every checkpoint | native; `store.sync_interval` (seconds, `0` never) | `TASQ_SYNC_INTERVAL` |
@@ -120,7 +120,7 @@ default = "auto"        # herdr inside herdr, claude otherwise
 
 [forge.gitlab]
 host = "gitlab.silverfin.com"
-token_cmd = "glab auth token"
+token_cmd = "glab config get token --host gitlab.silverfin.com"
 
 [report.summary]
 model = "sonnet"
@@ -188,9 +188,10 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
       optional tools (`glow`, `claude`, `direnv`, `glab`) reported.
 - [ ] Write `~/.config/tasq/config.toml` from the mapping above;
       `tasq config show` prints every key with the layer that set it.
-- [ ] Forge token: `glab auth token` works in a shell, and
-      `[forge.gitlab] token_cmd = "glab auth token"` is set (or
-      `GITLAB_TOKEN`). Never paste the token into the config file.
+- [ ] Forge token: `glab config get token --host gitlab.silverfin.com` prints it in a
+      shell, and `[forge.gitlab] token_cmd` is set to that command (or `GITLAB_TOKEN`).
+      glab 1.118 has no `auth token` subcommand: it prints help with exit 0, which tasq
+      would send as the token. Never paste the token into the config file.
 - [ ] `tasq sync --dry-run`: read the planned creates/closes/notes against the
       tasks `tasks update` created; nothing is written. Then `tasq sync`.
 - [ ] `tasq sync --interactive --dry-run` prints the `claude "/tasq:sync"` command

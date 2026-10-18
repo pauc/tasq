@@ -220,7 +220,7 @@ flowchart LR
 | `review_requests`, `work_items` | The `Source` implementations built on `Forge`. |
 | `llm_bridge` | A configured command prints a JSON array of items; parsed and deduplicated. Contract in [`docs/sources.md`](sources.md). |
 | `http` | `Client` over `Transport`: JSON decoding, `Link` pagination, backoff on 429 and 5xx. |
-| `auth` | Tokens via `token_cmd` (`glab auth token`, `gh auth token`) or `GITLAB_TOKEN` / `GITHUB_TOKEN`. Never printed. |
+| `auth` | Tokens via `token_cmd` (`glab config get token --host <host>`, `gh auth token`) or `GITLAB_TOKEN` / `GITHUB_TOKEN`. Never printed. |
 | `url`, `title` | Parsing MR and issue URLs, and resolving titles for `tasq mr`. |
 
 The reconciliation itself (which items become tasks, which tasks get closed) is not here. It is

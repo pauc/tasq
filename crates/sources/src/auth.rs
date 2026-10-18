@@ -1,4 +1,4 @@
-//! Tokens for forge APIs: `token_cmd` (`glab auth token`, `gh auth token`)
+//! Tokens for forge APIs: `token_cmd` (`glab config get token --host <host>`, `gh auth token`)
 //! or the `GITLAB_TOKEN` / `GITHUB_TOKEN` environment variables. Tokens
 //! never appear in messages.
 

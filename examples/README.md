@@ -10,7 +10,7 @@ items into tasks is in `docs/sources.md`.
 without nb and without a remote: no automatic sync, worktrees off, the shell launcher with an
 inherited environment, raw summaries and no sources, with the two commands that create the
 notebook directory (tasq never runs nb, so installing it later changes nothing). `author.toml` is the
-author's setup with the real key names: a self-hosted GitLab forge with `glab auth token`,
+author's setup with the real key names: a self-hosted GitLab forge with `glab config get token`,
 worktrees per task (`[worktree]`), `launch.default = "auto"` with herdr workspaces, hourly sync,
 an `llm-bridge` inbox that only runs on request, the LLM summarizer and a `[hooks]` entry
 pointing at the example hook. Every key is defined in

@@ -625,7 +625,7 @@ pub struct ForgeConfig {
     /// Host name without scheme, for example `gitlab.example.com`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
-    /// Command whose stdout is the API token (`glab auth token`,
+    /// Command whose stdout is the API token (`glab config get token --host <host>`,
     /// `gh auth token`). Default: unset, meaning `GITLAB_TOKEN` /
     /// `GITHUB_TOKEN` from the environment.
     #[serde(skip_serializing_if = "Option::is_none")]

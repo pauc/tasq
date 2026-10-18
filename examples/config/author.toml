@@ -3,7 +3,7 @@
 # and a time-log plugin fed by hooks. Plan section 4.6, with the key names
 # the tool actually has. Full reference: docs/config.md.
 #
-# Secrets never live here: the GitLab token comes from `glab auth token`.
+# Secrets never live here: the GitLab token comes from `glab config get token`.
 
 [store]
 kind = "nb"
@@ -47,7 +47,7 @@ detail_position = "bottom"   # the task detail under the list in `tasq ui`
 
 [forge.gitlab]               # kind "gitlab" inferred from the block name
 host = "gitlab.silverfin.com"
-token_cmd = "glab auth token"
+token_cmd = "glab config get token --host gitlab.silverfin.com"
 
 [[source]]
 name = "gitlab-review-requests"
