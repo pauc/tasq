@@ -13,10 +13,10 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 | SV-005 | The tasq store reads a directory | done | 5e1226b, 7e222fc; `TasqStore::new(dir, workflow)` (`crates/store/src/store.rs`), `tasq_store::ulid::Ulid`, `StoreError::AmbiguousId`; `tests/read.rs` (12 tests) over a temp directory; `mutants-in crates/store/src`: 127 mutants, 108 caught, 19 unviable, 0 missed; `--in-diff main` (before the review follow-ups): 276 mutants, 0 missed |
 | SV-006 | Create under the store lock | done | 840706a, 9de6066; `TasqStore::create` (`crates/store/src/store.rs`), `tasq_store::lock::StoreLock` (`.tasq/lock`), `tasq_store::draft::{check_draft, materialize, DEFAULT_NOTE}` (shared with store-nb), `TasqStore::{with_clock, with_random}`; `tests/create.rs` (12 tests) plus lock and draft unit tests; `mutants-in crates/store/src`: 153 mutants, 124 caught, 27 unviable, 2 timeouts (both make a loop infinite: the lock poll, the name-attempt counter), 0 missed |
 | SV-007 | Update with conflict detection, and doctor | done | 9184e95; `TasqStore::{update, set_done}` (`crates/store/src/store.rs`), revisions remembered by `get`/`list`, `TasqStore::edit` (the shared edit-compare-write, with the invalid-UTF-8 refusal), doctor's `lock` check; `tests/update.rs` (14 tests); `mutants-in crates/store/src`: 164 mutants, 130 caught, 32 unviable, 2 timeouts (the same two loops as SV-006), 0 missed |
-| SV-008 | Migrate as a library, and the committed v2 fixture store | ready | |
-| SV-009 | The CLI opens the tasq store | blocked (SV-008) | |
+| SV-008 | Migrate as a library, and the committed v2 fixture store | done | 69f7f75; `tasq_store::migrate::{plan, Plan, Entry, MigrateError}` (`crates/store/src/migrate.rs`), the fixture store `crates/store/tests/fixtures/stores/default` (ids 1, 3, 4, 6, 7), `format::section::ALL`; `tests/migrate.rs` (23 tests), the parity test `crates/store-nb/tests/migrate.rs`; mutants on `migrate.rs`, `lock.rs`, `store.rs`: 107 + 49 mutants, 0 missed (timeouts: the known lock and name loops) |
+| SV-009 | The CLI opens the tasq store | ready | |
 | SV-010 | Creation time and store provenance surfaces | blocked (SV-009) | |
-| SV-011 | `tasq migrate <notebook> [--to] [--dry-run]` | blocked (SV-008, SV-009) | |
+| SV-011 | `tasq migrate <notebook> [--to] [--dry-run]` | blocked (SV-009) | |
 | SV-012 | Docs, agent surfaces and the hand-over | blocked (SV-010, SV-011) | |
 
 ## Learnings
@@ -266,6 +266,30 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   millisecond short is live). Doctor never removes the lock; a clean store now reports four
   `Ok` checks, and `tasq doctor`'s exit code is unaffected by a `Warn`.
 
+- 2026-10-18 (SV-008): migrate lives in `tasq-store` and reads the notebook itself (`.index`
+  lines, `*.todo.md`, `format::parse` from core), because store-nb depends on `tasq-store` and
+  the reverse would be a cycle. It mirrors `NbStore::list`: index lines that are not todo
+  files, files that are gone (or are directories) and files whose first line is not a task
+  title are skipped; any other parse error is `MigrateError::Format` naming the file, so no
+  task is dropped silently. A todo file on disk that `.index` does not list gets the id nb's
+  reconcile would have given it (the line after the index, name order); a notebook without
+  `.index` is `NotANotebook`, there is no rebuild. The plan returns `Entry { id, from, file,
+  title, created, text() }` per task, in id order, for SV-011 to print.
+- 2026-10-18 (SV-008): the ULID is minted from the nb second read in the local zone
+  (`lock::instant_at`, split out of `lock::instant`), so `created_at` read back is that
+  second. Names are checked for uniqueness within the plan only (the target is empty);
+  a repeat is re-minted up to `MAX_NAME_ATTEMPTS`, then `NoFreeName`. The random source is a
+  `&mut dyn FnMut() -> u128`; `store::os_random` is now public for SV-011.
+- 2026-10-18 (SV-008): the text is `Document::from_task_v2` of the v1 projection, then every
+  `##` section outside `format::section::ALL`, verbatim (trailing blank lines trimmed), each
+  after a blank line, at the end of the file. A CRLF v1 file becomes an LF v2 file.
+- 2026-10-18 (SV-008): the committed fixture's names carry the nb second read as UTC (what
+  `migrate` writes with `TZ=UTC`), random part 1..5, so they do not depend on the zone of the
+  machine that made them; `created_at` read back from it is that instant in local time
+  (11:00 for the 09:00 task under CEST). SV-009/SV-010: pin `TZ=UTC` in the CLI test
+  environment before snapshotting `created`. The pinning test compares names and bytes with
+  the plan's; `TASQ_UPDATE_FIXTURES=1` rewrites the directory.
+
 ## Deviations
 
 - SV-001's first criterion read "No file in the CLI crate names the nb store type". The
@@ -352,9 +376,21 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   the baseline is per id, so a `list` between a `get` and an `update` of the same task
   refreshes it and an external edit in that window goes unreported; renaming over a
   symlinked task file replaces the link with a regular file.
+- SV-008: a done task with no `## Closed` (every task closed by `nb todo do` or the original
+  script, which never wrote it) gets `closed` from its last progress entry (`00:00` for a
+  date-only one; none without entries). The plan's "done tasks as `status: done` with
+  `closed`" and story 22 asked for it, and without it no migrated done task of the real
+  notebook would have one. The third criterion ("equal field by field, plus `created_at`")
+  therefore reads "plus `created_at`, and `closed` where nb had none"; the parity test pins
+  the fixture's done task at `2026-10-03 16:30` and compares every other field.
+- SV-008: not carried over: text the projection does not read inside a known section (prose
+  around `### Merge requests`, extra lines under `## Due`) and text between the title and
+  the first section. Unknown `##` sections are carried (story 23). A todo file with invalid
+  UTF-8 is refused rather than rewritten with U+FFFD. `Plan::write` is not atomic: a failure
+  part way leaves the files written so far and the target must be emptied before retrying.
 
 ## Blockers
 
 - One cargo build at a time on this machine (`scripts/guard`); independent sub-tasks (SV-001,
-  SV-002 and SV-003 were; SV-008 is now the frontier, SV-009 behind it) are worked one after
+  SV-002 and SV-003 were; SV-009 is now the frontier, SV-011 behind it) are worked one after
   another, not in parallel agents.

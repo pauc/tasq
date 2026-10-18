@@ -437,14 +437,14 @@ and committed as the v2 fixture store the CLI tests will use.
 
 **Blocked by:** SV-006.
 
-**Status:** ready
+**Status:** done
 
-- [ ] Converting the nb fixture notebook yields one file per task with the nb id, and each file's ULID time equals the nb file name's second.
-- [ ] A done nb task becomes `status: done` with its closed time; an open one keeps its status and tags.
-- [ ] Re-reading the converted store through the trait gives tasks equal to the nb store's, field by field, plus `created_at`.
-- [ ] The plan step writes nothing; the target must be absent or empty, otherwise an error.
-- [ ] The v2 fixture store is committed and listed in the testing docs.
-- [ ] Zero missed mutants in the touched code.
+- [x] Converting the nb fixture notebook yields one file per task with the nb id, and each file's ULID time equals the nb file name's second.
+- [x] A done nb task becomes `status: done` with its closed time; an open one keeps its status and tags.
+- [x] Re-reading the converted store through the trait gives tasks equal to the nb store's, field by field, plus `created_at`.
+- [x] The plan step writes nothing; the target must be absent or empty, otherwise an error.
+- [x] The v2 fixture store is committed and listed in the testing docs.
+- [x] Zero missed mutants in the touched code.
 
 ### SV-009: the CLI opens the tasq store
 
@@ -456,7 +456,7 @@ copy of the v2 fixture store and every CLI test and snapshot is green on it.
 
 **Blocked by:** SV-001, SV-007, SV-008.
 
-**Status:** blocked
+**Status:** ready
 
 - [ ] With no config, `tasq list` reads `~/.local/share/tasq/stores/default` (under the test `HOME`); `data_dir`, `store.name`, `.tasq.toml`, a profile and the two env variables override it in the documented precedence.
 - [ ] `store.kind`, `store.notebook` and `store.sync_interval` in a config file fail with file, line, column and a message naming `data_dir` / `store.name` or ADR-0026.
