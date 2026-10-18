@@ -334,11 +334,11 @@ for both and behaves exactly as before.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready
+**Status:** done
 
-- [ ] The workspace has `tasq-store`; store-nb's revision and diff come from it.
-- [ ] Every store-nb test, including the nb-gated ones, is green.
-- [ ] The moved tests run in the new crate.
+- [x] The workspace has `tasq-store`; store-nb's revision and diff come from it.
+- [x] Every store-nb test, including the nb-gated ones, is green.
+- [x] The moved tests run in the new crate.
 
 ### SV-003: core reads and renders a v2 task file
 

@@ -7,10 +7,10 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 | Id | Title | Status | Notes |
 |---|---|---|---|
 | SV-001 | CLI talks to the `Store` trait; `store sync` / `store reconcile` go (prefactor) | done | 2d527e5; `App::open_store` returns `Box<dyn Store>`; `Store` gained `take_warnings` and `doctor` (required); `Check` moved to `tasq_core::doctor`; 40 mutants in the diff, 0 missed |
-| SV-002 | `tasq-store` crate skeleton, revision and diff moved (prefactor) | ready | |
+| SV-002 | `tasq-store` crate skeleton, revision and diff moved (prefactor) | done | 7920eb3; `crates/store` (`tasq-store`, deps: core only); `revision.rs` and `diff.rs` moved with their 16 unit tests, store-nb re-exports `Revision`, `diff`, `revision`; `mutants-in crates/store/src`: 44 mutants, 42 caught, 2 unviable, 0 missed (two tests added) |
 | SV-003 | Core reads and renders a v2 task file | ready | |
 | SV-004 | Core writes v2: new documents and one op per key | blocked (SV-003) | |
-| SV-005 | The tasq store reads a directory | blocked (SV-002, SV-003) | |
+| SV-005 | The tasq store reads a directory | blocked (SV-003) | |
 | SV-006 | Create under the store lock | blocked (SV-004, SV-005) | |
 | SV-007 | Update with conflict detection, and doctor | blocked (SV-006) | |
 | SV-008 | Migrate as a library, and the committed v2 fixture store | blocked (SV-006) | |
@@ -53,6 +53,23 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   replacement is SV-009's bullet.
 - 2026-10-18 (SV-001): mutation run `cargo mutants --jobs 2 --in-diff <git diff main>`:
   40 mutants, 26 caught, 14 unviable, 0 missed.
+
+- 2026-10-18 (SV-002): `tasq-store` sits between core and store-nb in the dependency
+  order: store-nb's `Cargo.toml` takes it as a path dependency and its `lib.rs` re-exports
+  `tasq_store::{Revision, diff, revision}`, so `crate::revision::Revision` and `crate::diff` in
+  `store.rs` resolve unchanged and nothing outside the nb crate moved (the CLI never named
+  either). The release workflow publishes `tasq-store` right after `tasq-core`, the mutants
+  config examines `crates/store/**`, and the architecture, release, testing and contributing
+  docs list the crate. The new crate depends on `tasq-core` only (`tempfile` for tests); no
+  `mutants`, `serde` or `chrono` until a slice needs them.
+- 2026-10-18 (SV-002): `cargo mutants --in-diff` sees a `git mv` as a rename with no hunks,
+  so it mutated nothing in the moved files (the 40 mutants it reported were SV-001's). For a
+  move, run the `mutants-in` recipe on the new location. Doing so found five survivors in
+  `diff::apply` that store-nb's integration write tests used to kill: the `&&` guarding the
+  status op (an unchanged task whose status tag is not last would have had the tag moved to
+  the end by `set_status`) and the four `==` in the list-append filters (with `!=`, a second
+  entry next to an existing one is never appended). Two unit tests in `diff.rs` now pin
+  both, so the module is self-sufficient when the nb crate goes.
 
 ## Deviations
 
