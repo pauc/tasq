@@ -17,7 +17,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 | SV-009 | The CLI opens the tasq store | done | 5cffcd5; `Config::data_dir` (`Option<PathBuf>`, filled by `Config::load` from `default_data_dir`), `StoreConfig::name` plus three `Removed` keys, `ConfigError::BadStoreName`, `ENV_DATA_DIR`/`ENV_STORE_NAME`; `App::{data_dir, store_dir, store_env}`, `open_store` builds a `TasqStore`; `tasq_launch::which::{find_in_path, tool_check}` (moved out of store-nb); `NbStore::open(notebook: &str, ..)`; the CLI harness copies the v2 fixture store under the test `HOME` (`TZ=UTC`, `ulid_name`, `v2`, `file_of`, `read_task(id)`); 201 CLI tests, 23 snapshots regenerated and reviewed; mutants `--in-diff` (config loading, `NbStore::open`, `tool_check`): 16 mutants, 13 caught, 3 unviable, 0 missed; `mutants-in crates/launch/src/which.rs`: 11 mutants, 10 caught, 1 unviable, 0 missed |
 | SV-010 | Creation time and store provenance surfaces | done | 2728d5a; `Task::created_at` serialised as `created` (`YYYY-MM-DD HH:MM`, skipped when `None`, never deserialised); TUI detail `Created:` line; `tasq view` on a terminal adds `created:` to the shown frontmatter and fences the block for glow (`view::{with_created, fence_frontmatter}`); `App::store_provenance` (`Provenance`), `store info` `data_dir:`/`store.name:` lines and `{value, from}` JSON keys, doctor `location` check; 6 snapshots regenerated and reviewed; mutants `--no-config` on the touched CLI and TUI files, `--in-diff`: 30 mutants, 25 caught, 5 unviable, 0 missed (the config excludes `crates/cli` and `crates/tui`; core changed only an attribute) |
 | SV-011 | `tasq migrate <notebook> [--to] [--dry-run]` | done | ae9110b; `Command::Migrate`, `commands/migrate.rs` (`run`, `render`, `StoreSettings`, `plan_json`, `lexical`), `tasq_store::migrate::resolve_notebook` and `MigrateError::NoNotebook`, `From<MigrateError> for CliError`, the `migrate` row in `docs/json.md`; CLI `mod migrate` (8 tests, 2 snapshots, help snapshot regenerated), 4 resolver tests, 6 unit tests; mutants `--no-config --in-diff`: 20 mutants, 18 caught, 2 unviable, 0 missed |
-| SV-012 | Docs, agent surfaces and the hand-over | ready | |
+| SV-012 | Docs, agent surfaces and the hand-over | done | 29f72a7; `docs/file-format.md` rewritten (v2 normative: store and identity, grammar, keys table, canonical order, editing rules; v1 a short "read by `tasq migrate` only" section); `config`, `json`, `testing`, `migration`, `architecture`, `sources`, `plugins`, README, CONTRIBUTING, CLAUDE.md, `docs/agents/issue-tracker.md`, the plugin prompts and the demo setup swept; `plugin.rs` bans `.todo.md`, `.index` and `notebook` in skills; tracker: 47 and 2 done pointing at 56, task 58 (delete the nb store) created blocked by 56 and logged on 56; no Rust logic changed, so no mutation run (the CLI test file and two strings only) |
 
 ## Learnings
 
@@ -366,6 +366,25 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   `tasq migrate` (every command loads the config for the workflow and the default target).
   The error names the replacement, so the user removes the key and runs migrate. SV-012's
   docs should say so in the switch-over steps.
+
+- 2026-10-18 (SV-012): the frontmatter spec was written from the code, not from the plan, and
+  differs from the plan's wording in three places the docs now state: the key/value split is
+  on the first `:` (not `: `), with a key that is one word with no whitespace; `priority`
+  also reads `#A`/`#B`/`#C` (`Priority::from_str` strips a `#`); `migrate` invents `closed`
+  for a done v1 task without `## Closed` from its last progress entry, and a todo file that is
+  not valid UTF-8 aborts the whole plan. A spec review against the code caught the last two
+  and the `task-files` check name.
+- 2026-10-18 (SV-012): the "no doc mentions" criterion keeps four exceptions besides the v1
+  section and the ADRs: the removal notes in `docs/config.md` (the plan asks for them),
+  `docs/migration.md` (the switch-over guide names the old keys and `.index` ids on purpose),
+  the `ids_may_change_on_reconcile` JSON key (always `false`, kept for compatibility) and
+  the legacy store-nb rows of the architecture/testing docs, which task 58 deletes. The
+  CLI's positional `store info` rendering and `IdScheme::Positional` stay in code for the nb
+  crate until then.
+- 2026-10-18 (SV-012): the project's own tasks are still in the `Tasq` nb notebook, read by
+  the installed `tasq` from main; the tracker writes (closing 47 and 2, creating 58) went
+  there. Migrating that notebook (`tasq migrate Tasq`) is for after this branch is merged
+  and installed; `docs/agents/issue-tracker.md` already describes the store.
 
 ## Deviations
 

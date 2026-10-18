@@ -507,8 +507,8 @@ created, blocked by nothing once this task lands, and linked from task 56.
 
 **Blocked by:** SV-011.
 
-**Status:** ready
+**Status:** done
 
-- [ ] No doc or prompt mentions `.index`, positional ids, `store.notebook`, `store sync` or `store reconcile` except the v1 section and the ADRs.
-- [ ] The frontmatter subset is specified exactly (grammar, keys, values, canonical order, what survives an edit).
-- [ ] Tasks 47 and 2 are done with a note pointing at 56; the removal task exists and is linked.
+- [x] No doc or prompt mentions `.index`, positional ids, `store.notebook`, `store sync` or `store reconcile` except the v1 section and the ADRs (and the removal notes in `docs/config.md` and `docs/migration.md`, which name the old keys on purpose, and the `ids_may_change_on_reconcile` JSON key, kept for compatibility).
+- [x] The frontmatter subset is specified exactly (grammar, keys, values, canonical order, what survives an edit).
+- [x] Tasks 47 and 2 are done with a note pointing at 56; the removal task exists (58) and is linked.
