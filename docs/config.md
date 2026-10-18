@@ -45,7 +45,7 @@ env = "direnv"               # inherit | direnv
 # log = "~/.local/state/tasq/launch.log"
 
 [launch.claude]
-# prompt_file = "~/.config/tasq/prompts/claude.md"
+# prompt_file = "~/.config/tasq/prompts/launch/claude.md"
 
 [launch.herdr]
 placement = "auto"           # auto | workspace | tab
@@ -80,7 +80,7 @@ preset = "dark"              # dark, light, solarized, gruvbox or mono; see "Col
 #                                   # github-review-requests | github-work-items | llm-bridge
 # forge = "gitlab"                  # forge-backed kinds
 # command = "claude -p --output-format json"   # llm-bridge only
-# prompt_file = "~/.config/tasq/prompts/inbox.md"  # llm-bridge only
+# prompt_file = "~/.config/tasq/prompts/source/inbox.md"  # llm-bridge only
 # tags = ["gitlab", "review-request"]
 # status = "ready"
 # enabled = true
@@ -99,7 +99,7 @@ preset = "dark"              # dark, light, solarized, gruvbox or mono; see "Col
 summarizer = "llm"           # raw | llm
 command = "claude -p"        # reads the prompt (instructions + notes) on stdin
 # model = "sonnet"           # appended as --model <model>
-# prompt_file = "~/.config/tasq/prompts/summary.md"  # {{day}} {{date}} {{notes}}
+# prompt_file = "~/.config/tasq/prompts/report/summary.md"  # {{day}} {{date}} {{notes}}
 
 [hooks]
 post-create = []             # command lines, see "Hooks"
