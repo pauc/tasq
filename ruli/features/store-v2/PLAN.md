@@ -401,14 +401,14 @@ all succeed. A stale lock is broken, a live one is waited on.
 
 **Blocked by:** SV-004, SV-005.
 
-**Status:** ready
+**Status:** done
 
-- [ ] Creating in an absent directory creates it and the task gets id 1.
-- [ ] Ids are highest-plus-one; a deleted file's id is not reused when a higher one exists.
-- [ ] Ten parallel creates produce ten files, ten distinct ids and no error.
-- [ ] The file name is a ULID whose time is the clock's; `get` reports it as `created_at`.
-- [ ] A lock older than the stale threshold is removed and the create proceeds; a fresh lock makes the create wait until it is released.
-- [ ] Zero missed mutants in the touched code.
+- [x] Creating in an absent directory creates it and the task gets id 1.
+- [x] Ids are highest-plus-one; a deleted file's id is not reused when a higher one exists.
+- [x] Ten parallel creates produce ten files, ten distinct ids and no error.
+- [x] The file name is a ULID whose time is the clock's; `get` reports it as `created_at`.
+- [x] A lock older than the stale threshold is removed and the create proceeds; a fresh lock makes the create wait until it is released.
+- [x] Zero missed mutants in the touched code.
 
 ### SV-007: update with conflict detection, and doctor
 
@@ -419,7 +419,7 @@ naming the file (the non-task-file and duplicate-id checks landed with SV-005).
 
 **Blocked by:** SV-006.
 
-**Status:** blocked
+**Status:** ready
 
 - [ ] Every scalar and list change made through `update` is visible on re-read and leaves unrelated lines untouched.
 - [ ] A change the ops cannot express is refused with `Unsupported` and writes nothing.
@@ -437,7 +437,7 @@ and committed as the v2 fixture store the CLI tests will use.
 
 **Blocked by:** SV-006.
 
-**Status:** blocked
+**Status:** ready
 
 - [ ] Converting the nb fixture notebook yields one file per task with the nb id, and each file's ULID time equals the nb file name's second.
 - [ ] A done nb task becomes `status: done` with its closed time; an open one keeps its status and tags.

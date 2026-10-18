@@ -11,9 +11,9 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 | SV-003 | Core reads and renders a v2 task file | done | 710f1ff, c1d2bf1; `Document` keeps the block as a `front` region ahead of the body, `format::parse_v2(text, created_at, workflow)`, `Document::{frontmatter, id}`, `format::key`, `Task::created_at`; nine v2 fixtures under `crates/core/tests/fixtures/v2/`, `format_v2.rs` (23 tests), a v2 arm in `format_props.rs`; `mutants-in crates/core/src/format`: 385 mutants, 347 caught, 38 unviable, 0 missed |
 | SV-004 | Core writes v2: new documents and one op per key | done | dba6a08; `Document::from_task_v2`, `key::ORDER`, `ops::{set_key, clear_key, set_origin, clear_origin}`, every scalar op dispatches on the shape; `diff::apply` writes the origin on v2; `format_v2_write.rs` (28 tests), two v2 props; `mutants-in crates/core/src/format`: 415 mutants, 376 caught, 39 unviable, 0 missed (one `||` survivor in `clear_origin` fixed by reshaping it to a `map` over the three keys); `mutants-in crates/store/src`: 45 mutants, 0 missed |
 | SV-005 | The tasq store reads a directory | done | 5e1226b, 7e222fc; `TasqStore::new(dir, workflow)` (`crates/store/src/store.rs`), `tasq_store::ulid::Ulid`, `StoreError::AmbiguousId`; `tests/read.rs` (12 tests) over a temp directory; `mutants-in crates/store/src`: 127 mutants, 108 caught, 19 unviable, 0 missed; `--in-diff main` (before the review follow-ups): 276 mutants, 0 missed |
-| SV-006 | Create under the store lock | ready | |
-| SV-007 | Update with conflict detection, and doctor | blocked (SV-006) | |
-| SV-008 | Migrate as a library, and the committed v2 fixture store | blocked (SV-006) | |
+| SV-006 | Create under the store lock | done | 840706a, 9de6066; `TasqStore::create` (`crates/store/src/store.rs`), `tasq_store::lock::StoreLock` (`.tasq/lock`), `tasq_store::draft::{check_draft, materialize, DEFAULT_NOTE}` (shared with store-nb), `TasqStore::{with_clock, with_random}`; `tests/create.rs` (12 tests) plus lock and draft unit tests; `mutants-in crates/store/src`: 153 mutants, 124 caught, 27 unviable, 2 timeouts (both make a loop infinite: the lock poll, the name-attempt counter), 0 missed |
+| SV-007 | Update with conflict detection, and doctor | ready | |
+| SV-008 | Migrate as a library, and the committed v2 fixture store | ready | |
 | SV-009 | The CLI opens the tasq store | blocked (SV-001, SV-007, SV-008) | |
 | SV-010 | Creation time and store provenance surfaces | blocked (SV-009) | |
 | SV-011 | `tasq migrate <notebook> [--to] [--dry-run]` | blocked (SV-008, SV-009) | |
@@ -173,6 +173,54 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   replace invalid bytes with U+FFFD; SV-007 should refuse (or keep the bytes) rather than
   rewrite them. Reads are unaffected.
 
+- 2026-10-18 (SV-006): `create` is check the draft, take the lock, scan, `next_id` (the
+  highest id parsed as a number plus one, `1` for an empty store; the files of an ambiguous id
+  count, so a stray copy never makes a create fail or reuse an id), `draft::materialize`,
+  `Document::from_task_v2`, `write_new`, release, `get`. The returned task comes from reading
+  the file back, which is what gives it `created_at` and proves the write parses. The lock is
+  dropped before the read-back: reads never lock, and holding it there would only lengthen
+  the critical section.
+- 2026-10-18 (SV-006): the lock mirrors the nb crate's `job::State::acquire` without the
+  hand-over: `.tasq/lock` by exclusive create, stale at `STALE_AFTER` (two minutes) measured
+  against the store's clock read as an instant (`lock::instant`, the inverse of SV-005's
+  `local_time`: `Local.from_local_datetime(..).earliest()`, UTC for a time skipped by a DST
+  change), polled every 10 ms, removed on drop. The clock is read on every poll, not once on
+  entry: the review caught a first cut that froze `now`, under which a waiter never broke a
+  lock whose holder died after the waiter arrived (`a_waiter_breaks_a_lock_that_goes_stale_
+  while_it_polls`, with a clock that advances a minute per reading, hangs on that cut).
+  Measuring staleness against the injected clock rather than the wall clock is what makes
+  the stale and live-lock tests deterministic: a test sets the lock's mtime relative to the
+  fixed clock's instant. A lock from the future (mtime after `now`) is live, as in the nb
+  crate. The total wait on a lock nobody releases is bounded by the stale threshold; there
+  is no separate timeout.
+- 2026-10-18 (SV-006): in the hour a DST change skips, `instant` reads the clock as UTC, so
+  the ULID's time and the `created_at` read back from it differ from the clock's wall time by
+  the zone offset while the progress note carries the wall time. The fold is exact
+  (`earliest()` round-trips). Known, not handled: the nb crate's `job::instant` has the same
+  reading and the hour is one per year.
+- 2026-10-18 (SV-006): the ULID's random part comes through `TasqStore::with_random`
+  (`RandomSource`, a `Box<dyn FnMut() -> u128>`, default `os_random`: `getrandom::fill`, the
+  one `#[mutants::skip]` in the crate). Tests script it, so the file name of a created task is an
+  exact-string assertion, and a collision is forced by scripting the same value twice. The
+  write is a temp file in the store directory (`.tasq-*`, ignored by the scan as a dot
+  file) and `persist_noclobber`, which hands the temp file back on failure, so a retry
+  mints a new name without rewriting; `MAX_NAME_ATTEMPTS` (8) bounds the loop and the error
+  (`Io`, `AlreadyExists`, "no free file name after 8 attempts") names the last candidate.
+  The bounded-attempts test counts the random calls, which is what separates `>=` from `>`
+  on the bound.
+- 2026-10-18 (SV-006): ten threads, each with its own `TasqStore` on the same directory and
+  the same fixed clock (so every file shares the millisecond), allocate ids 1 to 10 with no
+  retry: the lock serialises scan-allocate-write. `TasqStore` is not `Send` (`Box<dyn
+  Clock>`, `RefCell`), like `NbStore`; the CLI never needs it to be.
+- 2026-10-18 (SV-006): `getrandom` 0.4 was already in the lock file through `tempfile`;
+  taking it as a direct dependency adds nothing to the build. `tempfile` moved from
+  dev-dependency to dependency, and the crate took `mutants` for the skip attribute. The
+  temp file is set to mode `0644` before the rename, as the nb store does: `tempfile` creates
+  `0600`, which would make every task file unreadable to anyone but the owner regardless of
+  the umask. `impl Debug for TasqStore` is written with `Debug` imported, not `fmt::Debug`,
+  because `-E 'impl Debug'` matches the source text (SV-005's `Display` lesson); the first
+  run reported the `fmt::Debug` form as a missed mutant.
+
 ## Deviations
 
 - SV-001's first criterion read "No file in the CLI crate names the nb store type". The
@@ -224,6 +272,17 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   the `task-file` fix text follows the parse error (five variants, each pinned);
   `docs/architecture.md` describes the crate's read path and the two new modules. SV-007's
   text in PLAN.md was narrowed to the stale-lock check.
+- SV-006: `check_draft` and the default note moved from the nb crate's `create` module to
+  `tasq_store::draft` (`check_draft`, `DEFAULT_NOTE`, `materialize`): the merge-request rule
+  (`- [title](url)` needs a title) and the `created via tasq create` default apply to both
+  file shapes, and duplicating them would have let the two stores drift before SV-009 switches
+  the CLI. The nb crate's `create` module re-exports both names and its `render_draft` calls
+  `materialize`; `file_name_at` and `free_file_name` stay in the nb crate. The unit test moved
+  with the code. Nothing the nb store writes changed.
+- SV-006: "ids are never reused" holds while a higher id exists; with no cache and no index,
+  deleting the file with the highest id does hand that id to the next create (the plan's
+  second criterion is scoped to "when a higher one exists"). Doctor's stale-lock check is
+  still SV-007's; `tasq_store::lock::is_stale` is public for it.
 - SV-003: `FormatError::NotATask`'s message still names only the v1 title shapes; the CLI and
   store-nb snapshots pin it, and the tasq store (SV-005) classifies files through
   `NotFrontmatter` instead. The v2 file format is implemented but `docs/file-format.md` is
@@ -233,5 +292,5 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 ## Blockers
 
 - One cargo build at a time on this machine (`scripts/guard`); independent sub-tasks (SV-001,
-  SV-002 and SV-003 were; SV-006 is now the frontier, SV-007 and SV-008 wait on it) are worked
-  one after another, not in parallel agents.
+  SV-002 and SV-003 were; SV-007 and SV-008 are now the frontier) are worked one after
+  another, not in parallel agents.
