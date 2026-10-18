@@ -85,6 +85,16 @@ pub enum StoreError {
         /// What failed and the manual fix.
         message: String,
     },
+    /// More than one task file claims `id` (a tasq store, where the id is
+    /// written in the file): nothing that names the id can proceed until
+    /// one of the files is fixed. `tasq doctor` reports it too.
+    #[error("id {id} is claimed by more than one file: {}", path_list(paths))]
+    AmbiguousId {
+        /// The id.
+        id: TaskId,
+        /// Every file claiming it, in name order.
+        paths: Vec<PathBuf>,
+    },
     /// The store cannot perform this operation (yet or at all).
     #[error("unsupported: {operation}")]
     Unsupported {
@@ -115,6 +125,16 @@ fn written_suffix(written: &[TaskId]) -> String {
     }
     let ids: Vec<String> = written.iter().map(ToString::to_string).collect();
     format!(" (tasks already written: {})", ids.join(", "))
+}
+
+/// `a.md, b.md`: the paths of an [`StoreError::AmbiguousId`], comma
+/// separated.
+fn path_list(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// How a store assigns ids.
@@ -454,6 +474,14 @@ mod tests {
             }
             .to_string(),
             "bookkeeping failed after the write: run nb index reconcile"
+        );
+        assert_eq!(
+            StoreError::AmbiguousId {
+                id: TaskId::from(7),
+                paths: vec!["/s/a.md".into(), "/s/b.md".into()],
+            }
+            .to_string(),
+            "id 7 is claimed by more than one file: /s/a.md, /s/b.md"
         );
         assert_eq!(
             StoreError::Unsupported {
