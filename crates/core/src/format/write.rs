@@ -3,17 +3,22 @@
 //! (ADR 0026, [`Document::from_task_v2`]).
 
 use crate::clock::{format_date, format_timestamp};
-use crate::model::{Tag, Task};
+use crate::model::Task;
 
 use super::document::{DONE_PREFIX, Document, FENCE, OPEN_PREFIX, TITLE_PREFIX, key};
 use super::entry;
 use super::ops;
 use super::read::section;
 
-/// `[a, b, c]`: the one-line list the `tags` key holds.
-pub(super) fn format_tag_list(tags: &[Tag]) -> String {
-    let items: Vec<&str> = tags.iter().map(Tag::as_str).collect();
-    format!("[{}]", items.join(", "))
+/// Appends a `## name` section to `lines` the way `cmd_create` did: a blank
+/// line, the heading, and, when there is a body, a blank line and the body.
+fn push_section(lines: &mut Vec<String>, name: &str, body: &[String]) {
+    lines.push(String::new());
+    lines.push(format!("## {name}"));
+    if !body.is_empty() {
+        lines.push(String::new());
+        lines.extend(body.iter().cloned());
+    }
 }
 
 /// The `key: value` lines of the canonical frontmatter block of `task`, in
@@ -21,7 +26,7 @@ pub(super) fn format_tag_list(tags: &[Tag]) -> String {
 /// one, or `done` when it is done; the other keys when set. `closed` is
 /// written on a done task only, `source_url` only when the origin has one,
 /// `tags` only when there are any.
-pub(super) fn frontmatter_lines(task: &Task) -> Vec<String> {
+fn frontmatter_lines(task: &Task) -> Vec<String> {
     let entry = |k: &str, v: &str| format!("{k}: {v}");
     let mut lines = vec![entry(key::ID, &task.id.to_string())];
     if task.done {
@@ -50,7 +55,7 @@ pub(super) fn frontmatter_lines(task: &Task) -> Vec<String> {
         }
     }
     if !task.tags.is_empty() {
-        lines.push(entry(key::TAGS, &format_tag_list(&task.tags)));
+        lines.push(entry(key::TAGS, &entry::format_tag_list(&task.tags)));
     }
     lines
 }
@@ -68,14 +73,7 @@ impl Document {
     pub fn from_task(task: &Task, workflow: &crate::model::Workflow) -> Self {
         let marker = if task.done { DONE_PREFIX } else { OPEN_PREFIX };
         let mut lines = vec![format!("{marker}{}", task.title)];
-        let mut section = |name: &str, body: &[String]| {
-            lines.push(String::new());
-            lines.push(format!("## {name}"));
-            if !body.is_empty() {
-                lines.push(String::new());
-                lines.extend(body.iter().cloned());
-            }
-        };
+        let mut section = |name: &str, body: &[String]| push_section(&mut lines, name, body);
         if let Some(desc) = task.description.as_deref().filter(|d| !d.is_empty()) {
             section(section::DESCRIPTION, &[desc.to_owned()]);
         }
@@ -106,10 +104,17 @@ impl Document {
         section(section::TAGS, &[tags.join(" ")]);
         let progress: Vec<String> = task.progress.iter().map(entry::format_progress).collect();
         section(section::PROGRESS, &progress);
+        let _ = workflow;
+        Self::with_appended_lists(&lines, task)
+    }
 
+    /// Parses the fresh lines and adds the sections the script added with
+    /// later commands (merge requests, Worktrees, Sessions) through the
+    /// operations those commands use.
+    fn with_appended_lists(lines: &[String], task: &Task) -> Self {
         let mut text = lines.join("\n");
         text.push('\n');
-        let mut doc = Self::parse(&text).expect("a rendered title line always parses");
+        let mut doc = Self::parse(&text).expect("a rendered block and title line always parse");
         for mr in &task.merge_requests {
             ops::append_merge_request(&mut doc, mr);
         }
@@ -119,7 +124,6 @@ impl Document {
         for session in &task.sessions {
             ops::append_session(&mut doc, session);
         }
-        let _ = workflow;
         doc
     }
 
@@ -134,14 +138,7 @@ impl Document {
         lines.extend(frontmatter_lines(task));
         lines.push(FENCE.to_owned());
         lines.push(format!("{TITLE_PREFIX}{}", task.title));
-        let mut section = |name: &str, body: &[String]| {
-            lines.push(String::new());
-            lines.push(format!("## {name}"));
-            if !body.is_empty() {
-                lines.push(String::new());
-                lines.extend(body.iter().cloned());
-            }
-        };
+        let mut section = |name: &str, body: &[String]| push_section(&mut lines, name, body);
         if let Some(desc) = task.description.as_deref().filter(|d| !d.is_empty()) {
             section(section::DESCRIPTION, &[desc.to_owned()]);
         }
@@ -151,19 +148,6 @@ impl Document {
         }
         let progress: Vec<String> = task.progress.iter().map(entry::format_progress).collect();
         section(section::PROGRESS, &progress);
-
-        let mut text = lines.join("\n");
-        text.push('\n');
-        let mut doc = Self::parse(&text).expect("a rendered v2 block and title line always parse");
-        for mr in &task.merge_requests {
-            ops::append_merge_request(&mut doc, mr);
-        }
-        for worktree in &task.worktrees {
-            ops::append_worktree(&mut doc, worktree);
-        }
-        for session in &task.sessions {
-            ops::append_session(&mut doc, session);
-        }
-        doc
+        Self::with_appended_lists(&lines, task)
     }
 }

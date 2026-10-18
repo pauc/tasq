@@ -29,7 +29,6 @@ use crate::model::{
 use super::document::{DONE_PREFIX, Document, OPEN_PREFIX, TITLE_PREFIX, heading_name, key};
 use super::entry;
 use super::read::{TagKind, classify, section};
-use super::write::format_tag_list;
 
 fn heading(name: &str) -> String {
     format!("## {name}")
@@ -43,6 +42,11 @@ fn heading(name: &str) -> String {
 /// in [`key::ORDER`], and a key outside that order goes at the end of the
 /// block. No other line changes: unknown keys, blank lines and the body
 /// stay byte for byte. A v1 document has no block and is left alone.
+///
+/// The value is written as given: like [`set_title`] with an empty title,
+/// a value with a line break, or an `id` that is not a positive integer,
+/// makes a file the parser refuses (callers check; the typed operations
+/// never pass one).
 pub fn set_key(doc: &mut Document, key: &str, value: &str) {
     doc.set_key(key, value);
 }
@@ -538,7 +542,7 @@ pub fn set_tags(doc: &mut Document, tags: &[Tag], workflow: &Workflow) {
         if tags.is_empty() {
             doc.clear_key(key::TAGS);
         } else {
-            doc.set_key(key::TAGS, &format_tag_list(tags));
+            doc.set_key(key::TAGS, &entry::format_tag_list(tags));
         }
         return;
     }

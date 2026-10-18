@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use crate::clock::{When, format_timestamp, parse_timestamp};
-use crate::model::{Link, Origin, ProgressEntry, Session, Worktree};
+use crate::model::{Link, Origin, ProgressEntry, Session, Tag, Worktree};
 
 /// Separator between a session id and its description: space, EM DASH, space.
 pub const SESSION_SEPARATOR: &str = " \u{2014} ";
@@ -179,4 +179,11 @@ pub fn format_origin(origin: &Origin) -> String {
         }
         _ => format!("{}: {}", origin.source, origin.external_id),
     }
+}
+
+/// `[a, b, c]`: the one-line list the `tags` key of a v2 frontmatter holds
+/// (ADR 0026); the reader is `super::read::parse_tag_list`.
+pub fn format_tag_list(tags: &[Tag]) -> String {
+    let items: Vec<&str> = tags.iter().map(Tag::as_str).collect();
+    format!("[{}]", items.join(", "))
 }
