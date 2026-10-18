@@ -16,8 +16,8 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 | SV-008 | Migrate as a library, and the committed v2 fixture store | done | 69f7f75; `tasq_store::migrate::{plan, Plan, Entry, MigrateError}` (`crates/store/src/migrate.rs`), the fixture store `crates/store/tests/fixtures/stores/default` (ids 1, 3, 4, 6, 7), `format::section::ALL`; `tests/migrate.rs` (23 tests), the parity test `crates/store-nb/tests/migrate.rs`; mutants on `migrate.rs`, `lock.rs`, `store.rs`: 107 + 49 mutants, 0 missed (timeouts: the known lock and name loops) |
 | SV-009 | The CLI opens the tasq store | done | 5cffcd5; `Config::data_dir` (`Option<PathBuf>`, filled by `Config::load` from `default_data_dir`), `StoreConfig::name` plus three `Removed` keys, `ConfigError::BadStoreName`, `ENV_DATA_DIR`/`ENV_STORE_NAME`; `App::{data_dir, store_dir, store_env}`, `open_store` builds a `TasqStore`; `tasq_launch::which::{find_in_path, tool_check}` (moved out of store-nb); `NbStore::open(notebook: &str, ..)`; the CLI harness copies the v2 fixture store under the test `HOME` (`TZ=UTC`, `ulid_name`, `v2`, `file_of`, `read_task(id)`); 201 CLI tests, 23 snapshots regenerated and reviewed; mutants `--in-diff` (config loading, `NbStore::open`, `tool_check`): 16 mutants, 13 caught, 3 unviable, 0 missed; `mutants-in crates/launch/src/which.rs`: 11 mutants, 10 caught, 1 unviable, 0 missed |
 | SV-010 | Creation time and store provenance surfaces | done | 2728d5a; `Task::created_at` serialised as `created` (`YYYY-MM-DD HH:MM`, skipped when `None`, never deserialised); TUI detail `Created:` line; `tasq view` on a terminal adds `created:` to the shown frontmatter and fences the block for glow (`view::{with_created, fence_frontmatter}`); `App::store_provenance` (`Provenance`), `store info` `data_dir:`/`store.name:` lines and `{value, from}` JSON keys, doctor `location` check; 6 snapshots regenerated and reviewed; mutants `--no-config` on the touched CLI and TUI files, `--in-diff`: 30 mutants, 25 caught, 5 unviable, 0 missed (the config excludes `crates/cli` and `crates/tui`; core changed only an attribute) |
-| SV-011 | `tasq migrate <notebook> [--to] [--dry-run]` | ready | |
-| SV-012 | Docs, agent surfaces and the hand-over | blocked (SV-011) | |
+| SV-011 | `tasq migrate <notebook> [--to] [--dry-run]` | done | ae9110b; `Command::Migrate`, `commands/migrate.rs` (`run`, `render`, `StoreSettings`, `plan_json`, `lexical`), `tasq_store::migrate::resolve_notebook` and `MigrateError::NoNotebook`, `From<MigrateError> for CliError`, the `migrate` row in `docs/json.md`; CLI `mod migrate` (8 tests, 2 snapshots, help snapshot regenerated), 4 resolver tests, 6 unit tests; mutants `--no-config --in-diff`: 20 mutants, 18 caught, 2 unviable, 0 missed |
+| SV-012 | Docs, agent surfaces and the hand-over | ready | |
 
 ## Learnings
 
@@ -348,7 +348,36 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   no longer needs the task to parse. `docs/json.md` documents `created` and the two new `store
   info` keys now, not in SV-012, because the JSON shape changed in this commit.
 
+- 2026-10-18 (SV-011): the notebook resolver lives in `tasq_store::migrate::resolve_notebook`
+  (cwd, home and `NB_DIR` passed in), not in the CLI and not reused from store-nb: the CLI
+  does not depend on the nb crate since SV-009, and the copy lets the removal task delete
+  `store-nb/src/resolve.rs` without touching migrate. The CLI still does not depend on
+  `tasq-store-nb` at all, so "the nb crate is a dependency of the CLI only for migrate" holds
+  trivially. `--to` is taken from the working directory and resolved lexically (`.` dropped,
+  `..` pops), so the printed `data_dir` is the directory meant even when the target does not
+  exist yet. The config lines are the target's parent as `data_dir` and its last component as
+  `store.name`, quoted with the `toml` crate (a path with `"` prints as a literal string);
+  they are printed even when the target is the configured store. File names carry a random
+  tail, so the CLI tests redact the 16 random characters (`redact`) and compare the mapping
+  of a dry run with the real run's; the time part is pinned by `TZ=UTC`. "No git runs" is a
+  fake `git` on `PATH` that records any call. `list --all --json` on the migrated store is
+  byte-identical to the committed fixture store's.
+- 2026-10-18 (SV-011): a config that still sets `store.notebook` fails to load, and so does
+  `tasq migrate` (every command loads the config for the workflow and the default target).
+  The error names the replacement, so the user removes the key and runs migrate. SV-012's
+  docs should say so in the switch-over steps.
+
 ## Deviations
+
+- SV-011: a notebook path containing `/` may be relative (taken from the working directory);
+  `store.notebook` required it to be absolute or start with `~`, which made sense for a config
+  value and not for an argument. The output adds two things the plan did not list: a summary
+  line between the mapping and the config lines ("Wrote N tasks to <dir>." / "Would write ...
+  (dry run: nothing written).") followed by "To use this store, set in the tasq config:", and
+  the `--json` document carries `dry_run`, `target` and each task's `from` besides the mapping
+  and the config. `Plan::write` still leaves the files written so far when a write fails part
+  way (SV-008); the error names the file, and a second attempt is refused until the target is
+  emptied.
 
 - SV-010: `created` is `YYYY-MM-DD HH:MM` (minute precision), not "ISO local time" with the
   ULID's milliseconds: `docs/json.md` says every JSON timestamp has that shape, and `closed_at`,

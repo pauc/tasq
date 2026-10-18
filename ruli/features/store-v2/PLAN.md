@@ -490,13 +490,13 @@ never written and no git command runs.
 
 **Blocked by:** SV-008, SV-009.
 
-**Status:** ready
+**Status:** done
 
-- [ ] On a copy of the fixture notebook, `tasq migrate home --to <tmp>` prints one line per task and the config lines; the notebook directory is byte-identical afterwards.
-- [ ] `tasq list` on the new store shows the same ids and titles as the notebook did.
-- [ ] `--dry-run` prints the same mapping and leaves the target absent.
-- [ ] An existing non-empty target is refused before anything is written.
-- [ ] Zero missed mutants in the touched code.
+- [x] On a copy of the fixture notebook, `tasq migrate home --to <tmp>` prints one line per task and the config lines; the notebook directory is byte-identical afterwards.
+- [x] `tasq list` on the new store shows the same ids and titles as the notebook did.
+- [x] `--dry-run` prints the same mapping and leaves the target absent.
+- [x] An existing non-empty target is refused before anything is written.
+- [x] Zero missed mutants in the touched code.
 
 ### SV-012: docs, agent surfaces and the hand-over
 
@@ -507,7 +507,7 @@ created, blocked by nothing once this task lands, and linked from task 56.
 
 **Blocked by:** SV-011.
 
-**Status:** blocked
+**Status:** ready
 
 - [ ] No doc or prompt mentions `.index`, positional ids, `store.notebook`, `store sync` or `store reconcile` except the v1 section and the ADRs.
 - [ ] The frontmatter subset is specified exactly (grammar, keys, values, canonical order, what survives an edit).
