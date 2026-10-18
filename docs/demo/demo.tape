@@ -2,7 +2,7 @@
 #
 # Render with `scripts/demo-gif` (VHS in docker, nothing to install) or, with
 # vhs on PATH, `vhs docs/demo/demo.tape` from the repository root with `tasq`
-# on PATH. docs/demo/setup.sh builds the notebook it records against.
+# on PATH. docs/demo/setup.sh builds the store it records against.
 
 Output docs/demo/tasq.gif
 

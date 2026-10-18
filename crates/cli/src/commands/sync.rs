@@ -119,7 +119,7 @@ pub fn run(
 /// `tasq sync --interactive`: the script's `tasks update`. Replaces this
 /// process with `claude "/tasq:sync"` in `work.default_project` (through
 /// `direnv exec` when `launch.env` and the `.envrc` allow it), with the
-/// notebook and profile in the environment so the session's `tasq` sees
+/// store and profile in the environment so the session's `tasq` sees
 /// the same tasks. With `dry_run` the command is printed instead.
 pub fn interactive(app: &App, dry_run: bool) -> Result<()> {
     let Some(workdir) = app.config().work.default_project.clone() else {

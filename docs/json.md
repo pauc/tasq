@@ -17,7 +17,7 @@ refuse anything else; a future shape change bumps the number.
 | `tasq worktree trust` | `"file"`: the repository's `.tasq.toml` (its main checkout when it has none), `"approved": [{kind, line}]`: each hook line now approved, `kind` one of `"pre-create"`, `"post-create"`, `"pre-remove"`, `"post-remove"` (in that order, then the lines in file order); `[]` when the file sets no hooks |
 | `tasq project <id>` (show) | `"task": Task`, `"default_project": path or null` |
 | `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool` (only with worktrees enabled), `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
-| `tasq store info` | `"store": {name, location, task_count, id_scheme, ids_may_change_on_reconcile}`, `"bookkeeper": the bookkeeper's name (`"native"`; `"none"` in tests), `null` for a store without one, `"data_dir": {value, from}` (the resolved directory and the layer that set it, as `tasq config show` names it: `defaults`, a file, `env`, `--set`), `"store_name": {value, from}` |
+| `tasq store info` | `"store": {name, location, task_count, id_scheme, ids_may_change_on_reconcile}` (`"tasq"`, the directory, the count, `"stable"`, `false`), `"bookkeeper": null` (the tasq store commits nothing; the key stays for the opt-in git sync ADR-0026 defers). `ids_may_change_on_reconcile` is always `false` and stays for compatibility, `"data_dir": {value, from}` (the resolved directory and the layer that set it, as `tasq config show` names it: `defaults`, a file, `env`, `--set`), `"store_name": {value, from}` |
 | `tasq migrate` | `"dry_run"`, `"target"` (the store directory), `"tasks"`: `[{id, file, title, from}]` in id order (`file` the new `<ULID>.md` name, `from` the nb file), `"config"`: `{data_dir, store_name}` (the settings that select the target) |
 | `tasq doctor` | `"checks": [{name, status: "ok" \| "warn" \| "fail", detail, fix}]`, `"ok": bool` |
 | `tasq sync` | `"dry_run": bool`, `"ok": bool`, `"sources": [{name, changes: [string], applied: [{id, description}], error}]` |
@@ -50,7 +50,7 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
   "sessions": [{"at": "2026-10-04 10:20", "id": "abc-123", "launcher": null, "description": "first session"}],
   "progress": [
     {"at": "2025-03-01", "note": "legacy note without time"},
-    {"at": "2026-10-04 10:15", "note": "created via tasks create"}
+    {"at": "2026-10-04 10:15", "note": "created via tasq create"}
   ],
   "origin": null,
   "closed_at": null,
@@ -59,8 +59,8 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
 }
 ```
 
-- `id` is a string (nb ids are index line numbers, other stores may use slugs).
-- `status` is `null` for done tasks and for open tasks without a status tag; `priority` is
+- `id` is a string (the task file's `id:` number; other stores may use slugs).
+- `status` is `null` for done tasks and for open tasks without a status; `priority` is
   always `A`, `B` or `C`.
 - Timestamps are local time: `YYYY-MM-DD HH:MM` everywhere, except that a legacy progress
   entry may carry only `YYYY-MM-DD`.

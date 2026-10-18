@@ -1,6 +1,6 @@
 # Sources and `tasq sync`
 
-A source turns something outside the notebook into tasks: merge requests waiting for your
+A source turns something outside the store into tasks: merge requests waiting for your
 review, issues assigned to you, or whatever an LLM finds in your inbox. Sources are declared as
 `[[source]]` blocks (see `docs/config.md`); `tasq sync` runs the enabled ones that have
 `auto = true` in order, `tasq sync --source <name>...` exactly the named ones.
@@ -11,8 +11,8 @@ For each source:
 
 1. `fetch` lists everything currently relevant. Each item has a stable external id
    (`group/project!123`, `owner/repo#42`, a ticket id), usually a URL, a title and a state.
-2. Items are matched against existing tasks by the task's `## Source` line
-   (`<source>: <external id> <url>`), or, for tasks that predate `tasq sync`, by the URL in
+2. Items are matched against existing tasks by the task's origin (the `source`,
+   `source_id` and `source_url` keys of its file), or, for tasks that predate `tasq sync`, by the URL in
    `## Related` or `### Merge requests`.
 3. A new open item becomes a task (`create_new`, default on): the source's `tags` and `status`
    (else `workflow.default_status`), the URL under `## Related`, the first progress note

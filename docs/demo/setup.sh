@@ -1,16 +1,16 @@
 # shellcheck shell=bash
-# Builds the throwaway notebook that docs/demo/demo.tape records against.
+# Builds the throwaway store that docs/demo/demo.tape records against.
 #
 # Sourced by the tape's shell (bash) inside the VHS container, where `tasq` is
 # on PATH. Everything lives in a fresh temp directory: HOME is moved there so
-# no real config or notebook is read, and TASQ_NOW pins the clock so the gif
+# no real config or store is read, and TASQ_NOW pins the clock so the gif
 # is reproducible: the tape runs on Monday 2026-10-05, so `tasq summary` with no
 # argument reports Friday 2026-10-02, where most of the history below lands.
 
 demo="$(mktemp -d)"
-mkdir -p "$demo/nb/demo"
-: > "$demo/nb/demo/.index"
-export HOME="$demo" NB_DIR="$demo/nb" TASQ_NOTEBOOK=demo TASQ_BOOKKEEPER=native
+# The default store, <HOME>/.local/share/tasq/stores/default, made by the first create.
+export HOME="$demo"
+unset XDG_CONFIG_HOME XDG_DATA_HOME
 # No `less` or `claude` in the container: print directly, summarize without an LLM.
 export TASQ_PAGER=cat TASQ_SUMMARIZER=raw
 

@@ -1,67 +1,64 @@
 # Task file format
 
-**Status:** normative (2026-10-04). Derived from plan section 4.4 and from what
-`original/tasks` reads and writes; the open points of the first draft were
-settled while implementing the format (T-102/T-103), the store (T-203) and the
-sources (T-501), and are recorded here. The two points still marked **TBD** are
-not implemented; do not infer behaviour for them from this document.
+**Status:** normative (2026-10-18, ADR 0026). A task is one markdown file in a
+store directory: a frontmatter block that holds the id and the other scalar
+fields, then a markdown body with the title and the list sections. This is
+format v2. Format v1, the nb notebook shape, is described at the end; only
+`tasq migrate` reads it.
 
-A task is one markdown file in an nb notebook. nb, the old `tasks` script and
-`tasq` all read and write the same files. `tasq` must preserve anything it does
-not understand (see "Lossless editing").
+`tasq` must preserve anything it does not understand (see "Lossless editing").
+The frontmatter is tasq's own flat subset, parsed line by line; it looks like
+YAML and simple blocks are valid YAML, but YAML compatibility is a convenience,
+not a promise.
 
-## File and identity
+## Store and identity
 
-- Filename: `<stamp>.todo.md`, where `<stamp>` is nb's timestamp
-  (`YYYYMMDDHHMMSS`). When that name is taken the stamp is bumped one second at
-  a time, as nb does; after 60 attempts `create` fails with nothing written.
-- Id: the 1-based line number of the filename in the notebook's `.index` file.
-  Ids are positional and can change after `nb index reconcile`; `tasq store
-  reconcile` keeps them (a deleted file's line becomes empty).
-- Index lines that are not `*.todo.md`, or whose file no longer exists, are
-  skipped when listing.
+- A store is a directory, `<data_dir>/<store.name>` (`docs/config.md`). A
+  directory that does not exist is an empty store; the first write creates it.
+  There is no marker file, no index and no cache.
+- Task files are `<ULID>.md`: 26 uppercase Crockford base32 characters, the
+  first at most `7`. The ULID's millisecond timestamp (UTC) is the task's
+  creation time, shown in local time (`created` in JSON); its random part
+  keeps two creates in the same millisecond apart. Nothing else is read from
+  the name. A directory listing sorts by creation time.
+- Every other non-dot file whose extension is `md` (any case) is read too. A
+  file that parses as a v2 task file is a task even when its name is not a
+  ULID (it has no creation time); one that does not is skipped by reads and
+  reported by `tasq doctor`. Dot files, non-`.md` files, directories (even one
+  named `x.md`) and the `.tasq/` directory (it holds the write lock,
+  `.tasq/lock`) are ignored.
+- Id: the `id` key of the frontmatter, a positive integer. It is written once
+  and never changes: `create` takes the highest id in the store plus one (`1`
+  in an empty store), `migrate` keeps the nb id. Ids are never reused while a
+  higher one exists. Two files with the same id make that id ambiguous: any
+  command naming it fails naming both files, `list` shows both, `doctor`
+  reports them.
 - Encoding UTF-8. New files use LF. In an existing file every line keeps its
   own ending when the file is rewritten, and lines `tasq` adds use the ending
-  of the first line, so CRLF and even mixed endings survive an edit.
-- Related ADRs: [0002](adr/0002-nb-compatible-markdown-store.md),
-  [0007](adr/0007-nb-under-the-hood.md).
+  of the first line, so CRLF and even mixed endings survive an edit. A file
+  that is not valid UTF-8 is read with the invalid bytes replaced, and a write
+  that would change it is refused.
 
-## Title line
-
-Line 1 is the title and done marker:
+## A complete file
 
 ```
-# [ ] Title        open
-# [x] Title        done
-```
-
-Exactly one space inside the brackets and one after the closing bracket. The
-old script lists only files whose first line starts with `# [ ] `; files whose
-first line is anything else are not tasks (`NotATask`). Marking done flips
-`[ ]` to `[x]` on this line only (what `nb todo do` does) and removes the status
-tag (see Tags).
-
-## Sections
-
-Sections are level-2 headings `## Name`, matched exactly (`## ` plus the name,
-no trailing text). A section runs until the next line starting with `## `.
-Each heading is followed by one blank line, then its content, then one blank
-line before the next heading. A file created by the script has this order:
-
-```
-# [ ] Title
+---
+id: 12
+status: in-progress
+priority: A
+rank: 1024
+due: 2026-10-10
+project: /home/pau/code/tasks
+source: gitlab
+source_id: group/project!123
+source_url: https://gitlab.example.invalid/group/project/-/merge_requests/123
+tags: [gitlab, review-request]
+---
+# Full task
 
 ## Description
 
 Free text, any number of lines.
-
-## Project
-
-/absolute/path
-
-## Due
-
-2026-10-10
 
 ## Related
 
@@ -71,13 +68,9 @@ Free text, any number of lines.
 
 - [MR title](https://example.invalid/-/merge_requests/123)
 
-## Tags
-
-#gitlab #A #ready
-
 ## Progress
 
-- 2026-10-04 10:15: created via tasks create
+- 2026-10-04 10:15: created via tasq create
 - 2026-10-04 11:40: note
 
 ## Worktrees
@@ -89,57 +82,131 @@ Free text, any number of lines.
 - 2026-10-04 10:15: `session-id` — short description
 ```
 
-Only `## Tags` and `## Progress` are always written on create; the others
-appear when they have content. `## Worktrees`, `## Sessions` and
-`### Merge requests` are added later by the corresponding commands.
+## Frontmatter
+
+### Grammar
+
+```
+file        = fence block fence blank* title-line body
+fence       = "---" EOL                 ; exactly three dashes, nothing else
+block       = line*                     ; every line up to the first fence
+entry       = WS* key WS* ":" value EOL ; key: one word, no whitespace
+value       = any text after the first ":", surrounding whitespace trimmed
+title-line  = "# " title EOL            ; title non-empty
+```
+
+- Line 1 must be `---`; a file whose first line is anything else is not a v2
+  task file. The block runs to the next line that is exactly `---`; with none,
+  the file is a format error (`the frontmatter has no closing '---'`).
+- A line of the block is an entry when it has a `:` and the text before the
+  first `:`, trimmed, is non-empty and has no whitespace. Every other line
+  (blank, a comment, free text, `: orphan`) is kept verbatim and ignored.
+- The value is everything after the first `:`, trimmed, so a value may itself
+  contain `: ` (`note: a: b` has the value `a: b`). There is no quoting, no
+  escaping, no nesting and no multi-line value. An empty value (`project:`)
+  reads as unset.
+- When a key appears on more than one line, the first one is read.
+- The block must have an `id` entry whose value is a positive integer written
+  plainly (`0`, `007`, `+1`, `1.0` are refused); otherwise the file is a format
+  error naming the line.
+- After the closing fence, blank lines are allowed; the first non-blank line
+  must be `# Title` with a non-empty title. A done task's title has no marker:
+  `# [x] Title` in a v2 file is a title that starts with `[x]`.
+
+### Keys
+
+| Key | Value | Read as | Written |
+|---|---|---|---|
+| `id` | positive integer | the task id (required) | always, first |
+| `status` | a workflow status name, or `done` | `done`: the task is done and has no status; a name the workflow does not know: no status | when the task has a status, or `done` when done |
+| `priority` | `A`, `B` or `C` | `#A`, `#B`, `#C` too; anything else, or absent: `B` | always |
+| `rank` | integer (`i64`) | anything else: no rank (ADR 0025) | when set |
+| `due` | `YYYY-MM-DD` | anything else: no due date | when set |
+| `closed` | `YYYY-MM-DD HH:MM`, local time | on a done task only; a bare date or any other text: no closing time | on a done task with a closing time |
+| `project` | a directory path | the value as a path | when set |
+| `source` | the origin's source name | an origin needs `source` and `source_id` | with the origin |
+| `source_id` | the origin's external id | | with the origin |
+| `source_url` | the origin's url | the url and nothing else | when the origin has a url |
+| `tags` | `[a, b, c]` | the items between the brackets, split on `,` and trimmed, without `#`; items that are not valid tags are dropped; no brackets: no tags | when there are topic tags |
+
+There is no `title` key (the title is the body's first line) and no `created`
+key (the creation time is the file name's). A value that does not parse stays
+in the file untouched and reads as unset, so a hand-edited typo never makes a
+task unreadable; the next write of that key replaces it. Any other key is an
+unknown key: kept, never read.
+
+### Canonical order
+
+A block written from scratch (`create`, `migrate`) has the keys in this order,
+with no other lines and no blank line between the closing fence and the title:
+
+```
+id, status, priority, rank, due, closed, project, source, source_id, source_url, tags
+```
+
+### Editing the block
+
+An edit changes the lines of the keys it writes and nothing else.
+
+- **Set** a key that is present: its first line becomes `key: value` and every
+  later line of the same key is removed, so after a write there is one line
+  per key.
+- **Add** a key that is absent: the line goes right after the last line whose
+  key comes before it in the canonical order (`id` is always present, so there
+  is always one). Keys outside the canonical order never move it.
+- **Clear** a key: every line of the key is removed. `id` is never cleared.
+
+What survives every edit, byte for byte: the order of the keys already
+present, unknown keys and their values, lines that are not entries, blank
+lines inside the block, the blank lines between the closing fence and the
+title, line endings, and the whole body. Values are written as `Status`,
+`A`/`B`/`C`, `YYYY-MM-DD`, `YYYY-MM-DD HH:MM`, the path as given, the integer,
+and `[a, b]` for tags (items joined with `, `). Setting the tags to none
+clears the key.
+
+Closing a task sets `status: done` and `closed`. Reopening it removes
+`status: done`, removes `closed`, and sets the status it is reopened to, if
+any.
+
+## Body
+
+The body starts at the title line `# Title` and holds the list sections:
+
+```
+## Description
+## Related
+### Merge requests      (inside ## Related)
+## Progress
+## Worktrees
+## Sessions
+```
+
+Sections are level-2 headings `## Name`, matched exactly (`## ` plus the name,
+no trailing text). A section runs until the next line starting with `## `.
+Each heading is followed by one blank line, then its content, then one blank
+line before the next heading. A fresh file writes Description and Related when
+they have content, Progress always (`- <now>: created via tasq create` unless
+a note is given), then merge requests, Worktrees and Sessions through the
+append rules below. Any other section, including the v1 scalar sections
+(`## Project`, `## Due`, `## Tags`, `## Source`, `## Closed`, `## Rank`), is
+an unknown section in a v2 body: kept verbatim, never read.
 
 ### Description
 
-Free markdown. `tasq` treats it as opaque text.
-
-### Project
-
-One absolute directory path. Reading takes the first non-empty line of the
-section. Writing replaces the whole section body with a blank line and the
-path.
-
-### Due
-
-Reading takes the first non-empty line. `tasq` writes ISO dates `YYYY-MM-DD`
-(and accepts `today`, `tomorrow`, `yesterday` on input). The old script stored
-whatever string it was given, so existing files may contain other shapes: a
-value that is not an ISO date gives `due = None` in the model, and the raw line
-is preserved in the document, so a round trip does not touch it.
+Free markdown. `tasq` treats it as opaque text. Several `## Description`
+sections are read joined with a newline.
 
 ### Related
 
 A list of `- <url>` lines, one link per line. `- [label](url)` is accepted
 here too (the same link parser serves both lists); `tasq` writes bare URLs in
-the top-level list, as the script did, and labelled links only under
-`### Merge requests`.
+the top-level list and labelled links only under `### Merge requests`.
 
 #### `### Merge requests`
 
 A level-3 subsection inside `## Related`. Each entry is `- [title](url)`. The
 subsection ends at the next line starting with `##` (that is, any `##` or
 `###` heading). An MR is already tracked when `(url)` occurs in the subsection.
-
-### Tags
-
-One line of whitespace-separated `#tags`. All lines in the section are joined
-and split on whitespace when reading. Three kinds of tag share the line:
-
-- **Status**: one of the configured workflow statuses (default `in-progress`,
-  `ready`, `waiting`, `blocked`, `later`). Absent on done tasks and on tasks
-  with no status.
-- **Priority**: `A`, `B` or `C`. Absent means `B`.
-- **Topic tags**: everything else (for example `#gitlab`, `#review-request`).
-
-Create writes topic tags first, then priority, then status: `#gitlab #A #ready`.
-Status and priority are not tags in the `tasq` model; the format layer maps
-them. When two status tags or two priority tags are present the last one seen
-wins, as in the script. A tag with two leading hashes (`##A`, `##ready`) is a
-topic tag, because the script's patterns required exactly one `#`.
 
 ### Progress
 
@@ -150,68 +217,25 @@ a single line.
 ### Worktrees
 
 Entries `- /abs/path` or ``- /abs/path (`branch`)`` with the branch in backticks
-inside parentheses. The path contains no whitespace (the script reads it as the
-second whitespace-separated field). A worktree is already tracked when an entry
-of a `## Worktrees` section has the same path. (The script matched `- <path>`
-on every line of the file, so a description bullet starting with the path hid
-the worktree; tasq looks only where it reads worktrees from.)
+inside parentheses. The path contains no whitespace. A worktree is already
+tracked when an entry of a `## Worktrees` section has the same path.
 
 ### Sessions
 
 Entries ``- YYYY-MM-DD HH:MM: `session-id` `` optionally followed by
 ` — description` (space, U+2014 EM DASH, space). A session is already tracked
-when an entry of a `## Sessions` section has the same id. (The script skipped a
-session whenever `` `session-id` `` occurred anywhere in the file, so a worktree
-on branch `x`, written ``(`x`)``, or a note mentioning `` `x` `` swallowed
-session `x`; tasq looks only where it reads sessions from.)
+when an entry of a `## Sessions` section has the same id.
 
-### Source (new, optional)
-
-Written only by `tasq`, ignored by nb and the script. Records the external
-origin `tasq sync` uses for reconciliation, as one line
-`<source-name>: <external-id> [<url>]`, for example
-`gitlab-review-requests: group/project!123 https://host/group/project/-/merge_requests/123`.
-When the only value after the colon is an `http(s)://` URL it serves as both
-id and URL. `Document::from_task` writes the section after `## Due`. One origin
-per task is read; **TBD:** more than one origin per task.
-
-### Closed (new, optional)
-
-Written only by `tasq` (ADR 0020), ignored by nb and the script. When a done
-task was closed, local time: one `YYYY-MM-DD HH:MM` line. Reading takes the
-first non-empty line of the first `## Closed` section; a bare date or any other
-text gives `closed_at = None` and is preserved. An open task has no closing
-time whatever the file says (a stale section left by `nb todo undo`).
-`tasq done`, sync and creating a done task write it; `Document::from_task` puts
-it after `## Source`, and `set_closed` inserts it after `## Source`, else
-`## Due`, `## Project`, `## Description`, else after the title line. Reopening
-removes it. Files closed by `nb todo do` or the script have none.
-
-### Rank (new, optional)
-
-Written only by `tasq` (ADR 0025), ignored by nb and the script. The task's
-manual place within its status group: one integer line, smaller first. Reading
-takes the first non-empty line of the first `## Rank` section that holds an
-integer; anything else gives `rank = None` and is preserved, so a hand-edited
-typo never makes a task unreadable (the next write overwrites it). Done tasks
-keep their rank for when they are reopened, but the done list does not follow
-it. `tasq apply` and `tasq move` write it (ADR 0025);
-`Document::from_task` puts it after `## Closed`, and `set_rank` inserts it
-after `## Closed`, else `## Source`, `## Due`, `## Project`, `## Description`,
-else after the title line. Unranking removes the section. The rank is never
-shown outside JSON and the raw file.
-
-### HTML comments (new, optional)
+### HTML comments (reserved)
 
 `<!-- tasq: {...} -->` is reserved for metadata the model needs but humans
 should not see. **TBD:** placement and JSON shape; nothing writes or reads such
 comments today, and like any unknown line they are preserved verbatim.
-Renderers hide them; the old script and nb ignore them.
 
-## Editing rules
+## Editing the body
 
-These reproduce the script's helpers so that files edited by either tool look
-the same.
+These rules come from the original script's helpers and are the same in both
+formats.
 
 ### Appending an entry to a list section (`append_to_section`)
 
@@ -225,17 +249,6 @@ Used for Progress, Worktrees and Sessions.
    last one.
 3. Otherwise insert a blank line and the entry right after the heading.
 
-### Setting the project (`set_project`)
-
-- If `## Project` exists, replace its body with a blank line and the path, drop
-  everything up to the next `## ` heading, and keep one blank line before it.
-- If it does not exist and the first section is `## Description`, insert the
-  section after Description (before the second heading, or at end of file).
-- If it does not exist and the first section is anything else, insert the
-  section right after the title line.
-- In both insert cases: a blank line precedes `## Project` unless the previous
-  line is blank; a blank line follows the path when the next line is not blank.
-
 ### Adding a merge request (`append_mr_entry`)
 
 1. If `### Merge requests` is missing:
@@ -248,72 +261,65 @@ Used for Progress, Worktrees and Sessions.
 2. Insert `- [title](url)` after the last `- ` line of the subsection, else a
    blank line and the entry right after the subsection heading.
 
-### Setting status or priority (`cmd_set`)
+### Title and description
 
-- With a `## Tags` section: on the first line of the section containing `#`,
-  remove every tag of the same kind (all status tags, or all of `#A #B #C`),
-  then append the new tag at the end of the line. Topic tags keep their order.
-- Without a `## Tags` section: append a blank line, `## Tags`, a blank line and
-  `#value` at the end of the file. This does not insert before Progress; `tasq`
-  keeps the script's behaviour so both tools produce the same file.
-
-### Marking done (`cmd_done`)
-
-1. Optionally append the final note to Progress.
-2. Flip the title line to `# [x]`.
-3. Remove the status tag. If the tags line becomes empty, the line is dropped;
-   the `## Tags` heading stays.
-
-### Edits the script never made (`tasq` only)
-
-The TUI's edit form (`e`) and `tasq apply` can change the title, the due
-date, the project and the topic tags of a task. The script had no command for
-any of these, so the rewrite rules are `tasq`'s own; they follow the shape of
-the operations above.
-
-- **Title** (`set_title`): line 1 is rewritten with the new title after the
-  same `# [ ] ` or `# [x] ` marker. Nothing else moves.
+- **Title** (`set_title`): the title line is rewritten as `# <title>`. Nothing
+  else moves.
 - **Description** (`set_description`, `clear_description`): the first
   `## Description` body becomes a blank line, the lines of the text and a
   blank line before the next heading; any further `## Description` section
   is removed, because reading joins them and only one can round-trip. A
-  missing section is inserted right after the title line, where create put
-  it. The text has no blank lines at either end (reading trims them, so they
-  could not round-trip). An empty description removes the section, like
-  clearing.
-- **Due** (`set_due`): writes the ISO date like `set_project` writes a path:
-  every `## Due` body becomes a blank line and the date, followed by a blank
-  line when another heading follows. A missing section is inserted after
-  `## Project`, else after `## Description`, else right after the title line,
-  with the blank lines `set_project` would put around it.
-- **Clearing due or project** (`clear_due`, `clear_project`): every `## Due`
-  (or `## Project`) section is removed, heading and body up to the next `## `
-  heading, so the line before the heading is followed by what came after the
-  section. When the removed section was the last one, the blank lines left at
-  the end of the file go too. A done or an open task is the same here.
-- **Topic tags** (`set_tags`): on every `#` line of `## Tags` the topic tags
-  are removed and the status and priority tags keep their places; the new
-  topic tags go at the front of the first `#` line, the order create wrote
-  (`#gitlab #A #ready`). A line left empty is dropped, the heading stays.
-  Without a `#` line, a blank line and the tags are inserted after the
-  heading; without a `## Tags` section, one is appended at the end of the
-  file like `set` does. No tags and no section changes nothing.
+  missing section is inserted right after the title line. The text has no
+  blank lines at either end (reading trims them, so they could not
+  round-trip). An empty description removes the section, like clearing.
 
-### Lossless editing
+## Lossless editing
 
-`tasq` parses a file into a task plus a document that keeps unknown sections,
-unknown lines, ordering and blank lines verbatim. Writing back touches only the
-sections it changed. For any file produced by the script,
-`write(parse(x)) == x` byte for byte, and `parse(write(parse(x))) == parse(x)`
-for every file. Unknown sections are never reordered or reformatted.
+`tasq` parses a file into a task plus a document that keeps the block, unknown
+keys, unknown sections, unknown lines, ordering and blank lines verbatim.
+Writing back touches only the lines it changed: `render(parse(x)) == x` byte
+for byte for every file that parses, CRLF included, and
+`parse(render(parse(x))) == parse(x)`. An update applies one operation per
+changed field, re-reads the result and refuses the write
+(`StoreError::Unsupported`) when the task still differs from the one asked
+for, rather than drop a change silently.
 
 ## Open points
 
-- More than one origin per task in `## Source`.
+- More than one origin per task.
 - Placement and schema of `<!-- tasq: ... -->` comments (reserved, unused).
 
-Settled while implementing (see the sections above): same-second filename
-collisions bump the stamp; line endings are preserved per line; non-ISO due
-values read as no due date and are kept verbatim; labelled links parse in the
-top-level Related list; the last status or priority tag wins; `## Source` is
-`name: id [url]`; `set` without a Tags section appends at the end of the file.
+## Format v1 (nb notebook): read by `tasq migrate` only
+
+The shape `tasq` used while it shared an nb notebook with nb and the
+`original/tasks` script (ADRs 0002, 0007, 0020, 0023, 0025). Nothing writes
+it any more; `tasq migrate` reads it to build a v2 store (`docs/migration.md`).
+The reader stays in `tasq-core` until the nb crate is deleted.
+
+- Files are `<YYYYMMDDHHMMSS>.todo.md` in the notebook directory, the stamp
+  being nb's creation second. A task's id was the 1-based line number of its
+  file name in the notebook's `.index`, so ids were positional: `nb index
+  reconcile` could renumber them. Index lines that are not `*.todo.md`, whose
+  file is gone, or whose file's first line is not a title are skipped. `migrate` keeps these ids, and gives a
+  todo file the index does not list the id nb's reconcile would have given it
+  (after the last line, in name order).
+- Line 1 is the title and done marker, `# [ ] Title` (open) or `# [x] Title`
+  (done). A file whose first line is anything else is not a task.
+- Every scalar field is a section: `## Project` (first non-empty line, a
+  path), `## Due` (first non-empty line, `YYYY-MM-DD`), `## Source`
+  (`<source>: <external-id> [<url>]`), `## Closed` (`YYYY-MM-DD HH:MM`, done
+  tasks only), `## Rank` (an integer), and `## Tags`: one line of
+  whitespace-separated `#tags` mixing topic tags, the priority (`#A`, `#B`,
+  `#C`; absent is `B`) and the workflow status (absent on done tasks). The
+  last status or priority tag seen wins; `##x` is a topic tag.
+- The list sections (Description, Related with Merge requests, Progress,
+  Worktrees, Sessions) are the v2 body sections above, with the same rules.
+
+`migrate` maps a v1 task to a fresh v2 file: the frontmatter in canonical
+order from the parsed task, the body sections rewritten, every section it does
+not know appended verbatim at the end, and an LF file whatever the source
+endings. The ULID is minted from the nb file name's second (falling back to
+the first progress entry's time, then to now). A done task without
+`## Closed` (closed by `nb todo do` or the script) gets `closed` from its last
+progress entry. A todo file that is not valid UTF-8 stops the migration with
+nothing written, naming the file.

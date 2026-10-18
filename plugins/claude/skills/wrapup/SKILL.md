@@ -10,7 +10,7 @@ allowed-tools: Bash(tasq *)
 
 Record this session on the task so the next session (or the standup summary, `tasq summary`)
 starts from facts, not from memory. Every write goes through the `tasq` CLI; never edit the
-notebook files directly.
+task files directly.
 
 ## 1. Find the task
 

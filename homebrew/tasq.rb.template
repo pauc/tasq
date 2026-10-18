@@ -9,7 +9,7 @@
 #   brew tap <owner>/tasq
 #   brew install tasq
 class Tasq < Formula
-  desc "Terminal task manager over nb markdown todos"
+  desc "Terminal task manager over plain markdown task files"
   homepage "{{homepage}}"
   version "{{version}}"
   license "GPL-3.0-or-later"

@@ -86,12 +86,15 @@ Conventions, with examples, in [`docs/testing.md`](docs/testing.md). The short v
 - Logic is pure with injected `Clock`, filesystem views, environment and fake processes, so a
   test runs it against a temp dir in microseconds. Keep new code in that shape; it is what makes
   mutation testing affordable.
-- Markdown fixtures live in `crates/core/tests/fixtures/*.md`; round trips must be
-  byte-identical.
-- The nb store tests build an `NbEnv` (`crates/store-nb/tests/support/mod.rs`): a temp copy of
-  `tests/fixtures/nb/home` with `NB_DIR`, `NBRC_PATH`, `HOME` (holding a `.gitconfig`) and
-  `NB_AUTO_SYNC=0`, so the real `nb` only ever sees that copy. Fixture ids are the constants in
-  `support::id`. Tests that need the real `nb` call `nb_or_skip`.
+- Markdown fixtures live in `crates/core/tests/fixtures/v2/*.md` (format v2) and
+  `crates/core/tests/fixtures/*.md` (format v1, read by `tasq migrate` only); round trips must
+  be byte-identical.
+- The store tests use a `TempStore` (`crates/store/tests/support/mod.rs`): a temp root whose
+  store directory is absent or empty, opened with a fixed clock and, when names matter, a
+  scripted random source. Nothing there runs `nb` or `git`.
+- The legacy nb crate's tests build an `NbEnv` (`crates/store-nb/tests/support/mod.rs`), a temp
+  copy of the fixture notebook, until the crate is deleted; tests that need the real `nb` call
+  `nb_or_skip`.
 - The CLI tests use `TestEnv` (`crates/cli/tests/support/mod.rs`): a copy of the v2 fixture
   store (`crates/store/tests/fixtures/stores/default`) as the default store under an isolated
   `HOME`, a `PATH` holding only `git` and `TZ=UTC`, so the binary never sees the real store or
@@ -100,8 +103,6 @@ Conventions, with examples, in [`docs/testing.md`](docs/testing.md). The short v
 - Snapshots are `insta`; accept changes with `INSTA_UPDATE=always scripts/guard cargo test -p
   <crate>` (no `cargo insta` needed), then review the diff.
 - No test touches the network. HTTP goes through an injected `Transport`.
-- Probed nb behaviours are recorded under "nb facts" in `PROGRESS.md`; read it before assuming
-  how nb behaves.
 
 ## Commits
 
@@ -148,7 +149,7 @@ Public items in `tasq-core` carry doc comments; `cargo doc` must stay warning-fr
 ## What never changes
 
 - `original/tasks`, the bash script this project rewrites. Read-only reference.
-- The user's real nb notebooks. Tests only ever touch temp copies of the fixture notebook, and
-  nb is only ever run with `NB_DIR` pointing inside one.
+- The user's real nb notebooks and tasq stores. Tests only ever touch temp copies of the
+  fixtures (an isolated `HOME`), and nb is only ever run with `NB_DIR` pointing inside one.
 - The existing `~/.claude` skills (`/wrapup`, `/update-tasks`, `/update-support-tasks`,
   `/time-logs`). The new tool ships its own plugin under `plugins/claude`.

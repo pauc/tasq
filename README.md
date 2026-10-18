@@ -4,19 +4,21 @@
 [![Mutants (nightly)](https://github.com/pauc/tasq/actions/workflows/mutants-nightly.yml/badge.svg)](https://github.com/pauc/tasq/actions/workflows/mutants-nightly.yml)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-Terminal task manager over [nb](https://github.com/xwmx/nb) markdown todos.
+Terminal task manager over plain markdown task files.
 
-Tasks are the `*.todo.md` files of an nb notebook. `tasq` reads and writes them directly,
-keeps every byte it does not understand, and commits every write with git in the background,
-without ever running nb. On top of the files it adds a status workflow, priorities, due dates,
+Each task is one markdown file in a store directory: a small `key: value` block for the id,
+status, priority and the other fields, then the title, description, links and a dated progress
+log. `tasq` edits the files in place and keeps every byte it does not understand, so hand edits
+and `tasq` edits coexist. On top of the files it adds a status workflow, priorities, due dates,
 progress notes, a standup summary, work sessions (Claude Code, tmux, herdr, a shell) started
 in the task's worktree, external sources (GitLab and GitHub review requests and issues, an LLM
 inbox) that create and close tasks, a full-screen terminal UI, `--json` on every command, and
-out-of-process plugins. nb itself keeps working on the same notebook.
+out-of-process plugins. An existing [nb](https://github.com/xwmx/nb) todo notebook converts
+with one command, `tasq migrate` ([`docs/migration.md`](docs/migration.md)).
 
 ![tasq listing tasks, setting a status and printing a standup summary, then tasq ui with the status picker and the help overlay](docs/demo/tasq.gif)
 
-The recording is [`docs/demo/demo.tape`](docs/demo/demo.tape) against a throwaway notebook;
+The recording is [`docs/demo/demo.tape`](docs/demo/demo.tape) against a throwaway store;
 `scripts/demo-gif` re-renders it with [VHS](https://github.com/charmbracelet/vhs) in docker.
 
 ## Install
@@ -29,7 +31,7 @@ The recording is [`docs/demo/demo.tape`](docs/demo/demo.tape) against a throwawa
 | From source | `git clone https://github.com/pauc/tasq && cd tasq && cargo install --path crates/cli` |
 
 The binary is called `tasq`. Rust 1.90 or newer builds it from source. Nothing else is
-required: nb, git, glow, claude, direnv, tmux, herdr, glab and gh are all optional and
+required: git, glow, claude, direnv, tmux, herdr, glab and gh are all optional and
 `tasq doctor` tells you which ones it found and what each one would add.
 
 Shell completions:
@@ -88,10 +90,10 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    tasq set 12 in-progress          # a status of the workflow, or A/B/C for priority
    tasq log 12 "found the cause"    # dated progress note
    tasq view 12                     # rendered with glow on a terminal, plain markdown otherwise
-   tasq done 12 "merged"            # # [x], status tag removed, final note logged
+   tasq done 12 "merged"            # status: done, closed time and final note written
    ```
 
-   Ids are the numbers in brackets in the list, the same ids nb shows.
+   Ids are the numbers in brackets in the list. A task keeps its id for life.
 
 4. Work on a task:
 
@@ -144,34 +146,47 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
 
 ## Concepts
 
-**A task is one nb todo file.** `<stamp>.todo.md` in the notebook directory, starting with
-`# [ ] Title` (`# [x]` when done) and `## Section` headings: Description, Project, Due,
-Related (with `### Merge requests`), Tags, Progress, Worktrees, Sessions. The format is the
-one the original `tasks` script wrote and nb reads; `tasq` edits only the section it changes
-and keeps everything else byte for byte. Normative reference:
+**A task is one markdown file.** `<ULID>.md` in the store directory, by default
+`~/.local/share/tasq/stores/default` (`data_dir` and `store.name` choose another). The file
+starts with a frontmatter block, then the body:
+
+```
+---
+id: 12
+status: ready
+priority: A
+due: 2026-10-10
+tags: [gitlab]
+---
+# Fix the build
+
+## Progress
+
+- 2026-10-04 10:15: created via tasq create
+```
+
+The body has `## Description`, `## Related` (with `### Merge requests`), `## Progress`,
+`## Worktrees` and `## Sessions`. `tasq` edits only the lines it changes and keeps everything
+else byte for byte: unknown keys, their order, unknown sections, blank lines, line endings.
+A done task says `status: done`. Normative reference, including the exact frontmatter subset:
 [`docs/file-format.md`](docs/file-format.md).
 
-**Status and priority are tags in the file, fields in the model.** The `## Tags` line holds
-`#gitlab #A #ready`: topic tags, the priority (`A`, `B` or `C`, `B` when absent) and the
-status. In `tasq` they are three different things: `tags` holds topic tags only, `status` is
-one of the workflow's statuses (`in-progress`, `ready`, `waiting`, `blocked`, `later` by
-default; configurable with `[workflow]`) or none, `priority` is always set. The format layer
-maps between the two; nothing else asks whether a tag is a status.
+**Status, priority and tags are fields.** `tags` holds topic tags only, `status` is one of the
+workflow's statuses (`in-progress`, `ready`, `waiting`, `blocked`, `later` by default;
+configurable with `[workflow]`) or none, `priority` is always set (`A`, `B` or `C`, `B` when
+absent).
 
-**Ids are nb's.** A task's id is the line number of its file in the notebook's `.index`, so
-`tasq` and `nb` show the same numbers. Ids are positional: `nb index reconcile` can renumber
-them. `tasq store info` says so for the store in use and `tasq doctor` warns when the index is
-inconsistent (a missing `.index` is rebuilt from the files on the next command).
+**Ids are stable.** A task's id is the `id:` in its file: the highest id in the store plus one
+when it is created, never changed afterwards. The file name is a ULID whose timestamp is the
+creation time (`created` in `tasq view --json`), so two creates in the same second, or in
+parallel, both succeed, and `ls` sorts the store chronologically.
 
-**nb's format, no nb at runtime.** Reads never spawn a process: `.index` and the markdown
-files are parsed directly. Writes are atomic rewrites of one file; new files are appended to
-`.index` with the bytes `nb index add` would write. The commit (`[tasq] Update: <file>`, nb's
-message style) runs in a detached git job, so no command waits for git, commit signing or the
-network; the same job pulls and pushes at most hourly (no longer configurable: sync comes back as
-a feature of the tasq-owned store,
-[ADR-0026](docs/adr/0026-store-v2-frontmatter-tasq-directory-ulid-files.md)). A failed job is
-reported as a warning by the next command, never as data loss
-([ADR-0023](docs/adr/0023-no-nb-at-runtime.md)).
+**Files, a lock, no index and no git.** Reads never spawn a process and never lock: every
+command reads the frontmatter of the store's files. A write takes `.tasq/lock` in the store
+directory (a crashed holder's lock is broken after two minutes), rewrites one file atomically,
+and refuses with a conflict when the file changed since it was read. Nothing is committed;
+syncing a store with git comes back as an opt-in feature
+([ADR-0026](docs/adr/0026-store-v2-frontmatter-tasq-directory-ulid-files.md)).
 
 **Layered configuration.** TOML, later layers winning key by key: built-in defaults,
 `~/.config/tasq/config.toml`, the nearest `.tasq.toml` walking up from the current directory,
@@ -179,11 +194,12 @@ a `[profile.<name>]` selected with `--profile`, `TASQ_*` environment variables, 
 key=value`. Unknown keys are errors with file, line and column. `tasq config show` prints the
 effective config and which layer set each key. Reference: [`docs/config.md`](docs/config.md).
 
-**Sources** turn things outside the notebook into tasks: merge requests waiting for your
+**Sources** turn things outside the store into tasks: merge requests waiting for your
 review, issues assigned to you (GitLab and GitHub), and whatever a command prints as JSON
 (`llm-bridge`, typically `claude -p` over Slack or Gmail). `tasq sync` creates tasks for new
 items, marks them done when the item is merged, closed, approved or reassigned, and re-checks
-tracked tasks the sweep no longer lists. Each task remembers its origin in a `## Source` line.
+tracked tasks the sweep no longer lists. Each task remembers its origin in its `source`,
+`source_id` and `source_url` keys.
 [`docs/sources.md`](docs/sources.md).
 
 **Launchers** open a work session on a task: `claude` (Claude Code with a prompt from a
@@ -216,7 +232,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq create TITLE [--desc] [--status] [--prio] [--due] [--project] [--tag]... [--related]... [--mr]... [--note]` | Create a task |
 | `tasq set ID VALUE [NOTE]` | Set the status or the priority, optionally logging a note; a value the task already has writes nothing |
 | `tasq log ID NOTE` | Append a dated progress note |
-| `tasq done ID [NOTE]` | Mark done, status tag removed, optional final note; a done task is refused |
+| `tasq done ID [NOTE]` | Mark done (`status: done` and the closing time), optional final note; a done task is refused |
 | `tasq rename ID TITLE [--note TEXT]` | Replace the title |
 | `tasq due ID DATE\|none [--note TEXT]` | Set the due date (`create --due` words) or remove it |
 | `tasq tag ID TAG... [--note TEXT]` | `+name` or `name` adds a topic tag, `-name` removes one; the other tags stay |
@@ -263,13 +279,13 @@ only on a terminal.
 
 Reference with every key and its default: [`docs/config.md`](docs/config.md). Complete
 examples: [`examples/config/plain-markdown.toml`](examples/config/plain-markdown.toml) for a
-setup without nb, [`examples/config/author.toml`](examples/config/author.toml) for the full
+plain setup, [`examples/config/author.toml`](examples/config/author.toml) for the full
 GitLab, worktree, launcher and hook setup.
 
 ## Status
 
-Pre-release, version 0.1.0. The only store is the nb-compatible notebook (markdown files plus
-`.index`); SQLite or other stores are behind the `Store` trait but not implemented. Linux and
+Pre-release, version 0.1.0. The only store is the directory of task files described above;
+SQLite or other stores are behind the `Store` trait but not implemented. Linux and
 macOS; Windows should compile but is untested and unsupported (`exec`, direnv and tmux
 semantics). The plan and the decisions behind the design are in
 [`ruli/features/rust-rewrite/PLAN.md`](ruli/features/rust-rewrite/PLAN.md) and
@@ -283,9 +299,8 @@ denied and the tests; `just --list` shows the rest. Every recipe runs cargo thro
 `scripts/guard`, a memory-capped systemd scope, and only one build should run at a time on a
 machine: the reasons and the rules are in [`CONTRIBUTING.md`](CONTRIBUTING.md). The crates,
 what each owns and how they depend on each other: [`docs/architecture.md`](docs/architecture.md).
-Test conventions, the nb fixture notebook and mutation testing: [`docs/testing.md`](docs/testing.md).
+Test conventions, the fixture store and mutation testing: [`docs/testing.md`](docs/testing.md).
 
 ## License
 
-GPL-3.0-or-later. See [`LICENSE`](LICENSE). nb is AGPLv3 and is run as a separate program,
-never linked.
+GPL-3.0-or-later. See [`LICENSE`](LICENSE).

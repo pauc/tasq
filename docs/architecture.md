@@ -1,9 +1,9 @@
 # Architecture
 
-`tasq` is a Cargo workspace of six crates. One crate holds the domain and knows nothing about
-the outside world; four crates implement its extension traits against real things (an nb
-notebook, GitLab and GitHub, child processes, a terminal); one crate, the `tasq` binary, wires
-them together. This document describes each crate, what it owns, and how the crates talk to
+`tasq` is a Cargo workspace of eight crates. One crate holds the domain and knows nothing about
+the outside world; the adapter crates implement its extension traits against real things (a
+store directory, GitLab and GitHub, child processes, git worktrees, a terminal); one crate, the
+`tasq` binary, wires them together; one, the nb store, is legacy and waits for deletion. This document describes each crate, what it owns, and how the crates talk to
 each other. The decisions behind the shape are in [`docs/adr/`](adr/README.md).
 
 ## The workspace at a glance
@@ -17,7 +17,7 @@ flowchart TB
 
     subgraph adapters["Adapters (the only crates that do I/O)"]
         tstore["<b>tasq-store</b><br/>Store over a tasq directory<br/>(ULID files, Revision, diff; ADR-0026)"]
-        store["<b>tasq-store-nb</b><br/>Store over an nb notebook"]
+        store["<b>tasq-store-nb</b><br/>legacy: Store over an nb notebook<br/>(deleted by a follow-up task)"]
         sources["<b>tasq-sources</b><br/>Source: GitLab, GitHub, LLM bridge"]
         launch["<b>tasq-launch</b><br/>Launcher, Summarizer"]
         worktree["<b>tasq-worktree</b><br/>git worktree add"]
@@ -25,7 +25,7 @@ flowchart TB
 
     core["<b>tasq-core</b> (crates/core)<br/>model · format · query · config · clock<br/>Store / Source / Launcher traits"]
 
-    cli --> store
+    cli --> tstore
     store --> tstore
     tstore --> core
     cli --> sources
@@ -47,8 +47,8 @@ everything meets.
 | Crate | Package | Role | Talks to the world through |
 |---|---|---|---|
 | `crates/core` | `tasq-core` | Domain model, lossless markdown format, queries, config, clock, reconciliation, reports, and the `Store`, `Source`, `Launcher`, `Summarizer` traits; the worktree lifecycle decisions (`worktree`). | Nothing. No filesystem, no processes, no terminal, no network. |
-| `crates/store` | `tasq-store` | The tasq-owned `Store` (ADR-0026): `TasqStore` over a directory of `<ULID>.md` files with a frontmatter block, built in slices. Today: reads (the id map is the files' frontmatter, scanned on every call; the creation time is the ULID's), `create` under the store lock (`.tasq/lock`; highest id plus one, a ULID minted from the clock, a no-clobber write), `update` and `set_done` under the same lock (conflict detection by `Revision`, `diff::apply` to the v2 ops, an atomic write over the file), `doctor` checks (`store`, `task-file`, `ids`, `lock`), `migrate` (an nb notebook into a store directory, keeping every id), `Revision` (mtime, length, hash) and `diff::apply` (whole-task write to `format::ops` calls). | Files. |
-| `crates/store-nb` | `tasq-store-nb` | The `Store` implementation: `*.todo.md` files in an nb notebook, `.index` ids, atomic writes, conflict detection, bookkeeping (`nb` or `git`), `tasq doctor` checks. | Files; `nb` and `git` child processes (only for bookkeeping, never for reads). |
+| `crates/store` | `tasq-store` | The `Store` the CLI opens (ADR-0026): `TasqStore` over a directory of `<ULID>.md` files with a frontmatter block. Reads (the id map is the files' frontmatter, scanned on every call; the creation time is the ULID's), `create` under the store lock (`.tasq/lock`; highest id plus one, a ULID minted from the clock, a no-clobber write), `update` and `set_done` under the same lock (conflict detection by `Revision`, `diff::apply` to the v2 ops, an atomic write over the file), `doctor` checks (`store`, `task-files`, `ids`, `lock`), `migrate` (an nb notebook into a store directory, keeping every id), `Revision` (mtime, length, hash) and `diff::apply` (whole-task write to `format::ops` calls). | Files. |
+| `crates/store-nb` | `tasq-store-nb` | Legacy: the `Store` over an nb notebook the CLI used before ADR-0026, with its git bookkeeping. Nothing opens it any more; it stays for the migrate parity test until a follow-up task deletes it with the v1 reader. | Files; `git` child processes. |
 | `crates/sources` | `tasq-sources` | `Source` implementations: GitLab and GitHub review requests and work items over a shared forge client, and the LLM bridge that turns a command's JSON into items. | HTTPS (`ureq`); a child process for the LLM bridge and `token_cmd`. |
 | `crates/launch` | `tasq-launch` | `Launcher` implementations (shell, tmux, Claude Code, herdr), the command `Summarizer` behind `tasq summary`. | Child processes, with an explicitly injected environment. |
 | `crates/worktree` | `tasq-worktree` | Carries out the worktree lifecycle (ADR 0022): where a branch lives, `git worktree add` at the declared path, provisioning and the `pre-create`/`post-create` hooks around it, the release at close (removal, branch deletion, `pre-remove`/`post-remove` hooks), the declared worktrees `worktree ls` lists and their changes, hook approvals in the trust file. | `git` child processes, with an explicitly injected environment. |
@@ -124,78 +124,24 @@ flowchart LR
 
 ### Two ideas that shape everything else
 
-**Status and priority are tags in the file, fields in the model.** The `## Tags` line holds
-`#gitlab #A #ready`; `Task::status` is `Some(READY)`, `Task::priority` is `A`, and
-`Task::tags` is `[gitlab]`. The format layer does the mapping both ways against the configured
-`Workflow`. Nothing outside `format` asks "is this tag a status?".
+**The file has keys and sections, the model has fields.** A task file's frontmatter holds
+`status: ready`, `priority: A`, `tags: [gitlab]` (done is `status: done`); `Task::status` is
+`Some(READY)`, `Task::priority` is `A`, `Task::tags` is `[gitlab]` and `Task::done` a bool. The
+format layer does the mapping both ways against the configured `Workflow` (and, for the v1 nb
+files `tasq migrate` reads, from `#gitlab #A #ready` tags). Nothing outside `format` asks "is
+this value a status?".
 
-**Edits are operations, not diffs.** `Document` keeps every byte it does not understand. The
-original script's insertion rules are not uniform (new sections go before `## Progress`,
-`## Project` goes after `## Description`, a new `## Tags` goes at end of file, `### Merge requests`
-nests inside `## Related`), so each rule is one function in `format::ops`. The store applies
+**Edits are operations, not diffs.** `Document` keeps every byte it does not understand: the
+frontmatter's unknown keys and key order, unknown sections, blank lines, line endings. A scalar
+op sets, adds or clears one frontmatter line; the list sections follow the original script's
+insertion rules, which are not uniform (new sections go before `## Progress`,
+`### Merge requests` nests inside `## Related`), so each rule is one function in `format::ops`. The store applies
 ops, re-parses, and compares with the requested task; anything it could not express is a
 `StoreError::Unsupported`, never a silent drop.
 
-## tasq-store-nb
-
-The crate that runs `git` for the notebook; nothing runs `nb` (ADR-0023). Reads never spawn a
-process: `NbStore::open` resolves the notebook (`$NB_DIR/<name>`, or a path), reads `.index`
-(line number = task id) and parses the files directly. A write takes `.git/tasq/lock` (waiting
-for the previous background job), writes the file, and hands the lock to a detached job that
-commits and, at most hourly (`DEFAULT_SYNC_INTERVAL`, set by the CLI), pulls and pushes.
-
-```mermaid
-sequenceDiagram
-    participant C as caller (CLI / TUI)
-    participant S as NbStore
-    participant D as diff.rs
-    participant F as task file
-    participant B as Bookkeeper
-
-    C->>S: get(id)
-    S->>F: read bytes
-    S-->>C: Task (+ Revision: mtime, length, hash)
-    Note over C: change fields on the Task
-    C->>S: update(task)
-    S->>B: lock() (waits for the previous job)
-    S->>F: re-read, compare Revision
-    alt file changed since read
-        S-->>C: StoreError::Conflict
-    else unchanged
-        S->>D: ops = diff(stored Document, requested Task)
-        D-->>S: format::ops::* calls
-        S->>S: apply ops, re-parse, compare
-        alt still differs
-            S-->>C: StoreError::Unsupported
-        else matches
-            S->>F: NamedTempFile::persist (atomic)
-            S->>B: checkpoint(lock, "…")
-            B-->>S: job started (commit, maybe pull + push) / warning
-            S-->>C: Ok, before the commit exists
-        end
-    end
-```
-
-| Module | What it holds |
-|---|---|
-| `store` | `NbStore`, `NbStoreOptions` (environment for `git`, home, sync interval), `StoreWarning`, `reconcile`. |
-| `resolve` | Notebook name or path → directory, as the script's `NB_HOME` block did. |
-| `index` | nb's `.index`: one filename per line, id = 1-based line number. Appended to; `reconcile` only blanks lines of missing files, never renumbers. |
-| `revision`, `diff` | Re-exported from `tasq-store` (see below): `Revision`, the basis of `Conflict` detection, and the whole-task write → `format::ops` diff. |
-| `create` | New `YYYYMMDDHHMMSS.todo.md` file, registered through the bookkeeper, id read back from `.index`. |
-| `bookkeeper` | The `Bookkeeper` trait (`lock`, `register`, `checkpoint`, `take_failure`, `verify`, `sync`), `WriteLock`, `NoopBookkeeper` for tests. |
-| `native` | `NativeBookkeeper`: appends to `.index` byte-identically to `nb index add`, starts the background job, verifies the index, syncs on demand. |
-| `job` | The detached `sh` job (`git add -A`, `git commit`, throttled `git pull --rebase` + `git push`) and its files in `.git/tasq/`: `lock`, `failed`, `last-sync`. |
-| `git` | Running `git` inside the notebook with an injected environment, for the bookkeeper and the diagnostics. |
-| `doctor` | The store's checks for `tasq doctor`: notebook, index, ids, bookkeeper, git identity. |
-
-Bookkeeping failure after a successful write is a warning carrying the manual fix; the file is
-already on disk. A failed background job leaves its message in `.git/tasq/failed` for the next
-`NbStore::open` to report. ADR-0023 explains why nb is not run and the job design.
-
 ## tasq-store
 
-The tasq-owned store of ADR-0026, built one slice at a time (`ruli/features/store-v2/PLAN.md`).
+The store of ADR-0026 (`ruli/features/store-v2/PLAN.md`), and the only one the CLI opens.
 Reads scan the directory on every call: every non-dot `.md` file is read and parsed as a v2
 task file, the id map is the files' frontmatter, a file that is not a v2 task file is skipped
 by `list` and reported by `doctor`, an id claimed by two files is `StoreError::AmbiguousId`
@@ -225,17 +171,49 @@ writes (`InvalidData`) when they would change it, since writing it back would re
 bytes. Doctor adds a `lock` check: `Ok` without a lock file or with a live one, `Warn` naming a
 stale one (doctor does not remove it; the next write does).
 
+```mermaid
+sequenceDiagram
+    participant C as caller (CLI / TUI)
+    participant S as TasqStore
+    participant D as diff.rs
+    participant F as task file
+    participant L as .tasq/lock
+
+    C->>S: get(id)
+    S->>F: read bytes
+    S-->>C: Task (Revision remembered: mtime, length, hash)
+    Note over C: change fields on the Task
+    C->>S: update(task)
+    S->>L: take (waits while another write holds it)
+    S->>F: re-read, compare with the remembered Revision
+    alt file changed since read
+        S-->>C: StoreError::Conflict
+    else unchanged
+        S->>D: ops = diff(stored Document, requested Task)
+        D-->>S: format::ops::* calls
+        S->>S: apply ops, re-parse, compare
+        alt still differs
+            S-->>C: StoreError::Unsupported
+        else matches
+            S->>F: NamedTempFile::persist (atomic)
+            S-->>C: Ok (the new Revision is remembered)
+        end
+    end
+    S->>L: release
+```
+
+
 | Module | What it holds |
 |---|---|
-| `store` | `TasqStore`: `list`, `get`, `file_of`, `describe` (`tasq`, stable ids), `doctor` (`store`, `task-file`, `ids`, `lock` checks), warnings, `create`, `update`, `set_done`; the remembered revisions; the injected `Clock` and random source (`with_clock`, `with_random`). |
-| `migrate` | `plan` (reads an nb notebook: `.index` ids, unlisted todo files numbered after its last line, a ULID from the nb file's second, then the first progress entry, then the clock; a fresh v2 document per task, unknown sections appended verbatim; refuses a target that is not absent or empty; writes nothing) and `Plan::write` (no-clobber files into the target). Reads the notebook through `tasq-core` only, never through `tasq-store-nb`, never `nb` or `git`. |
+| `store` | `TasqStore`: `list`, `get`, `file_of`, `describe` (`tasq`, stable ids), `doctor` (`store`, `task-files`, `ids`, `lock` checks), warnings, `create`, `update`, `set_done`; the remembered revisions; the injected `Clock` and random source (`with_clock`, `with_random`). |
+| `migrate` | `plan` (reads an nb notebook: the nb ids, unlisted todo files numbered after the last one, a ULID from the nb file's second, then the first progress entry, then the clock; a fresh v2 document per task, unknown sections appended verbatim; refuses a target that is not absent or empty; writes nothing) and `Plan::write` (no-clobber files into the target). Reads the notebook through `tasq-core` only, never through `tasq-store-nb`, never `nb` or `git`. |
 | `lock` | `StoreLock`: `.tasq/lock`, taken with an exclusive create, stale after `STALE_AFTER`, released on drop. |
 | `draft` | `check_draft` (a merge request needs a title) and `materialize` (the default note, the done-draft rules), shared with the nb store. |
 | `ulid` | `Ulid`: the file name; parse, render, and the millisecond timestamp that is the task's creation time. |
 | `revision` | `Revision`: mtime, length and a content hash, captured on read and compared on write; a mismatch is `StoreError::Conflict`. |
 | `diff` | `apply`: edits the stored `Document` with `format::ops` until its projection equals the requested `Task`, or names the fields it could not express (`StoreError::Unsupported` in the caller). |
 
-`revision` and `diff` were moved out of the nb crate so both stores share them.
+`revision` and `diff` were moved out of the nb crate, which re-exports them until it is deleted.
 
 ## tasq-sources
 
@@ -368,7 +346,7 @@ flowchart TB
 | `error` | CLI error type and exit codes: `0` ok, `1` user error, `2` usage or internal error. |
 | `plugins` | Out-of-process plugins: dispatch to `tasq-<name>`, the three hooks, `tasq plugins list`. Reference: [`docs/plugins.md`](plugins.md). |
 
-The CLI is the only crate that knows all the others exist. It builds the concrete `NbStore`,
+The CLI is the only crate that knows all the others exist. It builds the concrete `TasqStore` (`App::open_store`),
 `Box<dyn Source>`s, `Box<dyn Launcher>`s and the TUI's `Host`, and hands them to code that only
 sees the traits.
 
@@ -382,6 +360,7 @@ sees the traits.
 | `scripts/guard`, `scripts/test-runner` | Memory-capped wrappers every cargo invocation goes through (see `CONTRIBUTING.md`). |
 | `original/tasks` | The bash script this project rewrites. Never modified. |
 | `ruli/features/rust-rewrite/` | `PLAN.md` (tasks, acceptance criteria, decisions) and `PROGRESS.md` (status, learnings, nb facts). |
+| `ruli/features/<slug>/` | One plan and progress log per larger task since then, e.g. `store-v2/` for ADR-0026. |
 | `docs/adr/` | Architecture decision records. |
 
 ## How a change moves through the system
@@ -393,7 +372,7 @@ sequenceDiagram
     participant U as user
     participant FE as front end (CLI "tasq done 12" or TUI "d" key)
     participant E as tasq_core::edit::done
-    participant S as Store (NbStore)
+    participant S as Store (TasqStore)
     participant H as hooks (post-done)
 
     U->>FE: close task 12
@@ -401,7 +380,7 @@ sequenceDiagram
     E->>S: get(id)
     E->>E: log the note, flip to done
     E->>S: update(task) / set_done(id, true)
-    S-->>E: Ok (file written, commit started in the background)
+    S-->>E: Ok (file written under .tasq/lock)
     E-->>FE: Task as stored
     FE->>H: run post-done hooks with the Task as JSON
     FE-->>U: rendered task, or --json
@@ -415,13 +394,13 @@ The dependency direction is what makes the test strategy work:
 
 | Crate | How it is tested |
 |---|---|
-| `tasq-core` | Unit and integration tests, property tests (`proptest`) for format round trips, byte-identical fixtures in `tests/fixtures/*.md`. Mutation-tested with zero missed mutants as the acceptance bar. |
-| `tasq-store` | Unit tests on `revision`, `diff`, `lock` and `draft`; integration tests through the `Store` trait over a temporary directory (`tests/support/mod.rs` builds a `TempStore`; `open_at` freezes the clock and scripts the random part of minted ULIDs, so file names are predictable and a name collision can be forced); no `nb`, no `git`. Mutation-tested (`just mutants-in crates/store/src`). |
-| `tasq-store-nb` | Tests against a temp copy of the fixture notebook (`tests/support/mod.rs` builds an `NbEnv`), real `git` on temporary repositories and bare remotes, a slow fake `git` to prove writes do not wait. The nb parity tests run the real `nb` next to the store; they skip when it is absent, or fail with `TASQ_REQUIRE_NB=1`. Mutation-tested. |
+| `tasq-core` | Unit and integration tests, property tests (`proptest`) for format round trips, byte-identical fixtures in `tests/fixtures/v2/*.md` (and the v1 ones `migrate` reads in `tests/fixtures/*.md`). Mutation-tested with zero missed mutants as the acceptance bar. |
+| `tasq-store` | Unit tests on `revision`, `diff`, `lock` and `draft`; integration tests through the `Store` trait over a temporary directory (`tests/support/mod.rs` builds a `TempStore`; `open_with` freezes the clock and scripts the random part of minted ULIDs, so file names are predictable and a name collision can be forced); no `nb`, no `git`. Mutation-tested (`just mutants-in crates/store/src`). |
+| `tasq-store-nb` | Legacy, until deleted: tests against a temp copy of the fixture notebook (`NbEnv`), including the parity test that a migrated notebook reads back equal through the tasq store. |
 | `tasq-sources` | Unit tests with a scripted `Transport`; no network in `cargo test`. |
 | `tasq-launch` | Fake executables on an injected `PATH`; `insta` snapshots of the commands that would run. |
 | `tasq-worktree` | Real `git` against temporary repositories: a bare `origin`, a clone to work in, a second clone that pushes branches. Mutation-tested. |
 | `tasq-tui` | `dispatch` against `MemoryStore` and `RecordingHost`; `insta` snapshots of rendered frames. |
-| `tasq` (CLI) | Integration tests run the binary against the fixture notebook and snapshot its output with `insta`. Not mutation-tested; the logic lives in core. |
+| `tasq` (CLI) | Integration tests run the binary against a copy of the v2 fixture store and snapshot its output with `insta`. Not mutation-tested; the logic lives in core. |
 
-Conventions, the fixture notebook and the mutation-testing workflow: [`docs/testing.md`](testing.md).
+Conventions, the fixture store and the mutation-testing workflow: [`docs/testing.md`](testing.md).

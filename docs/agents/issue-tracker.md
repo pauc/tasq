@@ -1,14 +1,15 @@
 # Issue tracker: tasq
 
-This project tracks its own work with tasq. An issue is a task in the `Tasq` nb notebook
-(`tasq store info`), read and written with the installed `tasq` binary. Never edit the notebook
-files with nb or by hand while a `tasq` command can do it; the store does the bookkeeping.
+This project tracks its own work with tasq. An issue is a task in the tasq store the config
+selects (`tasq store info` prints its directory), read and written with the installed `tasq`
+binary. Never edit the task files by hand while a `tasq` command can do it; the store checks for
+concurrent edits and keeps the file format.
 
-Ids are positional (`.index` line numbers). Refer to a task by id **and** title, e.g. `44 ("Create a plugin to manage worktrees ...")`.
+Ids are stable: a task keeps its id for life. Still refer to a task by id **and** title, e.g. `44 ("Create a plugin to manage worktrees ...")`, so a typo in the number is caught.
 
 ## Conventions
 
-- **Create**: `tasq create "<title>" --desc "<body>" --tag <topic> [--prio A|B|C] [--status <status>]`, run from the repo root so `## Project` is this checkout. Topic tags in use: `tasq`, `bug`, `ux`, `perf`.
+- **Create**: `tasq create "<title>" --desc "<body>" --tag <topic> [--prio A|B|C] [--status <status>]`, run from the repo root so the task's `project:` is this checkout. Topic tags in use: `tasq`, `bug`, `ux`, `perf`.
 - **Read**: `tasq view <id> --json` (shape in `docs/json.md`); `tasq view <id> --no-pager` for markdown.
 - **List**: `tasq list --json` with `--status <s>`, `--tag <t>` (repeatable, all must match), `--all` / `--done`.
 - **Comment**: `tasq log <id> "<note>"` appends a dated line under `## Progress`. There is no other comment channel.

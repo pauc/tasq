@@ -9,9 +9,10 @@ Quality gates run locally with `just check` (or the cargo commands it wraps) and
 - Logic lives in pure functions with injected `Clock`, filesystem views, environment and fake
   processes, so it is cheap to run thousands of times. That is what makes mutation testing
   affordable.
-- Fixtures for the markdown format live under `crates/core/tests/fixtures/*.md`; round trips
-  must be byte-identical (`crates/core/tests/format_fixtures.rs`). Property tests use
-  `proptest` (`format_props.rs`).
+- Fixtures for the markdown format live under `crates/core/tests/fixtures/v2/*.md` (format v2,
+  `format_v2.rs`, `format_v2_write.rs`) and `crates/core/tests/fixtures/*.md` (format v1, read
+  by `tasq migrate` only, `format_fixtures.rs`); round trips must be byte-identical. Property
+  tests use `proptest` (`format_props.rs`, one arm per format).
 - Snapshot tests use `insta`. Accept changes with `INSTA_UPDATE=always scripts/guard cargo test
   -p <crate>` (no `cargo insta` needed), then review the snapshot diff.
 - The CLI is tested end to end with `assert_cmd` (`crates/cli/tests/cli.rs`) against the
@@ -37,31 +38,31 @@ migration of the notebook disagree; after a deliberate change to either, regener
 `TASQ_UPDATE_FIXTURES=1 scripts/guard cargo test -p tasq-store --test migrate` and review the
 diff. Hand edits to the fixture are overwritten by that run.
 
-## Testing nb without touching the real notebook
+## Testing the store
 
-`crates/store-nb/tests/support/mod.rs` builds an `NbEnv`: a temporary copy of
-`crates/store-nb/tests/fixtures/nb/home` with `NB_DIR` and `NBRC_PATH` pointing inside it,
-`HOME` set to a temp directory holding a `.gitconfig` (nb refuses to work without a git
-identity), and `NB_AUTO_SYNC=0`. Every `nb` invocation in a test receives only that
-environment, so the real `~/.nb` is never read or written. Fixture ids are the constants in
-`support::id` (`FULL`, `NOTE`, `SUPPORT`, `DONE`, `MISSING`, `WAITING`, `NO_TAGS`); use them,
-not literals.
+The tasq store (`crates/store`) is tested through the `Store` trait over a temporary directory,
+with no environment to build: `crates/store/tests/support/mod.rs` gives a `TempStore`, a temp
+root whose store directory is absent (`TempStore::absent()`, an empty store that a write must
+create) or empty (`TempStore::empty()`). `open()` opens a `TasqStore` on it with the default
+workflow and a fixed clock; `open_with(clock, random)` also scripts the random part of minted
+ULIDs, so a created file's name is an exact-string assertion and a name collision can be forced
+by returning the same value twice. `write(name, text)` places a task file by hand, `entries(dir)`
+lists a directory. Nothing in these tests runs a process: the store never runs `nb` or `git`.
+Creation times are compared through the same local-time conversion the store uses
+(`local_millis`), so the tests hold in any `TZ`. The lock tests set the lock file's mtime
+relative to the fixed clock, which is what makes stale and live locks deterministic.
 
-The store never runs `nb` (ADR-0023). Its background commit job is tested on real temporary
-repositories (`NbEnv::git_init`, `add_bare_remote`); `slow_git(seconds)` puts a `git` whose
-`commit` sleeps on the store's `PATH`, to prove a write returns before the commit lands. A test
-that writes to a repository calls `wait_for_bookkeeping()` (or takes and drops the bookkeeper's
-lock) before looking at `git log`, and before the temp directory goes away.
+## The nb crate (migrate only)
 
-The nb parity tests (`tests/nb_parity.rs` and a few in `tests/create.rs`) run the real `nb`
-next to the store to prove nb still reads what tasq writes. They start with
-`nb_or_skip("<test name>")`: when `nb` is not on
-`PATH` they print a notice and pass vacuously, unless `TASQ_REQUIRE_NB=1` is set, in which case
-the skip is a failure. CI sets it (after installing nb), so run `TASQ_REQUIRE_NB=1 scripts/guard
-cargo test -p tasq-store-nb` before pushing anything that touches the store. The nb behaviours
-the tests rely on (renumbering on `nb index reconcile`, blank index lines accepted by
-`nb index verify`, the git-identity requirement) are recorded under "nb facts" in
-`ruli/features/rust-rewrite/PROGRESS.md`; check there before assuming how nb behaves.
+`crates/store-nb` and the v1 reader stay only until the follow-up task that deletes them;
+nothing in the CLI opens an nb notebook, and `tasq migrate` reads the notebook through
+`tasq-core` alone (`tasq_store::migrate`). Its tests still build an `NbEnv`
+(`crates/store-nb/tests/support/mod.rs`): a temporary copy of
+`crates/store-nb/tests/fixtures/nb/home` with `NB_DIR`, `NBRC_PATH`, an isolated `HOME` and
+`NB_AUTO_SYNC=0`, so the real `~/.nb` is never read or written. `crates/store-nb/tests/migrate.rs`
+checks that a migrated notebook reads back through the tasq store equal, field by field, to the
+nb store's tasks. The tests that run the real `nb` start with `nb_or_skip("<test name>")`: they
+pass vacuously when `nb` is not on `PATH`, unless `TASQ_REQUIRE_NB=1` is set (CI sets it).
 
 The CLI harness (`crates/cli/tests/support/mod.rs`, `TestEnv`) copies the v2 fixture store
 (above) to `<home>/.local/share/tasq/stores/default`, the default store under an isolated
@@ -77,7 +78,8 @@ Snapshots normalise the temp root to `[ROOT]`.
 ## Claude Code plugin
 
 `crates/cli/tests/plugin.rs` checks the layout of `plugins/claude` (manifest name `tasq`, one
-`SKILL.md` per skill with matching `name` and a `description`, no direct notebook edits) and that
+`SKILL.md` per skill with matching `name` and a `description`, no mention of task files,
+`.index` or a notebook: every write goes through the CLI) and that
 the launch prompt template only names skills the plugin ships. The authoritative check needs
 Claude Code and is not in CI: `claude plugin validate --strict plugins/claude` (and the same for
 `.claude-plugin/marketplace.json` and `plugins/claude/skills`).
@@ -102,7 +104,7 @@ printf 'j?qq' | script -qec "stty cols 120 rows 30; target/debug/tasq ui" /dev/n
 drawn.)
 
 The README gif is a [VHS](https://github.com/charmbracelet/vhs) tape, `docs/demo/demo.tape`,
-recorded against a throwaway notebook that `docs/demo/setup.sh` builds with `tasq create`
+recorded against a throwaway store that `docs/demo/setup.sh` builds with `tasq create`
 under a fixed `TASQ_NOW`, so re-rendering gives the same frames. `scripts/demo-gif` (also
 `just demo`) builds the debug binary and runs the tape with the pinned VHS docker image,
 mounting the repository and the binary; nothing else needs to be installed. The container has

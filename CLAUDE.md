@@ -4,8 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`tasq` is a Rust rewrite of `original/tasks`, a bash script that manages todos stored as
-[nb](https://github.com/xwmx/nb) markdown files. Work is driven by a phased plan:
+`tasq` is a Rust rewrite of `original/tasks`, a bash script that managed todos stored as
+[nb](https://github.com/xwmx/nb) markdown files. tasq now owns its storage: a store directory of
+`<ULID>.md` task files with a frontmatter block (ADR-0026); an nb notebook is read only by `tasq
+migrate`. Work is driven by a phased plan:
 
 - `ruli/features/rust-rewrite/PLAN.md`: tasks (`T-xxx`) with acceptance criteria, architecture, decisions log.
 - `ruli/features/rust-rewrite/PROGRESS.md`: status per task, learnings, blockers, deviations. **Update it
@@ -55,8 +57,8 @@ Workspace of eight crates; dependencies flow one way, toward `tasq-core`.
 | Crate | Role |
 |---|---|
 | `crates/core` (`tasq-core`) | Domain model, markdown format, queries, config, clock, and the `Store`/`Source`/`Launcher` traits. **No I/O, no process spawning, no terminal or network deps.** |
-| `crates/store` (`tasq-store`) | The tasq-owned store (ADR-0026), built in slices under `ruli/features/store-v2/`. `TasqStore` reads a directory of `<ULID>.md` v2 task files (the id map is the files' frontmatter, scanned on every call; `ulid` decodes the creation time from the name) and creates tasks under the store lock (`lock`: `.tasq/lock`, stale after two minutes; highest id plus one; a no-clobber write), and updates under it too (`Revision` compared against the one remembered on read, `diff::apply`, an atomic write over the file). Holds the `Revision` check (mtime, length, hash), `diff::apply` (whole task in, `format::ops` calls out) and `draft` (the draft check and default note); store-nb re-exports all three. `migrate` converts an nb notebook into a store directory (`plan` writes nothing, `Plan::write`), reading `.index` and the v1 files through core only. |
-| `crates/store-nb` | `Store` impl over an nb notebook plus the `Bookkeeper`, the background commit job and `doctor` checks. Runs `git` for bookkeeping; nothing runs `nb` (ADR-0023). Depends on `tasq-store` for `Revision` and `diff`. |
+| `crates/store` (`tasq-store`) | The store the CLI opens (ADR-0026, built under `ruli/features/store-v2/`). `TasqStore` reads a directory of `<ULID>.md` v2 task files (the id map is the files' frontmatter, scanned on every call; `ulid` decodes the creation time from the name) and creates tasks under the store lock (`lock`: `.tasq/lock`, stale after two minutes; highest id plus one; a no-clobber write), and updates under it too (`Revision` compared against the one remembered on read, `diff::apply`, an atomic write over the file). Holds the `Revision` check (mtime, length, hash), `diff::apply` (whole task in, `format::ops` calls out) and `draft` (the draft check and default note); store-nb re-exports all three. `migrate` converts an nb notebook into a store directory (`plan` writes nothing, `Plan::write`), reading the notebook's id list and the v1 files through core only. |
+| `crates/store-nb` | Legacy: the nb notebook `Store` impl, its git bookkeeping and doctor checks. Nothing in the CLI opens it; it stays for the migrate parity test until the removal task deletes it with the v1 reader. Do not build on it. |
 | `crates/sources`, `crates/launch` | Stubs. Phase 5 (GitLab/GitHub/LLM-bridge sources) and Phase 4 (shell/tmux/claude/herdr launchers). |
 | `crates/worktree` (`tasq-worktree`) | Runs `git` for declared worktrees (ADR 0022): branch state, `git worktree add`, creating a task's worktree (`create::materialize`: provisioning, hooks, the trust store), releasing it at close (`release::release`: removal, branch deletion, remove hooks), the rows of `worktree ls` (`listing::rows`: scope, changes). The decisions live in `tasq_core::worktree`; the CLI passes in the terminal question (`hooks::Approver`). |
 | `crates/cli` (binary `tasq`) | Stub. Phase 3 (current). Must stay thin: every command is a core function plus rendering, and every command gets `--json`. |
@@ -64,17 +66,17 @@ Workspace of eight crates; dependencies flow one way, toward `tasq-core`.
 
 ### The model vs the file
 
-The nb file encodes status and priority as `#tags` (`#gitlab #A #ready`). In the model they are **fields** of `Task` (`status: Option<Status>`, `priority: Priority`), and `Task::tags` holds topic tags only. The format layer does that mapping both ways; nothing else should ask "is this tag a status?". Statuses are configured through a `Workflow`, not hard-coded.
+A v2 task file holds status, priority and topic tags as frontmatter keys (`status: ready`, `priority: A`, `tags: [gitlab]`; done is `status: done`); the v1 nb file encoded them as `#tags` (`#gitlab #A #ready`). In the model they are **fields** of `Task` (`status: Option<Status>`, `priority: Priority`), and `Task::tags` holds topic tags only. The format layer does that mapping both ways; nothing else should ask "is this tag a status?". Statuses are configured through a `Workflow`, not hard-coded.
 
 ### Lossless format: operations, not diffs
 
-`tasq_core::format` has two layers. `Document` keeps the file byte for byte (line endings, unknown sections, blank lines); `Task` is a read-only typed projection of it. Edits are expressed as `format::ops::*` functions on the `Document`, one per awk pass of the original script, because the script's insertion rules are **not uniform** (new sections go before `## Progress`, `## Project` goes after `## Description`, a new `## Tags` goes at end of file, `### Merge requests` nests inside `## Related`). The store applies ops, re-parses, and returns `StoreError::Unsupported` if the requested `Task` still differs, rather than silently dropping a change.
+`tasq_core::format` has two layers. `Document` keeps the file byte for byte (the frontmatter block with its unknown keys and key order, line endings, unknown sections, blank lines); `Task` is a read-only typed projection of it. Edits are expressed as `format::ops::*` functions on the `Document`: a scalar op sets, adds (in `key::ORDER` among the keys present) or clears one frontmatter line, and the list-section ops are one per awk pass of the original script, because its insertion rules are **not uniform** (new sections go before `## Progress`, `### Merge requests` nests inside `## Related`). The same ops still write the v1 shape when handed a v1 document; nothing does that outside the tests. The store applies ops, re-parses, and returns `StoreError::Unsupported` if the requested `Task` still differs, rather than silently dropping a change.
 
 ### Store semantics
 
-`Store::update` takes the whole task; the nb store diffs it against disk (`tasq_store::diff`, in `crates/store/src/diff.rs`), applies ops, and writes atomically with `NamedTempFile::persist`. A `Revision` (mtime + length + hash) captured on read makes a later `update` fail with `Conflict` if the file changed. Task ids are `.index` line numbers (positional; `describe()` reports this so the CLI can warn).
+A store is `<data_dir>/<store.name>` (default `$XDG_DATA_HOME/tasq/stores/default`, else `~/.local/share/tasq/stores/default`); an absent directory is an empty store and the first write creates it. There is no index, no cache and no git: `TasqStore` reads every `.md` file's frontmatter on each call to map ids to files. A task's id is the `id:` key, written once (highest plus one on create, the nb id on migrate) and never changed; `describe()` reports `IdScheme::Stable`. Two files with one id make it ambiguous (`StoreError::AmbiguousId`, naming both).
 
-Reads never spawn a process. A write takes `.git/tasq/lock` (`Bookkeeper::lock`, which waits for the previous job), writes the file, registers new files in `.index`, then `checkpoint` hands the lock to a detached `sh` job (`store-nb/src/job.rs`) that commits and, at most hourly (`DEFAULT_SYNC_INTERVAL`, the CLI's fixed choice since `store.sync_interval` went, ADR-0026), pulls and pushes. The command never waits for git, signing or the network. `NativeBookkeeper` is the only real strategy, `NoopBookkeeper` is for tests. A failed job writes `.git/tasq/failed`, reported as a warning by the next `NbStore::open`, never as data loss. `.index` is appended to and never renumbered; a missing `.index` is rebuilt from the files by `NbStore::open`. Tests that write to a repository call `wait_for_bookkeeping()` before reading `git log`.
+Reads never lock and never spawn a process. A write (`create`, `update`, `set_done`) takes `.tasq/lock` (exclusive create, stale after two minutes against the injected clock, polled) for its whole duration. `create` mints a ULID from the clock and an injected random source and writes no-clobber, retrying on a taken name. `Store::update` takes the whole task, diffs it against disk (`tasq_store::diff`), applies ops and writes atomically (`NamedTempFile::persist`). A `Revision` (mtime + length + hash) remembered on read makes a later `update` fail with `Conflict` if the file changed. Commits and sync are task 57.
 
 ### Injected everything
 
@@ -82,19 +84,19 @@ Time comes from a `Clock` trait, config loading from `LoadOptions` (cwd, home, e
 
 ### Config
 
-Layered TOML (`tasq_core::config`): defaults, global `~/.config/tasq/config.toml`, nearest `.tasq.toml` walking up to home, selected `[profile.<name>]`, `TASQ_*` env, `--set`. Layers are deep-merged as TOML tables and deserialised once; each file is also checked alone with `deny_unknown_fields` so errors carry file:line:column. `Loaded::file_for("store.notebook")` gives the provenance used in error messages. Full reference in `docs/config.md`.
+Layered TOML (`tasq_core::config`): defaults, global `~/.config/tasq/config.toml`, nearest `.tasq.toml` walking up to home, selected `[profile.<name>]`, `TASQ_*` env, `--set`. Layers are deep-merged as TOML tables and deserialised once; each file is also checked alone with `deny_unknown_fields` so errors carry file:line:column. `Loaded::file_for("store.name")` gives the provenance used in error messages and `tasq store info`. Full reference in `docs/config.md`.
 
-## Testing nb without touching the real notebook
+## Testing the store
 
-`crates/store-nb/tests/support/mod.rs` builds an `NbEnv`: a temp copy of `tests/fixtures/nb/home` with `NB_DIR`, `NBRC_PATH`, `HOME` (with a `.gitconfig`, nb refuses to work without a git identity) and `NB_AUTO_SYNC=0`. Every `nb` and `git` invocation in tests gets only that environment; the store never runs `nb`, the parity tests run it next to the store. Fixture ids are named constants (`id::FULL`, `id::DONE`, `id::MISSING`, ...). Tests that need the real `nb` call `nb_or_skip`. Probed nb behaviours (index renumbering on reconcile, blank index lines) are recorded under "nb facts" in PROGRESS.md; check there before assuming how nb behaves.
+`crates/store/tests/support/mod.rs` gives a `TempStore`: a temp root whose store directory is absent or empty, opened with a fixed clock and, when a test needs exact file names, a scripted random source. Nothing runs `nb` or `git`. The CLI harness (`crates/cli/tests/support/mod.rs`) copies the committed v2 fixture store `crates/store/tests/fixtures/stores/default` (ids 1, 3, 4, 6, 7) under an isolated `HOME` with `TZ=UTC`; tests place tasks with `write_task(ulid_name(..), v2(id, front, body))` and read them back by id. The fixture store is the migrated nb fixture notebook; `TASQ_UPDATE_FIXTURES=1` regenerates it.
 
-Markdown format fixtures live in `crates/core/tests/fixtures/*.md`; round trips must be byte-identical.
+Markdown format fixtures live in `crates/core/tests/fixtures/v2/*.md` (v2) and `crates/core/tests/fixtures/*.md` (v1, migrate only); round trips must be byte-identical. The nb crate's own tests (`NbEnv`, `nb_or_skip`) remain until it is deleted; see `docs/testing.md`.
 
 ## Agent skills
 
 ### Issue tracker
 
-Issues are tasq tasks in the `Tasq` nb notebook, managed with the `tasq` CLI; larger ones get a plan under `ruli/features/<slug>/`. See `docs/agents/issue-tracker.md`.
+Issues are tasq tasks in the configured tasq store, managed with the `tasq` CLI; larger ones get a plan under `ruli/features/<slug>/`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

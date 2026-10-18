@@ -37,7 +37,7 @@ variables:
 | `TASQ_SET` | `--set` given (or already in the environment) | `key=value` overrides, one per line, existing entries first |
 
 `tasq` itself reads the same variables (`docs/config.md`), so `"$TASQ_BIN" list --json` inside
-the plugin resolves the same notebook, profile and overrides as the command that started it.
+the plugin resolves the same store, profile and overrides as the command that started it.
 `--json`, `--color`, `--no-pager` and `-v` before the name are not forwarded.
 
 Dispatch happens before the configuration is loaded: a plugin runs even when the config is
@@ -98,7 +98,7 @@ weekday, tasks: [{id, title, notes, hours}]}]}`. To install the plugin: copy or 
 file somewhere on `PATH`.
 
 The CLI integration test `plugins::example_tlogs_plugin_runs_through_dispatch` runs this
-script through the dispatcher against the fixture notebook: `--propose` in both formats,
+script through the dispatcher against the fixture store: `--propose` in both formats,
 `--dry-run` with `--set work.default_project=...`, and the error without a directory.
 
 ## Hooks

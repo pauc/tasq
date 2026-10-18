@@ -59,7 +59,7 @@ Examples:
 #[command(
     name = "tasq",
     version,
-    about = "Terminal task manager over nb markdown todos",
+    about = "Terminal task manager over plain markdown task files",
     long_about = LONG_ABOUT,
     after_help = EXAMPLES
 )]

@@ -9,7 +9,8 @@ collide with other skills called `wrapup` or `sync`.
 | `/tasq:sync` | Runs `tasq sync --json` for every configured source, triages Slack and Gmail into tasks when no LLM bridge is configured (always with the permalink under `--related`, so later syncs match by URL), and prints a briefing. |
 
 Everything the skills do goes through the `tasq` CLI (`--json` in, `tasq create/log/set/done`
-out), so they work with any store and any notebook the session points at.
+out), so they work with whatever store the session points at (`TASQ_DATA_DIR`,
+`TASQ_STORE_NAME`).
 
 ## Install
 

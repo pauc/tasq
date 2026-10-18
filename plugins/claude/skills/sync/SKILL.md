@@ -7,7 +7,7 @@ allowed-tools: Bash(tasq *)
 # Sync tasq tasks
 
 `tasq sync` does the deterministic work: every enabled `[[source]]` in the config is fetched,
-reconciled with the notebook and applied (new items become tasks with a `## Source` line,
+reconciled with the store and applied (new items become tasks with a `source:` origin,
 merged / closed / reassigned items mark their task done). Your job is to run it, fill the gap
 it cannot cover on its own, and report.
 

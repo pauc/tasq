@@ -138,7 +138,7 @@ pre-launch = []
 | `forge.<name>.host` | string | `gitlab.com` / `github.com` by kind | Host without scheme. |
 | `forge.<name>.token_cmd` | string | unset | Command whose stdout is the token. Unset: `GITLAB_TOKEN` / `GITHUB_TOKEN`. |
 | `forge.<name>.url` | string | `https://<host>/api/v4` (GitLab), `https://api.github.com` (github.com), `https://<host>/api/v3` (other GitHub) | API base URL override. |
-| `source[].name` | string | required | Unique name, recorded in each task's `## Source` line. |
+| `source[].name` | string | required | Unique name, recorded in each task's `source` key. |
 | `source[].kind` | string | required | `gitlab-review-requests`, `gitlab-work-items`, `github-review-requests`, `github-work-items`, `llm-bridge`. |
 | `source[].forge` | string | unset | `[forge.<name>]` to use. Required by the forge-backed kinds; its kind must match. |
 | `source[].command` | string | unset | Command run by `llm-bridge`. Required by it. |
@@ -206,8 +206,9 @@ Empty values count as unset. `XDG_CONFIG_HOME` is honoured for the global file l
 
 Removed keys (ADR-0026): `store.kind`, `store.notebook` and `store.sync_interval`, and the
 `TASQ_NOTEBOOK` variable. A file that still sets one of the keys fails with the file, line and
-column and a message naming the replacement; convert an nb notebook once with `tasq migrate
-<notebook>`.
+column and a message naming the replacement. Every command loads the config, `tasq migrate`
+included, so remove the old keys first, then convert the nb notebook once with `tasq migrate
+<notebook>` and set the `data_dir` / `store.name` lines it prints (`docs/migration.md`).
 
 Variables that are not configuration: `NO_COLOR` turns colour off; `TASQ_NOW="YYYY-MM-DD
 HH:MM"` fixes the clock (see `docs/testing.md`); `TASQ_TASK_ID`, `TASQ_DATA_DIR`,
@@ -628,6 +629,6 @@ status-bar hints show the configured keys.
 
 ## Examples
 
-Complete, commented files in `examples/config/`: `plain-markdown.toml` for a setup without nb
-(no automatic sync, shell launcher, raw summaries, no sources) and `author.toml` for a GitLab
+Complete, commented files in `examples/config/`: `plain-markdown.toml` for a plain setup
+(the default store, shell launcher, raw summaries, no sources) and `author.toml` for a GitLab
 plus worktree plus Claude Code plus hooks setup. Sources alone: `examples/sources/config.toml`.

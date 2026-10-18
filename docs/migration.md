@@ -1,42 +1,79 @@
 # Migrating from `tasks` to `tasq`
 
-**TL;DR:** `tasq` and the original `tasks` bash script can run on the same nb
-notebook at the same time. They read the same files, use the same ids and write
-the same format; nb keeps doing the index and git bookkeeping when it is
-installed. Switch command by command, keep the script around until
-`tasq doctor` is clean for a week, then retire the old skills.
+**TL;DR:** `tasq` keeps its tasks in its own store directory, not in the nb
+notebook the original `tasks` bash script uses (ADR 0026). Convert the
+notebook once with `tasq migrate <notebook>`: every task keeps its id, done
+tasks included, and the notebook is never written. Then switch command by
+command using the mapping below. From that point the two tools no longer see
+each other's changes.
 
-The one-week side-by-side acceptance (plan T-904) is **pending the author**;
-the procedure is at the end of this document.
+The one-week side-by-side run the first plan called for (T-904, task 2) is
+obsolete: it was closed when the store moved out of the notebook.
 
-## Why running both is safe
+## Converting the notebook
 
-- **Same files.** Both tools operate on `$NB_DIR/<notebook>/*.todo.md`
-  (`YYYYMMDDHHMMSS.todo.md`). `tasq` never copies, converts or indexes the
-  notebook anywhere else.
-- **Same ids.** Both read `.index` and use the line number as the task id.
-  `tasq` appends to `.index` with the same bytes `nb index add` writes and
-  never reorders it. `nb index reconcile` renumbers ids for both tools alike;
-  `tasq doctor` reports an out-of-date index and a missing one is rebuilt
-  from the files by the next command.
-- **Lossless format.** `tasq` parses a file into a document that keeps unknown
-  sections, unknown lines, ordering, blank lines and line endings byte for
-  byte, and rewrites only the section an edit touched. For every file the
-  script produced, `write(parse(x)) == x` (see
-  [`docs/file-format.md`](file-format.md), "Lossless editing").
-- **Same history.** `tasq` never runs nb
-  ([ADR-0023](adr/0023-no-nb-at-runtime.md)). Every write is committed as
-  `[tasq] Update: <file>` (`Add`, `Done`, `Undone`) by a background `git`
-  job, so `nb history` reads as before, and the same job pulls and pushes at
-  most hourly (like `NB_AUTO_SYNC_SECONDS=3600`; no longer configurable,
-  [ADR-0026](adr/0026-store-v2-frontmatter-tasq-directory-ulid-files.md)
-  brings sync back as a feature of the new store). The command itself
-  returns before the commit lands.
-- **Conflicts are detected, not merged.** `tasq` captures mtime, length and
-  hash of a file when it reads it and refuses to write (`Conflict`) if the
-  file changed in between. Alternating the two tools is fine; editing the
-  same task from both at the same second is not, and `tasq` is the one that
-  will say so.
+1. Remove `store.kind`, `store.notebook` and `store.sync_interval` from every
+   config file that still sets them, and unset `TASQ_NOTEBOOK`. Every command
+   loads the config, `tasq migrate` included, and an old key is an error naming
+   the file, line and column.
+2. Check the conversion without writing anything:
+
+   ```sh
+   tasq migrate home --dry-run          # or a path: tasq migrate ~/.nb/home
+   ```
+
+   `<notebook>` is a name under `$NB_DIR` (default `~/.nb`), or a directory
+   when it contains `/`. The target defaults to the store the config selects
+   (`tasq store info`); `--to <dir>` picks another one.
+3. Convert:
+
+   ```sh
+   tasq migrate home --to ~/.local/share/tasq/stores/home
+   ```
+
+   It prints one line per task (id, new file, title), then the config lines
+   that select the new store:
+
+   ```
+   1  01M1E34QM0....md  Rewrite the tasks script in Rust
+   3  01M1GRZA80....md  Answer the support ticket
+
+   Wrote 2 tasks to /home/me/.local/share/tasq/stores/home.
+   To use this store, set in the tasq config:
+
+   data_dir = "/home/me/.local/share/tasq/stores"
+
+   [store]
+   name = "home"
+   ```
+
+4. Put those lines in `~/.config/tasq/config.toml` (or a `.tasq.toml`, or a
+   profile), then check: `tasq store info` names the new directory and the
+   task count, `tasq list --all` shows the ids and titles the notebook had,
+   `tasq doctor` reports every check `OK`.
+
+What `migrate` does:
+
+- **Same ids.** Every task keeps the id it had in the notebook (its line in
+  nb's `.index`). A todo file the index does not list gets the id nb's
+  reconcile would have given it. New tasks continue from the highest id.
+- **Creation time kept.** Each file is named with a ULID minted from the nb
+  file name's second (falling back to the first progress entry, then to now),
+  so `created` and `ls` order reflect when the task was created.
+- **Every task, every section.** Open and done tasks are converted. The scalar
+  sections (`## Project`, `## Due`, `## Tags`, `## Source`, `## Closed`,
+  `## Rank`) and the `# [x]` marker become frontmatter keys; Description,
+  Related, Merge requests, Progress, Worktrees and Sessions are copied; any
+  section `tasq` does not know is appended verbatim at the end of the file.
+  A done task without `## Closed` (closed by `nb todo do` or the script)
+  gets `closed` from its last progress entry.
+  CRLF files become LF ([`docs/file-format.md`](file-format.md)).
+- **All or nothing on bad bytes.** A todo file that is not valid UTF-8
+  stops the migration before anything is written, naming the file.
+- **Read-only on the notebook.** Nothing in the notebook directory is
+  written, and no `git` or `nb` command runs.
+- **Refuses to mix stores.** A target that exists and is not empty is refused
+  before anything is written.
 
 ## Command mapping
 
@@ -52,14 +89,14 @@ of the file) and its `tasq` counterpart.
 | `tasks log <id> <note>` | `tasq log <ID> <NOTE>` | |
 | `tasks next` | `tasq next [--launcher L] [--dry-run]` | Launcher from `launch.default`. |
 | `tasks pick <id>` | `tasq pick <ID> [--launcher L] [--dry-run]` | |
-| `tasks done <id> [note]` | `tasq done <ID> [NOTE]` | NOTE can also be `--note TEXT` (not both). `tasq` edits the title line itself instead of calling `nb todo do`; same result (`# [x]`, status tag removed). A task that is already done is refused (exit 1). |
-| none (`nb todo undo`, then `tasks set`) | `tasq reopen <ID> [STATUS] [NOTE]` | Clears `# [x]`, sets STATUS (default `workflow.default_status`) and logs NOTE (default `reopened`) in one write. A lone word that is not a status is the note; with `--note TEXT` (not both) a word there must be a status. |
+| `tasks done <id> [note]` | `tasq done <ID> [NOTE]` | NOTE can also be `--note TEXT` (not both). Writes `status: done` and the closing time (the script flipped the title to `# [x]` through `nb todo do`). A task that is already done is refused (exit 1). |
+| none (`nb todo undo`, then `tasks set`) | `tasq reopen <ID> [STATUS] [NOTE]` | Drops `status: done` and the closing time, sets STATUS (default `workflow.default_status`) and logs NOTE (default `reopened`) in one write. A lone word that is not a status is the note; with `--note TEXT` (not both) a word there must be a status. |
 | none (`nb edit`, or the `tasq view --json \| jq \| tasq apply` round trip) | `tasq rename <ID> <TITLE> [--note TEXT]` | Trimmed, one non-empty line. The same title writes nothing (`title unchanged`); with `--note` that is an error. |
-| none (`nb edit`, or the `tasq apply` round trip) | `tasq due <ID> <DATE\|none> [--note TEXT]` | DATE as for `create --due` (YYYY-MM-DD, today, tomorrow, yesterday); `none` removes `## Due`. The same date writes nothing (`due unchanged`); with `--note` that is an error. |
+| none (`nb edit`, or the `tasq apply` round trip) | `tasq due <ID> <DATE\|none> [--note TEXT]` | DATE as for `create --due` (YYYY-MM-DD, today, tomorrow, yesterday); `none` removes the `due` key. The same date writes nothing (`due unchanged`); with `--note` that is an error. |
 | none (edit `## Tags` by hand, or the `tasq apply` round trip) | `tasq tag <ID> <TAG>... [--note TEXT]` | `+name` or `name` adds, `-name` removes, the other tags stay in place. Prints only the changes that took effect (`tags unchanged` when none, and then writes nothing; with `--note` that is an error). Status and priority words are refused (use `tasq set`). Long options go before or after the tags; short ones (`-v`) before, since `-name` is a tag. |
-| none (`nb edit`, or the `tasq apply` round trip) | `tasq desc <ID> [TEXT\|-\|--edit] [--note TEXT]` | No TEXT prints the description; `-` reads stdin to EOF (the task is read first, so a change made while stdin is open is a conflict, not an overwrite); `""` removes `## Description`; `--edit` opens `$VISUAL`, else `$EDITOR`, on it (a non-zero exit or an unchanged file writes nothing; when the edit cannot be saved, the error names the file that keeps it). Blank lines at either end are dropped; a line starting with `## ` is refused (it would start a section). An unchanged description writes nothing; with `--note` that is an error, since the note is not logged either (`tasq log` adds one alone). |
+| none (`nb edit`, or the `tasq apply` round trip) | `tasq desc <ID> [TEXT\|-\|--edit] [--note TEXT]` | No TEXT prints the description; `-` reads stdin to EOF (the task is read first, so a change made while stdin is open is a conflict, not an overwrite); `""` removes the `## Description` section; `--edit` opens `$VISUAL`, else `$EDITOR`, on it (a non-zero exit or an unchanged file writes nothing; when the edit cannot be saved, the error names the file that keeps it). Blank lines at either end are dropped; a line starting with `## ` is refused (it would start a section). An unchanged description writes nothing; with `--note` that is an error, since the note is not logged either (`tasq log` adds one alone). |
 | `tasks view <id>` | `tasq view <ID>` | glow rendering and OSC 8 links as before. |
-| `tasks view <id> <nb args>` (nb passthrough) | none; `tasq view <ID> --raw`, or `nb show <notebook>:<ID> <args>` | Decided in T-305. |
+| `tasks view <id> <nb args>` (nb passthrough) | none; `tasq view <ID> --raw` prints the file | Decided in T-305. |
 | `tasks project <id> [path]` | `tasq project <ID> [PATH]` | |
 | `tasks worktree <id> <path>` | `tasq worktree <ID> <PATH>` | |
 | `tasks worktree <id> --create <branch>` | `tasq worktree <ID> --create <BRANCH>` (hidden), or `tasq worktree <ID> <BRANCH>` then `tasq worktree up <ID>` | Declares the worktree at `worktree.path` and runs `git worktree add`. The script called gwm; tasq provisions worktrees itself under `[worktree]` (`docs/config.md`, "Worktrees"). |
@@ -74,7 +111,7 @@ of the file) and its `tasq` counterpart.
 | `tasks help` | `tasq --help`, `tasq <cmd> --help` | |
 
 New in `tasq`, with no script equivalent: `tasq ui` (TUI), `tasq apply` (JSON
-in), `tasq dates`, `tasq store info|sync`, `tasq doctor`, `tasq config show`,
+in), `tasq dates`, `tasq store info`, `tasq migrate`, `tasq doctor`, `tasq config show`,
 `tasq completions <shell>`, `tasq plugins list` plus `tasq-<name>` dispatch and
 `[hooks]` command lines, and `--json` on every command
 ([`docs/json.md`](json.md)).
@@ -103,14 +140,14 @@ names below are from `crates/core/src/config/mod.rs`.
 | `glab api` for MR titles, `gitlab.silverfin.com` | hard-coded | `[forge.gitlab] host`, `token_cmd = "glab config get token --host gitlab.silverfin.com"` (or `GITLAB_TOKEN`) | |
 | `/update-tasks` skill (GitLab, Slack, Gmail) | Claude session | `[[source]]` blocks (`gitlab-review-requests`, `gitlab-work-items`, `github-*`, `llm-bridge`) | |
 | `FRESHDESK_API_KEY`, `bin/freshdesk` | | none (Non-Goal) | |
-| `nb` bookkeeping, `NB_AUTO_SYNC_SECONDS` | always through nb, sync on every checkpoint | native; pull and push at most hourly, not configurable (ADR-0026) | |
+| `nb` bookkeeping, `NB_AUTO_SYNC_SECONDS` | always through nb, sync on every checkpoint | none: the store is not committed anywhere; opt-in git sync is task 57 (ADR-0026) | |
 
 A global config that reproduces the script's defaults:
 
 ```toml
 # ~/.config/tasq/config.toml
 [store]
-notebook = "home"
+name = "home"           # the store `tasq migrate home` wrote, under data_dir
 
 [work]
 default_project = "~/code/SF/silverfin_worspace/silverfin"
@@ -130,28 +167,17 @@ model = "sonnet"
 project with `[store] name = "Zantop"` (after `tasq migrate Zantop`), or a
 `[profile.zantop]` block and `--profile zantop` / `TASQ_PROFILE`.
 
-## What each tool writes that the other does not know about
+## What `tasq` writes that the script never did
 
-### `tasq` writes, the script ignores
+| What | Where |
+|---|---|
+| The frontmatter block (`id`, `status`, `priority`, `rank`, `due`, `closed`, `project`, `source`, `source_id`, `source_url`, `tags`) | The top of every task file, in place of the `# [x]` marker and the scalar sections |
+| `sync(<source>): created`, `sync(<source>): merged`, `sync(<source>): needs attention` progress notes | `## Progress`, dated like every other note |
+| The source's `flag` tag (`review-request`) on matched tasks | `tags` |
+| `created via tasq create` default note | `## Progress` |
 
-| What | Where | Effect on the script |
-|---|---|---|
-| `## Source` section, one line `<source-name>: <external-id> [url]` | After `## Due`, only on tasks created or matched by `tasq sync` | The script keeps unknown sections verbatim; it never reads them. |
-| `sync(<source>): created`, `sync(<source>): merged`, `sync(<source>): needs attention` progress notes | `## Progress`, dated like every other note | Shown as ordinary notes. |
-| The source's `flag` tag (`#review-request`) on matched tasks | `## Tags` | A topic tag; `tasks review-request` filters on it, as before. |
-| `created via tasq create` default note | `## Progress` | Ordinary note. |
-| `[tasq] Update: <file>` commit messages | nb's git history | Visible in `nb history`; nb's own are `[nb] Add:`/`[nb] Done:`. |
-
-No other new sections. The `<!-- tasq: ... -->` comments mentioned in
-`docs/file-format.md` are still TBD and are not written by any command today.
-
-### The script writes, `tasq` reads losslessly
-
-Everything: the title line (including `nb todo do`'s `# [x]` flip), `##
-Description`, `## Project`, `## Due`, `## Related` with `### Merge requests`,
-`## Tags` (status and priority tags become fields of the task; topic tags stay
-tags), `## Progress`, `## Worktrees`, `## Sessions`. Sections `tasq` does not
-know, and any stray line, round-trip byte for byte.
+The `<!-- tasq: ... -->` comments mentioned in `docs/file-format.md` are still
+TBD and are not written by any command today.
 
 ## Behavioural differences worth knowing
 
@@ -167,6 +193,10 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
 - Usage errors exit 2 (clap convention); domain errors exit 1 with
   `tasq: ...`. The script exited 1 for both.
 - `tasq view` has no nb passthrough; `--raw` prints the file verbatim.
+- Ids never change. In the notebook they were line numbers of `.index` and
+  `nb index reconcile` could renumber them.
+- Nothing is committed. The notebook's git history stops at the migration;
+  sync for a tasq store is task 57.
 - A launch creates the task's declared worktree when it is gone, without
   asking (the script offered to recreate it); `tasq worktree --create` runs
   plain `git worktree add`, and worktree provisioning (links, copies,
@@ -184,8 +214,11 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
 
 - [ ] Install: `cargo install tasq` (or a release tarball, or the Homebrew
       tap; [`docs/release.md`](release.md)). `tasq --version`.
-- [ ] `tasq doctor`: notebook found, `.index` verifies, nb and git detected,
-      optional tools (`glow`, `claude`, `direnv`, `glab`) reported.
+- [ ] Convert the notebook ("Converting the notebook" above) and set the
+      printed `data_dir` / `store.name` lines.
+- [ ] `tasq doctor`: the store location and where it was configured, every
+      task file readable, no duplicate ids, no stale lock; optional tools
+      (`git`, `glow`, `claude`, `direnv`, `glab`) reported.
 - [ ] Write `~/.config/tasq/config.toml` from the mapping above;
       `tasq config show` prints every key with the layer that set it.
 - [ ] Forge token: `glab config get token --host gitlab.silverfin.com` prints it in a
@@ -210,7 +243,9 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
       [`plugins/claude/README.md`](../plugins/claude/README.md).
 - [ ] Shell completions: `tasq completions zsh > ~/.zfunc/_tasq` (bash and
       fish in `tasq completions --help`).
-- [ ] Keep `tasks update-support` on the script (no Freshdesk in v1).
+- [ ] Keep `tasks update-support` on the script (no Freshdesk in v1). It writes
+      to the nb notebook, which `tasq` no longer reads: copy those tasks over
+      with `tasq create`, or re-run `tasq migrate` into a fresh `--to` directory.
 - [ ] Put `examples/plugins/tasq-tlogs` on your `PATH` and set
       `work.default_project` to the old `TASKS_DEFAULT_WORKTREE`; check with
       `tasq tlogs --dry-run`, then `tasq tlogs` replaces `tasks tlogs`.
@@ -220,31 +255,7 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
 
 ## Rollback
 
-Nothing to roll back. Stop running `tasq`; the files are nb files, the index is
-nb's index, the commits are in the notebook's git history. The only traces are
-the `## Source` sections and `sync(...)` notes on synced tasks, which the
-script and nb ignore. Delete the `## Source` section by hand if you want a
-file byte-identical to what the script would have written.
-
-## Side-by-side verification (one week, manual acceptance)
-
-**Status: pending the author.** Run `tasks` and `tasq` alternately on the real
-notebook for one week. Each day:
-
-```sh
-nb index verify                              # "Index corrupted" on stderr is the signal, not the exit code
-tasq doctor                                  # every line OK or WARN with a hint; exit 0
-git -C ~/.nb/home log --oneline -5           # one commit per write (a moment after it), [tasq] and [nb] interleaved
-```
-
-After every `tasq` write (`set`, `log`, `done`, `project`, `worktree`,
-`session`, `mr`, `sync`), before the next command:
-
-```sh
-git -C ~/.nb/home diff HEAD~1 -- <file>      # only the edited section changed
-```
-
-A clean week is: no `Index corrupted`, no `FAIL` from `tasq doctor`, every
-diff limited to the section the command named, and `tasks` still listing and
-rendering every task `tasq` touched. Record the outcome in
-`ruli/features/rust-rewrite/PROGRESS.md` under T-904.
+The notebook is exactly as it was before `tasq migrate`: go back to the
+script and nb, and remove the `data_dir` / `store.name` lines. Changes made
+with `tasq` after the migration live only in the store directory; they do not
+flow back to the notebook.
