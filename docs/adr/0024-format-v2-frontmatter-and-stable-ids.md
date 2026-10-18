@@ -1,6 +1,6 @@
 # ADR-0024: Format v2: frontmatter for scalar fields and a stable id, after nb compatibility ends
 
-- **Status:** Proposed (deferred until the side-by-side period of T-904 is over and the old script is retired)
+- **Status:** Superseded by ADR-0026 (the format stands; the store becomes a tasq-owned directory with ULID file names and no git)
 - **Date:** 2026-10-17
 
 ## Context
