@@ -350,13 +350,13 @@ key order, unknown sections. v1 files parse as before.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready
+**Status:** done
 
-- [ ] v2 fixtures (minimal, full, done with closed, ranked, source, CRLF, unknown keys, blank lines inside the block, unknown sections) parse and render byte-identical.
-- [ ] A v2 file with no `id`, a non-integer `id`, or no closing `---` is a format error naming the line.
-- [ ] `status: done` projects to done with no status; a workflow status projects as today; `tags` projects to topic tags without `#`.
-- [ ] The format property test has a v2 arm.
-- [ ] Zero missed mutants in the format module.
+- [x] v2 fixtures (minimal, full, done with closed, ranked, source, CRLF, unknown keys, blank lines inside the block, unknown sections) parse and render byte-identical.
+- [x] A v2 file with no `id`, a non-integer `id`, or no closing `---` is a format error naming the line.
+- [x] `status: done` projects to done with no status; a workflow status projects as today; `tags` projects to topic tags without `#`.
+- [x] The format property test has a v2 arm.
+- [x] Zero missed mutants in the format module.
 
 ### SV-004: core writes v2: new documents and one op per key
 
@@ -367,7 +367,7 @@ done` and `closed`; reopening writes the status and clears `closed`.
 
 **Blocked by:** SV-003.
 
-**Status:** blocked
+**Status:** ready
 
 - [ ] A fresh document for every fixture task renders the canonical block and round-trips to the same `Task`.
 - [ ] Setting, adding and clearing each of the eleven keys leaves every other line byte-identical; adding puts the key in canonical order among the known keys present.
@@ -383,7 +383,7 @@ is not a v2 task file is skipped, and a directory that does not exist is an empt
 
 **Blocked by:** SV-002, SV-003.
 
-**Status:** blocked
+**Status:** ready
 
 - [ ] `list` on an absent directory is empty and creates nothing; `describe` reports it.
 - [ ] `get` returns the task whose frontmatter id matches, with `created_at` equal to the ULID's time.

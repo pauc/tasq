@@ -8,9 +8,9 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 |---|---|---|---|
 | SV-001 | CLI talks to the `Store` trait; `store sync` / `store reconcile` go (prefactor) | done | 2d527e5; `App::open_store` returns `Box<dyn Store>`; `Store` gained `take_warnings` and `doctor` (required); `Check` moved to `tasq_core::doctor`; 40 mutants in the diff, 0 missed |
 | SV-002 | `tasq-store` crate skeleton, revision and diff moved (prefactor) | done | 7920eb3; `crates/store` (`tasq-store`, deps: core only); `revision.rs` and `diff.rs` moved with their 16 unit tests, store-nb re-exports `Revision`, `diff`, `revision`; `mutants-in crates/store/src`: 44 mutants, 42 caught, 2 unviable, 0 missed (two tests added) |
-| SV-003 | Core reads and renders a v2 task file | ready | |
-| SV-004 | Core writes v2: new documents and one op per key | blocked (SV-003) | |
-| SV-005 | The tasq store reads a directory | blocked (SV-003) | |
+| SV-003 | Core reads and renders a v2 task file | done | 710f1ff; `Document` keeps the block as a `front` region ahead of the body, `format::parse_v2(text, created_at, workflow)`, `Document::{frontmatter, id}`, `format::key`, `Task::created_at`; nine v2 fixtures under `crates/core/tests/fixtures/v2/`, `format_v2.rs` (23 tests), a v2 arm in `format_props.rs`; `mutants-in crates/core/src/format`: 380 mutants, 342 caught, 38 unviable, 0 missed |
+| SV-004 | Core writes v2: new documents and one op per key | ready | |
+| SV-005 | The tasq store reads a directory | ready | |
 | SV-006 | Create under the store lock | blocked (SV-004, SV-005) | |
 | SV-007 | Update with conflict detection, and doctor | blocked (SV-006) | |
 | SV-008 | Migrate as a library, and the committed v2 fixture store | blocked (SV-006) | |
@@ -71,6 +71,33 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
   entry next to an existing one is never appended). Two unit tests in `diff.rs` now pin
   both, so the module is self-sufficient when the nb crate goes.
 
+- 2026-10-18 (SV-003): the frontmatter is a second run of lines (`Document::front`: opening
+  fence, block, closing fence and the blank lines before the title) in front of the body, not
+  an offset into one line buffer. The body is numbered from the title line in both shapes, so
+  `Section::heading`, `Document::lines()`/`line_count()` and every list-section op in
+  `format::ops` work on a v2 document unchanged; SV-004 adds the frontmatter ops next to them.
+  `Document::parse` checks, in file order: the closing `---` (`UnterminatedFrontmatter`), the
+  `id` key (`MissingId { line }` names the closing fence, `InvalidId { line, value }` the first
+  `id:` line; the value is trimmed and must be a plainly written positive integer, so `0`,
+  `007`, `+1` are refused), then the first non-blank line after the fence, which must be
+  `# Title` (`MissingTitle { line, found }`). A `# [x] Title` in a v2 body is a title that
+  starts with `[x]`; `status: done` is the only done marker, and `closed` is read on done tasks
+  only, as `## Closed` was.
+- 2026-10-18 (SV-003): `format::parse(text, id, workflow)` keeps its signature and reads both
+  shapes; for a v2 file the frontmatter id wins and `id` is not used (the nb store and
+  `diff::apply` call it unchanged). `format::parse_v2(text, created_at, workflow)` is the
+  store's entry point: it refuses a v1 file with `FormatError::NotFrontmatter` and sets
+  `Task::created_at`, which is `#[serde(skip)]` until SV-010 picks the JSON shape (it is not
+  a field of the file, so `diff::differing_fields` never compares it).
+- 2026-10-18 (SV-003): a value that does not parse (`priority: D`, `due: next friday`, a
+  `status` the workflow does not know, `rank: 1.5`) reads as unset and stays in the file,
+  the way an invalid `## Rank` did in v1; an empty value (`project:`) is unset too. `tags`
+  must be bracketed (`[a, b]`), items are trimmed and anything `Tag::new` refuses is dropped.
+  An origin needs `source` and `source_id`; `source_url` is optional and a `source_id` that is
+  a URL is the url too, the v1 `## Source` rule, so SV-004 can write the line the way
+  `format_origin` did. The v1 scalar sections (`## Due`, `## Tags`, ...) are unknown sections
+  in a v2 body and are not read (`extra-sections` fixture).
+
 ## Deviations
 
 - SV-001's first criterion read "No file in the CLI crate names the nb store type". The
@@ -84,8 +111,14 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 56. ADR: 0026.
 - Still reached through `tasq_store_nb` from the CLI, not the store type: `doctor::tool_check`
   and `which::find_in_path` (PATH lookups for optional tools). They need a home outside the nb
   crate before SV-009 makes it `migrate`'s dependency only.
+- SV-003: `FormatError::NotATask`'s message still names only the v1 title shapes; the CLI and
+  store-nb snapshots pin it, and the tasq store (SV-005) classifies files through
+  `NotFrontmatter` instead. The v2 file format is implemented but `docs/file-format.md` is
+  SV-012's; the normative grammar lives in the `format::key` and `Frontmatter` doc comments
+  until then.
 
 ## Blockers
 
-- One cargo build at a time on this machine (`scripts/guard`); SV-001, SV-002 and SV-003 are
-  independent but are worked one after another, not in parallel agents.
+- One cargo build at a time on this machine (`scripts/guard`); independent sub-tasks (SV-001,
+  SV-002 and SV-003 were; SV-004 and SV-005 are now the frontier) are worked one after
+  another, not in parallel agents.
