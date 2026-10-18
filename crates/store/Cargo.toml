@@ -16,8 +16,13 @@ tasq-core = { path = "../core", version = "0.1.0" }
 # The ULID timestamp (`created_at`) is a UTC millisecond shown in local
 # time; `clock` is what turns it into the machine's zone.
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
-
-[dev-dependencies]
+# The random 80 bits of a minted ULID come from the OS.
+getrandom = "0.4"
+# `#[mutants::skip]` for the one function that reads the OS entropy source;
+# a regular dependency because the attribute sits on non-test code.
+mutants = "0.0.4"
+# Create writes a temp file in the store directory and renames it into
+# place without overwriting (`NamedTempFile::persist_noclobber`).
 tempfile = "3"
 
 [lints]

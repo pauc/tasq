@@ -47,7 +47,7 @@ everything meets.
 | Crate | Package | Role | Talks to the world through |
 |---|---|---|---|
 | `crates/core` | `tasq-core` | Domain model, lossless markdown format, queries, config, clock, reconciliation, reports, and the `Store`, `Source`, `Launcher`, `Summarizer` traits; the worktree lifecycle decisions (`worktree`). | Nothing. No filesystem, no processes, no terminal, no network. |
-| `crates/store` | `tasq-store` | The tasq-owned `Store` (ADR-0026): `TasqStore` over a directory of `<ULID>.md` files with a frontmatter block, built in slices. Today: reads (the id map is the files' frontmatter, scanned on every call; the creation time is the ULID's), `doctor` checks, `Revision` (mtime, length, hash) and `diff::apply` (whole-task write to `format::ops` calls); writes come with the next slices. | Files. |
+| `crates/store` | `tasq-store` | The tasq-owned `Store` (ADR-0026): `TasqStore` over a directory of `<ULID>.md` files with a frontmatter block, built in slices. Today: reads (the id map is the files' frontmatter, scanned on every call; the creation time is the ULID's), `create` under the store lock (`.tasq/lock`; highest id plus one, a ULID minted from the clock, a no-clobber write), `doctor` checks, `Revision` (mtime, length, hash) and `diff::apply` (whole-task write to `format::ops` calls); `update` comes with the next slice. | Files. |
 | `crates/store-nb` | `tasq-store-nb` | The `Store` implementation: `*.todo.md` files in an nb notebook, `.index` ids, atomic writes, conflict detection, bookkeeping (`nb` or `git`), `tasq doctor` checks. | Files; `nb` and `git` child processes (only for bookkeeping, never for reads). |
 | `crates/sources` | `tasq-sources` | `Source` implementations: GitLab and GitHub review requests and work items over a shared forge client, and the LLM bridge that turns a command's JSON into items. | HTTPS (`ureq`); a child process for the LLM bridge and `token_cmd`. |
 | `crates/launch` | `tasq-launch` | `Launcher` implementations (shell, tmux, Claude Code, herdr), the command `Summarizer` behind `tasq summary`. | Child processes, with an explicitly injected environment. |
@@ -201,11 +201,21 @@ Reads scan the directory on every call: every non-dot `.md` file is read and par
 task file, the id map is the files' frontmatter, a file that is not a v2 task file is skipped
 by `list` and reported by `doctor`, an id claimed by two files is `StoreError::AmbiguousId`
 from `get` (both files named) and a warning from `list`. A directory that does not exist is
-an empty store; reads never lock and never create it. Writes are not implemented yet.
+an empty store; reads never lock and never create it.
+
+A `create` takes the store lock, `.tasq/lock` inside the directory (an exclusive create; a
+lock older than two minutes is removed, a live one is waited on), reads the id map, allocates
+the highest id plus one, renders the draft as a fresh v2 document, writes it to a temp file in
+the directory and renames it into place without overwriting as `<ULID>.md`, the ULID minted
+from the store's clock and the OS's randomness (a name that exists gets a fresh ULID, a bounded
+number of times), then releases the lock and reads the task back. The first write creates the
+directory. No job, no git: dropping the lock removes the file. `update` is not implemented yet.
 
 | Module | What it holds |
 |---|---|
-| `store` | `TasqStore`: `list`, `get`, `file_of`, `describe` (`tasq`, stable ids), `doctor` (`store`, `task-file`, `ids` checks), warnings. |
+| `store` | `TasqStore`: `list`, `get`, `file_of`, `describe` (`tasq`, stable ids), `doctor` (`store`, `task-file`, `ids` checks), warnings, `create`; the injected `Clock` and random source (`with_clock`, `with_random`). |
+| `lock` | `StoreLock`: `.tasq/lock`, taken with an exclusive create, stale after `STALE_AFTER`, released on drop. |
+| `draft` | `check_draft` (a merge request needs a title) and `materialize` (the default note, the done-draft rules), shared with the nb store. |
 | `ulid` | `Ulid`: the file name; parse, render, and the millisecond timestamp that is the task's creation time. |
 | `revision` | `Revision`: mtime, length and a content hash, captured on read and compared on write; a mismatch is `StoreError::Conflict`. |
 | `diff` | `apply`: edits the stored `Document` with `format::ops` until its projection equals the requested `Task`, or names the fields it could not express (`StoreError::Unsupported` in the caller). |
@@ -390,7 +400,7 @@ The dependency direction is what makes the test strategy work:
 | Crate | How it is tested |
 |---|---|
 | `tasq-core` | Unit and integration tests, property tests (`proptest`) for format round trips, byte-identical fixtures in `tests/fixtures/*.md`. Mutation-tested with zero missed mutants as the acceptance bar. |
-| `tasq-store` | Unit tests on `revision` and `diff`, and a test of the public paths over a temporary directory; no `nb`, no `git`. Mutation-tested (`just mutants-in crates/store/src`). |
+| `tasq-store` | Unit tests on `revision`, `diff`, `lock` and `draft`; integration tests through the `Store` trait over a temporary directory (`tests/support/mod.rs` builds a `TempStore`; `open_at` freezes the clock and scripts the random part of minted ULIDs, so file names are predictable and a name collision can be forced); no `nb`, no `git`. Mutation-tested (`just mutants-in crates/store/src`). |
 | `tasq-store-nb` | Tests against a temp copy of the fixture notebook (`tests/support/mod.rs` builds an `NbEnv`), real `git` on temporary repositories and bare remotes, a slow fake `git` to prove writes do not wait. The nb parity tests run the real `nb` next to the store; they skip when it is absent, or fail with `TASQ_REQUIRE_NB=1`. Mutation-tested. |
 | `tasq-sources` | Unit tests with a scripted `Transport`; no network in `cargo test`. |
 | `tasq-launch` | Fake executables on an injected `PATH`; `insta` snapshots of the commands that would run. |

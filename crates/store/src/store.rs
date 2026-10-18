@@ -4,28 +4,59 @@
 //! Every command reads the directory afresh: the id map is built from the
 //! frontmatter of each file, there is no index and no cache. Reads never
 //! lock and never create the directory; one that does not exist is an
-//! empty store.
+//! empty store. A write takes the store lock ([`crate::lock`]) from reading
+//! the id map to the end of the write, and the first write creates the
+//! directory.
 
 use std::cell::RefCell;
+use std::fmt::{self, Debug};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::Local;
+use tasq_core::clock::{Clock, SystemClock};
 use tasq_core::doctor::Check;
-use tasq_core::format::{self, FormatError, Parsed};
+use tasq_core::format::{self, Document, FormatError, Parsed};
 use tasq_core::model::{Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::Filter;
 use tasq_core::store::{IdScheme, Store, StoreError, StoreInfo};
 
+use crate::draft;
+use crate::lock::{StoreLock, instant, lock_path};
 use crate::ulid::Ulid;
 
 /// The name `describe()` reports.
 pub const NAME: &str = "tasq";
 
+/// How many ULIDs a create mints before giving up on a free file name. A
+/// name is taken only when the random 80 bits repeat within one
+/// millisecond; the bound is there so a broken random source cannot loop.
+pub const MAX_NAME_ATTEMPTS: u32 = 8;
+
+/// A source of the random part of a minted ULID: 80 bits, the rest is
+/// masked off.
+pub type RandomSource = Box<dyn FnMut() -> u128>;
+
 /// A tasq-owned store: the directory `<data_dir>/<store.name>`.
-#[derive(Debug)]
 pub struct TasqStore {
     dir: PathBuf,
     workflow: Workflow,
+    clock: Box<dyn Clock>,
+    random: RandomSource,
     warnings: RefCell<Vec<String>>,
+}
+
+/// Reason: the clock and the random source have no `Debug`; the fields
+/// that do are printed.
+impl Debug for TasqStore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TasqStore")
+            .field("dir", &self.dir)
+            .field("workflow", &self.workflow)
+            .field("warnings", &self.warnings)
+            .finish_non_exhaustive()
+    }
 }
 
 /// One task file the scan read.
@@ -80,12 +111,85 @@ impl Scan {
 
 impl TasqStore {
     /// The store over `dir`, which need not exist. `workflow` says which
-    /// `status` values are statuses.
+    /// `status` values are statuses. Creates stamp the system clock and
+    /// take the random part of the file name from the OS; see
+    /// [`with_clock`](Self::with_clock) and [`with_random`](Self::with_random).
     pub fn new(dir: impl Into<PathBuf>, workflow: Workflow) -> Self {
         Self {
             dir: dir.into(),
             workflow,
+            clock: Box::new(SystemClock),
+            random: Box::new(os_random),
             warnings: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Replaces the clock that stamps new tasks and their notes, and whose
+    /// time names their files.
+    #[must_use]
+    pub fn with_clock(mut self, clock: Box<dyn Clock>) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// Replaces the source of the random part of minted ULIDs (tests make
+    /// file names predictable, or force a name collision).
+    #[must_use]
+    pub fn with_random(mut self, random: RandomSource) -> Self {
+        self.random = random;
+        self
+    }
+
+    /// Takes the store lock, creating the directory when it does not
+    /// exist. The error names the lock file.
+    fn lock(&self) -> Result<StoreLock, StoreError> {
+        StoreLock::acquire(&self.dir, self.clock.as_ref()).map_err(|source| StoreError::Io {
+            path: lock_path(&self.dir),
+            source,
+        })
+    }
+
+    /// Writes `text` as a new `<ULID>.md` in the directory and returns its
+    /// path: a temp file in the directory, renamed into place without
+    /// overwriting. The ULID is minted at `millis` with a fresh random part
+    /// for each attempt; a name that exists is tried again, up to
+    /// [`MAX_NAME_ATTEMPTS`] times.
+    fn write_new(&mut self, millis: u64, text: &str) -> Result<PathBuf, StoreError> {
+        let io_error = |path: PathBuf, source| StoreError::Io { path, source };
+        let mut tmp = tempfile::Builder::new()
+            .prefix(".tasq-")
+            .tempfile_in(&self.dir)
+            .map_err(|e| io_error(self.dir.clone(), e))?;
+        tmp.write_all(text.as_bytes())
+            .map_err(|e| io_error(tmp.path().to_owned(), e))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tmp.as_file()
+                .set_permissions(std::fs::Permissions::from_mode(0o644))
+                .map_err(|e| io_error(tmp.path().to_owned(), e))?;
+        }
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            let ulid = Ulid::from_parts(millis, (self.random)());
+            let path = self.dir.join(format!("{ulid}.md"));
+            let Err(failed) = tmp.persist_noclobber(&path) else {
+                return Ok(path);
+            };
+            if failed.error.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(io_error(path, failed.error));
+            }
+            if attempts >= MAX_NAME_ATTEMPTS {
+                return Err(io_error(
+                    path,
+                    std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        format!("no free file name after {MAX_NAME_ATTEMPTS} attempts"),
+                    ),
+                ));
+            }
+            tmp = failed.file;
         }
     }
 
@@ -168,9 +272,37 @@ fn created_at(name: &str) -> Option<chrono::NaiveDateTime> {
 }
 
 /// `utc` as the machine's local wall-clock time, the shape every timestamp
-/// in the model has (see `tasq_core::clock`).
+/// in the model has (see `tasq_core::clock`); [`instant`] is the inverse.
 fn local_time(utc: chrono::DateTime<chrono::Utc>) -> chrono::NaiveDateTime {
-    utc.with_timezone(&chrono::Local).naive_local()
+    utc.with_timezone(&Local).naive_local()
+}
+
+/// `at` in milliseconds since the Unix epoch, `0` for an instant before it
+/// (the ULID timestamp is unsigned).
+fn unix_millis(at: SystemTime) -> u64 {
+    at.duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// The id a new task gets: the highest id in the store plus one, `1` when
+/// there is none. Open and done tasks count, as do the files of an
+/// ambiguous id.
+fn next_id(scan: &Scan) -> TaskId {
+    let highest = scan
+        .tasks
+        .iter()
+        .filter_map(|f| f.parsed.task.id.as_str().parse::<u64>().ok())
+        .max();
+    TaskId::from(highest.map_or(1, |h| h + 1))
+}
+
+/// 128 random bits from the OS; [`Ulid::from_parts`] keeps 80.
+/// Reason: reads the OS entropy source; nothing deterministic to assert.
+#[mutants::skip]
+fn os_random() -> u128 {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("the OS entropy source is available");
+    u128::from_le_bytes(bytes)
 }
 
 impl Store for TasqStore {
@@ -196,10 +328,20 @@ impl Store for TasqStore {
         Ok(self.scan()?.single(id)?.parsed.task.clone())
     }
 
-    fn create(&mut self, _draft: TaskDraft) -> Result<Task, StoreError> {
-        Err(StoreError::Unsupported {
-            operation: "create (the tasq store does not write yet)".to_owned(),
-        })
+    /// Under the store lock: reads the id map, takes the highest id plus
+    /// one, writes the draft as a fresh v2 file named by a ULID minted from
+    /// the clock, releases the lock, and reads the task back (so the
+    /// returned task has its `created_at`). The first write creates the
+    /// directory.
+    fn create(&mut self, draft: TaskDraft) -> Result<Task, StoreError> {
+        draft::check_draft(&draft)?;
+        let lock = self.lock()?;
+        let id = next_id(&self.scan()?);
+        let task = draft::materialize(draft, id.clone(), self.clock.as_ref());
+        let text = format::render(&Document::from_task_v2(&task));
+        self.write_new(unix_millis(instant(self.clock.as_ref())), &text)?;
+        drop(lock);
+        self.get(&id)
     }
 
     fn update(&mut self, task: &Task) -> Result<(), StoreError> {
@@ -302,5 +444,20 @@ impl Store for TasqStore {
     /// The file claiming `id`.
     fn file_of(&self, id: &TaskId) -> Result<Option<PathBuf>, StoreError> {
         Ok(Some(self.scan()?.single(id)?.path.clone()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tasq_core::clock::FixedClock;
+
+    #[test]
+    fn a_clock_before_the_epoch_is_millisecond_zero() {
+        assert_eq!(unix_millis(instant(&FixedClock::at("1960-01-01 00:00"))), 0);
+        assert_eq!(
+            unix_millis(UNIX_EPOCH + std::time::Duration::from_millis(1_469_922_850_259)),
+            1_469_922_850_259
+        );
     }
 }

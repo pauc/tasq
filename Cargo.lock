@@ -2099,6 +2099,8 @@ name = "tasq-store"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "getrandom 0.4.3",
+ "mutants",
  "tasq-core",
  "tempfile",
 ]

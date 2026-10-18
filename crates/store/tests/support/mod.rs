@@ -4,9 +4,13 @@
 #![allow(dead_code, reason = "each test file uses a subset of the helpers")]
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
+use tasq_core::clock::FixedClock;
 use tasq_core::model::Workflow;
 use tasq_store::TasqStore;
+use tasq_store::store::RandomSource;
+use tasq_store::ulid::Ulid;
 
 /// A temp root holding the store directory `store` (not created until a
 /// test writes into it).
@@ -68,4 +72,74 @@ pub fn entries(dir: &Path) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+/// The instant every test's clock is frozen at.
+pub const CLOCK: &str = "2026-10-04 12:34";
+
+/// A millisecond timestamp derived from the fixed clock the same way the store derives it:
+/// the local wall-clock time read in the machine's zone, so the expectation holds in any `TZ`.
+pub fn clock_millis() -> u64 {
+    use chrono::TimeZone;
+    let local = tasq_core::clock::FixedClock::at(CLOCK).0;
+    let millis = chrono::Local
+        .from_local_datetime(&local)
+        .earliest()
+        .map_or_else(
+            || local.and_utc().timestamp_millis(),
+            |t| t.timestamp_millis(),
+        );
+    u64::try_from(millis).unwrap()
+}
+
+impl TempStore {
+    /// Opens the store over `dir()` with the default workflow, the clock frozen at `clock`
+    /// (`YYYY-MM-DD HH:MM`) and `random` as the source of the random part of minted ULIDs.
+    pub fn open_with(&self, clock: &str, random: RandomSource) -> TasqStore {
+        TasqStore::new(self.dir(), Workflow::default())
+            .with_clock(Box::new(FixedClock::at(clock)))
+            .with_random(random)
+    }
+
+    /// Opens the store with the clock frozen at [`CLOCK`] and the random part of every minted
+    /// ULID taken from `random`, in order (the last value repeats once the list is used up).
+    pub fn open_at(&self, random: &[u128]) -> TasqStore {
+        let mut queue: std::collections::VecDeque<u128> = random.iter().copied().collect();
+        let last = *random.last().expect("at least one random value");
+        self.open_with(CLOCK, Box::new(move || queue.pop_front().unwrap_or(last)))
+    }
+
+    /// `<dir>/.tasq/lock`.
+    pub fn lock_path(&self) -> PathBuf {
+        self.dir().join(".tasq").join("lock")
+    }
+}
+
+/// `<ULID>.md` for a ULID minted at `millis` with the random part `random`.
+pub fn ulid_name(millis: u64, random: u128) -> String {
+    format!("{}.md", Ulid::from_parts(millis, random))
+}
+
+/// A minimal v2 task file.
+pub fn task_file(id: u64, title: &str, status: &str) -> String {
+    format!(
+        "---\nid: {id}\nstatus: {status}\n---\n# {title}\n\n## Progress\n\n- 2026-10-04 10:15: created\n"
+    )
+}
+
+/// Sets the modification time of `path`.
+pub fn touch(path: &Path, at: SystemTime) {
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(at)
+        .unwrap();
+}
+
+/// Whether the tests run as root, where permission bits do not apply.
+#[cfg(unix)]
+pub fn is_root() -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata("/proc/self").is_ok_and(|m| m.uid() == 0)
 }

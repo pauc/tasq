@@ -5,8 +5,13 @@
 //! - [`TasqStore`]: the store. Reads scan the directory on every call (the
 //!   id map is the files' frontmatter, there is no index), never lock and
 //!   never create it; a directory that does not exist is an empty store.
-//!   Writes come with the later slices.
+//!   `create` takes the store lock, allocates the highest id plus one and
+//!   writes a new file; `update` comes with the next slice.
+//! - [`lock`]: the store lock, `.tasq/lock`, held across a write; a stale
+//!   one is broken, a live one waited on.
 //! - [`ulid`]: the file name, whose timestamp is the task's creation time.
+//! - [`draft`]: the check and the defaults a draft gets before it is
+//!   written, shared with the nb store.
 //! - [`Revision`]: change detection for a task file (mtime, length, hash), so
 //!   an update refuses to overwrite a file that changed since it was read.
 //! - [`diff::apply`]: turns a whole-task write into the edit operations of
@@ -19,6 +24,8 @@
 #![warn(missing_docs)]
 
 pub mod diff;
+pub mod draft;
+pub mod lock;
 pub mod revision;
 pub mod store;
 pub mod ulid;

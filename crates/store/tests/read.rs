@@ -7,13 +7,12 @@ mod support;
 
 use chrono::{DateTime, Local};
 use tasq_core::doctor::{Check, CheckStatus};
-use tasq_core::model::{Status, Task, TaskDraft, TaskId, Workflow};
+use tasq_core::model::{Status, Task, TaskId, Workflow};
 use tasq_core::query::Filter;
 use tasq_core::store::{IdScheme, Store, StoreError, StoreInfo};
 use tasq_store::TasqStore;
-use tasq_store::ulid::Ulid;
 
-use support::{TempStore, entries};
+use support::{TempStore, entries, is_root, task_file};
 
 #[test]
 fn an_absent_directory_is_an_empty_store_and_is_not_created() {
@@ -44,17 +43,7 @@ const SPEC_ULID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 
 /// A ULID name minted at `millis` with a fixed random part.
 fn ulid_name(millis: u64) -> String {
-    format!(
-        "{}.md",
-        Ulid::from_parts(millis, 0xD676_4C61_EFB9_9302_BD5B)
-    )
-}
-
-/// A minimal v2 task file.
-fn task_file(id: u64, title: &str, status: &str) -> String {
-    format!(
-        "---\nid: {id}\nstatus: {status}\n---\n# {title}\n\n## Progress\n\n- 2026-10-04 10:15: created\n"
-    )
+    support::ulid_name(millis, 0xD676_4C61_EFB9_9302_BD5B)
 }
 
 fn ids(tasks: &[Task]) -> Vec<u64> {
@@ -327,22 +316,11 @@ fn reads_propagate_errors_other_than_a_missing_file() {
     );
 }
 
-#[cfg(unix)]
-fn is_root() -> bool {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata("/proc/self").is_ok_and(|m| m.uid() == 0)
-}
-
 #[test]
-fn writes_are_not_supported_yet() {
+fn updates_are_not_supported_yet() {
     let temp = TempStore::empty();
     temp.write(&ulid_name(1_000), &task_file(1, "Task", "ready"));
     let mut store = temp.open();
-    let draft = TaskDraft::new("New");
-    assert_eq!(
-        store.create(draft).unwrap_err().to_string(),
-        "unsupported: create (the tasq store does not write yet)"
-    );
     let task = store.get(&TaskId::from(1)).unwrap();
     assert_eq!(
         store.update(&task).unwrap_err().to_string(),
