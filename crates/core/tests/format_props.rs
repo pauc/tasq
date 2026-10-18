@@ -89,6 +89,25 @@ fn origin() -> impl Strategy<Value = Origin> {
         })
 }
 
+/// A line of a v2 frontmatter block that is not the `id` line: a known or
+/// unknown key with some value, a blank line, or a line of another shape.
+fn front_line() -> impl Strategy<Value = String> {
+    prop_oneof![
+        (
+            "(status|priority|rank|due|closed|project|source|source_id|source_url|tags|owner|x)",
+            "(done|ready|A|7|2026-10-10|2026-10-10 10:00|/p|gitlab|\\[a, b\\]|)"
+        )
+            .prop_map(|(k, v)| if v.is_empty() {
+                format!("{k}:")
+            } else {
+                format!("{k}: {v}")
+            }),
+        " {0,2}".prop_map(String::from),
+        "[a-z ]{1,8}".prop_map(String::from),
+        "# [a-z]{1,8}".prop_map(String::from),
+    ]
+}
+
 prop_compose! {
     fn task()(
         title in "[^\\r\\n]{1,40}".prop_filter("title keeps its shape", |t| !t.starts_with(' ') && !t.ends_with(' ') && !t.contains('\t')),
@@ -153,6 +172,40 @@ proptest! {
         prop_assert_eq!(parsed.document.is_done(), marker.contains('x'));
         let again = format::parse(&format::render(&parsed.document), TaskId::from(1), &workflow()).unwrap();
         prop_assert_eq!(again, parsed);
+    }
+
+    /// The v2 arm: any block of `key: value`, blank and stray lines around an
+    /// `id` line, any blank lines before the title, any body. The id read is
+    /// the one written whatever `parse` is told, `status: done` is the done
+    /// marker, and the bytes come back unchanged.
+    #[test]
+    fn every_v2_text_renders_back_unchanged(
+        id in 1u64..100_000,
+        before in proptest::collection::vec(front_line(), 0..4),
+        after in proptest::collection::vec(front_line(), 0..4),
+        gap in "(\\r?\\n *){0,2}",
+        title in "[^\\r\\n]{1,20}",
+        body in "(\\r?\\n(## [A-Za-z ]{0,10}|### Merge requests|- .*|.*)){0,12}(\\r?\\n)?",
+        crlf in any::<bool>(),
+        created in proptest::option::of(date_time()),
+    ) {
+        let nl = if crlf { "\r\n" } else { "\n" };
+        let block: Vec<String> = before.iter().cloned().chain([format!("id: {id}")]).chain(after.iter().cloned()).collect();
+        let text = format!("---{nl}{}{nl}---{gap}{nl}# {title}{body}", block.join(nl));
+        let parsed = format::parse_v2(&text, created, &workflow()).unwrap();
+        prop_assert_eq!(format::render(&parsed.document), text.clone());
+        prop_assert_eq!(&parsed.task.id, &TaskId::from(id));
+        prop_assert_eq!(parsed.task.created_at, created);
+        let front = parsed.document.frontmatter().unwrap();
+        let expected: Vec<&str> = block.iter().map(String::as_str).collect();
+        prop_assert_eq!(front.lines(), expected.as_slice());
+        let first_status = block.iter().find_map(|l| l.strip_prefix("status:")).map(str::trim);
+        prop_assert_eq!(parsed.document.is_done(), first_status == Some("done"));
+        prop_assert_eq!(parsed.task.done, first_status == Some("done"));
+        prop_assert_eq!(parsed.task.title.as_str(), title.as_str());
+        let again = format::parse(&format::render(&parsed.document), TaskId::from(1), &workflow()).unwrap();
+        prop_assert_eq!(&again.task.id, &parsed.task.id);
+        prop_assert_eq!(&again.document, &parsed.document);
     }
 
     #[test]

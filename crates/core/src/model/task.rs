@@ -233,6 +233,13 @@ pub struct Task {
     /// unset; missing on input means "unchanged" to `tasq apply`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rank: Option<i64>,
+    /// When the task was created, to the millisecond (local time), for a
+    /// task whose store knows it: a v2 store reads it from the task file's
+    /// ULID name (ADR 0026). `None` for a v1 (nb) task. Not a field of the
+    /// file, so edits never compare it; left out of JSON until SV-010
+    /// decides its shape.
+    #[serde(skip)]
+    pub created_at: Option<NaiveDateTime>,
 }
 
 impl Task {
@@ -258,6 +265,7 @@ impl Task {
             origin: None,
             closed_at: None,
             rank: None,
+            created_at: None,
         }
     }
 
@@ -505,6 +513,7 @@ impl TaskDraft {
             origin: self.origin,
             closed_at: self.done.then(|| to_minute(clock.now())),
             rank: None,
+            created_at: None,
         };
         if let Some(note) = self.note {
             task.log(note, clock);

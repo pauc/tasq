@@ -335,7 +335,9 @@ fn non_tasks_are_rejected() {
         "#[ ] T",
     ] {
         let err = format::parse(text, TaskId::from(1), &Workflow::default()).unwrap_err();
-        let FormatError::NotATask { first_line } = &err;
+        let FormatError::NotATask { first_line } = &err else {
+            panic!("{text:?}: {err:?}")
+        };
         assert_eq!(first_line, text.lines().next().unwrap_or(""), "{text:?}");
         assert!(err.to_string().starts_with("not a task: "));
         assert_eq!(Document::parse(text), Err(err));

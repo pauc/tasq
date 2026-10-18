@@ -7,14 +7,30 @@
 //! every edit the original script made was a line-level `awk` pass and the
 //! operations in [`super::ops`] mirror those passes one line at a time.
 //!
-//! Only the first line is validated here (see [`FormatError::NotATask`]);
-//! everything else is kept verbatim, so `render(parse(x)) == x` holds for
-//! every string that parses.
+//! Two shapes of file share the type (ADR 0026):
+//!
+//! - **v1**, the nb notebook shape: line 1 is `# [ ] Title` or `# [x] Title`
+//!   and every field is a `## Section`.
+//! - **v2**: the file opens with a frontmatter block, `---`, `key: value`
+//!   lines, `---`, and the body that follows starts with `# Title`. The block
+//!   is kept as its own run of lines in front of the body, so the body lines
+//!   (what [`Document::lines`] and the sections index) are numbered the same
+//!   way in both shapes and the list-section operations need not know which
+//!   one they edit.
+//!
+//! Only the first lines are validated here (the title line, and for v2 the
+//! closing `---` and the `id` key, see [`FormatError`]); everything else is
+//! kept verbatim, so `render(parse(x)) == x` holds for every string that
+//! parses.
 
 use std::fmt;
 use std::ops::Range;
 
 use thiserror::Error;
+
+use crate::model::TaskId;
+
+use super::read::key::{DONE_STATUS, ID as ID_KEY, STATUS as STATUS_KEY};
 
 /// Errors from parsing a task file.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -28,6 +44,44 @@ pub enum FormatError {
     NotATask {
         /// The offending first line, without its line ending.
         first_line: String,
+    },
+    /// The first line is not `---`, so the file is not a v2 task file.
+    ///
+    /// Raised by [`super::parse_v2`] only; [`Document::parse`] reads the
+    /// v1 shape instead.
+    #[error("not a v2 task file: first line {first_line:?} is not '---'")]
+    NotFrontmatter {
+        /// The offending first line, without its line ending.
+        first_line: String,
+    },
+    /// Line 1 is `---` and no later line closes the block.
+    #[error("line 1: the frontmatter has no closing '---'")]
+    UnterminatedFrontmatter,
+    /// The block closes without an `id` key.
+    #[error("line {line}: the frontmatter closes without an 'id' key")]
+    MissingId {
+        /// 1-based number of the closing `---` line.
+        line: usize,
+    },
+    /// The `id` value is not a positive integer written plainly (`47`, not
+    /// `047`, `+47` or `0`).
+    #[error("line {line}: id {value:?} is not a positive integer")]
+    InvalidId {
+        /// 1-based number of the `id:` line.
+        line: usize,
+        /// The value after `id:`, trimmed.
+        value: String,
+    },
+    /// The first non-blank line after the block is not `# Title`.
+    #[error(
+        "line {line}: expected the title line '# Title' after the frontmatter, found {found:?}"
+    )]
+    MissingTitle {
+        /// 1-based number of the offending line (one past the last line
+        /// when the file ends first).
+        line: usize,
+        /// That line, or the empty string at the end of the file.
+        found: String,
     },
 }
 
@@ -60,10 +114,14 @@ struct Line {
     ending: Newline,
 }
 
-/// Prefix of an open task's title line.
+/// Prefix of an open task's title line (v1).
 pub const OPEN_PREFIX: &str = "# [ ] ";
-/// Prefix of a done task's title line.
+/// Prefix of a done task's title line (v1).
 pub const DONE_PREFIX: &str = "# [x] ";
+/// Prefix of the title line of a v2 file, whose done marker is `status: done`.
+pub const TITLE_PREFIX: &str = "# ";
+/// The line that opens and closes the frontmatter block.
+pub const FENCE: &str = "---";
 
 /// A task file, byte for byte.
 ///
@@ -72,6 +130,11 @@ pub const DONE_PREFIX: &str = "# [x] ";
 /// [`Document::render`]. Edit it through the operations in [`super::ops`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
+    /// The frontmatter region of a v2 file: the opening `---`, the lines of
+    /// the block, the closing `---` and any blank lines before the title.
+    /// Empty for a v1 file.
+    front: Vec<Line>,
+    /// The body: the title line first, then the sections.
     lines: Vec<Line>,
     /// Ending used for lines this document creates: the ending of the first
     /// line, or LF when the file was a single unterminated line.
@@ -164,45 +227,116 @@ impl<'a> Section<'a> {
     }
 }
 
+/// The frontmatter block of a v2 document: the lines between the two `---`
+/// fences, verbatim, with the `key: value` reading over them.
+///
+/// A line is an entry when it has a `:` and the text before it, trimmed, is
+/// a single word; the value is the text after the first `:`, trimmed. Other
+/// lines (blank, or not of that shape) are kept and ignored. With a key on
+/// two lines the first wins.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Frontmatter<'a> {
+    lines: Vec<&'a str>,
+}
+
+impl<'a> Frontmatter<'a> {
+    /// The lines between the fences, without their endings.
+    pub fn lines(&self) -> &[&'a str] {
+        &self.lines
+    }
+
+    /// Every `key: value` entry, in file order, duplicates included.
+    pub fn entries(&self) -> impl Iterator<Item = (&'a str, &'a str)> + '_ {
+        self.lines.iter().filter_map(|line| entry(line))
+    }
+
+    /// The value of the first entry for `key`.
+    pub fn get(&self, key: &str) -> Option<&'a str> {
+        self.entries().find(|(k, _)| *k == key).map(|(_, v)| v)
+    }
+}
+
+/// Splits a `key: value` line; `None` for lines of any other shape.
+pub(super) fn entry(line: &str) -> Option<(&str, &str)> {
+    let (key, value) = line.split_once(':')?;
+    let key = key.trim();
+    if key.is_empty() || key.contains(char::is_whitespace) {
+        return None;
+    }
+    Some((key, value.trim()))
+}
+
+/// The id a frontmatter value denotes: a positive integer written plainly.
+pub(super) fn parse_id(value: &str) -> Option<TaskId> {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|n| *n > 0 && n.to_string() == value)
+        .map(TaskId::from)
+}
+
 impl Document {
-    /// Splits `text` into lines and checks the title line.
+    /// Splits `text` into lines and checks the shape: a v2 file (line 1 is
+    /// `---`) must close its block, carry a valid `id` and put `# Title` on
+    /// the first non-blank line after it; any other file must start with a
+    /// v1 title line.
     pub fn parse(text: &str) -> Result<Self, FormatError> {
-        let mut lines = Vec::new();
-        let mut rest = text;
-        let mut trailing_newline = false;
-        while !rest.is_empty() {
-            if let Some(i) = rest.find('\n') {
-                let (line, ending) = match rest[..i].strip_suffix('\r') {
-                    Some(line) => (line, Newline::CrLf),
-                    None => (&rest[..i], Newline::Lf),
-                };
-                lines.push(Line {
-                    text: line.to_owned(),
-                    ending,
-                });
-                rest = &rest[i + 1..];
-                trailing_newline = true;
-            } else {
-                lines.push(Line {
-                    text: rest.to_owned(),
-                    ending: Newline::Lf,
-                });
-                rest = "";
-                trailing_newline = false;
-            }
-        }
+        let (mut lines, trailing_newline) = split_lines(text);
         let first_line = lines.first().map(|l| l.text.as_str()).unwrap_or_default();
-        if title_of(first_line).is_none() {
-            return Err(FormatError::NotATask {
-                first_line: first_line.to_owned(),
+        // The first line, when it is the only line and unterminated, was
+        // given `Lf` by `split_lines`; so its ending is always the style new
+        // lines should use.
+        let newline = lines.first().map_or(Newline::Lf, |l| l.ending);
+        if first_line != FENCE {
+            if title_of(first_line).is_none() {
+                return Err(FormatError::NotATask {
+                    first_line: first_line.to_owned(),
+                });
+            }
+            return Ok(Self {
+                front: Vec::new(),
+                lines,
+                newline,
+                trailing_newline,
             });
         }
-        // The first line exists (it is a title) and, when it is the only line
-        // and unterminated, it was given `Lf` above; so its ending is always
-        // the style new lines should use.
-        let newline = lines[0].ending;
+        let close = lines
+            .iter()
+            .skip(1)
+            .position(|l| l.text == FENCE)
+            .map(|i| i + 1)
+            .ok_or(FormatError::UnterminatedFrontmatter)?;
+        match lines[1..close].iter().enumerate().find_map(|(i, l)| {
+            entry(&l.text)
+                .filter(|(k, _)| *k == ID_KEY)
+                .map(|(_, v)| (i + 1, v))
+        }) {
+            None => return Err(FormatError::MissingId { line: close + 1 }),
+            Some((i, value)) if parse_id(value).is_none() => {
+                return Err(FormatError::InvalidId {
+                    line: i + 1,
+                    value: value.to_owned(),
+                });
+            }
+            Some(_) => {}
+        }
+        let body_start = (close + 1..lines.len())
+            .find(|&i| !lines[i].text.trim().is_empty())
+            .unwrap_or(lines.len());
+        let found = lines
+            .get(body_start)
+            .map(|l| l.text.as_str())
+            .unwrap_or_default();
+        if v2_title_of(found).is_none() {
+            return Err(FormatError::MissingTitle {
+                line: body_start + 1,
+                found: found.to_owned(),
+            });
+        }
+        let body = lines.split_off(body_start);
         Ok(Self {
-            lines,
+            front: lines,
+            lines: body,
             newline,
             trailing_newline,
         })
@@ -211,6 +345,10 @@ impl Document {
     /// Writes the document back, byte for byte if it was not edited.
     pub fn render(&self) -> String {
         let mut out = String::new();
+        for line in &self.front {
+            out.push_str(&line.text);
+            out.push_str(line.ending.as_str());
+        }
         let last = self.lines.len().saturating_sub(1);
         for (i, line) in self.lines.iter().enumerate() {
             out.push_str(&line.text);
@@ -219,6 +357,23 @@ impl Document {
             }
         }
         out
+    }
+
+    /// The frontmatter block of a v2 file; `None` for a v1 file.
+    pub fn frontmatter(&self) -> Option<Frontmatter<'_>> {
+        let close = self.front.iter().skip(1).position(|l| l.text == FENCE)? + 1;
+        Some(Frontmatter {
+            lines: self.front[1..close]
+                .iter()
+                .map(|l| l.text.as_str())
+                .collect(),
+        })
+    }
+
+    /// The id written in the frontmatter of a v2 file (always present, the
+    /// parse checked it); `None` for a v1 file, which does not know its id.
+    pub fn id(&self) -> Option<TaskId> {
+        self.frontmatter()?.get(ID_KEY).and_then(parse_id)
     }
 
     /// The ending used for lines this document creates.
@@ -231,29 +386,40 @@ impl Document {
         self.trailing_newline
     }
 
-    /// The lines without their endings.
+    /// The body lines without their endings: the whole file for a v1
+    /// document, everything after the frontmatter for a v2 one.
     pub fn lines(&self) -> impl Iterator<Item = &str> {
         self.lines.iter().map(|l| l.text.as_str())
     }
 
-    /// Number of lines.
+    /// Number of body lines (see [`Self::lines`]).
     pub fn line_count(&self) -> usize {
         self.lines.len()
     }
 
-    /// The first line, without its ending.
+    /// The title line, without its ending: the first line of a v1 file, the
+    /// first body line of a v2 file.
     pub fn title_line(&self) -> &str {
         &self.lines[0].text
     }
 
-    /// The title text after the `# [ ] ` / `# [x] ` marker.
+    /// The title text after the `# [ ] ` / `# [x] ` marker (v1) or after
+    /// `# ` (v2).
     pub fn title(&self) -> &str {
-        title_of(self.title_line()).map_or("", |(_, t)| t)
+        if self.front.is_empty() {
+            title_of(self.title_line()).map_or("", |(_, t)| t)
+        } else {
+            v2_title_of(self.title_line()).unwrap_or_default()
+        }
     }
 
-    /// Whether the title line carries the done marker `# [x]`.
+    /// Whether the task is done: the title line carries `# [x]` (v1) or the
+    /// frontmatter says `status: done` (v2).
     pub fn is_done(&self) -> bool {
-        title_of(self.title_line()).is_some_and(|(done, _)| done)
+        match self.frontmatter() {
+            Some(front) => front.get(STATUS_KEY) == Some(DONE_STATUS),
+            None => title_of(self.title_line()).is_some_and(|(done, _)| done),
+        }
     }
 
     /// Every level-2 section, in file order. A section runs from its heading
@@ -421,7 +587,44 @@ pub(super) fn title_of(line: &str) -> Option<(bool, &str)> {
     (!title.is_empty()).then_some((done, title))
 }
 
+/// The title of a v2 title line (`# Title`), or `None`. Like [`title_of`],
+/// the title must be non-empty.
+pub(super) fn v2_title_of(line: &str) -> Option<&str> {
+    line.strip_prefix(TITLE_PREFIX).filter(|t| !t.is_empty())
+}
+
 /// The name of a level-2 heading line (`## Name`), or `None`.
 pub(super) fn heading_name(line: &str) -> Option<&str> {
     line.strip_prefix("## ")
+}
+
+/// Splits `text` into lines with their endings; the second value says
+/// whether the last line was terminated. An unterminated last line gets
+/// `Lf`, so an empty text yields no lines.
+fn split_lines(text: &str) -> (Vec<Line>, bool) {
+    let mut lines = Vec::new();
+    let mut rest = text;
+    let mut trailing_newline = false;
+    while !rest.is_empty() {
+        if let Some(i) = rest.find('\n') {
+            let (line, ending) = match rest[..i].strip_suffix('\r') {
+                Some(line) => (line, Newline::CrLf),
+                None => (&rest[..i], Newline::Lf),
+            };
+            lines.push(Line {
+                text: line.to_owned(),
+                ending,
+            });
+            rest = &rest[i + 1..];
+            trailing_newline = true;
+        } else {
+            lines.push(Line {
+                text: rest.to_owned(),
+                ending: Newline::Lf,
+            });
+            rest = "";
+            trailing_newline = false;
+        }
+    }
+    (lines, trailing_newline)
 }

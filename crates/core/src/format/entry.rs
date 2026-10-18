@@ -166,7 +166,8 @@ pub fn parse_origin(line: &str) -> Option<Origin> {
     })
 }
 
-fn is_url(text: &str) -> bool {
+/// Whether `text` starts with `http://` or `https://`.
+pub(super) fn is_url(text: &str) -> bool {
     text.starts_with("https://") || text.starts_with("http://")
 }
 
