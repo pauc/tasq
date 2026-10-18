@@ -13,6 +13,8 @@
 //! - [`lock`]: the store lock, `.tasq/lock`, held across a write; a stale
 //!   one is broken, a live one waited on.
 //! - [`ulid`]: the file name, whose timestamp is the task's creation time.
+//! - [`migrate`]: converts an nb notebook into a store directory, keeping
+//!   every id; a plan step decides the files without writing.
 //! - [`draft`]: the check and the defaults a draft gets before it is
 //!   written, shared with the nb store.
 //! - [`Revision`]: change detection for a task file (mtime, length, hash), so
@@ -29,6 +31,7 @@
 pub mod diff;
 pub mod draft;
 pub mod lock;
+pub mod migrate;
 pub mod revision;
 pub mod store;
 pub mod ulid;

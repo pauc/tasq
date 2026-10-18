@@ -10,7 +10,7 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use chrono::{Local, TimeZone};
+use chrono::{Local, NaiveDateTime, TimeZone};
 use tasq_core::clock::Clock;
 
 /// The directory inside the store that holds the lock.
@@ -86,11 +86,16 @@ pub fn is_stale(path: &Path, now: SystemTime) -> bool {
 /// twice (a daylight saving fold) is the earlier instant; one that does
 /// not exist (skipped by the change) is read as UTC.
 pub fn instant(clock: &dyn Clock) -> SystemTime {
-    let now = clock.now();
+    instant_at(clock.now())
+}
+
+/// The instant of `local`, a wall-clock time in the local zone, read as
+/// [`instant`] reads the clock.
+pub fn instant_at(local: NaiveDateTime) -> SystemTime {
     Local
-        .from_local_datetime(&now)
+        .from_local_datetime(&local)
         .earliest()
-        .map_or_else(|| now.and_utc().into(), Into::into)
+        .map_or_else(|| local.and_utc().into(), Into::into)
 }
 
 #[cfg(test)]

@@ -80,8 +80,12 @@ pub const CLOCK: &str = "2026-10-04 12:34";
 /// A millisecond timestamp derived from the fixed clock the same way the store derives it:
 /// the local wall-clock time read in the machine's zone, so the expectation holds in any `TZ`.
 pub fn clock_millis() -> u64 {
+    local_millis(tasq_core::clock::FixedClock::at(CLOCK).0)
+}
+
+/// `local`, a wall-clock time in the machine's zone, as milliseconds since the Unix epoch.
+pub fn local_millis(local: chrono::NaiveDateTime) -> u64 {
     use chrono::TimeZone;
-    let local = tasq_core::clock::FixedClock::at(CLOCK).0;
     let millis = chrono::Local
         .from_local_datetime(&local)
         .earliest()

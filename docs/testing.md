@@ -24,6 +24,19 @@ Quality gates run locally with `just check` (or the cargo commands it wraps) and
   table (`crates/cli/tests/support/mod.rs`) reached through `forge.<name>.url`. No `wiremock`
   and no tokio in the dependency tree.
 
+## The v2 fixture store
+
+`crates/store/tests/fixtures/stores/default` is the nb fixture notebook converted by
+`tasq_store::migrate`: one `<ULID>.md` per task (ids 1, 3, 4, 6, 7, the nb ids), laid out as
+`<data_dir>/<store.name>` with the default name, for the CLI tests to copy. Each file name is a
+ULID of the nb file's second read as UTC (what `migrate` writes with `TZ=UTC`) with the random
+part counting up from 1, so the committed names do not depend on the zone of the machine that
+made them; `created_at` read back is that instant in local time.
+`the_committed_fixture_store_is_the_migrated_nb_fixture` (`crates/store/tests/migrate.rs`) fails when the fixture and the
+migration of the notebook disagree; after a deliberate change to either, regenerate it with
+`TASQ_UPDATE_FIXTURES=1 scripts/guard cargo test -p tasq-store --test migrate` and review the
+diff. Hand edits to the fixture are overwritten by that run.
+
 ## Testing nb without touching the real notebook
 
 `crates/store-nb/tests/support/mod.rs` builds an `NbEnv`: a temporary copy of

@@ -388,7 +388,7 @@ fn local_time(utc: chrono::DateTime<chrono::Utc>) -> chrono::NaiveDateTime {
 
 /// `at` in milliseconds since the Unix epoch, `0` for an instant before it
 /// (the ULID timestamp is unsigned).
-fn unix_millis(at: SystemTime) -> u64 {
+pub(crate) fn unix_millis(at: SystemTime) -> u64 {
     at.duration_since(UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
@@ -405,10 +405,11 @@ fn next_id(scan: &Scan) -> TaskId {
     TaskId::from(highest.map_or(1, |h| h + 1))
 }
 
-/// 128 random bits from the OS; [`Ulid::from_parts`] keeps 80.
+/// 128 random bits from the OS; [`Ulid::from_parts`] keeps 80. The
+/// default random source of [`TasqStore`], and the one a migration takes.
 /// Reason: reads the OS entropy source; nothing deterministic to assert.
 #[mutants::skip]
-fn os_random() -> u128 {
+pub fn os_random() -> u128 {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("the OS entropy source is available");
     u128::from_le_bytes(bytes)

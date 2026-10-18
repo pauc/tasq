@@ -47,6 +47,22 @@ pub mod section {
     pub const CLOSED: &str = "Closed";
     /// `## Rank` (written only by tasq, ADR 0025).
     pub const RANK: &str = "Rank";
+
+    /// Every section a v1 file is read from; any other `##` section is
+    /// unknown and kept as it is.
+    pub const ALL: [&str; 11] = [
+        DESCRIPTION,
+        PROJECT,
+        DUE,
+        RELATED,
+        TAGS,
+        PROGRESS,
+        WORKTREES,
+        SESSIONS,
+        SOURCE,
+        CLOSED,
+        RANK,
+    ];
 }
 
 /// Builds the typed task from the document. `id` names a v1 task, whose
