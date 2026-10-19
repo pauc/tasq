@@ -978,6 +978,18 @@ fn styles_the_character_snapshots_cannot_see() {
             .modifier
             .contains(Modifier::BOLD)
     );
+    // A link label is underlined in the link colour, its "- " is not; a
+    // plain entry (a worktree, a session) stays plain.
+    let buffer = terminal.backend().buffer();
+    let (x, y) = find(&terminal, "Pin the cache key", 60);
+    for x in x..x + 17 {
+        assert_eq!(buffer[(x, y)].fg, Color::Indexed(75));
+        assert!(buffer[(x, y)].modifier.contains(Modifier::UNDERLINED));
+    }
+    assert_eq!(buffer[(x - 2, y)].fg, Color::Reset);
+    assert!(!buffer[(x - 2, y)].modifier.contains(Modifier::UNDERLINED));
+    let (x, y) = find(&terminal, "example.com/issue/1", 60);
+    assert_eq!(buffer[(x, y)].fg, Color::Indexed(75));
     let (x, y) = find(&terminal, "#ci", 60);
     let chip = &terminal.backend().buffer()[(x, y)];
     assert_eq!(chip.bg, Color::Indexed(24));

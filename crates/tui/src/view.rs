@@ -404,6 +404,11 @@ fn selection(model: &Model) -> Style {
     }
 }
 
+/// A link label in the detail: underlined in the theme's `link` colour.
+fn link(model: &Model) -> Style {
+    role(model, Role::Link).add_modifier(Modifier::UNDERLINED)
+}
+
 /// The tag chip: the theme's `chip-fg` on `chip-bg`, or plain text when
 /// colours are off.
 fn chip(model: &Model) -> Style {
@@ -688,14 +693,19 @@ fn detail<'a>(model: &Model, task: &'a Task) -> (Vec<Line<'a>>, Vec<DetailLink<'
             lines.push(Line::default());
             lines.push(Line::styled(heading, header(model)));
             for (item, url) in items {
-                if let Some(url) = url {
-                    targets.push(DetailLink {
-                        line: lines.len(),
-                        label: item.clone(),
-                        url,
-                    });
-                }
-                lines.push(Line::raw(format!("- {item}")));
+                let Some(url) = url else {
+                    lines.push(Line::raw(format!("- {item}")));
+                    continue;
+                };
+                targets.push(DetailLink {
+                    line: lines.len(),
+                    label: item.clone(),
+                    url,
+                });
+                lines.push(Line::from(vec![
+                    Span::raw("- "),
+                    Span::styled(item, link(model)),
+                ]));
             }
         }
     }

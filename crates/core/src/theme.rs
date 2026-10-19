@@ -107,7 +107,8 @@ pub enum Role {
     Error,
     /// Secondary text: ids, dates, hints, weekends in the calendar.
     Dim,
-    /// Hyperlinks in `tasq view`.
+    /// Hyperlinks in `tasq view` and the link labels of the `tasq ui`
+    /// detail (underlined there).
     Link,
     /// Titles and section headings in the detail pane and popups; bold is
     /// added by the front ends.

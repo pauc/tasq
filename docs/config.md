@@ -520,7 +520,7 @@ The roles: the eight groups `in-progress`, `ready`, `waiting`, `blocked`, `later
 `#A` marker; `focus` for the focused field of the edit view and the calendar border;
 `selection` for the selected row and the chosen option; `error` for error messages and a
 refused field; `dim` for ids, dates, hints and calendar weekends; `link` for the hyperlinks of
-`tasq view`; `header` for titles and section headings (bold is always added); `overdue` for
+`tasq view` and the link labels of the `tasq ui` detail (underlined there); `header` for titles and section headings (bold is always added); `overdue` for
 the due date of an open task that is past (bold is always added) and `due-soon` for one due
 today or tomorrow; later dates use `dim`.
 
