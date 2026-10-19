@@ -13,15 +13,15 @@ use std::io::{self, BufRead, Write};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
-use ratatui::crossterm::cursor::MoveToColumn;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyboardEnhancementFlags,
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode, size,
     supports_keyboard_enhancement,
 };
 use tasq_core::clock::Clock;
@@ -266,13 +266,18 @@ static KEYBOARD_ENHANCED: AtomicBool = AtomicBool::new(false);
 /// `Ctrl+Enter` and `Shift+Enter` reach the key map as such.
 struct Screen {
     active: bool,
+    /// The terminal size before the alternate screen, waited for on quit.
+    before: Option<(u16, u16)>,
 }
 
 impl Screen {
     /// Reason: terminal mode switching; nothing to assert without a terminal.
     #[mutants::skip]
     fn enter() -> io::Result<Self> {
-        let mut screen = Self { active: false };
+        let mut screen = Self {
+            active: false,
+            before: size().ok(),
+        };
         screen.resume()?;
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
@@ -311,20 +316,23 @@ impl Screen {
         }
         Ok(())
     }
-}
 
-impl Screen {
-    /// Leaves for good: the terminal is restored and the cursor moved to
-    /// column 0, where leaving the alternate screen may not put it (a
-    /// program run while the terminal was released can overwrite the
-    /// saved cursor), so the shell prompt does not start mid-line.
+    /// Leaves for good, then waits up to 250ms for the terminal to be
+    /// back to its size from before the alternate screen. Some multiplexers
+    /// (herdr) give a full-screen program one more column than the shell
+    /// and shrink the pane back only after it leaves; a shell that reads
+    /// the wider size pads its `PROMPT_SP` line past the edge and shows a
+    /// stray `%`.
     ///
     /// Reason: terminal mode switching; nothing to assert without a terminal.
     #[mutants::skip]
     fn quit(&mut self) -> io::Result<()> {
         if self.active {
             self.leave()?;
-            execute!(io::stdout(), MoveToColumn(0))?;
+            let deadline = Instant::now() + Duration::from_millis(250);
+            while self.before.is_some() && size().ok() != self.before && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
         Ok(())
     }
