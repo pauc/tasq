@@ -1,6 +1,8 @@
-//! Format v2 (ADR 0026): a frontmatter block of scalar fields, then the
-//! title heading and the list sections. Every fixture under `fixtures/v2/`
-//! parses, renders back byte for byte and re-parses to the same task.
+//! The task file format (ADR 0026): a frontmatter block of scalar fields,
+//! then the title heading and the list sections. Every fixture under
+//! `fixtures/v2/` parses, renders back byte for byte and re-parses to the
+//! same task; the document's structured view is checked on hand-written
+//! files.
 
 #![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
 #![allow(
@@ -68,18 +70,12 @@ fn every_fixture_reparses_to_the_same_result() {
         let once = parse(&text);
         let twice = parse(&format::render(&once.document));
         assert_eq!(once, twice, "{name}");
-        let id = once.task.id.clone();
         assert_eq!(
-            format::project(&once.document, TaskId::from(999), &Workflow::default()),
+            format::project(&once.document, &Workflow::default()),
             once.task,
-            "{name} via project: the id comes from the file"
+            "{name} via project"
         );
-        assert_eq!(
-            format::parse(&text, TaskId::from(999), &Workflow::default()).unwrap(),
-            once,
-            "{name} via parse: the id comes from the file"
-        );
-        assert_eq!(once.document.id(), Some(id));
+        assert_eq!(once.document.id(), once.task.id);
     }
 }
 
@@ -115,7 +111,7 @@ fn minimal() {
     assert_eq!(document.title_line(), "# Minimal task");
     assert_eq!(document.title(), "Minimal task");
     assert!(!document.is_done());
-    assert_eq!(document.id(), Some(TaskId::from(47)));
+    assert_eq!(document.id(), TaskId::from(47));
     assert_eq!(document.newline(), Newline::Lf);
     assert!(document.ends_with_newline());
     // The body lines only: the block is not among them.
@@ -133,7 +129,7 @@ fn minimal() {
     let names: Vec<&str> = document.sections().iter().map(|s| s.name).collect();
     assert_eq!(names, ["Progress"]);
     assert_eq!(document.section("Progress").unwrap().heading, 2);
-    let front = document.frontmatter().unwrap();
+    let front = document.frontmatter();
     assert_eq!(front.lines(), ["id: 47", "status: ready"]);
     assert_eq!(
         front.entries().collect::<Vec<_>>(),
@@ -257,7 +253,7 @@ fn full_document_view() {
             (2, "Notes", 33),
         ]
     );
-    let front = document.frontmatter().unwrap();
+    let front = document.frontmatter();
     assert_eq!(front.lines().len(), 10);
     assert_eq!(front.get(key::TAGS), Some("[gitlab, review-request]"));
     assert_eq!(front.get(key::SOURCE_ID), Some("!123"));
@@ -290,8 +286,8 @@ fn ranked() {
 #[test]
 fn source() {
     let task = parse(&fixture("source")).task;
-    // Unlike the v1 `## Source` line, a url-shaped `source_id` is not the
-    // url: only `source_url` is (the writer always writes it).
+    // A url-shaped `source_id` is not the url: only `source_url` is (the
+    // writer always writes it).
     assert_eq!(
         task.origin,
         Some(Origin {
@@ -310,10 +306,7 @@ fn crlf() {
     let Parsed { document, task } = parse(&text);
     assert_eq!(document.newline(), Newline::CrLf);
     assert_eq!(task, parse(&fixture("minimal")).task);
-    assert_eq!(
-        document.frontmatter().unwrap().lines(),
-        ["id: 47", "status: ready"]
-    );
+    assert_eq!(document.frontmatter().lines(), ["id: 47", "status: ready"]);
     assert_eq!(
         document.lines().collect::<Vec<_>>(),
         parse(&fixture("minimal"))
@@ -329,7 +322,7 @@ fn unknown_keys() {
     assert_eq!(task.id, TaskId::from(5));
     assert_eq!(task.status, Some(Status::WAITING), "the first key wins");
     assert_eq!(task.priority, Priority::B);
-    let front = document.frontmatter().unwrap();
+    let front = document.frontmatter();
     assert_eq!(front.get("owner"), Some("pau"));
     assert_eq!(front.get("estimate"), Some("3h"));
     assert_eq!(front.get("note"), Some("a: b"), "split on the first colon");
@@ -350,7 +343,7 @@ fn blank_lines() {
     assert_eq!(task.status, Some(Status::BLOCKED));
     assert_eq!(task.title, "Task with blank lines in the block");
     assert_eq!(
-        document.frontmatter().unwrap().lines(),
+        document.frontmatter().lines(),
         ["", "id: 6", "", "status: blocked", "  ", "priority: B"]
     );
     // A whitespace-only line between the fence and the title is blank too.
@@ -366,7 +359,7 @@ fn blank_lines() {
 fn extra_sections() {
     let Parsed { document, task } = parse(&fixture("extra-sections"));
     assert_eq!(task.status, Some(Status::WAITING));
-    // The v1 scalar sections are unknown sections in a v2 body.
+    // The script's scalar sections are unknown sections in the body.
     assert_eq!(task.due, None);
     assert_eq!(task.project, None);
     assert_eq!(task.priority, Priority::B);
@@ -660,53 +653,40 @@ fn a_missing_title_is_an_error_naming_the_line() {
     );
 }
 
+/// A file that does not open with the fence is not a task file, whatever
+/// else it is: a note, an empty file, a task written the way the original
+/// script wrote them (`# [ ] Title` and `## Tags`).
 #[test]
-fn a_v1_file_is_not_a_v2_file_and_vice_versa() {
+fn a_file_without_a_frontmatter_block_is_not_a_task_file() {
     let wf = Workflow::default();
-    let v1 = "# [ ] T\n\n## Tags\n\n#B #ready\n";
-    assert_eq!(
-        format::parse_v2(v1, None, &wf).unwrap_err(),
-        FormatError::NotFrontmatter {
-            first_line: "# [ ] T".into()
-        }
-    );
-    assert_eq!(
-        format::parse_v2(v1, None, &wf).unwrap_err().to_string(),
-        "not a v2 task file: first line \"# [ ] T\" is not '---'"
-    );
-    // `Document::parse` reads both; the v1 one does not know its id.
-    let doc = Document::parse(v1).unwrap();
-    assert_eq!(doc.id(), None);
-    assert_eq!(doc.frontmatter(), None);
-    // Any other markdown file is not a v2 task file either.
     for text in [
+        "# [ ] T\n\n## Tags\n\n#B #ready\n",
         "# T\n",
         "# Notes\n\nsome notes\n",
         "",
         "\n",
         "--- \n",
         "---x\n",
+        "--- \nid: 1\n---\n# T\n",
     ] {
+        let first_line = text.lines().next().unwrap_or("");
+        let expected = FormatError::NotFrontmatter {
+            first_line: first_line.into(),
+        };
         assert_eq!(
             format::parse_v2(text, None, &wf).unwrap_err(),
-            FormatError::NotFrontmatter {
-                first_line: text.lines().next().unwrap_or("").into()
-            },
+            expected,
             "{text:?}"
         );
+        assert_eq!(Document::parse(text), Err(expected), "{text:?}");
     }
-    // `Document::parse` still says what such a file is not.
     assert_eq!(
-        Document::parse("# T\n").unwrap_err(),
-        FormatError::NotATask {
-            first_line: "# T".into()
-        }
+        err("# [ ] T\n\n## Tags\n\n#B #ready\n").to_string(),
+        "not a task file: first line \"# [ ] T\" is not '---'"
     );
     assert_eq!(
-        format::parse("--- \nid: 1\n---\n# T\n", TaskId::from(1), &wf).unwrap_err(),
-        FormatError::NotATask {
-            first_line: "--- ".into()
-        }
+        err("# Notes\n").to_string(),
+        "not a task file: first line \"# Notes\" is not '---'"
     );
 }
 
@@ -730,7 +710,123 @@ fn every_ops_fixture_round_trips() {
 }
 
 #[test]
+fn title_only_files_parse() {
+    for (text, trailing) in [
+        ("---\nid: 1\n---\n# T", false),
+        ("---\nid: 1\n---\n# T\n", true),
+        ("---\r\nid: 1\r\n---\r\n# T\r\n", true),
+        ("---\nid: 1\n---\n# T\n\n", true),
+    ] {
+        let doc = Document::parse(text).unwrap();
+        assert_eq!(doc.ends_with_newline(), trailing, "{text:?}");
+        assert_eq!(doc.render(), text);
+        assert_eq!(doc.title(), "T");
+        assert_eq!(doc.sections(), Vec::new());
+    }
+    assert_eq!(
+        Document::parse("---\nid: 1\n---\n# T").unwrap().newline(),
+        Newline::Lf
+    );
+    // The ending of the first line is the one new lines take.
+    assert_eq!(
+        Document::parse("---\r\nid: 1\n---\n# T\n")
+            .unwrap()
+            .newline(),
+        Newline::CrLf
+    );
+    assert_eq!(
+        Document::parse("---\nid: 1\r\n---\r\n# T\r\n")
+            .unwrap()
+            .newline(),
+        Newline::Lf
+    );
+}
+
+#[test]
+fn mixed_line_endings_survive() {
+    let text = "---\r\nid: 1\n---\r\n# T\r\n\n## Notes\r\n\r\nn\n";
+    let doc = Document::parse(text).unwrap();
+    assert_eq!(doc.render(), text);
+    assert_eq!(doc.frontmatter().lines(), ["id: 1"]);
+    assert_eq!(
+        doc.lines().collect::<Vec<_>>(),
+        ["# T", "", "## Notes", "", "n"]
+    );
+}
+
+#[test]
+fn section_views_report_levels_headings_and_bodies() {
+    let doc = Document::parse(concat!(
+        "---\n",
+        "id: 1\n",
+        "---\n",
+        "# T\n",
+        "## Related\n",
+        "- a\n",
+        "### Merge requests\n",
+        "- b\n",
+        "### Other\n",
+        "c\n",
+        "## Notes\n",
+        "n\n",
+        "## Empty\n",
+    ))
+    .unwrap();
+    let sections = doc.sections();
+    assert_eq!(sections.len(), 3);
+    let related = &sections[0];
+    assert_eq!(
+        (related.level, related.name, related.heading),
+        (2, "Related", 1)
+    );
+    assert_eq!(
+        related.body,
+        ["- a", "### Merge requests", "- b", "### Other", "c"]
+    );
+    assert_eq!(related.own_body(), ["- a"]);
+    let subs = related.subsections();
+    assert_eq!(subs.len(), 2);
+    assert_eq!(
+        (subs[0].level, subs[0].name, subs[0].heading),
+        (3, "Merge requests", 3)
+    );
+    assert_eq!(subs[0].body, ["- b"]);
+    assert_eq!(
+        (subs[1].level, subs[1].name, subs[1].heading),
+        (3, "Other", 5)
+    );
+    assert_eq!(subs[1].body, ["c"]);
+    assert_eq!((sections[1].name, sections[1].heading), ("Notes", 7));
+    assert_eq!(sections[1].body, ["n"]);
+    assert_eq!(sections[2].body, Vec::<&str>::new());
+    assert_eq!(sections[2].trimmed_body(), Vec::<&str>::new());
+    assert_eq!(sections[2].subsections(), Vec::new());
+    assert_eq!(sections[2].own_body(), Vec::<&str>::new());
+    assert_eq!(doc.sections_named("Notes"), vec![sections[1].clone()]);
+    assert_eq!(doc.sections_named("Nope"), Vec::new());
+    assert_eq!(doc.section("Empty").unwrap().heading, 9);
+    assert_eq!(
+        doc.section("Merge requests"),
+        None,
+        "subsections are not sections"
+    );
+    assert_eq!(doc.line_count(), 10);
+}
+
+#[test]
+fn blank_only_bodies_trim_to_nothing() {
+    let doc = Document::parse("---\nid: 1\n---\n# T\n\n## Notes\n\n   \n\t\n## Other\n").unwrap();
+    let notes = doc.section("Notes").unwrap();
+    assert_eq!(notes.body, ["", "   ", "\t"]);
+    assert_eq!(notes.trimmed_body(), Vec::<&str>::new());
+    let other = doc.section("Other").unwrap();
+    assert_eq!(other.trimmed_body(), Vec::<&str>::new());
+}
+
+#[test]
 fn constants() {
+    assert_eq!(Newline::Lf.as_str(), "\n");
+    assert_eq!(Newline::CrLf.as_str(), "\r\n");
     assert_eq!(format::FENCE, "---");
     assert_eq!(format::TITLE_PREFIX, "# ");
     assert_eq!(key::ID, "id");

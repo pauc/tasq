@@ -223,7 +223,7 @@ fn folded_groups() {
 }
 
 /// Two done tasks for the DONE group: one closed by tasq (with a past due
-/// date, not overdue once done), one closed by `nb todo do` (no time).
+/// date, not overdue once done), one closed without a time recorded.
 fn done_tasks() -> Vec<Task> {
     let mut shipped = Task::new(TaskId::from(7), "Ship the export fix");
     shipped.due = Some(date("2026-10-01"));
@@ -867,8 +867,9 @@ fn paths_under_home_start_with_a_tilde() {
     );
 }
 
-/// The creation time (a v2 store's, ADR-0026) sits with the project, under
-/// a blank line; a task whose store does not know it has no such line.
+/// The creation time (the store reads it from the file name, ADR-0026) sits
+/// with the project, under a blank line; a task whose store does not know it
+/// has no such line.
 #[test]
 fn the_detail_shows_when_the_task_was_created() {
     let model = fixture(true);

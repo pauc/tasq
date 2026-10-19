@@ -1,5 +1,5 @@
 //! A temporary store directory for the integration tests: nothing in it
-//! until a test writes a file, no `nb`, no `git`.
+//! until a test writes a file, no `git`.
 
 #![allow(dead_code, reason = "each test file uses a subset of the helpers")]
 
@@ -124,7 +124,7 @@ pub fn ulid_name(millis: u64, random: u128) -> String {
     format!("{}.md", Ulid::from_parts(millis, random))
 }
 
-/// A minimal v2 task file.
+/// A minimal task file.
 pub fn task_file(id: u64, title: &str, status: &str) -> String {
     format!(
         "---\nid: {id}\nstatus: {status}\n---\n# {title}\n\n## Progress\n\n- 2026-10-04 10:15: created\n"

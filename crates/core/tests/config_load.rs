@@ -840,7 +840,7 @@ fn unknown_key_names_file_line_and_column() {
 #[test]
 fn unknown_section_and_nested_unknown_key_are_errors() {
     let sb = Sandbox::new();
-    sb.write_global("[stor]\nnotebook = \"x\"\n");
+    sb.write_global("[stor]\ncolour = \"x\"\n");
     let err = Config::load(&sb.opts()).unwrap_err();
     assert!(err.to_string().contains("unknown field `stor`"), "{err}");
 
@@ -856,64 +856,60 @@ fn unknown_section_and_nested_unknown_key_are_errors() {
     let err = Config::load(&sb.opts()).unwrap_err();
     assert!(err.to_string().contains("unknown field `hots`"), "{err}");
 
-    sb.write_global("[profile.x]\nnotebook = \"x\"\n");
+    sb.write_global("[profile.x]\ncolour = \"x\"\n");
     let err = Config::load(&sb.opts()).unwrap_err();
-    assert!(
-        err.to_string().contains("unknown field `notebook`"),
-        "{err}"
-    );
+    assert!(err.to_string().contains("unknown field `colour`"), "{err}");
 }
 
-/// `store.kind`, `store.notebook` and `store.sync_interval` went with the
-/// nb store (ADR-0026): a file that still sets one fails naming the file,
-/// line and column, and the message names the replacement.
+/// `[store]` has one key, `name`: a file that sets `kind`, `notebook` or
+/// `sync_interval` (keys older configs had) fails like any other unknown
+/// key, naming the file, line and column of the key and the keys that exist.
 #[test]
-fn removed_store_keys_name_the_replacement() {
-    for (key, tail) in [
-        (
-            "kind = \"nb\"",
-            ": store.kind was removed (ADR-0026): tasq always opens its own store at <data_dir>/<store.name>",
-        ),
-        (
-            "notebook = \"home\"",
-            ": store.notebook was removed (ADR-0026): tasks live in <data_dir>/<store.name>; convert the notebook once with `tasq migrate <notebook>`",
-        ),
-        (
-            "sync_interval = 3600",
-            ": store.sync_interval was removed (ADR-0026): the store does not run git; sync comes back as a feature of its own",
-        ),
+fn old_store_keys_are_unknown_fields() {
+    for (line, key) in [
+        ("kind = \"x\"", "kind"),
+        ("notebook = \"home\"", "notebook"),
+        ("sync_interval = 3600", "sync_interval"),
     ] {
         let sb = Sandbox::new();
-        let path = sb.write_global(&format!("[store]\nname = \"work\"\n{key}\n"));
+        let path = sb.write_global(&format!("[store]\nname = \"work\"\n{line}\n"));
         let err = Config::load(&sb.opts()).unwrap_err();
-        // The span is the value's (the deserializer rejects what it is given).
-        let value_column = key.find('=').unwrap() + 3;
         match &err {
             ConfigError::Parse {
-                file, line, column, ..
+                file,
+                line,
+                column,
+                message,
             } => {
                 assert_eq!(file, &path, "{key}");
-                assert_eq!((*line, *column), (3, value_column), "{key}");
+                assert_eq!((*line, *column), (3, 1), "{key}");
+                assert!(
+                    message.starts_with(&format!("unknown field `{key}`, expected `name`")),
+                    "{key}: {message}"
+                );
             }
             other => panic!("{key}: {other:?}"),
         }
-        let err = err.to_string();
         assert!(
-            err.starts_with(&format!("{}:3:{value_column}: ", path.display())),
+            err.to_string().starts_with(&format!(
+                "{}:3:1: unknown field `{key}`, expected `name`",
+                path.display()
+            )),
             "{key}: {err}"
         );
-        assert!(err.ends_with(tail), "{key}: {err}");
     }
-    assert!(
-        !tasq_core::config::ENV_KEYS.iter().any(|(var, key)| {
-            matches!(*var, "TASQ_NOTEBOOK" | "TASQ_SYNC_INTERVAL")
-                || matches!(
-                    *key,
-                    "store.kind" | "store.notebook" | "store.sync_interval"
-                )
-        }),
-        "no environment variable maps to a removed key"
-    );
+}
+
+/// A `TASQ_*` variable that maps to no key (`TASQ_NOTEBOOK`, which older
+/// versions read) is ignored like any other unknown variable.
+#[test]
+fn an_unmapped_tasq_variable_is_ignored() {
+    let sb = Sandbox::new();
+    let mut opts = sb.opts();
+    opts.env = env(&[("TASQ_NOTEBOOK", "home"), ("TASQ_SYNC_INTERVAL", "60")]);
+    let loaded = Config::load(&opts).unwrap();
+    assert_eq!(loaded.config, Config::load(&sb.opts()).unwrap().config);
+    assert_eq!(loaded.config.store.name, "default");
 }
 
 // --- data_dir and store.name ------------------------------------------------

@@ -1,59 +1,61 @@
-//! Edit operations on a [`Document`], one per command of the original
-//! script. Each mirrors the corresponding `awk` pass line by line, so a file
-//! edited by `tasq` and the same file edited by the script are identical.
+//! Edit operations on a [`Document`], one per field or list of the task.
+//!
+//! A scalar operation (`set_status`, `set_due`, `set_origin`, ...) writes or
+//! removes one frontmatter key through the primitives [`set_key`] and
+//! [`clear_key`]; nothing else in the file changes. A list operation
+//! (`append_progress`, `append_worktree`, `set_description`, ...) edits the
+//! body line by line, mirroring the `awk` pass the original script made for
+//! the same command, so the insertion rules are the ones the body always
+//! had (new sections before `## Progress`, merge requests nested in
+//! `## Related`).
 //!
 //! Every operation touches only the lines it has to and leaves everything
-//! else verbatim. Like the script's `awk` rewrites, an operation that writes
-//! leaves every line terminated; the line ending style is the document's.
+//! else verbatim. Like the script's `awk` rewrites, a list operation that
+//! writes leaves every line terminated; the line ending style is the
+//! document's.
 //!
 //! The idempotence checks the script performed before appending (`worktree
 //! already tracked`, ...) live here too and are reported through the `bool`
 //! return values: `true` means the document changed.
-//!
-//! On a v2 document (ADR 0026) the list operations work unchanged, since
-//! the body is the same, and every scalar operation edits the frontmatter
-//! key instead of a section or a tag: [`set_key`] and [`clear_key`] are the
-//! primitives, the typed operations (`set_status`, `set_due`, ...) call them
-//! and the v1 rules above do not apply. [`set_origin`] and [`clear_origin`]
-//! exist for v2 only.
 
 use std::path::Path;
 
 use chrono::{NaiveDate, NaiveDateTime};
 
 use crate::clock::{format_date, format_timestamp};
-use crate::model::{
-    Link, Origin, Priority, ProgressEntry, Session, Status, Tag, Workflow, Worktree,
-};
+use crate::model::{Link, Origin, Priority, ProgressEntry, Session, Status, Tag, Worktree};
 
-use super::document::{DONE_PREFIX, Document, OPEN_PREFIX, TITLE_PREFIX, heading_name, key};
+use super::document::{Document, TITLE_PREFIX, heading_name, key};
 use super::entry;
-use super::read::{TagKind, classify, section};
+use super::read::section;
 
 fn heading(name: &str) -> String {
     format!("## {name}")
 }
 
-// ---- the frontmatter of a v2 document (ADR 0026) ---------------------------
+// ---- the frontmatter ---------------------------------------------------------
 
-/// Writes `key: value` into the frontmatter block of a v2 document: the
-/// line of a present key is replaced (a duplicated key is left with one
-/// line), a missing key is added after the last line whose key precedes it
-/// in [`key::ORDER`], and a key outside that order goes at the end of the
-/// block. No other line changes: unknown keys, blank lines and the body
-/// stay byte for byte. A v1 document has no block and is left alone.
+/// Writes `key: value` into the frontmatter block: the line of a present
+/// key is replaced (a duplicated key is left with one line), a missing key
+/// is added after the last line whose key precedes it in [`key::ORDER`],
+/// and a key outside that order goes at the end of the block. No other
+/// line changes: unknown keys, blank lines and the body stay byte for byte.
+/// `id` is written once, when the file is created, and never changed: the
+/// document is left alone.
 ///
 /// The value is written as given: like [`set_title`] with an empty title,
-/// a value with a line break, or an `id` that is not a positive integer,
-/// makes a file the parser refuses (callers check; the typed operations
-/// never pass one).
+/// a value with a line break makes a file the parser refuses (callers
+/// check; the typed operations never pass one).
 pub fn set_key(doc: &mut Document, key: &str, value: &str) {
+    if key == key::ID {
+        return;
+    }
     doc.set_key(key, value);
 }
 
 /// Removes every line of `key` from the frontmatter block. Returns whether
-/// there was one. `id` is never removed (a v2 document always has one), and
-/// a v1 document has no block; both return `false`.
+/// there was one. `id` is never removed (a document always has one) and
+/// returns `false`.
 pub fn clear_key(doc: &mut Document, key: &str) -> bool {
     if key == key::ID {
         return false;
@@ -63,7 +65,6 @@ pub fn clear_key(doc: &mut Document, key: &str) -> bool {
 
 /// Writes the origin as `source`, `source_id` and, when it has one,
 /// `source_url` (a `source_url` line is removed when the origin has none).
-/// v2 only: a v1 document is left alone (nothing rewrote `## Source`).
 pub fn set_origin(doc: &mut Document, origin: &Origin) {
     doc.set_key(key::SOURCE, &origin.source);
     doc.set_key(key::SOURCE_ID, &origin.external_id);
@@ -76,11 +77,13 @@ pub fn set_origin(doc: &mut Document, origin: &Origin) {
 }
 
 /// Removes the `source`, `source_id` and `source_url` lines. Returns
-/// whether any was there. v2 only, like [`set_origin`].
+/// whether any was there.
 pub fn clear_origin(doc: &mut Document) -> bool {
     let removed = [key::SOURCE, key::SOURCE_ID, key::SOURCE_URL].map(|k| doc.clear_key(k));
     removed.contains(&true)
 }
+
+// ---- the list sections of the body ------------------------------------------
 
 /// `append_to_section`: appends `entry` to the list section `name`, creating
 /// the section first when it is missing.
@@ -110,7 +113,6 @@ pub fn append_to_section(doc: &mut Document, name: &str, entry: &str) {
         Some(last) => doc.insert(last + 1, entry),
         None => doc.insert_all(h + 1, ["", entry]),
     }
-    doc.terminate();
 }
 
 /// One pass over the lines, as the script's awk did: returns the index of the
@@ -274,63 +276,16 @@ pub fn append_related(doc: &mut Document, link: &Link) -> bool {
     true
 }
 
-/// `set_project`: replaces the body of `## Project` with a blank line and the
-/// path, or inserts the section after `## Description` when that is the first
-/// section, else right after the title line.
-pub fn set_project(doc: &mut Document, path: &Path) {
-    let path = path.display().to_string();
-    if doc.is_v2() {
-        doc.set_key(key::PROJECT, &path);
-        return;
+/// Inserts a new `## Description` with the body `lines` right after the
+/// title line, where `cmd_create` put it: a blank line, the heading, a blank
+/// line, the body, and a blank line after when a non-blank line follows.
+fn insert_description(doc: &mut Document, lines: &[&str]) {
+    doc.insert_all(1, ["", &heading(section::DESCRIPTION), ""]);
+    doc.insert_all(4, lines.iter().copied());
+    let after = 4 + lines.len();
+    if after < doc.line_count() && !doc.is_blank(after) {
+        doc.insert(after, "");
     }
-    if replace_bodies(doc, section::PROJECT, &path) {
-        return;
-    }
-    let first = (0..doc.line_count()).find(|&i| heading_name(doc.line(i)).is_some());
-    let mut insafter = 1;
-    if let Some(first) = first
-        && doc.line(first) == heading(section::DESCRIPTION)
-    {
-        insafter = doc.section_end(first);
-    }
-    insert_section(doc, section::PROJECT, &[&path], insafter);
-}
-
-/// Gives every `## <name>` heading the body `["", value]` (the awk loop of
-/// `set_project` never reset its match), followed by a blank line when
-/// another `## ` heading follows. Going backwards keeps the earlier indices
-/// valid while later sections change length. Returns whether a heading was
-/// found.
-fn replace_bodies(doc: &mut Document, name: &str, value: &str) -> bool {
-    let headings = doc.find_all(&heading(name));
-    for &h in headings.iter().rev() {
-        doc.set_body(h, ["", value]);
-        let next = doc.section_end(h);
-        if next < doc.line_count() {
-            doc.insert(next, "");
-        }
-    }
-    !headings.is_empty()
-}
-
-/// Inserts a new `## <name>` section with the body `lines` so that
-/// `insafter` lines stay before it (awk is 1-based): a blank line first when
-/// the line before is not blank, then heading, blank line, the body, and a
-/// blank line after when a non-blank line follows.
-fn insert_section(doc: &mut Document, name: &str, lines: &[&str], insafter: usize) {
-    let hdr = heading(name);
-    let mut at = insafter;
-    if !doc.is_blank(at - 1) {
-        doc.insert(at, "");
-        at += 1;
-    }
-    doc.insert_all(at, [hdr.as_str(), ""]);
-    doc.insert_all(at + 2, lines.iter().copied());
-    at += 2 + lines.len();
-    if at < doc.line_count() && !doc.is_blank(at) {
-        doc.insert(at, "");
-    }
-    doc.terminate();
 }
 
 /// Removes every `## <name>` section, heading and body, so the line before
@@ -351,56 +306,28 @@ fn remove_sections(doc: &mut Document, name: &str) -> bool {
             trim_trailing_blank_lines(doc);
         }
     }
-    if headings.is_empty() {
-        false
-    } else {
-        doc.terminate();
-        true
-    }
+    !headings.is_empty()
 }
 
-/// `set_title`: rewrites the title line with `title`, keeping the open or
-/// done marker (v1) or the plain `# ` (v2). `tasq` only; `title` must not
-/// be empty (callers check).
+/// `set_title`: rewrites the title line as `# <title>`. `title` must not be
+/// empty (callers check).
 pub fn set_title(doc: &mut Document, title: &str) {
-    let prefix = if doc.is_v2() {
-        TITLE_PREFIX
-    } else if doc.is_done() {
-        DONE_PREFIX
-    } else {
-        OPEN_PREFIX
-    };
-    let line = format!("{prefix}{title}");
+    let line = format!("{TITLE_PREFIX}{title}");
     doc.replace(0, line);
 }
 
-/// `set_due`: replaces the body of every `## Due` with a blank line and the
-/// ISO date, like [`set_project`]; a missing section is inserted after
-/// `## Project`, else after `## Description`, else right after the title
-/// line (the order `cmd_create` wrote). `tasq` only.
+/// `set_due`: the `due` key, as an ISO date.
 pub fn set_due(doc: &mut Document, due: NaiveDate) {
-    let value = format_date(due);
-    if doc.is_v2() {
-        doc.set_key(key::DUE, &value);
-        return;
-    }
-    if replace_bodies(doc, section::DUE, &value) {
-        return;
-    }
-    let insafter = [section::PROJECT, section::DESCRIPTION]
-        .iter()
-        .find_map(|name| doc.find_first(&heading(name)))
-        .map_or(1, |h| doc.section_end(h));
-    insert_section(doc, section::DUE, &[&value], insafter);
+    doc.set_key(key::DUE, &format_date(due));
 }
 
 /// `set_description`: the first `## Description` gets a blank line, the
 /// lines of `text` and a blank line before the next heading; any other
 /// `## Description` section is removed (the projection joins them, so one
 /// is all that can round-trip). Without one, the section is inserted right
-/// after the title line, where `cmd_create` put it. `tasq` only; `text` is
-/// non-empty with no blank lines at either end (callers trim, since the
-/// projection does).
+/// after the title line, where `cmd_create` put it. `text` is non-empty
+/// with no blank lines at either end (callers trim, since the projection
+/// does).
 pub fn set_description(doc: &mut Document, text: &str) {
     let lines: Vec<&str> = text.split('\n').collect();
     let hdr = heading(section::DESCRIPTION);
@@ -420,12 +347,12 @@ pub fn set_description(doc: &mut Document, text: &str) {
             doc.insert(next, "");
             trim_trailing_blank_lines(doc);
         }
-        None => insert_section(doc, section::DESCRIPTION, &lines, 1),
+        None => insert_description(doc, &lines),
     }
 }
 
 /// `clear_description`: removes every `## Description` section. Returns
-/// whether there was one. `tasq` only.
+/// whether there was one.
 pub fn clear_description(doc: &mut Document) -> bool {
     remove_sections(doc, section::DESCRIPTION)
 }
@@ -439,305 +366,80 @@ fn trim_trailing_blank_lines(doc: &mut Document) {
     }
 }
 
-/// `clear_due`: removes every `## Due` section. Returns whether there was
-/// one. `tasq` only.
+/// `clear_due`: removes the `due` key. Returns whether there was one.
 pub fn clear_due(doc: &mut Document) -> bool {
-    if doc.is_v2() {
-        return doc.clear_key(key::DUE);
-    }
-    remove_sections(doc, section::DUE)
+    doc.clear_key(key::DUE)
 }
 
-/// `set_closed`: replaces the body of every `## Closed` with a blank line
-/// and the `YYYY-MM-DD HH:MM` timestamp, like [`set_due`]; a missing section
-/// is inserted after `## Source`, else `## Due`, else `## Project`, else
-/// `## Description`, else right after the title line (where
-/// [`Document::from_task`] puts it). `tasq` only (ADR 0020).
+/// `set_closed`: the `closed` key, as a `YYYY-MM-DD HH:MM` timestamp
+/// (ADR 0020).
 pub fn set_closed(doc: &mut Document, at: NaiveDateTime) {
-    let value = format_timestamp(at);
-    if doc.is_v2() {
-        doc.set_key(key::CLOSED, &value);
-        return;
-    }
-    if replace_bodies(doc, section::CLOSED, &value) {
-        return;
-    }
-    let insafter = [
-        section::SOURCE,
-        section::DUE,
-        section::PROJECT,
-        section::DESCRIPTION,
-    ]
-    .iter()
-    .find_map(|name| doc.find_first(&heading(name)))
-    .map_or(1, |h| doc.section_end(h));
-    insert_section(doc, section::CLOSED, &[&value], insafter);
+    doc.set_key(key::CLOSED, &format_timestamp(at));
 }
 
-/// `clear_closed`: removes every `## Closed` section. Returns whether there
-/// was one. `tasq` only.
+/// `clear_closed`: removes the `closed` key. Returns whether there was one.
 pub fn clear_closed(doc: &mut Document) -> bool {
-    if doc.is_v2() {
-        return doc.clear_key(key::CLOSED);
-    }
-    remove_sections(doc, section::CLOSED)
+    doc.clear_key(key::CLOSED)
 }
 
-/// `set_rank`: replaces the body of every `## Rank` with a blank line and
-/// the integer, like [`set_due`]; a missing section is inserted after
-/// `## Closed`, else `## Source`, else `## Due`, else `## Project`, else
-/// `## Description`, else right after the title line (where
-/// [`Document::from_task`] puts it). `tasq` only (ADR 0025).
+/// `set_rank`: the `rank` key (ADR 0025).
 pub fn set_rank(doc: &mut Document, rank: i64) {
-    let value = rank.to_string();
-    if doc.is_v2() {
-        doc.set_key(key::RANK, &value);
-        return;
-    }
-    if replace_bodies(doc, section::RANK, &value) {
-        return;
-    }
-    let insafter = [
-        section::CLOSED,
-        section::SOURCE,
-        section::DUE,
-        section::PROJECT,
-        section::DESCRIPTION,
-    ]
-    .iter()
-    .find_map(|name| doc.find_first(&heading(name)))
-    .map_or(1, |h| doc.section_end(h));
-    insert_section(doc, section::RANK, &[&value], insafter);
+    doc.set_key(key::RANK, &rank.to_string());
 }
 
-/// `clear_rank`: removes every `## Rank` section. Returns whether there
-/// was one. `tasq` only.
+/// `clear_rank`: removes the `rank` key. Returns whether there was one.
 pub fn clear_rank(doc: &mut Document) -> bool {
-    if doc.is_v2() {
-        return doc.clear_key(key::RANK);
-    }
-    remove_sections(doc, section::RANK)
+    doc.clear_key(key::RANK)
 }
 
-/// `clear_project`: removes every `## Project` section. Returns whether
-/// there was one. `tasq` only.
+/// `set_project`: the `project` key.
+pub fn set_project(doc: &mut Document, path: &Path) {
+    doc.set_key(key::PROJECT, &path.display().to_string());
+}
+
+/// `clear_project`: removes the `project` key. Returns whether there was
+/// one.
 pub fn clear_project(doc: &mut Document) -> bool {
-    if doc.is_v2() {
-        return doc.clear_key(key::PROJECT);
-    }
-    remove_sections(doc, section::PROJECT)
+    doc.clear_key(key::PROJECT)
 }
 
-/// `set_tags`: makes `tags` the topic tags, keeping the status and priority
-/// tags where they are. On every `#` line of `## Tags` the topic tags are
-/// removed; the new ones go in front of the first such line (the order
-/// `cmd_create` wrote: topics, priority, status). A line left empty is
-/// dropped. Without a `#` line the tags go on a new line after the heading;
-/// without a `## Tags` section one is appended at the end of the file, as
-/// `cmd_set` did. No tags and no section is a no-op. `tasq` only.
-///
-/// On a v2 document: `tags: [a, b]`, and no tags removes the key.
-pub fn set_tags(doc: &mut Document, tags: &[Tag], workflow: &Workflow) {
-    if doc.is_v2() {
-        if tags.is_empty() {
-            doc.clear_key(key::TAGS);
-        } else {
-            doc.set_key(key::TAGS, &entry::format_tag_list(tags));
-        }
-        return;
-    }
-    let hdr = heading(section::TAGS);
-    let topics: Vec<String> = tags.iter().map(|t| format!("#{t}")).collect();
-    let Some(h) = doc.find_first(&hdr) else {
-        if !topics.is_empty() {
-            doc.append_block([hdr.as_str(), "", &topics.join(" ")]);
-        }
-        return;
-    };
-    let mut in_tags = false;
-    let targets: Vec<usize> = (0..doc.line_count())
-        .filter(|&i| {
-            let line = doc.line(i);
-            if heading_name(line).is_some() {
-                in_tags = line == hdr;
-                return false;
-            }
-            in_tags && line.contains('#')
-        })
-        .collect();
-    let first = targets.first().copied();
-    for &i in targets.iter().rev() {
-        let mut out: Vec<String> = Vec::new();
-        if first == Some(i) {
-            out.extend(topics.iter().cloned());
-        }
-        out.extend(
-            doc.line(i)
-                .split_whitespace()
-                .filter(|t| !matches!(classify(t, workflow), Some(TagKind::Topic(_))))
-                .map(str::to_owned),
-        );
-        if out.is_empty() {
-            doc.remove(i);
-        } else {
-            doc.replace(i, out.join(" "));
-        }
-    }
-    if first.is_none() && !topics.is_empty() {
-        doc.insert_all(h + 1, ["", topics.join(" ").as_str()]);
-    }
-    doc.terminate();
-}
-
-/// Which kind of tag `cmd_set` and `strip_status_tag` remove.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Status,
-    Priority,
-}
-
-fn is_kind(token: &str, kind: Kind, workflow: &Workflow) -> bool {
-    match classify(token, workflow) {
-        Some(TagKind::Status(_)) => kind == Kind::Status,
-        Some(TagKind::Priority(_)) => kind == Kind::Priority,
-        _ => false,
+/// `set_tags`: the `tags` key as `[a, b]`, in the caller's order; no tags
+/// removes the key.
+pub fn set_tags(doc: &mut Document, tags: &[Tag]) {
+    if tags.is_empty() {
+        doc.clear_key(key::TAGS);
+    } else {
+        doc.set_key(key::TAGS, &entry::format_tag_list(tags));
     }
 }
 
-/// Rewrites the tag lines of every `## Tags` section: tokens of `kind` are
-/// removed, the remaining tokens are re-joined with single spaces, and
-/// `add` (if any) is appended to the first line that contained a `#`. A line
-/// left empty is dropped when `drop_empty` is set (`strip_status_tag`), else
-/// kept (`cmd_set` printed the bare new tag on it).
-///
-/// Returns whether a `#` line was found at all.
-fn rewrite_tag_lines(
-    doc: &mut Document,
-    kind: Kind,
-    workflow: &Workflow,
-    add: Option<&str>,
-    drop_empty: bool,
-) -> bool {
-    let hdr = heading(section::TAGS);
-    // First the lines to rewrite: those with a `#` under a `## Tags` heading
-    // (up to the next `## ` heading). Then rewrite them back to front, so a
-    // dropped line never shifts an index still to be visited.
-    let mut in_tags = false;
-    let targets: Vec<usize> = (0..doc.line_count())
-        .filter(|&i| {
-            let line = doc.line(i);
-            if heading_name(line).is_some() {
-                in_tags = line == hdr;
-                return false;
-            }
-            in_tags && line.contains('#')
-        })
-        .collect();
-    let first = targets.first().copied();
-    for &i in targets.iter().rev() {
-        let mut out: Vec<&str> = doc
-            .line(i)
-            .split_whitespace()
-            .filter(|t| !is_kind(t, kind, workflow))
-            .collect();
-        if let Some(tag) = add
-            && first == Some(i)
-        {
-            out.push(tag);
-        }
-        if out.is_empty() && drop_empty {
-            doc.remove(i);
-        } else {
-            let line = out.join(" ");
-            doc.replace(i, line);
-        }
-    }
-    doc.terminate();
-    !targets.is_empty()
+/// Sets the `status` key.
+pub fn set_status(doc: &mut Document, status: &Status) {
+    doc.set_key(key::STATUS, status.as_str());
 }
 
-/// `cmd_set` with a status or priority: with a `## Tags` section, removes the
-/// tags of the same kind from its lines and appends `tag` to the first line
-/// that had a `#`; without one, appends `## Tags` with the tag at the end of
-/// the file.
-///
-/// Deviation from the script: when `## Tags` exists but has no line with a
-/// `#` (a done task whose tags line was dropped), the script lost the tag
-/// silently; here a blank line and the tag are inserted after the heading.
-fn set_tag(doc: &mut Document, kind: Kind, tag: &str, workflow: &Workflow) {
-    let hdr = heading(section::TAGS);
-    match doc.find_first(&hdr) {
-        None => doc.append_block([hdr.as_str(), "", tag]),
-        Some(h) => {
-            if !rewrite_tag_lines(doc, kind, workflow, Some(tag), false) {
-                doc.insert_all(h + 1, ["", tag]);
-            }
-        }
-    }
+/// Sets the `priority` key.
+pub fn set_priority(doc: &mut Document, priority: Priority) {
+    doc.set_key(key::PRIORITY, priority.as_str());
 }
 
-/// Sets the status tag, keeping priority and topic tags in their order.
-/// On a v2 document: the `status` key.
-pub fn set_status(doc: &mut Document, status: &Status, workflow: &Workflow) {
-    if doc.is_v2() {
-        doc.set_key(key::STATUS, status.as_str());
-        return;
-    }
-    set_tag(doc, Kind::Status, &status.to_hash(), workflow);
+/// Removes the `status` key, whatever it says (`done` included). Returns
+/// whether there was one.
+pub fn clear_status(doc: &mut Document) -> bool {
+    doc.clear_key(key::STATUS)
 }
 
-/// Sets the priority tag, keeping status and topic tags in their order.
-/// On a v2 document: the `priority` key.
-pub fn set_priority(doc: &mut Document, priority: Priority, workflow: &Workflow) {
-    if doc.is_v2() {
-        doc.set_key(key::PRIORITY, priority.as_str());
-        return;
-    }
-    set_tag(doc, Kind::Priority, priority.to_hash(), workflow);
-}
-
-/// `strip_status_tag`: removes every status tag from the `## Tags` lines and
-/// drops a line that becomes empty (the heading stays). No-op without a
-/// `## Tags` section. On a v2 document: removes the `status` key, whatever
-/// it says (`done` included).
-pub fn strip_status_tag(doc: &mut Document, workflow: &Workflow) {
-    if doc.is_v2() {
-        doc.clear_key(key::STATUS);
-        return;
-    }
-    if doc.find_first(&heading(section::TAGS)).is_none() {
-        return;
-    }
-    rewrite_tag_lines(doc, Kind::Status, workflow, None, true);
-}
-
-/// `cmd_done` (minus the optional note, which is [`append_progress`]): flips
-/// the title to `# [x]` and strips the status tag. On a v2 document:
+/// `cmd_done` (minus the optional note, which is [`append_progress`]):
 /// `status: done`, the only done marker; the title line is not touched.
-pub fn set_done(doc: &mut Document, workflow: &Workflow) {
-    if doc.is_v2() {
-        doc.set_key(key::STATUS, key::DONE_STATUS);
-        return;
-    }
-    if let Some(title) = doc.title_line().strip_prefix(OPEN_PREFIX) {
-        let line = format!("{DONE_PREFIX}{title}");
-        doc.replace(0, line);
-    }
-    strip_status_tag(doc, workflow);
+pub fn set_done(doc: &mut Document) {
+    doc.set_key(key::STATUS, key::DONE_STATUS);
 }
 
-/// `nb todo undo`: flips the title back to `# [ ]`. The status tag is not
-/// restored (nothing remembers it); callers set one afterwards if they want.
-/// On a v2 document: removes a `status: done` line; any other status stays.
+/// Reopens a done task: removes a `status: done` line; any other status
+/// stays. The status is not restored (nothing remembers it); callers set
+/// one afterwards if they want.
 pub fn set_open(doc: &mut Document) {
-    if doc.is_v2() {
-        if doc.is_done() {
-            doc.clear_key(key::STATUS);
-        }
-        return;
-    }
-    if let Some(title) = doc.title_line().strip_prefix(DONE_PREFIX) {
-        let line = format!("{OPEN_PREFIX}{title}");
-        doc.replace(0, line);
+    if doc.is_done() {
+        doc.clear_key(key::STATUS);
     }
 }

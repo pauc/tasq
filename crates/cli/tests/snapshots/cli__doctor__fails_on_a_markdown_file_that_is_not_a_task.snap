@@ -5,7 +5,7 @@ expression: env.normalize(&stdout(&out))
 OK    config       loaded from defaults
 OK    location     [ROOT]/home/.local/share/tasq/stores/default (data_dir from defaults, store.name from defaults)
 OK    store        store at [ROOT]/home/.local/share/tasq/stores/default, 5 task file(s)
-FAIL  task-file    [ROOT]/home/.local/share/tasq/stores/default/notes.md: not a v2 task file: first line "# Notes" is not '---'
+FAIL  task-file    [ROOT]/home/.local/share/tasq/stores/default/notes.md: not a task file: first line "# Notes" is not '---'
                    fix: add a frontmatter block with an id, or move the file out of the store
 OK    ids          ids are stable and no id is claimed twice
 OK    lock         no write in progress

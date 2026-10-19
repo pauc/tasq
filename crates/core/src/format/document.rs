@@ -7,21 +7,15 @@
 //! every edit the original script made was a line-level `awk` pass and the
 //! operations in [`super::ops`] mirror those passes one line at a time.
 //!
-//! Two shapes of file share the type (ADR 0026):
+//! A file (ADR 0026) opens with a frontmatter block, `---`, `key: value`
+//! lines, `---`, and the body that follows starts with `# Title`. The block
+//! is kept as its own run of lines in front of the body, so the body lines
+//! (what [`Document::lines`] and the sections index) are numbered from the
+//! title line and the list-section operations never see the block.
 //!
-//! - **v1**, the nb notebook shape: line 1 is `# [ ] Title` or `# [x] Title`
-//!   and every field is a `## Section`.
-//! - **v2**: the file opens with a frontmatter block, `---`, `key: value`
-//!   lines, `---`, and the body that follows starts with `# Title`. The block
-//!   is kept as its own run of lines in front of the body, so the body lines
-//!   (what [`Document::lines`] and the sections index) are numbered the same
-//!   way in both shapes and the list-section operations need not know which
-//!   one they edit.
-//!
-//! Only the first lines are validated here (the title line, and for v2 the
-//! closing `---` and the `id` key, see [`FormatError`]); everything else is
-//! kept verbatim, so `render(parse(x)) == x` holds for every string that
-//! parses.
+//! Only the first lines are validated here (the fences, the `id` key and
+//! the title line, see [`FormatError`]); everything else is kept verbatim,
+//! so `render(parse(x)) == x` holds for every string that parses.
 
 use std::fmt;
 use std::ops::Range;
@@ -33,22 +27,9 @@ use crate::model::TaskId;
 /// Errors from parsing a task file.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum FormatError {
-    /// The first line is not `# [ ] Title` or `# [x] Title`.
-    ///
-    /// The original script lists only files whose first line starts with
-    /// `# [ ] ` (and recognises `# [x] ` in reports), so anything else is
-    /// some other markdown file in the notebook, not a task.
-    #[error("not a task: first line {first_line:?} is not '# [ ] Title' or '# [x] Title'")]
-    NotATask {
-        /// The offending first line, without its line ending.
-        first_line: String,
-    },
-    /// The first line is not `---`, so the file is not a v2 task file: a
-    /// v1 task file or any other markdown file.
-    ///
-    /// Raised by [`super::parse_v2`] only; [`Document::parse`] reads the
-    /// v1 shape instead.
-    #[error("not a v2 task file: first line {first_line:?} is not '---'")]
+    /// The first line is not `---`, so the file is not a task file but
+    /// some other markdown file.
+    #[error("not a task file: first line {first_line:?} is not '---'")]
     NotFrontmatter {
         /// The offending first line, without its line ending.
         first_line: String,
@@ -113,16 +94,13 @@ struct Line {
     ending: Newline,
 }
 
-/// Prefix of an open task's title line (v1).
-pub const OPEN_PREFIX: &str = "# [ ] ";
-/// Prefix of a done task's title line (v1).
-pub const DONE_PREFIX: &str = "# [x] ";
-/// Prefix of the title line of a v2 file, whose done marker is `status: done`.
+/// Prefix of the title line; the done marker is `status: done`, not the
+/// title.
 pub const TITLE_PREFIX: &str = "# ";
 /// The line that opens and closes the frontmatter block.
 pub const FENCE: &str = "---";
 
-/// Names of the frontmatter keys of a v2 task file (ADR 0026).
+/// Names of the frontmatter keys (ADR 0026).
 pub mod key {
     /// `id`: the task's id, a positive integer; required.
     pub const ID: &str = "id";
@@ -158,14 +136,13 @@ pub mod key {
 
 /// A task file, byte for byte.
 ///
-/// Construct one with [`Document::parse`] (or [`super::parse`], which also
-/// projects the typed [`crate::model::Task`]) and write it back with
+/// Construct one with [`Document::parse`] (or [`super::parse_v2`], which
+/// also projects the typed [`crate::model::Task`]) and write it back with
 /// [`Document::render`]. Edit it through the operations in [`super::ops`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
-    /// The frontmatter region of a v2 file: the opening `---`, the lines of
-    /// the block, the closing `---` and any blank lines before the title.
-    /// Empty for a v1 file.
+    /// The frontmatter region: the opening `---`, the lines of the block,
+    /// the closing `---` and any blank lines before the title.
     front: Vec<Line>,
     /// The body: the title line first, then the sections.
     lines: Vec<Line>,
@@ -260,8 +237,8 @@ impl<'a> Section<'a> {
     }
 }
 
-/// The frontmatter block of a v2 document: the lines between the two `---`
-/// fences, verbatim, with the `key: value` reading over them.
+/// The frontmatter block: the lines between the two `---` fences, verbatim,
+/// with the `key: value` reading over them.
 ///
 /// A line is an entry when it has a `:` and the text before it, trimmed, is
 /// a single word; the value is the text after the first `:`, trimmed. Other
@@ -309,10 +286,9 @@ pub(super) fn parse_id(value: &str) -> Option<TaskId> {
 }
 
 impl Document {
-    /// Splits `text` into lines and checks the shape: a v2 file (line 1 is
-    /// `---`) must close its block, carry a valid `id` and put `# Title` on
-    /// the first non-blank line after it; any other file must start with a
-    /// v1 title line.
+    /// Splits `text` into lines and checks the shape: line 1 is `---`, the
+    /// block closes, carries a valid `id`, and `# Title` is on the first
+    /// non-blank line after it.
     pub fn parse(text: &str) -> Result<Self, FormatError> {
         let (mut lines, trailing_newline) = split_lines(text);
         let first_line = lines.first().map(|l| l.text.as_str()).unwrap_or_default();
@@ -321,16 +297,8 @@ impl Document {
         // lines should use.
         let newline = lines.first().map_or(Newline::Lf, |l| l.ending);
         if first_line != FENCE {
-            if title_of(first_line).is_none() {
-                return Err(FormatError::NotATask {
-                    first_line: first_line.to_owned(),
-                });
-            }
-            return Ok(Self {
-                front: Vec::new(),
-                lines,
-                newline,
-                trailing_newline,
+            return Err(FormatError::NotFrontmatter {
+                first_line: first_line.to_owned(),
             });
         }
         let close = closing_fence(&lines).ok_or(FormatError::UnterminatedFrontmatter)?;
@@ -387,21 +355,28 @@ impl Document {
         out
     }
 
-    /// The frontmatter block of a v2 file; `None` for a v1 file.
-    pub fn frontmatter(&self) -> Option<Frontmatter<'_>> {
-        let close = closing_fence(&self.front)?;
-        Some(Frontmatter {
-            lines: self.front[1..close]
+    /// Index in `front` of the closing fence.
+    fn close_index(&self) -> usize {
+        closing_fence(&self.front).expect("a parsed document has a closed frontmatter block")
+    }
+
+    /// The frontmatter block.
+    pub fn frontmatter(&self) -> Frontmatter<'_> {
+        Frontmatter {
+            lines: self.front[1..self.close_index()]
                 .iter()
                 .map(|l| l.text.as_str())
                 .collect(),
-        })
+        }
     }
 
-    /// The id written in the frontmatter of a v2 file (always present, the
-    /// parse checked it); `None` for a v1 file, which does not know its id.
-    pub fn id(&self) -> Option<TaskId> {
-        self.frontmatter()?.get(key::ID).and_then(parse_id)
+    /// The id written in the frontmatter (the parse checked it is there and
+    /// valid).
+    pub fn id(&self) -> TaskId {
+        self.frontmatter()
+            .get(key::ID)
+            .and_then(parse_id)
+            .expect("a parsed document has a valid id key")
     }
 
     /// The ending used for lines this document creates.
@@ -414,8 +389,8 @@ impl Document {
         self.trailing_newline
     }
 
-    /// The body lines without their endings: the whole file for a v1
-    /// document, everything after the frontmatter for a v2 one.
+    /// The body lines without their endings: everything after the
+    /// frontmatter, the title line first.
     pub fn lines(&self) -> impl Iterator<Item = &str> {
         self.lines.iter().map(|l| l.text.as_str())
     }
@@ -425,34 +400,19 @@ impl Document {
         self.lines.len()
     }
 
-    /// The title line, without its ending: the first line of a v1 file, the
-    /// first body line of a v2 file.
+    /// The title line, without its ending: the first body line.
     pub fn title_line(&self) -> &str {
         &self.lines[0].text
     }
 
-    /// The title text after the `# [ ] ` / `# [x] ` marker (v1) or after
-    /// `# ` (v2).
+    /// The title text after `# `.
     pub fn title(&self) -> &str {
-        if self.is_v2() {
-            v2_title_of(self.title_line()).unwrap_or_default()
-        } else {
-            title_of(self.title_line()).map_or("", |(_, t)| t)
-        }
+        v2_title_of(self.title_line()).unwrap_or_default()
     }
 
-    /// Whether the file has a frontmatter block.
-    pub(super) fn is_v2(&self) -> bool {
-        !self.front.is_empty()
-    }
-
-    /// Whether the task is done: the title line carries `# [x]` (v1) or the
-    /// frontmatter says `status: done` (v2).
+    /// Whether the task is done: the frontmatter says `status: done`.
     pub fn is_done(&self) -> bool {
-        match self.frontmatter() {
-            Some(front) => front.get(key::STATUS) == Some(key::DONE_STATUS),
-            None => title_of(self.title_line()).is_some_and(|(done, _)| done),
-        }
+        self.frontmatter().get(key::STATUS) == Some(key::DONE_STATUS)
     }
 
     /// Every level-2 section, in file order. A section runs from its heading
@@ -596,12 +556,7 @@ impl Document {
         self.trailing_newline = true;
     }
 
-    /// Marks every line as terminated, as any `awk` rewrite of the file does.
-    pub(super) fn terminate(&mut self) {
-        self.trailing_newline = true;
-    }
-
-    // ---- frontmatter editing used by `ops` (v2 only) ----------------------
+    // ---- frontmatter editing used by `ops` --------------------------------
 
     /// Indices in `front` of the entry lines for `key`, in order; `close` is
     /// the closing fence.
@@ -616,12 +571,9 @@ impl Document {
     /// after the last line whose key precedes it in [`key::ORDER`] (`id`,
     /// always present, precedes every other known key), or, for a key not
     /// in that order, right before the closing fence. No other line
-    /// changes, the body included. A v1 document has no block and is left
-    /// alone.
+    /// changes, the body included.
     pub(super) fn set_key(&mut self, key: &str, value: &str) {
-        let Some(close) = closing_fence(&self.front) else {
-            return;
-        };
+        let close = self.close_index();
         let text = format!("{key}: {value}");
         let found = self.key_lines(close, key);
         if let Some((&first, rest)) = found.split_first() {
@@ -653,11 +605,9 @@ impl Document {
     }
 
     /// Removes every line of `key` from the block. Returns whether there
-    /// was one; `false` on a v1 document, which has no block.
+    /// was one.
     pub(super) fn clear_key(&mut self, key: &str) -> bool {
-        let Some(close) = closing_fence(&self.front) else {
-            return false;
-        };
+        let close = self.close_index();
         let found = self.key_lines(close, key);
         for &i in found.iter().rev() {
             self.front.remove(i);
@@ -672,18 +622,6 @@ impl fmt::Display for Document {
     }
 }
 
-/// Splits a title line into `(done, title)`, or `None` when it is not one.
-///
-/// The title must be non-empty: the script treated `# [ ]` alone as not a
-/// task (its `sub` left an empty title and it bailed out).
-pub(super) fn title_of(line: &str) -> Option<(bool, &str)> {
-    let (done, title) = match line.strip_prefix(OPEN_PREFIX) {
-        Some(t) => (false, t),
-        None => (true, line.strip_prefix(DONE_PREFIX)?),
-    };
-    (!title.is_empty()).then_some((done, title))
-}
-
 /// Index of the line that closes a block opened on line 0: the first
 /// `---` after it.
 fn closing_fence(lines: &[Line]) -> Option<usize> {
@@ -694,8 +632,8 @@ fn closing_fence(lines: &[Line]) -> Option<usize> {
         .map(|i| i + 1)
 }
 
-/// The title of a v2 title line (`# Title`), or `None`. Like [`title_of`],
-/// the title must be non-empty.
+/// The title of a title line (`# Title`), or `None`. The title must be
+/// non-empty: `#` alone is not a title line.
 pub(super) fn v2_title_of(line: &str) -> Option<&str> {
     line.strip_prefix(TITLE_PREFIX).filter(|t| !t.is_empty())
 }

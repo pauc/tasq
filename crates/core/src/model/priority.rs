@@ -9,9 +9,9 @@ use super::ModelError;
 
 /// Priority of a task: `A` (high), `B` (normal, the default) or `C` (low).
 ///
-/// Stored in the nb file as the tag `#A`, `#B` or `#C`; the format layer does
-/// that mapping. Sorts high to low (`A < B < C`), so sorting ascending puts
-/// the most urgent tasks first.
+/// Stored in the file as the `priority` key; the format layer does that
+/// mapping. Sorts high to low (`A < B < C`), so sorting ascending puts the
+/// most urgent tasks first.
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
 )]
@@ -38,7 +38,7 @@ impl Priority {
         }
     }
 
-    /// The tag form the file uses: `#A`, `#B`, `#C`.
+    /// The `#` form listings show: `#A`, `#B`, `#C`.
     pub fn to_hash(self) -> &'static str {
         match self {
             Self::A => "#A",

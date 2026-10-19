@@ -11,7 +11,7 @@ use super::ModelError;
 /// A workflow status such as `in-progress` or `ready`.
 ///
 /// A status is a lowercase kebab-case word (`[a-z0-9]+(-[a-z0-9]+)*`), the
-/// shape that is also a valid nb tag. Which statuses exist is decided by the
+/// shape that is also a valid tag. Which statuses exist is decided by the
 /// [`Workflow`], not by this type: [`Status::new`] only checks the spelling,
 /// [`Workflow::parse_status`] checks membership.
 ///
@@ -69,7 +69,7 @@ impl Status {
         &self.0
     }
 
-    /// The tag form the file uses: `#ready`.
+    /// The `#` form listings show: `#ready`.
     pub fn to_hash(&self) -> String {
         format!("#{}", self.0)
     }

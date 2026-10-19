@@ -1,7 +1,7 @@
 //! `tasq store info`.
 
 use serde_json::Value;
-use tasq_core::store::{IdScheme, StoreInfo};
+use tasq_core::store::StoreInfo;
 
 use crate::app::{App, Provenance};
 use crate::cli::StoreCommand;
@@ -49,24 +49,13 @@ fn info_json(mut info: StoreInfo, provenance: &Provenance) -> Value {
 /// The `store info` text; the `bookkeeper:` line only for a store that has
 /// one.
 pub fn render_info(info: &StoreInfo, provenance: &Provenance) -> String {
-    let ids = match info.id_scheme {
-        IdScheme::Stable => "stable".to_owned(),
-        IdScheme::Positional => format!(
-            "positional (line numbers in .index){}",
-            if info.ids_may_change_on_reconcile {
-                "; they can change when another tool rewrites .index (nb index reconcile)"
-            } else {
-                ""
-            }
-        ),
-    };
     let bookkeeper = info
         .bookkeeper
         .as_deref()
         .map(|name| format!("bookkeeper:  {name}\n"))
         .unwrap_or_default();
     format!(
-        "store:       {}\nlocation:    {}\ndata_dir:    {} (from {})\nstore.name:  {} (from {})\ntasks:       {} (open and done)\nids:         {ids}\n{bookkeeper}",
+        "store:       {}\nlocation:    {}\ndata_dir:    {} (from {})\nstore.name:  {} (from {})\ntasks:       {} (open and done)\n{bookkeeper}",
         info.name,
         info.location.display(),
         provenance.data_dir.display(),
@@ -81,14 +70,12 @@ pub fn render_info(info: &StoreInfo, provenance: &Provenance) -> String {
 mod tests {
     use super::*;
 
-    fn nb_info() -> StoreInfo {
+    fn info() -> StoreInfo {
         StoreInfo {
-            name: "nb".into(),
-            location: "/nb/home".into(),
+            name: "tasq".into(),
+            location: "/data/work".into(),
             task_count: 6,
-            id_scheme: IdScheme::Positional,
-            ids_may_change_on_reconcile: true,
-            bookkeeper: Some("native".into()),
+            bookkeeper: Some("git".into()),
         }
     }
 
@@ -104,35 +91,23 @@ mod tests {
     #[test]
     fn info_text() {
         assert_eq!(
-            render_info(&nb_info(), &provenance()),
-            "store:       nb\nlocation:    /nb/home\ndata_dir:    /data (from env)\nstore.name:  work (from --set)\ntasks:       6 (open and done)\nids:         positional (line numbers in .index); they can change when another tool rewrites .index (nb index reconcile)\nbookkeeper:  native\n"
+            render_info(&info(), &provenance()),
+            "store:       tasq\nlocation:    /data/work\ndata_dir:    /data (from env)\nstore.name:  work (from --set)\ntasks:       6 (open and done)\nbookkeeper:  git\n"
         );
-        let stable = StoreInfo {
-            id_scheme: IdScheme::Stable,
-            ids_may_change_on_reconcile: false,
+        let without_bookkeeper = StoreInfo {
             bookkeeper: None,
-            ..nb_info()
+            ..info()
         };
         assert_eq!(
-            render_info(&stable, &provenance()),
-            "store:       nb\nlocation:    /nb/home\ndata_dir:    /data (from env)\nstore.name:  work (from --set)\ntasks:       6 (open and done)\nids:         stable\n"
-        );
-        let unmoving = StoreInfo {
-            ids_may_change_on_reconcile: false,
-            ..nb_info()
-        };
-        assert!(
-            render_info(&unmoving, &provenance())
-                .contains("ids:         positional (line numbers in .index)\n"),
-            "{}",
-            render_info(&unmoving, &provenance())
+            render_info(&without_bookkeeper, &provenance()),
+            "store:       tasq\nlocation:    /data/work\ndata_dir:    /data (from env)\nstore.name:  work (from --set)\ntasks:       6 (open and done)\n"
         );
     }
 
     #[test]
     fn info_json_keeps_the_bookkeeper_at_the_top_level() {
-        let value = info_json(nb_info(), &provenance());
-        assert_eq!(value["bookkeeper"], "native");
+        let value = info_json(info(), &provenance());
+        assert_eq!(value["bookkeeper"], "git");
         assert_eq!(
             value["data_dir"],
             serde_json::json!({"value": "/data", "from": "env"})
@@ -141,12 +116,14 @@ mod tests {
             value["store_name"],
             serde_json::json!({"value": "work", "from": "--set"})
         );
-        assert_eq!(value["store"]["name"], "nb");
-        assert_eq!(value["store"].get("bookkeeper"), None);
+        assert_eq!(
+            value["store"],
+            serde_json::json!({"name": "tasq", "location": "/data/work", "task_count": 6})
+        );
         let value = info_json(
             StoreInfo {
                 bookkeeper: None,
-                ..nb_info()
+                ..info()
             },
             &provenance(),
         );

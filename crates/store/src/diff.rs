@@ -2,12 +2,12 @@
 //!
 //! [`Store::update`](tasq_core::store::Store::update) hands the store the
 //! task as the caller wants it. The document on disk is edited with the
-//! operations of [`tasq_core::format::ops`], each the exact rewrite the
-//! original script made, so the resulting bytes are the ones the script
-//! would have produced. Afterwards the document is projected back onto a
-//! task and compared with the request: any field the operations could not
-//! bring in line (a new title, a removed tag, a dropped progress entry, ...)
-//! is reported and nothing is written.
+//! operations of [`tasq_core::format::ops`]: one frontmatter line per
+//! scalar, one body line per list entry, so the rest of the file keeps its
+//! bytes. Afterwards the document is projected back onto a task and
+//! compared with the request: any field the operations could not bring in
+//! line (a removed progress entry, a changed id, ...) is reported and
+//! nothing is written.
 
 use tasq_core::format::{self, Document, ops};
 use tasq_core::model::{Task, Workflow};
@@ -21,7 +21,7 @@ pub fn apply(
     wanted: &Task,
     workflow: &Workflow,
 ) -> Result<(), Vec<&'static str>> {
-    let project = |doc: &Document| format::project(doc, wanted.id.clone(), workflow);
+    let project = |doc: &Document| format::project(doc, workflow);
     let current = project(doc);
 
     if wanted.title != current.title {
@@ -29,22 +29,24 @@ pub fn apply(
     }
     if wanted.done != current.done {
         if wanted.done {
-            ops::set_done(doc, workflow);
+            ops::set_done(doc);
         } else {
             ops::set_open(doc);
         }
     }
     if wanted.priority != current.priority {
-        ops::set_priority(doc, wanted.priority, workflow);
+        ops::set_priority(doc, wanted.priority);
     }
-    // Priority before status so a file that gets both ends `#A #ready`, the
-    // order `cmd_create` wrote. A done task carries no status (the
-    // projection drops it), so there is nothing to set on one.
+    // A done task carries no status (the projection drops it), so there is
+    // nothing to set on one; the status is compared after the done flip,
+    // which may have removed it.
     let after_done = project(doc);
     if !wanted.done && wanted.status != after_done.status {
         match &wanted.status {
-            Some(status) => ops::set_status(doc, status, workflow),
-            None => ops::strip_status_tag(doc, workflow),
+            Some(status) => ops::set_status(doc, status),
+            None => {
+                ops::clear_status(doc);
+            }
         }
     }
     if wanted.description != current.description {
@@ -57,7 +59,7 @@ pub fn apply(
     }
     apply_scalars(doc, wanted, &current);
     if wanted.tags != current.tags {
-        ops::set_tags(doc, &wanted.tags, workflow);
+        ops::set_tags(doc, &wanted.tags);
     }
     for link in wanted
         .related
@@ -102,13 +104,13 @@ pub fn apply(
     }
 }
 
-/// The one-value fields (`## Closed`, `## Rank`, `## Due`, `## Project` on
-/// v1; the frontmatter keys, origin included, on v2): each is set, replaced
-/// or removed when `wanted` differs from `current`.
+/// The one-value keys (`closed`, `rank`, `due`, `project`, the origin
+/// keys): each is set, replaced or removed when `wanted` differs from
+/// `current`.
 fn apply_scalars(doc: &mut Document, wanted: &Task, current: &Task) {
-    // Against the task as read: reopening drops `## Closed` even though the
-    // projection after `set_open` already reads `None`. A stale section on
-    // an open file reads as `None` too, so it is left alone.
+    // Against the task as read: reopening drops `closed` even though the
+    // projection after `set_open` already reads `None`. A stale `closed`
+    // on an open file reads as `None` too, so it is left alone.
     if wanted.closed_at != current.closed_at {
         match wanted.closed_at {
             Some(at) => ops::set_closed(doc, at),
@@ -117,7 +119,7 @@ fn apply_scalars(doc: &mut Document, wanted: &Task, current: &Task) {
             }
         }
     }
-    // Likewise a hand-written, invalid `## Rank` reads as `None` and stays.
+    // Likewise a hand-written, invalid `rank` reads as `None` and stays.
     if wanted.rank != current.rank {
         match wanted.rank {
             Some(rank) => ops::set_rank(doc, rank),
@@ -142,8 +144,6 @@ fn apply_scalars(doc: &mut Document, wanted: &Task, current: &Task) {
             }
         }
     }
-    // The origin keys of a v2 document; on a v1 document the ops do nothing
-    // (no command ever rewrote `## Source`) and the field is reported.
     if wanted.origin != current.origin {
         match &wanted.origin {
             Some(origin) => ops::set_origin(doc, origin),
@@ -188,10 +188,10 @@ mod tests {
     use tasq_core::clock::{Clock, FixedClock};
     use tasq_core::model::{Link, Priority, ProgressEntry, Session, Status, Tag, TaskId, Worktree};
 
-    const TEXT: &str = "# [ ] Title\n\n## Tags\n\n#gitlab #B #ready\n\n## Progress\n\n- 2026-10-01 09:00: created\n";
+    const TEXT: &str = "---\nid: 1\nstatus: ready\npriority: B\ntags: [gitlab]\n---\n# Title\n\n## Progress\n\n- 2026-10-01 09:00: created\n";
 
     fn parse(text: &str) -> (Document, Task) {
-        let p = format::parse(text, TaskId::from(1), &Workflow::default()).unwrap();
+        let p = format::parse_v2(text, None, &Workflow::default()).unwrap();
         (p.document, p.task)
     }
 
@@ -205,19 +205,13 @@ mod tests {
     #[test]
     fn unchanged_task_leaves_the_document_alone() {
         assert_eq!(apply_to(TEXT, |_| {}).unwrap(), TEXT);
-    }
-
-    #[test]
-    fn unchanged_task_keeps_a_leading_status_tag_in_place() {
-        // `set_status` moves the tag to the end of the line, so an unchanged
-        // task must never reach it: only a real status change may.
-        let leading = "# [ ] T\n\n## Tags\n\n#ready #gitlab #B\n";
-        assert_eq!(apply_to(leading, |_| {}).unwrap(), leading);
+        let odd = "---\nowner: pau\nid: 1\n\nstatus: ready\n---\n\n# T\n";
+        assert_eq!(apply_to(odd, |_| {}).unwrap(), odd);
     }
 
     #[test]
     fn appends_next_to_existing_list_entries() {
-        let text = "# [ ] T\n\n## Related\n\n- https://rel/1\n\n### Merge requests\n\n- [One](https://mr/1)\n\n## Tags\n\n#B\n\n## Worktrees\n\n- /w1 (`b1`)\n\n## Sessions\n\n- 2026-10-04 10:20: `s1`\n";
+        let text = "---\nid: 1\n---\n# T\n\n## Related\n\n- https://rel/1\n\n### Merge requests\n\n- [One](https://mr/1)\n\n## Worktrees\n\n- /w1 (`b1`)\n\n## Sessions\n\n- 2026-10-04 10:20: `s1`\n";
         let at = FixedClock::at("2026-10-05 09:00").0;
         let out = apply_to(text, |t| {
             t.add_related(Link::new("https://rel/2"));
@@ -233,12 +227,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             out,
-            "# [ ] T\n\n## Related\n\n- https://rel/1\n- https://rel/2\n\n### Merge requests\n\n- [One](https://mr/1)\n- [Two](https://mr/2)\n\n## Tags\n\n#B\n\n## Worktrees\n\n- /w1 (`b1`)\n- /w2 (`b2`)\n\n## Sessions\n\n- 2026-10-04 10:20: `s1`\n- 2026-10-05 09:00: `s2`\n"
+            "---\nid: 1\n---\n# T\n\n## Related\n\n- https://rel/1\n- https://rel/2\n\n### Merge requests\n\n- [One](https://mr/1)\n- [Two](https://mr/2)\n\n## Worktrees\n\n- /w1 (`b1`)\n- /w2 (`b2`)\n\n## Sessions\n\n- 2026-10-04 10:20: `s1`\n- 2026-10-05 09:00: `s2`\n"
         );
     }
 
     #[test]
-    fn status_and_priority_rewrite_the_tags_line() {
+    fn status_and_priority_rewrite_their_keys() {
         let out = apply_to(TEXT, |t| {
             t.set_status(Status::BLOCKED);
             t.set_priority(Priority::A);
@@ -246,62 +240,67 @@ mod tests {
         .unwrap();
         assert_eq!(
             out,
-            "# [ ] Title\n\n## Tags\n\n#gitlab #A #blocked\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+            TEXT.replace(
+                "status: ready\npriority: B\n",
+                "status: blocked\npriority: A\n"
+            )
         );
     }
 
     #[test]
-    fn clearing_the_status_strips_the_tag() {
-        let out = apply_to(TEXT, Task::clear_status).unwrap();
-        assert!(out.contains("\n#gitlab #B\n"), "{out}");
+    fn clearing_the_status_removes_the_key() {
+        assert_eq!(
+            apply_to(TEXT, Task::clear_status).unwrap(),
+            TEXT.replace("status: ready\n", "")
+        );
     }
 
     #[test]
-    fn marking_done_flips_the_title_and_strips_the_status() {
-        let out = apply_to(TEXT, Task::mark_done).unwrap();
+    fn marking_done_writes_status_done() {
         assert_eq!(
-            out,
-            "# [x] Title\n\n## Tags\n\n#gitlab #B\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+            apply_to(TEXT, Task::mark_done).unwrap(),
+            TEXT.replace("status: ready", "status: done")
         );
     }
 
     #[test]
     fn done_with_a_status_cannot_be_expressed() {
-        // A done task has no status in the model (the projection drops the
-        // tag), so asking for one is reported rather than written.
+        // A done task has no status in the model (the projection drops it),
+        // so asking for one is reported rather than written.
         assert_eq!(apply_to(TEXT, |t| t.done = true), Err(vec!["status"]));
     }
 
     #[test]
     fn reopening_a_done_task() {
-        let done = "# [x] Title\n\n## Tags\n\n#gitlab #B\n";
+        let done = "---\nid: 1\nstatus: done\npriority: B\n---\n# Title\n";
         let out = apply_to(done, |t| {
             t.done = false;
             t.set_status(Status::READY);
         })
         .unwrap();
-        assert_eq!(out, "# [ ] Title\n\n## Tags\n\n#gitlab #B #ready\n");
+        assert_eq!(out, done.replace("status: done", "status: ready"));
+        // Reopened without a status: no status line at all.
         let out = apply_to(done, |t| t.done = false).unwrap();
-        assert_eq!(out, "# [ ] Title\n\n## Tags\n\n#gitlab #B\n");
+        assert_eq!(out, done.replace("status: done\n", ""));
     }
 
     #[test]
     fn closing_writes_closed_and_reopening_removes_it() {
         let clock = FixedClock::at("2026-10-07 14:32");
-        let out = apply_to(TEXT, |t| t.close(&clock)).unwrap();
+        let closed = apply_to(TEXT, |t| t.close(&clock)).unwrap();
         assert_eq!(
-            out,
-            "# [x] Title\n\n## Closed\n\n2026-10-07 14:32\n\n## Tags\n\n#gitlab #B\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+            closed,
+            "---\nid: 1\nstatus: done\npriority: B\nclosed: 2026-10-07 14:32\ntags: [gitlab]\n---\n# Title\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
         );
-        let reopened = apply_to(&out, |t| {
+        let reopened = apply_to(&closed, |t| {
             t.done = false;
             t.closed_at = None;
             t.set_status(Status::READY);
         })
         .unwrap();
         assert_eq!(reopened, TEXT);
-        // A stale section on an open file reads as `None`, so it is left.
-        let stale = "# [ ] T\n\n## Closed\n\n2026-10-07 14:32\n\n## Tags\n\n#B\n";
+        // A stale `closed` on an open file reads as `None`, so it is left.
+        let stale = "---\nid: 1\nclosed: 2026-10-07 14:32\n---\n# T\n";
         assert_eq!(apply_to(stale, |_| {}).unwrap(), stale);
         // An open task cannot carry a closing time.
         assert_eq!(
@@ -315,27 +314,24 @@ mod tests {
         let ranked = apply_to(TEXT, |t| t.rank = Some(1024)).unwrap();
         assert_eq!(
             ranked,
-            "# [ ] Title\n\n## Rank\n\n1024\n\n## Tags\n\n#gitlab #B #ready\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+            TEXT.replace("priority: B\n", "priority: B\nrank: 1024\n")
         );
         let moved = apply_to(&ranked, |t| t.rank = Some(-512)).unwrap();
-        assert_eq!(
-            moved,
-            "# [ ] Title\n\n## Rank\n\n-512\n\n## Tags\n\n#gitlab #B #ready\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
-        );
+        assert_eq!(moved, ranked.replace("rank: 1024", "rank: -512"));
         assert_eq!(apply_to(&moved, |t| t.rank = None).unwrap(), TEXT);
         // A hand-written, invalid rank reads as `None`, so it is left alone.
-        let invalid = "# [ ] T\n\n## Rank\n\nsoon\n\n## Tags\n\n#B\n";
+        let invalid = "---\nid: 1\nrank: soon\n---\n# T\n";
         assert_eq!(apply_to(invalid, |_| {}).unwrap(), invalid);
         assert_eq!(
             apply_to(invalid, |t| t.rank = Some(1)).unwrap(),
-            "# [ ] T\n\n## Rank\n\n1\n\n## Tags\n\n#B\n"
+            "---\nid: 1\nrank: 1\n---\n# T\n"
         );
         // Closing and reopening keep the rank (ADR 0025).
         let clock = FixedClock::at("2026-10-07 14:32");
         let closed = apply_to(&ranked, |t| t.close(&clock)).unwrap();
         assert_eq!(
             closed,
-            "# [x] Title\n\n## Closed\n\n2026-10-07 14:32\n\n## Rank\n\n1024\n\n## Tags\n\n#gitlab #B\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
+            "---\nid: 1\nstatus: done\npriority: B\nrank: 1024\nclosed: 2026-10-07 14:32\ntags: [gitlab]\n---\n# Title\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
         );
         let reopened = apply_to(&closed, |t| {
             t.done = false;
@@ -347,169 +343,9 @@ mod tests {
     }
 
     #[test]
-    fn appends_progress_lists_and_project() {
+    fn scalars_and_lists_are_written_as_keys_and_sections() {
         let at = FixedClock::at("2026-10-04 10:15").0;
         let out = apply_to(TEXT, |t| {
-            t.progress.push(ProgressEntry::new(at, "more"));
-            t.progress.push(ProgressEntry::new(at, "and more"));
-            t.add_worktree(Worktree::on_branch("/w", "b"));
-            t.add_session(Session {
-                at,
-                id: "s1".into(),
-                launcher: None,
-                description: Some("d".into()),
-            });
-            t.add_merge_request(Link::labelled("https://mr/1", "MR"));
-            t.add_related(Link::new("https://rel"));
-            t.project = Some(PathBuf::from("/proj"));
-        })
-        .unwrap();
-        let (_, back) = parse(&out);
-        assert_eq!(back.progress.len(), 3);
-        assert_eq!(back.progress[2].note, "and more");
-        assert_eq!(back.worktrees, vec![Worktree::on_branch("/w", "b")]);
-        assert_eq!(back.sessions[0].id, "s1");
-        assert_eq!(
-            back.merge_requests,
-            vec![Link::labelled("https://mr/1", "MR")]
-        );
-        assert_eq!(back.related, vec![Link::new("https://rel")]);
-        assert_eq!(back.project, Some(PathBuf::from("/proj")));
-        assert!(
-            out.starts_with("# [ ] Title\n\n## Project\n\n/proj\n\n## Tags\n"),
-            "{out}"
-        );
-        assert!(out.contains("## Related\n\n- https://rel\n\n### Merge requests\n\n- [MR](https://mr/1)\n\n## Worktrees\n"), "{out}");
-    }
-
-    #[test]
-    fn replacing_the_project_rewrites_the_section() {
-        let text = "# [ ] T\n\n## Project\n\n/old\n\n## Tags\n\n#B\n";
-        let out = apply_to(text, |t| t.project = Some(PathBuf::from("/new"))).unwrap();
-        assert_eq!(out, "# [ ] T\n\n## Project\n\n/new\n\n## Tags\n\n#B\n");
-    }
-
-    #[test]
-    fn changes_without_an_operation_are_reported() {
-        assert_eq!(
-            apply_to(TEXT, |t| t.progress.clear()),
-            Err(vec!["progress"])
-        );
-        assert_eq!(
-            apply_to(TEXT, |t| t.progress[0].note = "edited".into()),
-            Err(vec!["progress"])
-        );
-        assert_eq!(
-            apply_to(TEXT, |t| t.description = Some("\nleading blank\n".into())),
-            Err(vec!["description"]),
-            "the projection trims blank lines, so they cannot round-trip"
-        );
-        assert_eq!(
-            apply_to(TEXT, |t| t.id = TaskId::from(9)),
-            Ok(TEXT.to_owned()),
-            "id is not in the file"
-        );
-    }
-
-    #[test]
-    fn the_form_fields_rewrite_their_sections() {
-        let today = FixedClock::at("2026-10-04 10:15").today();
-        let out = apply_to(TEXT, |t| {
-            t.title = "Other".into();
-            t.due = Some(today);
-            t.tags = vec![Tag::new("new").unwrap()];
-        })
-        .unwrap();
-        assert_eq!(
-            out,
-            "# [ ] Other\n\n## Due\n\n2026-10-04\n\n## Tags\n\n#new #B #ready\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
-        );
-        assert_eq!(
-            apply_to(TEXT, |t| t.tags.clear()).unwrap(),
-            "# [ ] Title\n\n## Tags\n\n#B #ready\n\n## Progress\n\n- 2026-10-01 09:00: created\n",
-            "removing a topic tag"
-        );
-        let out = apply_to(TEXT, |t| t.description = Some("Why.\n\nHow.".into())).unwrap();
-        assert_eq!(
-            out,
-            "# [ ] Title\n\n## Description\n\nWhy.\n\nHow.\n\n## Tags\n\n#gitlab #B #ready\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
-        );
-        let described = "# [ ] T\n\n## Description\n\nOld.\n\n## Tags\n\n#B\n";
-        assert_eq!(
-            apply_to(described, |t| t.description = None).unwrap(),
-            "# [ ] T\n\n## Tags\n\n#B\n"
-        );
-        assert_eq!(
-            apply_to(described, |t| t.description = Some(String::new())),
-            Err(vec!["description"]),
-            "an empty description reads back as none, so it is reported; callers pass None"
-        );
-        let with_both = "# [ ] T\n\n## Project\n\n/old\n\n## Due\n\n2026-01-01\n\n## Tags\n\n#B\n";
-        assert_eq!(
-            apply_to(with_both, |t| {
-                t.project = None;
-                t.due = None;
-            })
-            .unwrap(),
-            "# [ ] T\n\n## Tags\n\n#B\n"
-        );
-    }
-
-    // ---- v2 documents (ADR 0026): the same apply, the frontmatter ops ----
-
-    const V2: &str = "---\nid: 1\nstatus: ready\npriority: B\ntags: [gitlab]\n---\n# Title\n\n## Progress\n\n- 2026-10-01 09:00: created\n";
-
-    fn apply_v2(text: &str, edit: impl FnOnce(&mut Task)) -> Result<String, Vec<&'static str>> {
-        let p = format::parse_v2(text, None, &Workflow::default()).unwrap();
-        let (mut doc, mut task) = (p.document, p.task);
-        edit(&mut task);
-        apply(&mut doc, &task, &Workflow::default())?;
-        Ok(format::render(&doc))
-    }
-
-    #[test]
-    fn v2_unchanged_task_leaves_the_document_alone() {
-        assert_eq!(apply_v2(V2, |_| {}).unwrap(), V2);
-        let odd = "---\nowner: pau\nid: 1\n\nstatus: ready\n---\n\n# T\n";
-        assert_eq!(apply_v2(odd, |_| {}).unwrap(), odd);
-    }
-
-    #[test]
-    fn v2_closing_writes_status_done_and_closed_and_reopening_undoes_it() {
-        let clock = FixedClock::at("2026-10-07 14:32");
-        let closed = apply_v2(V2, |t| t.close(&clock)).unwrap();
-        assert_eq!(
-            closed,
-            "---\nid: 1\nstatus: done\npriority: B\nclosed: 2026-10-07 14:32\ntags: [gitlab]\n---\n# Title\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
-        );
-        let reopened = apply_v2(&closed, |t| {
-            t.done = false;
-            t.closed_at = None;
-            t.set_status(Status::READY);
-        })
-        .unwrap();
-        assert_eq!(reopened, V2);
-        // Reopened without a status: no status line at all.
-        assert_eq!(
-            apply_v2(&closed, |t| {
-                t.done = false;
-                t.closed_at = None;
-            })
-            .unwrap(),
-            "---\nid: 1\npriority: B\ntags: [gitlab]\n---\n# Title\n\n## Progress\n\n- 2026-10-01 09:00: created\n"
-        );
-        // Done with a status, or open with a closing time, cannot be written.
-        assert_eq!(apply_v2(V2, |t| t.done = true), Err(vec!["status"]));
-        assert_eq!(
-            apply_v2(V2, |t| t.closed_at = Some(clock.now())),
-            Err(vec!["closed_at"])
-        );
-    }
-
-    #[test]
-    fn v2_scalars_and_lists_are_written_as_keys_and_sections() {
-        let at = FixedClock::at("2026-10-04 10:15").0;
-        let out = apply_v2(V2, |t| {
             t.title = "Other".into();
             t.set_status(Status::BLOCKED);
             t.set_priority(Priority::A);
@@ -534,7 +370,12 @@ mod tests {
                 "## Progress\n\n- 2026-10-01 09:00: created\n- 2026-10-04 10:15: more\n"
             )
         );
-        let cleared = apply_v2(&out, |t| {
+        let (_, back) = parse(&out);
+        assert_eq!(back.progress.len(), 2);
+        assert_eq!(back.worktrees, vec![Worktree::on_branch("/w", "b")]);
+        assert_eq!(back.sessions[0].id, "s1");
+        assert_eq!(back.project, Some(PathBuf::from("/proj")));
+        let cleared = apply_to(&out, |t| {
             t.clear_status();
             t.rank = None;
             t.due = None;
@@ -550,33 +391,68 @@ mod tests {
     }
 
     #[test]
-    fn v2_origin_is_written_replaced_and_removed() {
+    fn origin_is_written_replaced_and_removed() {
         let origin = tasq_core::model::Origin {
             source: "gitlab".into(),
             external_id: "!7".into(),
             url: Some("https://gl.invalid/7".into()),
         };
-        let with = apply_v2(V2, |t| t.origin = Some(origin.clone())).unwrap();
+        let with = apply_to(TEXT, |t| t.origin = Some(origin.clone())).unwrap();
         assert_eq!(
             with,
-            V2.replace(
+            TEXT.replace(
                 "priority: B\n",
                 "priority: B\nsource: gitlab\nsource_id: !7\nsource_url: https://gl.invalid/7\n"
             )
         );
-        let moved = apply_v2(&with, |t| t.origin.as_mut().unwrap().url = None).unwrap();
+        let moved = apply_to(&with, |t| t.origin.as_mut().unwrap().url = None).unwrap();
         assert_eq!(
             moved,
-            V2.replace(
+            TEXT.replace(
                 "priority: B\n",
                 "priority: B\nsource: gitlab\nsource_id: !7\n"
             )
         );
-        assert_eq!(apply_v2(&moved, |t| t.origin = None).unwrap(), V2);
-        // On a v1 document nothing rewrites `## Source`, so it is reported.
+        assert_eq!(apply_to(&moved, |t| t.origin = None).unwrap(), TEXT);
+    }
+
+    #[test]
+    fn changes_without_an_operation_are_reported() {
         assert_eq!(
-            apply_to(TEXT, |t| t.origin = Some(origin)),
-            Err(vec!["origin"])
+            apply_to(TEXT, |t| t.progress.clear()),
+            Err(vec!["progress"])
+        );
+        assert_eq!(
+            apply_to(TEXT, |t| t.progress[0].note = "edited".into()),
+            Err(vec!["progress"])
+        );
+        assert_eq!(
+            apply_to(TEXT, |t| t.description = Some("\nleading blank\n".into())),
+            Err(vec!["description"]),
+            "the projection trims blank lines, so they cannot round-trip"
+        );
+        assert_eq!(
+            apply_to(TEXT, |t| t.id = TaskId::from(9)),
+            Err(vec!["id"]),
+            "the id is written once and never changed"
+        );
+    }
+
+    #[test]
+    fn the_description_is_rewritten_or_removed() {
+        let described = "---\nid: 1\n---\n# T\n\n## Description\n\nOld.\n\n## Progress\n";
+        assert_eq!(
+            apply_to(described, |t| t.description = Some("Why.\n\nHow.".into())).unwrap(),
+            "---\nid: 1\n---\n# T\n\n## Description\n\nWhy.\n\nHow.\n\n## Progress\n"
+        );
+        assert_eq!(
+            apply_to(described, |t| t.description = None).unwrap(),
+            "---\nid: 1\n---\n# T\n\n## Progress\n"
+        );
+        assert_eq!(
+            apply_to(described, |t| t.description = Some(String::new())),
+            Err(vec!["description"]),
+            "an empty description reads back as none, so it is reported; callers pass None"
         );
     }
 

@@ -1,12 +1,13 @@
-//! Line grammars for list entries: progress notes, worktrees, sessions,
-//! links and origins. Each has a `parse_*` that returns `None` for lines that
-//! do not match (they stay in the [`super::Document`] untouched) and a
-//! `format_*` that writes exactly what the script wrote.
+//! Line grammars for list entries: progress notes, worktrees, sessions and
+//! links. Each has a `parse_*` that returns `None` for lines that do not
+//! match (they stay in the [`super::Document`] untouched) and a `format_*`
+//! that writes exactly what the script wrote. [`format_tag_list`] is the
+//! one value grammar, for the `tags` key.
 
 use std::path::PathBuf;
 
 use crate::clock::{When, format_timestamp, parse_timestamp};
-use crate::model::{Link, Origin, ProgressEntry, Session, Tag, Worktree};
+use crate::model::{Link, ProgressEntry, Session, Tag, Worktree};
 
 /// Separator between a session id and its description: space, EM DASH, space.
 pub const SESSION_SEPARATOR: &str = " \u{2014} ";
@@ -144,45 +145,8 @@ pub fn format_merge_request(link: &Link) -> String {
     format!("- [{label}]({})", link.url)
 }
 
-/// `source: external-id` or `source: external-id url`. When only one value
-/// follows the source and it looks like a URL, it is both the id and the url.
-pub fn parse_origin(line: &str) -> Option<Origin> {
-    let (source, rest) = line.split_once(':')?;
-    let source = source.trim();
-    if source.is_empty() || source.contains(char::is_whitespace) {
-        return None;
-    }
-    let mut fields = rest.split_whitespace();
-    let external_id = fields.next()?;
-    let url = match fields.next() {
-        Some(url) => Some(url.to_owned()),
-        None if is_url(external_id) => Some(external_id.to_owned()),
-        None => None,
-    };
-    Some(Origin {
-        source: source.to_owned(),
-        external_id: external_id.to_owned(),
-        url,
-    })
-}
-
-fn is_url(text: &str) -> bool {
-    text.starts_with("https://") || text.starts_with("http://")
-}
-
-/// The `## Source` line for an origin: `source: id` when the url is absent or
-/// equal to the id, else `source: id url`.
-pub fn format_origin(origin: &Origin) -> String {
-    match &origin.url {
-        Some(url) if url != &origin.external_id => {
-            format!("{}: {} {url}", origin.source, origin.external_id)
-        }
-        _ => format!("{}: {}", origin.source, origin.external_id),
-    }
-}
-
-/// `[a, b, c]`: the one-line list the `tags` key of a v2 frontmatter holds
-/// (ADR 0026); the reader is `super::read::parse_tag_list`.
+/// `[a, b, c]`: the one-line list the `tags` key holds (ADR 0026); the
+/// reader is `super::read::parse_tag_list`.
 pub fn format_tag_list(tags: &[Tag]) -> String {
     let items: Vec<&str> = tags.iter().map(Tag::as_str).collect();
     format!("[{}]", items.join(", "))

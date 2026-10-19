@@ -3,9 +3,9 @@
 //! The model is deliberately plain data plus a few small invariants:
 //!
 //! - [`Status`] and [`Priority`] are fields of [`Task`], **not** entries in
-//!   [`Task::tags`]. The nb file stores all three as `#tags`; the format layer
-//!   does that mapping, so the rest of the code never has to ask "is this tag
-//!   really a status?".
+//!   [`Task::tags`]. The file stores them as the `status` and `priority`
+//!   keys and the `tags` list; the format layer does that mapping, so the
+//!   rest of the code never has to ask "is this tag really a status?".
 //! - Statuses are configured through a [`Workflow`], not hard-coded. The five
 //!   the original script used are the [`Workflow::default`] and available as
 //!   constants on [`Status`].

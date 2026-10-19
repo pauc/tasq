@@ -100,7 +100,7 @@ mod tests {
     fn ctx() -> LaunchContext {
         LaunchContext {
             task: Task::new(TaskId::from(3), "Fix the login form"),
-            file: "/nb/3.todo.md".into(),
+            file: "/store/01ARZ3NDEKTSV4RRFFQ69G5FAV.md".into(),
             markdown: String::new(),
             workdir: "/work".into(),
             in_worktree: false,

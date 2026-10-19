@@ -5,7 +5,7 @@ expression: env.normalize(&stdout(&out))
 OK    config       loaded from defaults
 OK    location     [ROOT]/home/.local/share/tasq/stores/default (data_dir from defaults, store.name from defaults)
 OK    store        store at [ROOT]/home/.local/share/tasq/stores/default, 5 task file(s)
-OK    task-files   every .md file is a v2 task file
+OK    task-files   every .md file is a task file
 OK    ids          ids are stable and no id is claimed twice
 OK    lock         no write in progress
 OK    git          git found at [ROOT]/bin/git

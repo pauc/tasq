@@ -23,8 +23,8 @@ fn failed_exec_is_reported_and_restores_the_directory() {
     let root = tempfile::tempdir().unwrap();
     let ctx = LaunchContext {
         task: Task::new(TaskId::from(3), "T"),
-        file: "/nb/3.todo.md".into(),
-        markdown: "# [ ] T\n".into(),
+        file: "/store/01ARZ3NDEKTSV4RRFFQ69G5FAV.md".into(),
+        markdown: "---\nid: 3\n---\n# T\n".into(),
         workdir: root.path().to_path_buf(),
         in_worktree: false,
         worktrees: true,

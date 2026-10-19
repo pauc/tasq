@@ -100,7 +100,7 @@ fn with_created(text: &str, created: Option<NaiveDateTime>) -> String {
 
 /// `text` with the `---` lines around its frontmatter replaced by code
 /// fences: glow drops a frontmatter block, and the block is where the id,
-/// status and the other fields of a v2 file are.
+/// status and the other fields of a task file are.
 fn fence_frontmatter(text: &str) -> String {
     let Some(block) = frontmatter(text) else {
         return text.to_owned();
@@ -448,7 +448,7 @@ mod tests {
             "---\nid: 1\nstatus: ready\ncreated: 2026-09-01 09:00\n---\n# T\n\n---\n"
         );
         assert_eq!(with_created(V2, None), V2);
-        // A v1 file, or a block that never closes, is shown as it is.
+        // A file without a block, or whose block never closes, is shown as it is.
         assert_eq!(with_created("# [ ] T\n---\n", Some(at)), "# [ ] T\n---\n");
         assert_eq!(with_created("---\nid: 1\n", Some(at)), "---\nid: 1\n");
     }

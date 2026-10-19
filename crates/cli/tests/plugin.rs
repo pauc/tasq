@@ -113,13 +113,6 @@ fn every_skill_has_a_matching_name_and_a_description() {
         );
         // Every write the skill asks for goes through the CLI.
         assert!(text.contains("tasq "), "{skill}: never calls tasq");
-        // Nor do they name the nb notebook the store replaced (ADR 0026).
-        for stale in [".todo.md", ".index", "notebook"] {
-            assert!(
-                !text.contains(stale),
-                "{skill}: names {stale:?}; skills write through the CLI and never name the nb notebook or task files"
-            );
-        }
     }
 }
 

@@ -886,7 +886,7 @@ mod tests {
                 id: &TaskId,
             ) -> Result<Option<std::path::PathBuf>, tasq_core::store::StoreError> {
                 self.0.get(id)?;
-                Ok(Some(format!("/nb/{id}.todo.md").into()))
+                Ok(Some(format!("/store/{id}.md").into()))
             }
         }
         let mut store = FileStore(store());
@@ -898,7 +898,7 @@ mod tests {
             &mut host,
         );
         assert_eq!(msgs[0], Msg::Info("ok".into()));
-        assert_eq!(host.calls, vec!["edit 2 /nb/2.todo.md"]);
+        assert_eq!(host.calls, vec!["edit 2 /store/2.md"]);
         assert_eq!(loaded_ids(&msgs), ["1", "2"]);
     }
 }

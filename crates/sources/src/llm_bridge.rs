@@ -14,7 +14,7 @@ use tasq_core::source::{ItemState, Source, SourceError, SourceItem, SourceItemSt
 use crate::http::excerpt;
 
 /// Environment variable holding the known external ids as a JSON array, so
-/// the prompt can avoid re-reporting items the notebook already tracks.
+/// the prompt can avoid re-reporting items the store already tracks.
 pub const ENV_KNOWN: &str = "TASQ_SYNC_KNOWN";
 
 /// A command that prints items.

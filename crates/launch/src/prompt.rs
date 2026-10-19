@@ -100,6 +100,5 @@ mod tests {
         ] {
             assert!(DEFAULT_TEMPLATE.contains(needle), "{needle}");
         }
-        assert!(!DEFAULT_TEMPLATE.contains("nb todo do"));
     }
 }

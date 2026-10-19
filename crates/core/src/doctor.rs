@@ -31,7 +31,7 @@ impl fmt::Display for CheckStatus {
 /// One diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Check {
-    /// Short identifier (`notebook`, `index`, `git`, ...).
+    /// Short identifier (`store`, `task-files`, `ids`, `lock`, ...).
     pub name: String,
     /// The verdict.
     pub status: CheckStatus,
@@ -98,8 +98,8 @@ mod tests {
         );
         assert_eq!(serde_json::from_str::<Check>(&json).unwrap(), c);
         assert_eq!(
-            serde_json::to_string(&Check::ok("nb", "fine")).unwrap(),
-            "{\"name\":\"nb\",\"status\":\"ok\",\"detail\":\"fine\",\"fix\":null}"
+            serde_json::to_string(&Check::ok("lock", "fine")).unwrap(),
+            "{\"name\":\"lock\",\"status\":\"ok\",\"detail\":\"fine\",\"fix\":null}"
         );
     }
 

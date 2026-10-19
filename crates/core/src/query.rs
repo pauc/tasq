@@ -110,7 +110,7 @@ impl Filter {
     }
 
     /// Keep only tasks carrying `tag`. Calling this several times requires
-    /// all of the tags. Tags compare exactly (case-sensitive), as nb does.
+    /// all of the tags. Tags compare exactly (case-sensitive).
     #[must_use]
     pub fn tag(mut self, tag: Tag) -> Self {
         if !self.tags.contains(&tag) {

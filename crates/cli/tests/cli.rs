@@ -1,4 +1,4 @@
-//! Integration tests: the `tasq` binary against a temporary copy of the v2
+//! Integration tests: the `tasq` binary against a temporary copy of the
 //! fixture store (ids 1, 3, 4, 6 and 7). Output is snapshotted with `insta`
 //! (`cargo insta review`, or `INSTA_UPDATE=always cargo test -p tasq` to
 //! accept everything).
@@ -784,36 +784,28 @@ mod config {
         assert_snapshot!(env.normalize(&stdout(&out)));
     }
 
-    /// `store.kind`, `store.notebook` and `store.sync_interval` went with
-    /// the nb store (ADR-0026); a config that still sets one fails naming
-    /// the file, line and column, and the message names the replacement.
+    /// `[store]` has one key, `name`: a config that sets `kind`, `notebook`
+    /// or `sync_interval` (keys older configs had) fails like any other
+    /// unknown key, with the file, line and column of the key.
     #[test]
-    fn removed_store_keys_name_the_replacement() {
-        for (key, replacement) in [
-            (
-                "kind = \"nb\"",
-                "store.kind was removed (ADR-0026): tasq always opens its own store at <data_dir>/<store.name>",
-            ),
-            (
-                "notebook = \"home\"",
-                "store.notebook was removed (ADR-0026): tasks live in <data_dir>/<store.name>; convert the notebook once with `tasq migrate <notebook>`",
-            ),
-            (
-                "sync_interval = 60",
-                "store.sync_interval was removed (ADR-0026): the store does not run git; sync comes back as a feature of its own",
-            ),
+    fn old_store_keys_are_unknown_fields() {
+        for (line, key) in [
+            ("kind = \"x\"", "kind"),
+            ("notebook = \"home\"", "notebook"),
+            ("sync_interval = 60", "sync_interval"),
         ] {
             let env = TestEnv::fixture();
-            let file = env.write_global_config(&format!("[store]\nname = \"default\"\n{key}\n"));
+            let file = env.write_global_config(&format!("[store]\nname = \"default\"\n{line}\n"));
             let out = env.tasq().args(["config", "show"]).output().unwrap();
             assert_eq!(out.status.code(), Some(1), "{key}");
             let err = stderr(&out);
-            let value_column = key.find('=').unwrap() + 3;
             assert!(
-                err.starts_with(&format!("tasq: {}:3:{value_column}: ", file.display())),
+                err.starts_with(&format!(
+                    "tasq: {}:3:1: unknown field `{key}`, expected `name`",
+                    file.display()
+                )),
                 "{key}: {err}"
             );
-            assert!(err.trim_end().ends_with(replacement), "{key}: {err}");
         }
     }
 

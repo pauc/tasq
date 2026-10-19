@@ -1,6 +1,6 @@
 //! External sources and reconciliation (plan T-501).
 //!
-//! A [`Source`] turns something outside the notebook (merge requests
+//! A [`Source`] turns something outside the store (merge requests
 //! awaiting review, assigned issues, an LLM's reading of an inbox) into
 //! [`SourceItem`]s. How it does that is its own business (ADR-0004):
 //! deterministic API calls, an LLM, or both. The core only reconciles:
@@ -117,7 +117,7 @@ pub struct SourceItemState {
 /// What a source gets for a sweep.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SyncContext {
-    /// Origins the notebook already tracks for this source.
+    /// Origins the store already tracks for this source.
     pub known: Vec<Origin>,
 }
 
@@ -484,7 +484,7 @@ mod tests {
     use crate::clock::FixedClock;
     use crate::model::Workflow;
     use crate::query::Filter;
-    use crate::store::{IdScheme, StoreInfo};
+    use crate::store::StoreInfo;
 
     const SRC: &str = "gitlab-review-requests";
 
@@ -846,8 +846,6 @@ mod tests {
                 name: "mem".into(),
                 location: "/".into(),
                 task_count: self.tasks.len(),
-                id_scheme: IdScheme::Stable,
-                ids_may_change_on_reconcile: false,
                 bookkeeper: None,
             }
         }

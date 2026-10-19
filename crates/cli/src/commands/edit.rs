@@ -53,9 +53,9 @@ pub fn log(app: &App, id: &str, note: &str) -> Result<()> {
     finish(app, &mut store, &id, &format!("[{id}] logged: {note}\n"))
 }
 
-/// `tasq done <id> [note]`: the note first, then `# [x]` with the status
-/// tag removed, as the script did (`append_progress`, `nb todo do`,
-/// `strip_status_tag`). A task that is already done is refused. Then,
+/// `tasq done <id> [note]`: the note first, then `status: done` and the
+/// closing time (`append_progress`, `set_done`, `set_closed`), through
+/// [`Store::set_done`]. A task that is already done is refused. Then,
 /// with worktrees enabled, the task's worktrees are released (plan 4.2
 /// step 3); a failure there is a warning, the task is closed either way.
 pub fn done(app: &App, id: &str, note: Option<&str>, yes: bool) -> Result<()> {

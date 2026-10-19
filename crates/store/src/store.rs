@@ -21,7 +21,7 @@ use tasq_core::doctor::Check;
 use tasq_core::format::{self, Document, FormatError, Parsed};
 use tasq_core::model::{Task, TaskDraft, TaskId, Workflow};
 use tasq_core::query::Filter;
-use tasq_core::store::{IdScheme, Store, StoreError, StoreInfo};
+use tasq_core::store::{Store, StoreError, StoreInfo};
 
 use crate::lock::{STALE_AFTER, StoreLock, instant, is_stale, lock_path};
 use crate::ulid::Ulid;
@@ -299,7 +299,7 @@ impl TasqStore {
     /// ignoring case). A directory that does not exist is empty. Dot files
     /// (editor locks), directories (`.tasq/`, a directory named `x.md`) and
     /// names with another extension are not read; a `.md` file that is not
-    /// a v2 task file is recorded as skipped; a file that vanished between
+    /// a task file is recorded as skipped; a file that vanished between
     /// the listing and the read (or a dangling symlink) is dropped; any
     /// other I/O failure is the error.
     fn scan(&self) -> Result<Scan, StoreError> {
@@ -359,10 +359,10 @@ impl TasqStore {
     }
 }
 
-/// What to do about a `.md` file that did not parse as a v2 task file.
+/// What to do about a `.md` file that did not parse as a task file.
 fn task_file_fix(error: &FormatError) -> &'static str {
     match error {
-        FormatError::NotFrontmatter { .. } | FormatError::NotATask { .. } => {
+        FormatError::NotFrontmatter { .. } => {
             "add a frontmatter block with an id, or move the file out of the store"
         }
         FormatError::UnterminatedFrontmatter => "close the frontmatter block with a '---' line",
@@ -446,7 +446,7 @@ impl Store for TasqStore {
     }
 
     /// Under the store lock: reads the id map, takes the highest id plus
-    /// one, writes the draft as a fresh v2 file named by a ULID minted from
+    /// one, writes the draft as a fresh file named by a ULID minted from
     /// the clock, releases the lock, and reads the task back (so the
     /// returned task has its `created_at`). The first write creates the
     /// directory.
@@ -515,7 +515,7 @@ impl Store for TasqStore {
         let file = scan.single(id)?;
         self.edit(file, |document| {
             if done {
-                format::ops::set_done(document, &self.workflow);
+                format::ops::set_done(document);
                 if !file.parsed.task.done {
                     format::ops::set_closed(document, to_minute(self.clock.now()));
                 }
@@ -545,8 +545,6 @@ impl Store for TasqStore {
             name: NAME.to_owned(),
             location: self.dir.clone(),
             task_count,
-            id_scheme: IdScheme::Stable,
-            ids_may_change_on_reconcile: false,
             bookkeeper: None,
         }
     }
@@ -558,7 +556,7 @@ impl Store for TasqStore {
     /// The checks, in display order: `store` (the directory: `Ok` and
     /// nothing else when it does not exist yet, `Fail` naming the error and
     /// nothing else when it cannot be read, otherwise `Ok` with its task
-    /// file count), one `task-file` `Fail` per `.md` file that is not a v2
+    /// file count), one `task-file` `Fail` per `.md` file that is not a
     /// task file (or `task-files` `Ok`), one `ids` `Fail` per id claimed
     /// by more than one file (or `ids` `Ok`), and `lock`: `Ok` with no lock
     /// file or a live one (a write in progress), `Warn` naming a stale one
@@ -586,7 +584,7 @@ impl Store for TasqStore {
             format!("store at {dir}, {} task file(s)", scan.tasks.len()),
         )];
         if scan.skipped.is_empty() {
-            checks.push(Check::ok("task-files", "every .md file is a v2 task file"));
+            checks.push(Check::ok("task-files", "every .md file is a task file"));
         }
         for (path, error) in &scan.skipped {
             checks.push(Check::fail(

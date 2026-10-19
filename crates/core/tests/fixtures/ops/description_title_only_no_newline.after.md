@@ -1,5 +1,0 @@
-# [ ] T
-
-## Description
-
-New text.

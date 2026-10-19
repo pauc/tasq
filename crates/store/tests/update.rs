@@ -462,7 +462,7 @@ fn doctor_reports_a_stale_lock_and_passes_a_live_one() {
             "store",
             format!("store at {}, 1 task file(s)", temp.dir().display()),
         ),
-        Check::ok("task-files", "every .md file is a v2 task file"),
+        Check::ok("task-files", "every .md file is a task file"),
         Check::ok("ids", "ids are stable and no id is claimed twice"),
         Check::ok("lock", "no write in progress"),
     ];

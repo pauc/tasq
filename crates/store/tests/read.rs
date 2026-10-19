@@ -9,7 +9,7 @@ use chrono::{DateTime, Local};
 use tasq_core::doctor::{Check, CheckStatus};
 use tasq_core::model::{Status, Task, TaskId, Workflow};
 use tasq_core::query::Filter;
-use tasq_core::store::{IdScheme, Store, StoreError, StoreInfo};
+use tasq_core::store::{Store, StoreError, StoreInfo};
 use tasq_store::TasqStore;
 
 use support::{TempStore, entries, is_root, task_file};
@@ -29,8 +29,6 @@ fn an_absent_directory_is_an_empty_store_and_is_not_created() {
             name: "tasq".into(),
             location: temp.dir(),
             task_count: 0,
-            id_scheme: IdScheme::Stable,
-            ids_may_change_on_reconcile: false,
             bookkeeper: None,
         }
     );
@@ -382,7 +380,7 @@ fn doctor_reports_the_directory_the_non_task_files_and_the_duplicate_ids() {
             Check::fail(
                 "task-file",
                 format!(
-                    "{}: not a v2 task file: first line \"# Notes\" is not '---'",
+                    "{}: not a task file: first line \"# Notes\" is not '---'",
                     readme.display()
                 ),
                 "add a frontmatter block with an id, or move the file out of the store",
@@ -410,7 +408,7 @@ fn doctor_reports_the_directory_the_non_task_files_and_the_duplicate_ids() {
                 "store",
                 format!("store at {}, 1 task file(s)", temp.dir().display())
             ),
-            Check::ok("task-files", "every .md file is a v2 task file"),
+            Check::ok("task-files", "every .md file is a task file"),
             Check::ok("ids", "ids are stable and no id is claimed twice"),
             Check::ok("lock", "no write in progress"),
         ]

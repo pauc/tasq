@@ -1,6 +1,0 @@
-# [ ] T
-
-## Due
-
-someday
-maybe

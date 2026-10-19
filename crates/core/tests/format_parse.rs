@@ -1,162 +1,81 @@
-//! Grammar edge cases of the typed projection, on hand-written documents.
+//! Grammar edge cases of the body's list sections, on hand-written
+//! documents: how progress notes, worktrees, sessions, links and
+//! descriptions read, and how duplicate and unknown sections behave. The
+//! frontmatter grammar is `format_v2.rs`.
 
 #![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
-#![allow(
-    clippy::disallowed_methods,
-    reason = "tests build fixtures on disk; the no-I/O rule is for the library"
-)]
-
-use std::path::PathBuf;
 
 use chrono::NaiveDate;
 use tasq_core::clock::FixedClock;
 use tasq_core::format::{self, SESSION_SEPARATOR, section};
-use tasq_core::model::{
-    Link, Origin, Priority, ProgressEntry, Status, Tag, Task, TaskId, Workflow, Worktree,
-};
+use tasq_core::model::{Link, ProgressEntry, Task, Workflow, Worktree};
 
-fn task(text: &str) -> Task {
-    format::parse(text, TaskId::from(1), &Workflow::default())
-        .expect("parses")
-        .task
+/// The task of a document whose body is `body`, behind a minimal block.
+fn task(body: &str) -> Task {
+    format::parse_v2(
+        &format!("---\nid: 1\n---\n{body}"),
+        None,
+        &Workflow::default(),
+    )
+    .expect("parses")
+    .task
 }
 
 fn at(s: &str) -> chrono::NaiveDateTime {
     FixedClock::at(s).0
 }
 
-fn tag(s: &str) -> Tag {
-    Tag::new(s).unwrap()
-}
-
 #[test]
 fn section_name_constants_match_the_headings() {
     assert_eq!(section::DESCRIPTION, "Description");
-    assert_eq!(section::PROJECT, "Project");
-    assert_eq!(section::DUE, "Due");
     assert_eq!(section::RELATED, "Related");
     assert_eq!(section::MERGE_REQUESTS, "Merge requests");
-    assert_eq!(section::TAGS, "Tags");
     assert_eq!(section::PROGRESS, "Progress");
     assert_eq!(section::WORKTREES, "Worktrees");
     assert_eq!(section::SESSIONS, "Sessions");
-    assert_eq!(section::SOURCE, "Source");
     assert_eq!(SESSION_SEPARATOR, " \u{2014} ");
-}
-
-#[test]
-fn tags_last_status_and_priority_win_and_topics_keep_order() {
-    let t = task("# [ ] T\n\n## Tags\n\n#zeta #ready #A #alpha\n#C #blocked #zeta\n");
-    assert_eq!(t.status, Some(Status::BLOCKED));
-    assert_eq!(t.priority, Priority::C);
-    assert_eq!(t.tags, vec![tag("zeta"), tag("alpha")]);
-}
-
-#[test]
-fn tags_ignore_tokens_that_are_not_tags() {
-    let t = task("# [ ] T\n\n## Tags\n\nplain ##double # #ready\n");
-    assert_eq!(t.status, Some(Status::READY));
-    assert_eq!(t.tags, Vec::new());
-}
-
-#[test]
-fn tags_use_the_given_workflow() {
-    let wf = Workflow::new(vec![
-        Status::new("todo").unwrap(),
-        Status::new("doing").unwrap(),
-    ]);
-    let text = "# [ ] T\n\n## Tags\n\n#ready #doing\n";
-    let t = format::parse(text, TaskId::from(1), &wf).unwrap().task;
-    assert_eq!(t.status, Some(Status::new("doing").unwrap()));
-    assert_eq!(
-        t.tags,
-        vec![tag("ready")],
-        "ready is a topic tag in this workflow"
-    );
-}
-
-#[test]
-fn done_task_has_no_status_even_with_a_status_tag() {
-    let t = task("# [x] T\n\n## Tags\n\n#ready #A\n");
-    assert!(t.done);
-    assert_eq!(t.status, None);
-    assert_eq!(t.priority, Priority::A);
 }
 
 #[test]
 fn duplicate_sections_are_concatenated_like_the_awk() {
     let t = task(
-        "# [ ] T\n\n## Tags\n\n#a\n\n## Progress\n\n- 2026-10-04 10:15: one\n\n## Tags\n\n#b #A\n\n## Progress\n\n- 2026-10-04 10:16: two\n\n## Due\n\n\n\n## Due\n\n2026-01-02\n",
+        "# T\n\n## Progress\n\n- 2026-10-04 10:15: one\n\n## Notes\n\nn\n\n## Progress\n\n- 2026-10-04 10:16: two\n",
     );
-    assert_eq!(t.tags, vec![tag("a"), tag("b")]);
-    assert_eq!(t.priority, Priority::A);
     assert_eq!(t.progress.len(), 2);
-    assert_eq!(t.due, NaiveDate::from_ymd_opt(2026, 1, 2));
+    assert_eq!(t.progress[1].note, "two");
 }
 
 #[test]
-fn due_takes_the_first_non_empty_line() {
-    assert_eq!(
-        task("# [ ] T\n\n## Due\n\n\n  2026-10-10  \nignored\n").due,
-        NaiveDate::from_ymd_opt(2026, 10, 10)
+fn scalar_sections_in_the_body_are_unknown_sections() {
+    // The script's one-value sections read as nothing: the keys are the
+    // only source of the scalar fields.
+    let t = task(
+        "# T\n\n## Due\n\n2026-10-10\n\n## Project\n\n/p\n\n## Tags\n\n#A #ready #x\n\n## Rank\n\n3\n\n## Closed\n\n2026-10-07 14:32\n\n## Source\n\ngitlab: !1\n",
     );
-    assert_eq!(
-        task("# [ ] T\n\n## Due\n\ntomorrow\n2026-10-10\n").due,
-        None
-    );
-    assert_eq!(task("# [ ] T\n\n## Due\n\n## Tags\n\n#B\n").due, None);
-    assert_eq!(task("# [ ] T\n\n## Due\n\n2026-10-10 10:00\n").due, None);
-}
-
-#[test]
-fn closed_takes_the_first_non_empty_line_of_a_done_task() {
-    let at = FixedClock::at("2026-10-07 14:32").0;
-    assert_eq!(
-        task("# [x] T\n\n## Closed\n\n\n  2026-10-07 14:32  \nignored\n").closed_at,
-        Some(at)
-    );
-    assert_eq!(
-        task("# [x] T\n\n## Closed\n\n2026-10-07 14:32\n\n## Closed\n\n2026-10-08 09:00\n")
-            .closed_at,
-        Some(at)
-    );
-    // A date alone, or anything else, is not a closing time.
-    assert_eq!(task("# [x] T\n\n## Closed\n\n2026-10-07\n").closed_at, None);
-    assert_eq!(task("# [x] T\n\n## Closed\n\nyesterday\n").closed_at, None);
-    assert_eq!(
-        task("# [x] T\n\n## Closed\n\n## Tags\n\n#B\n").closed_at,
-        None
-    );
-    assert_eq!(task("# [x] T\n\n## Tags\n\n#B\n").closed_at, None);
-    // An open task was not closed, whatever the file says (`nb todo undo`).
-    assert_eq!(
-        task("# [ ] T\n\n## Closed\n\n2026-10-07 14:32\n").closed_at,
-        None
-    );
-}
-
-#[test]
-fn project_takes_the_first_non_empty_line_and_the_second_section_is_ignored() {
-    let t = task("# [ ] T\n\n## Project\n\n\n/a/b\n/c\n\n## Project\n\n/d\n");
-    assert_eq!(t.project, Some(PathBuf::from("/a/b")));
-    assert_eq!(task("# [ ] T\n\n## Project\n\n").project, None);
+    assert_eq!(t.due, None);
+    assert_eq!(t.project, None);
+    assert_eq!(t.tags, Vec::new());
+    assert_eq!(t.status, None);
+    assert_eq!(t.rank, None);
+    assert_eq!(t.closed_at, None);
+    assert_eq!(t.origin, None);
 }
 
 #[test]
 fn description_is_trimmed_of_blank_lines_and_joined() {
     assert_eq!(
-        task("# [ ] T\n\n## Description\n\n\nline one\n\nline two\n\n\n## Tags\n")
+        task("# T\n\n## Description\n\n\nline one\n\nline two\n\n\n## Notes\n")
             .description
             .as_deref(),
         Some("line one\n\nline two")
     );
     assert_eq!(
-        task("# [ ] T\n\n## Description\n\n\n\n## Tags\n").description,
+        task("# T\n\n## Description\n\n\n\n## Notes\n").description,
         None
     );
-    assert_eq!(task("# [ ] T\n\n## Description\n").description, None);
+    assert_eq!(task("# T\n\n## Description\n").description, None);
     assert_eq!(
-        task("# [ ] T\n\n## Description\n\none\n\n## Description\n\ntwo\n")
+        task("# T\n\n## Description\n\none\n\n## Description\n\ntwo\n")
             .description
             .as_deref(),
         Some("one\ntwo")
@@ -166,7 +85,7 @@ fn description_is_trimmed_of_blank_lines_and_joined() {
 #[test]
 fn progress_grammar() {
     let t = task(concat!(
-        "# [ ] T\n\n## Progress\n\n",
+        "# T\n\n## Progress\n\n",
         "- 2026-10-04 10:15: with time\n",
         "- 2026-03-01: date only\n",
         "- 2026-10-04 10:15:no space\n",
@@ -198,7 +117,7 @@ fn progress_grammar() {
 #[test]
 fn progress_with_multibyte_text_near_the_stamp_does_not_panic() {
     assert_eq!(
-        task("# [ ] T\n\n## Progress\n\n- 2026-10-04 10:1é: x\n- é\n- 2026-10-04\u{e9}\n").progress,
+        task("# T\n\n## Progress\n\n- 2026-10-04 10:1é: x\n- é\n- 2026-10-04\u{e9}\n").progress,
         Vec::new()
     );
 }
@@ -206,7 +125,7 @@ fn progress_with_multibyte_text_near_the_stamp_does_not_panic() {
 #[test]
 fn worktree_grammar() {
     let t = task(concat!(
-        "# [ ] T\n\n## Worktrees\n\n",
+        "# T\n\n## Worktrees\n\n",
         "- /a (`main`)\n",
         "-  \u{e9}/b\n",
         "- /c   (`feat/x`)\n",
@@ -233,7 +152,7 @@ fn worktree_grammar() {
 #[test]
 fn session_grammar() {
     let t = task(concat!(
-        "# [ ] T\n\n## Sessions\n\n",
+        "# T\n\n## Sessions\n\n",
         "- 2026-10-04 10:15: `abc` \u{2014} desc with \u{2014} dash\n",
         "- 2026-10-04 10:16: `def`\n",
         "- 2026-10-04 10:17: `ghi` - hyphen desc\n",
@@ -265,7 +184,7 @@ fn session_grammar() {
 #[test]
 fn related_grammar() {
     let t = task(concat!(
-        "# [ ] T\n\n## Related\n\n",
+        "# T\n\n## Related\n\n",
         "- https://a.invalid/1\n",
         "- [Label](https://a.invalid/2)\n",
         "- [a](b)](https://a.invalid/3)\n",
@@ -279,7 +198,7 @@ fn related_grammar() {
         "- https://a.invalid/-/merge_requests/6\n",
         "### Other\n\n",
         "- https://a.invalid/ignored\n",
-        "## Tags\n\n#B\n",
+        "## Notes\n\nn\n",
     ));
     assert_eq!(
         t.related,
@@ -302,101 +221,7 @@ fn related_grammar() {
 
 #[test]
 fn merge_requests_outside_related_are_ignored() {
-    let t = task("# [ ] T\n\n## Other\n\n### Merge requests\n\n- [MR](https://a.invalid/1)\n");
+    let t = task("# T\n\n## Other\n\n### Merge requests\n\n- [MR](https://a.invalid/1)\n");
     assert_eq!(t.merge_requests, Vec::new());
     assert_eq!(t.related, Vec::new());
-}
-
-#[test]
-fn source_grammar() {
-    let origin = |line: &str| task(&format!("# [ ] T\n\n## Source\n\n{line}\n")).origin;
-    assert_eq!(
-        origin("gitlab: https://gl.invalid/g/p/-/merge_requests/1"),
-        Some(Origin {
-            source: "gitlab".into(),
-            external_id: "https://gl.invalid/g/p/-/merge_requests/1".into(),
-            url: Some("https://gl.invalid/g/p/-/merge_requests/1".into())
-        })
-    );
-    assert_eq!(
-        origin("gitlab: !123 https://gl.invalid/g/p/-/merge_requests/123"),
-        Some(Origin {
-            source: "gitlab".into(),
-            external_id: "!123".into(),
-            url: Some("https://gl.invalid/g/p/-/merge_requests/123".into())
-        })
-    );
-    assert_eq!(
-        origin("slack: C123/p456"),
-        Some(Origin {
-            source: "slack".into(),
-            external_id: "C123/p456".into(),
-            url: None
-        })
-    );
-    assert_eq!(
-        origin("  jira:   ABC-1  "),
-        Some(Origin {
-            source: "jira".into(),
-            external_id: "ABC-1".into(),
-            url: None
-        })
-    );
-    assert_eq!(
-        origin("http: http://x.invalid/1"),
-        Some(Origin {
-            source: "http".into(),
-            external_id: "http://x.invalid/1".into(),
-            url: Some("http://x.invalid/1".into())
-        })
-    );
-    assert_eq!(origin("gitlab:"), None);
-    assert_eq!(origin("no colon here"), None);
-    assert_eq!(origin(": id"), None);
-    assert_eq!(origin("two words: id"), None);
-    assert_eq!(origin(""), None);
-    // First parseable line wins; a later section does not override.
-    assert_eq!(
-        task("# [ ] T\n\n## Source\n\nbad\n\ngitlab: 1\n\n## Source\n\ngithub: 2\n")
-            .origin
-            .unwrap()
-            .source,
-        "gitlab"
-    );
-}
-
-#[test]
-fn double_hash_tokens_are_neither_statuses_nor_priorities() {
-    // The script matched `^#(A|B|C)$` and `^#(status)$`; `##A` is neither.
-    let t = task("# [ ] T\n\n## Tags\n\n##A ##ready #C #waiting\n");
-    assert_eq!(t.status, Some(Status::WAITING));
-    assert_eq!(t.priority, Priority::C);
-    assert_eq!(t.tags, Vec::new());
-    let t = task("# [ ] T\n\n## Tags\n\n##A ##ready\n");
-    assert_eq!(t.status, None);
-    assert_eq!(t.priority, Priority::B);
-}
-
-#[test]
-fn rank_takes_the_first_integer_line_and_keeps_anything_else() {
-    assert_eq!(
-        task("# [ ] T\n\n## Rank\n\n\n  1024  \nignored\n").rank,
-        Some(1024)
-    );
-    assert_eq!(task("# [ ] T\n\n## Rank\n\n-2048\n").rank, Some(-2048));
-    assert_eq!(
-        task("# [ ] T\n\n## Rank\n\n1024\n\n## Rank\n\n2048\n").rank,
-        Some(1024)
-    );
-    // A done task keeps its rank for when it comes back (ADR 0025).
-    assert_eq!(task("# [x] T\n\n## Rank\n\n1024\n").rank, Some(1024));
-    // Anything that is not an integer is no rank, and stays in the file.
-    let text = "# [ ] T\n\n## Rank\n\nfirst\n";
-    let parsed = format::parse(text, TaskId::from(1), &Workflow::default()).unwrap();
-    assert_eq!(parsed.task.rank, None);
-    assert_eq!(format::render(&parsed.document), text);
-    assert_eq!(task("# [ ] T\n\n## Rank\n\n1.5\n").rank, None);
-    assert_eq!(task("# [ ] T\n\n## Rank\n\n## Tags\n\n#B\n").rank, None);
-    assert_eq!(task("# [ ] T\n\n## Tags\n\n#B\n").rank, None);
-    assert_eq!(section::RANK, "Rank");
 }

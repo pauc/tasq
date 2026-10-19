@@ -1,6 +1,6 @@
-//! Writing format v2 (ADR 0026): a task becomes a canonical document, and
-//! each frontmatter key is set, added in canonical position or cleared on an
-//! existing document without touching any other line.
+//! Writing the task file format (ADR 0026): a task becomes a canonical
+//! document, and each frontmatter key is set, added in canonical position or
+//! cleared on an existing document without touching any other line.
 
 #![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
 #![allow(
@@ -29,30 +29,13 @@ const V2_FIXTURES: &[&str] = &[
     "extra-sections",
 ];
 
-const V1_FIXTURES: &[&str] = &[
-    "minimal",
-    "full",
-    "done",
-    "no-tags-section",
-    "no-status-tag",
-    "crlf",
-    "extra-sections",
-    "source",
-    "ranked",
-];
-
 fn v2_fixture(name: &str) -> String {
     let path = format!("{}/tests/fixtures/v2/{name}.md", env!("CARGO_MANIFEST_DIR"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
-fn v1_fixture(name: &str) -> String {
-    let path = format!("{}/tests/fixtures/{name}.md", env!("CARGO_MANIFEST_DIR"));
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
-}
-
 fn parse(text: &str) -> Parsed {
-    format::parse_v2(text, None, &Workflow::default()).expect("v2 text parses")
+    format::parse_v2(text, None, &Workflow::default()).expect("text parses")
 }
 
 fn at(s: &str) -> chrono::NaiveDateTime {
@@ -199,7 +182,7 @@ fn source_url_is_written_only_when_there_is_one() {
         at("2026-10-04 10:15"),
         "created via tasq sync",
     )];
-    // Unlike the v1 `## Source` line, a url equal to the id is still written.
+    // A url equal to the id is still written.
     assert_eq!(
         render_v2(&task),
         v2_fixture("source").replacen("status: ready\n", "status: ready\npriority: B\n", 1)
@@ -235,15 +218,6 @@ fn every_fixture_task_round_trips_through_a_fresh_document() {
         );
         assert!(!text.contains("## Tags"), "{name}");
     }
-    for name in V1_FIXTURES {
-        let expected = format::parse(&v1_fixture(name), TaskId::from(7), &wf)
-            .unwrap()
-            .task;
-        let text = render_v2(&expected);
-        let parsed = format::parse_v2(&text, None, &wf).unwrap();
-        assert_eq!(parsed.task, expected, "v1 {name}:\n{text}");
-        assert_eq!(format::render(&parsed.document), text, "v1 {name}");
-    }
 }
 
 #[test]
@@ -274,9 +248,10 @@ fn set_key_replaces_the_line_of_a_present_key() {
         format::render(&doc),
         with_line(&text, "status: in-progress\n", "status: blocked\n")
     );
+    // The id is written once and never changed.
     ops::set_key(&mut doc, key::ID, "13");
-    assert_eq!(doc.id(), Some(TaskId::from(13)));
-    assert!(format::render(&doc).starts_with("---\nid: 13\nstatus: blocked\n"));
+    assert_eq!(doc.id(), TaskId::from(12));
+    assert!(format::render(&doc).starts_with("---\nid: 12\nstatus: blocked\n"));
     ops::set_key(&mut doc, key::TAGS, "[x]");
     assert!(format::render(&doc).contains("source_url: https://gitlab.example.invalid/group/project/-/merge_requests/123\ntags: [x]\n---\n"));
 }
@@ -390,10 +365,7 @@ fn set_key_of_an_unknown_key_goes_at_the_end_of_the_block() {
             "status: ready\nowner: someone else\n"
         )
     );
-    assert_eq!(
-        doc.frontmatter().unwrap().get("owner"),
-        Some("someone else")
-    );
+    assert_eq!(doc.frontmatter().get("owner"), Some("someone else"));
 }
 
 #[test]
@@ -458,16 +430,6 @@ fn clear_key_never_removes_the_id() {
 }
 
 #[test]
-fn the_key_primitives_leave_a_v1_document_alone() {
-    let text = v1_fixture("minimal");
-    let mut doc = Document::parse(&text).unwrap();
-    ops::set_key(&mut doc, key::STATUS, "blocked");
-    ops::set_key(&mut doc, "owner", "pau");
-    assert!(!ops::clear_key(&mut doc, key::STATUS));
-    assert_eq!(format::render(&doc), text);
-}
-
-#[test]
 fn key_order_is_the_canonical_one() {
     assert_eq!(
         key::ORDER,
@@ -487,19 +449,19 @@ fn key_order_is_the_canonical_one() {
     );
 }
 
-// ---- the typed operations on a v2 document --------------------------------
+// ---- the typed operations ---------------------------------------------------
 
 /// The minimal fixture (`id: 47`, `status: ready`) after `op`.
-fn minimal_after(op: impl FnOnce(&mut Document, &Workflow)) -> String {
+fn minimal_after(op: impl FnOnce(&mut Document)) -> String {
     let mut doc = Document::parse(&v2_fixture("minimal")).unwrap();
-    op(&mut doc, &Workflow::default());
+    op(&mut doc);
     format::render(&doc)
 }
 
 /// The full fixture after `op`.
-fn full_after(op: impl FnOnce(&mut Document, &Workflow)) -> String {
+fn full_after(op: impl FnOnce(&mut Document)) -> String {
     let mut doc = Document::parse(&v2_fixture("full")).unwrap();
-    op(&mut doc, &Workflow::default());
+    op(&mut doc);
     format::render(&doc)
 }
 
@@ -514,21 +476,21 @@ fn minimal_with(block_after_status: &str) -> String {
 #[test]
 fn set_status_and_set_priority_write_their_keys() {
     assert_eq!(
-        minimal_after(|d, w| ops::set_status(d, &Status::BLOCKED, w)),
+        minimal_after(|d| ops::set_status(d, &Status::BLOCKED)),
         v2_fixture("minimal").replace("status: ready", "status: blocked")
     );
     assert_eq!(
-        minimal_after(|d, w| ops::set_priority(d, Priority::A, w)),
+        minimal_after(|d| ops::set_priority(d, Priority::A)),
         minimal_with("priority: A\n")
     );
     assert_eq!(
-        full_after(|d, w| ops::set_priority(d, Priority::C, w)),
+        full_after(|d| ops::set_priority(d, Priority::C)),
         v2_fixture("full").replace("priority: A", "priority: C")
     );
     // A status on a done task replaces `done`; the model never asks for it
     // (the store's compare refuses it), but the op is a plain key write.
     let mut doc = Document::parse(&v2_fixture("done")).unwrap();
-    ops::set_status(&mut doc, &Status::READY, &Workflow::default());
+    ops::set_status(&mut doc, &Status::READY);
     assert_eq!(
         format::render(&doc),
         v2_fixture("done").replace("status: done", "status: ready")
@@ -536,16 +498,19 @@ fn set_status_and_set_priority_write_their_keys() {
 }
 
 #[test]
-fn strip_status_tag_clears_the_status_key() {
+fn clear_status_removes_the_status_key_whatever_it_says() {
     assert_eq!(
-        minimal_after(ops::strip_status_tag),
+        minimal_after(|d| {
+            assert!(ops::clear_status(d));
+        }),
         v2_fixture("minimal").replace("status: ready\n", "")
     );
     let text = v2_fixture("done");
     let mut doc = Document::parse(&text).unwrap();
-    ops::strip_status_tag(&mut doc, &Workflow::default());
+    assert!(ops::clear_status(&mut doc));
     assert_eq!(format::render(&doc), text.replace("status: done\n", ""));
     assert!(!parse(&format::render(&doc)).task.done);
+    assert!(!ops::clear_status(&mut doc), "nothing left to remove");
 }
 
 #[test]
@@ -573,7 +538,7 @@ fn set_done_writes_status_done_and_set_open_clears_it() {
     assert_eq!(reopened.status, None, "reopened without a status");
     // Done on a task without a status adds the key after `id`.
     let mut doc = Document::parse("---\nid: 2\npriority: B\n---\n# T\n").unwrap();
-    ops::set_done(&mut doc, &Workflow::default());
+    ops::set_done(&mut doc);
     assert_eq!(
         format::render(&doc),
         "---\nid: 2\nstatus: done\npriority: B\n---\n# T\n"
@@ -588,37 +553,37 @@ fn set_done_writes_status_done_and_set_open_clears_it() {
 #[test]
 fn rank_due_closed_and_project_are_keys() {
     assert_eq!(
-        minimal_after(|d, _| ops::set_rank(d, 1024)),
+        minimal_after(|d| ops::set_rank(d, 1024)),
         minimal_with("rank: 1024\n")
     );
     assert_eq!(
-        minimal_after(|d, _| ops::set_rank(d, -512)),
+        minimal_after(|d| ops::set_rank(d, -512)),
         minimal_with("rank: -512\n")
     );
     assert_eq!(
-        minimal_after(|d, _| ops::set_due(d, NaiveDate::from_ymd_opt(2026, 11, 1).unwrap())),
+        minimal_after(|d| ops::set_due(d, NaiveDate::from_ymd_opt(2026, 11, 1).unwrap())),
         minimal_with("due: 2026-11-01\n")
     );
     assert_eq!(
-        minimal_after(|d, _| ops::set_closed(d, at("2026-10-07 14:32"))),
+        minimal_after(|d| ops::set_closed(d, at("2026-10-07 14:32"))),
         minimal_with("closed: 2026-10-07 14:32\n")
     );
     assert_eq!(
-        minimal_after(|d, _| ops::set_project(d, std::path::Path::new("/home/pau/code/x"))),
+        minimal_after(|d| ops::set_project(d, std::path::Path::new("/home/pau/code/x"))),
         minimal_with("project: /home/pau/code/x\n")
     );
     // Replacing keeps the line where it was.
     let text = v2_fixture("full");
     assert_eq!(
-        full_after(|d, _| ops::set_rank(d, 2)),
+        full_after(|d| ops::set_rank(d, 2)),
         text.replace("rank: 1024", "rank: 2")
     );
     assert_eq!(
-        full_after(|d, _| ops::set_due(d, NaiveDate::from_ymd_opt(2027, 1, 2).unwrap())),
+        full_after(|d| ops::set_due(d, NaiveDate::from_ymd_opt(2027, 1, 2).unwrap())),
         text.replace("due: 2026-10-10", "due: 2027-01-02")
     );
     assert_eq!(
-        full_after(|d, _| ops::set_project(d, std::path::Path::new("/new"))),
+        full_after(|d| ops::set_project(d, std::path::Path::new("/new"))),
         text.replace("project: /home/pau/code/tasks", "project: /new")
     );
     let closed = v2_fixture("done");
@@ -658,27 +623,26 @@ fn clearing_rank_due_closed_and_project_removes_their_lines() {
 
 #[test]
 fn set_tags_writes_the_list_and_an_empty_list_clears_it() {
-    let wf = Workflow::default();
     assert_eq!(
-        minimal_after(|d, w| ops::set_tags(d, &[tag("gitlab"), tag("review-request")], w)),
+        minimal_after(|d| ops::set_tags(d, &[tag("gitlab"), tag("review-request")])),
         minimal_with("tags: [gitlab, review-request]\n")
     );
     assert_eq!(
-        minimal_after(|d, w| ops::set_tags(d, &[], w)),
+        minimal_after(|d| ops::set_tags(d, &[])),
         v2_fixture("minimal"),
         "no tags and no key is a no-op"
     );
     let text = v2_fixture("full");
     assert_eq!(
-        full_after(|d, w| ops::set_tags(d, &[tag("x")], w)),
+        full_after(|d| ops::set_tags(d, &[tag("x")])),
         text.replace("tags: [gitlab, review-request]", "tags: [x]")
     );
     assert_eq!(
-        full_after(|d, w| ops::set_tags(d, &[], w)),
+        full_after(|d| ops::set_tags(d, &[])),
         text.replace("tags: [gitlab, review-request]\n", "")
     );
     let mut doc = Document::parse(&text).unwrap();
-    ops::set_tags(&mut doc, &[tag("b"), tag("a")], &wf);
+    ops::set_tags(&mut doc, &[tag("b"), tag("a")]);
     assert_eq!(
         parse(&format::render(&doc)).task.tags,
         vec![tag("b"), tag("a")],
@@ -689,7 +653,7 @@ fn set_tags_writes_the_list_and_an_empty_list_clears_it() {
 #[test]
 fn set_title_rewrites_the_title_line_without_a_marker() {
     assert_eq!(
-        minimal_after(|d, _| ops::set_title(d, "Renamed")),
+        minimal_after(|d| ops::set_title(d, "Renamed")),
         v2_fixture("minimal").replace("# Minimal task", "# Renamed")
     );
     let mut doc = Document::parse(&v2_fixture("done")).unwrap();
@@ -703,7 +667,7 @@ fn set_title_rewrites_the_title_line_without_a_marker() {
     let text = v2_fixture("full");
     assert!(text.contains("---\n\n# Full task\n"));
     assert_eq!(
-        full_after(|d, _| ops::set_title(d, "Renamed")),
+        full_after(|d| ops::set_title(d, "Renamed")),
         text.replace("# Full task", "# Renamed")
     );
 }
@@ -716,7 +680,7 @@ fn set_origin_writes_the_three_source_keys_and_clear_origin_removes_them() {
         url: Some("https://gl.invalid/7".into()),
     };
     assert_eq!(
-        minimal_after(|d, _| ops::set_origin(d, &origin)),
+        minimal_after(|d| ops::set_origin(d, &origin)),
         minimal_with("source: gitlab\nsource_id: !7\nsource_url: https://gl.invalid/7\n")
     );
     let without_url = Origin {
@@ -724,20 +688,20 @@ fn set_origin_writes_the_three_source_keys_and_clear_origin_removes_them() {
         ..origin.clone()
     };
     assert_eq!(
-        minimal_after(|d, _| ops::set_origin(d, &without_url)),
+        minimal_after(|d| ops::set_origin(d, &without_url)),
         minimal_with("source: gitlab\nsource_id: !7\n")
     );
     // Replacing: the lines stay where they are; a url that goes is removed.
     let text = v2_fixture("full");
     assert_eq!(
-        full_after(|d, _| ops::set_origin(d, &origin)),
+        full_after(|d| ops::set_origin(d, &origin)),
         text.replace("source_id: !123", "source_id: !7").replace(
             "source_url: https://gitlab.example.invalid/group/project/-/merge_requests/123",
             "source_url: https://gl.invalid/7"
         )
     );
     assert_eq!(
-        full_after(|d, _| ops::set_origin(d, &without_url)),
+        full_after(|d| ops::set_origin(d, &without_url)),
         text.replace("source_id: !123", "source_id: !7").replace(
             "source_url: https://gitlab.example.invalid/group/project/-/merge_requests/123\n",
             ""
@@ -761,111 +725,79 @@ fn set_origin_writes_the_three_source_keys_and_clear_origin_removes_them() {
 }
 
 #[test]
-fn origin_ops_leave_a_v1_document_alone() {
-    let text = v1_fixture("source");
-    let mut doc = Document::parse(&text).unwrap();
-    ops::set_origin(
-        &mut doc,
-        &Origin {
-            source: "x".into(),
-            external_id: "1".into(),
-            url: None,
-        },
-    );
-    assert!(!ops::clear_origin(&mut doc));
-    assert_eq!(format::render(&doc), text);
-}
-
-#[test]
 fn every_scalar_op_leaves_the_body_untouched() {
     // The body of the full fixture, with its unknown `## Notes` section and
     // every list, survives each scalar op; only the block changes.
-    type Op = Box<dyn Fn(&mut Document, &Workflow)>;
+    type Op = Box<dyn Fn(&mut Document)>;
     let text = v2_fixture("full");
     let body = &text[text.find("\n# Full task").unwrap()..];
     let ops: Vec<(&str, Op)> = vec![
         (
             "set_status",
-            Box::new(|d, w| ops::set_status(d, &Status::READY, w)),
+            Box::new(|d| ops::set_status(d, &Status::READY)),
         ),
         (
             "set_priority",
-            Box::new(|d, w| ops::set_priority(d, Priority::B, w)),
+            Box::new(|d| ops::set_priority(d, Priority::B)),
         ),
-        ("strip_status_tag", Box::new(ops::strip_status_tag)),
+        (
+            "clear_status",
+            Box::new(|d| {
+                ops::clear_status(d);
+            }),
+        ),
         ("set_done", Box::new(ops::set_done)),
-        ("set_rank", Box::new(|d, _| ops::set_rank(d, 1))),
+        ("set_rank", Box::new(|d| ops::set_rank(d, 1))),
         (
             "clear_rank",
-            Box::new(|d, _| {
+            Box::new(|d| {
                 ops::clear_rank(d);
             }),
         ),
         (
             "set_due",
-            Box::new(|d, _| ops::set_due(d, NaiveDate::from_ymd_opt(2026, 1, 1).unwrap())),
+            Box::new(|d| ops::set_due(d, NaiveDate::from_ymd_opt(2026, 1, 1).unwrap())),
         ),
         (
             "clear_due",
-            Box::new(|d, _| {
+            Box::new(|d| {
                 ops::clear_due(d);
             }),
         ),
         (
             "set_closed",
-            Box::new(|d, _| ops::set_closed(d, at("2026-10-07 14:32"))),
+            Box::new(|d| ops::set_closed(d, at("2026-10-07 14:32"))),
         ),
         (
             "clear_closed",
-            Box::new(|d, _| {
+            Box::new(|d| {
                 ops::clear_closed(d);
             }),
         ),
         (
             "set_project",
-            Box::new(|d, _| ops::set_project(d, std::path::Path::new("/p"))),
+            Box::new(|d| ops::set_project(d, std::path::Path::new("/p"))),
         ),
         (
             "clear_project",
-            Box::new(|d, _| {
+            Box::new(|d| {
                 ops::clear_project(d);
             }),
         ),
-        (
-            "set_tags",
-            Box::new(|d, w| ops::set_tags(d, &[tag("t")], w)),
-        ),
-        ("clear_tags", Box::new(|d, w| ops::set_tags(d, &[], w))),
+        ("set_tags", Box::new(|d| ops::set_tags(d, &[tag("t")]))),
+        ("clear_tags", Box::new(|d| ops::set_tags(d, &[]))),
         (
             "clear_origin",
-            Box::new(|d, _| {
+            Box::new(|d| {
                 ops::clear_origin(d);
             }),
         ),
     ];
     for (name, op) in ops {
         let mut doc = Document::parse(&text).unwrap();
-        op(&mut doc, &Workflow::default());
+        op(&mut doc);
         let out = format::render(&doc);
         assert!(out.ends_with(body), "{name}:\n{out}");
         assert!(out.starts_with("---\nid: 12\n"), "{name}:\n{out}");
     }
-}
-
-#[test]
-fn the_v1_scalar_ops_still_write_the_v1_shape() {
-    // The dispatch on the shape must not change a v1 edit: `format_ops.rs`
-    // pins every awk pass, this pins the one line that differs per op.
-    let wf = Workflow::default();
-    let text = v1_fixture("minimal");
-    let mut doc = Document::parse(&text).unwrap();
-    ops::set_status(&mut doc, &Status::BLOCKED, &wf);
-    ops::set_rank(&mut doc, 3);
-    ops::set_title(&mut doc, "Renamed");
-    assert_eq!(
-        format::render(&doc),
-        "# [ ] Renamed\n\n## Rank\n\n3\n\n## Tags\n\n#B #blocked\n\n## Progress\n\n- 2026-10-04 10:15: created via tasks create\n"
-    );
-    ops::set_done(&mut doc, &wf);
-    assert!(format::render(&doc).starts_with("# [x] Renamed\n"));
 }

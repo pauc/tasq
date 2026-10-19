@@ -9,10 +9,10 @@ use super::ModelError;
 
 /// Opaque, store-local identifier of a task.
 ///
-/// With the nb store this is the line number of the todo in the notebook's
-/// `.index` (`"23"`), but the model does not assume numbers: another store
-/// may use slugs or UUIDs. Ids compare and sort as plain text. The only rule
-/// is that an id is never empty.
+/// With the tasq store this is the `id` key of the task file (`"23"`), but
+/// the model does not assume numbers: another store may use slugs or UUIDs.
+/// Ids compare and sort as plain text. The only rule is that an id is never
+/// empty.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct TaskId(String);

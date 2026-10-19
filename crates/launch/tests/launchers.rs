@@ -92,14 +92,16 @@ impl Sandbox {
         ));
         LaunchContext {
             task,
-            file: "/nb/home/20260902100000.todo.md".into(),
-            markdown: "# [ ] Fix the login form validation\n\n## Tags\n\n#B #ready\n".into(),
+            file: "/store/01ARZ3NDEKTSV4RRFFQ69G5FAV.md".into(),
+            markdown:
+                "---\nid: 3\nstatus: ready\npriority: B\n---\n# Fix the login form validation\n"
+                    .into(),
             workdir: self.work.clone(),
             in_worktree: false,
             worktrees: true,
             env: vec![
                 ("TASQ_TASK_ID".to_owned(), "3".to_owned()),
-                ("TASQ_NOTEBOOK".to_owned(), "home".to_owned()),
+                ("TASQ_STORE_NAME".to_owned(), "home".to_owned()),
             ],
             statuses: vec!["in-progress".into(), "ready".into(), "waiting".into()],
             focus: true,
@@ -299,7 +301,7 @@ fn claude_describe_and_hint() {
     assert_eq!(lines[0], format!("cd {}", sb.work.display()));
     assert_eq!(
         lines[1],
-        "TASQ_TASK_ID=3 TASQ_NOTEBOOK=home exec claude \"<prompt below>\""
+        "TASQ_TASK_ID=3 TASQ_STORE_NAME=home exec claude \"<prompt below>\""
     );
     assert_eq!(lines[2], "");
     assert_eq!(lines[3], "--- prompt ---");
@@ -347,14 +349,14 @@ fn tmux_opens_a_window_through_the_fake() {
     assert_eq!(
         sb.log("tmux"),
         vec![format!(
-            "new-window -c {} -n 3 Fix the login -e TASQ_TASK_ID=3 -e TASQ_NOTEBOOK=home",
+            "new-window -c {} -n 3 Fix the login -e TASQ_TASK_ID=3 -e TASQ_STORE_NAME=home",
             sb.work.display()
         )]
     );
     assert_eq!(
         std::fs::read_to_string(&trace).unwrap(),
         format!(
-            "$ tmux new-window -c {} -n '3 Fix the login' -e 'TASQ_TASK_ID=3' -e 'TASQ_NOTEBOOK=home'\n  ok\n",
+            "$ tmux new-window -c {} -n '3 Fix the login' -e 'TASQ_TASK_ID=3' -e 'TASQ_STORE_NAME=home'\n  ok\n",
             sb.work.display()
         )
     );
@@ -419,7 +421,7 @@ fn herdr_creates_a_workspace_and_starts_the_agent() {
         vec![
             format!("worktree list --cwd {work}"),
             format!(
-                "workspace create --label Fix the login --cwd {work} --env TASQ_TASK_ID=3 --env TASQ_NOTEBOOK=home --no-focus"
+                "workspace create --label Fix the login --cwd {work} --env TASQ_TASK_ID=3 --env TASQ_STORE_NAME=home --no-focus"
             ),
             // The view switches before the agent's readiness wait.
             "workspace focus ws-new".to_owned(),
@@ -460,7 +462,7 @@ fn herdr_reuses_the_holding_workspace_as_a_tab_and_retries_the_agent_name() {
         vec![
             format!("worktree list --cwd {work}"),
             format!(
-                "tab create --workspace ws-held --cwd {work} --label Fix the login --env TASQ_TASK_ID=3 --env TASQ_NOTEBOOK=home --no-focus"
+                "tab create --workspace ws-held --cwd {work} --label Fix the login --env TASQ_TASK_ID=3 --env TASQ_STORE_NAME=home --no-focus"
             ),
             "tab focus tab-7".to_owned(),
             "workspace focus ws-held".to_owned(),
@@ -557,7 +559,7 @@ fn herdr_tab_placement_uses_the_holding_workspace_else_the_current_one() {
         [
             format!("worktree list --cwd {work}"),
             format!(
-                "tab create --workspace ws-current --cwd {work} --label Fix the login --env TASQ_TASK_ID=3 --env TASQ_NOTEBOOK=home --no-focus"
+                "tab create --workspace ws-current --cwd {work} --label Fix the login --env TASQ_TASK_ID=3 --env TASQ_STORE_NAME=home --no-focus"
             ),
         ]
     );
@@ -626,7 +628,7 @@ fn herdr_traces_its_calls_and_warnings_to_the_log_file() {
         std::fs::read_to_string(&log).unwrap(),
         format!(
             "$ herdr workspace create --label 'Fix the login' --cwd {work} --env 'TASQ_TASK_ID=3' \
-             --env 'TASQ_NOTEBOOK=home' --no-focus\n  failed\n  stderr:\n    error: server not running\n\
+             --env 'TASQ_STORE_NAME=home' --no-focus\n  failed\n  stderr:\n    error: server not running\n\
              warning: herdr could not open a pane (herdr workspace create failed: error: server not running); \
              opening in the current pane with recording\n"
         )

@@ -10,9 +10,9 @@
 //! the complete task as the caller wants it on disk, and the store works out
 //! which edits produce it. A store that detects the task changed since it
 //! was read fails with [`StoreError::Conflict`] instead of overwriting.
-//! [`Store::update_many`] writes several tasks as one batch (the nb store
-//! makes it one commit) and stops at the first failure, reporting which
-//! tasks were already written.
+//! [`Store::update_many`] writes several tasks as one batch (a store with
+//! per-write bookkeeping does it once) and stops at the first failure,
+//! reporting which tasks were already written.
 
 use std::path::PathBuf;
 
@@ -57,28 +57,20 @@ pub enum StoreError {
         #[source]
         source: FormatError,
     },
-    /// A configuration value could not be resolved (a notebook that does not
-    /// exist, no home directory, ...). Raised by the nb store only.
+    /// A configuration value could not be resolved (no home directory, a
+    /// data directory that cannot be used, ...).
     #[error("{setting}{}: {message}", file.as_deref().map(|f| format!(" (set in {})", f.display())).unwrap_or_default())]
     Config {
-        /// The dotted config key, for example `store.notebook`.
+        /// The dotted config key, for example `store.name`.
         setting: &'static str,
         /// The configuration file that set it, when known.
         file: Option<PathBuf>,
         /// What went wrong.
         message: String,
     },
-    /// The store's index is missing or unusable.
-    #[error("{}: {message}", path.display())]
-    Index {
-        /// The index file.
-        path: PathBuf,
-        /// What went wrong and how to fix it.
-        message: String,
-    },
-    /// The task was written but the bookkeeping that follows a write (index
-    /// registration, commit) failed. The data is on disk; the message says
-    /// how to repair the bookkeeping by hand.
+    /// The task was written but the bookkeeping that follows a write (a
+    /// commit) failed. The data is on disk; the message says how to repair
+    /// the bookkeeping by hand.
     #[error("bookkeeping failed after the write: {message}")]
     Bookkeeping {
         /// What failed and the manual fix.
@@ -136,34 +128,17 @@ fn path_list(paths: &[PathBuf]) -> String {
         .join(", ")
 }
 
-/// How a store assigns ids.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum IdScheme {
-    /// An id names the same task forever.
-    Stable,
-    /// An id is a position (nb: the line number in `.index`) and can move
-    /// when the store is reorganised.
-    Positional,
-}
-
 /// What a store says about itself (`tasq store info`, `tasq doctor`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoreInfo {
-    /// Implementation name (`tasq`, or `nb` for the notebook store).
+    /// Implementation name (`tasq`).
     pub name: String,
     /// Where the tasks live.
     pub location: PathBuf,
     /// Number of tasks, open and done.
     pub task_count: usize,
-    /// How ids behave.
-    pub id_scheme: IdScheme,
-    /// Whether ids can change when the store's index is rebuilt; the CLI
-    /// warns about it.
-    pub ids_may_change_on_reconcile: bool,
-    /// The strategy that does the bookkeeping after a write (nb: `native`,
-    /// or `none` in tests), for stores that have one. Left out of the JSON
-    /// when `None`.
+    /// The strategy that does the bookkeeping after a write, for stores
+    /// that have one. Left out of the JSON when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bookkeeper: Option<String>,
 }
@@ -193,8 +168,7 @@ pub trait Store {
     /// of the store. An empty batch writes nothing.
     ///
     /// The default implementation calls `update` once per task. A store
-    /// with per-write bookkeeping overrides it to do that bookkeeping once
-    /// (nb: one lock, one commit).
+    /// with per-write bookkeeping overrides it to do that bookkeeping once.
     fn update_many(&mut self, tasks: &[Task]) -> Result<(), BatchError> {
         let mut written = Vec::with_capacity(tasks.len());
         for task in tasks {
@@ -207,20 +181,20 @@ pub trait Store {
     }
 
     /// Marks the task done (`true`) or reopens it (`false`), with the store's
-    /// own `done` semantics (nb: `# [x]` plus the status tag removed).
+    /// own `done` semantics (`status: done`, the status removed).
     fn set_done(&mut self, id: &TaskId, done: bool) -> Result<(), StoreError>;
 
-    /// Location, size and id semantics.
+    /// Name, location and size.
     fn describe(&self) -> StoreInfo;
 
     /// Hands over, and clears, what the user should hear about that did not
-    /// stop a command (nb: an index rebuilt on open, a background commit
-    /// that failed). The CLI prints each one as a warning.
+    /// stop a command (a directory that could not be read while describing
+    /// the store). The CLI prints each one as a warning.
     fn take_warnings(&mut self) -> Vec<String>;
 
     /// The store's part of `tasq doctor`: one [`Check`] per thing worth
-    /// verifying about the store itself (nb: the notebook, its index, the
-    /// bookkeeper, the git identity), in display order.
+    /// verifying about the store itself (the directory, the files that are
+    /// not task files, the ids, the lock), in display order.
     fn doctor(&self) -> Vec<Check>;
 
     /// The file holding `id`, for stores that keep one file per task (the
@@ -277,7 +251,7 @@ impl<S: Store + ?Sized> Store for Box<S> {
 
 /// A [`Store`] that keeps its tasks in memory: the test double for every
 /// front end, and a scratch store for tools that assemble tasks without a
-/// notebook. Ids are stable and assigned on creation as `1`, `2`, ...
+/// store directory. Ids are stable and assigned on creation as `1`, `2`, ...
 /// after the highest numeric id present. New tasks' notes are stamped with
 /// the injected clock. Warnings are whatever a test queued with
 /// [`MemoryStore::warn`].
@@ -382,8 +356,6 @@ impl Store for MemoryStore {
             name: "memory".to_owned(),
             location: PathBuf::from("memory"),
             task_count: self.tasks.len(),
-            id_scheme: IdScheme::Stable,
-            ids_may_change_on_reconcile: false,
             bookkeeper: None,
         }
     }
@@ -418,61 +390,53 @@ mod tests {
         assert_eq!(
             StoreError::Conflict {
                 id: TaskId::from(3),
-                path: "/nb/home/x.todo.md".into(),
+                path: "/s/x.md".into(),
             }
             .to_string(),
-            "task 3 changed since it was read (/nb/home/x.todo.md); re-read it and retry"
+            "task 3 changed since it was read (/s/x.md); re-read it and retry"
         );
         assert_eq!(
             StoreError::Io {
-                path: "/nb/.index".into(),
+                path: "/s/.tasq/lock".into(),
                 source: io(std::io::ErrorKind::NotFound),
             }
             .to_string(),
-            "/nb/.index: boom"
+            "/s/.tasq/lock: boom"
         );
         assert_eq!(
             StoreError::Format {
-                path: "/nb/notes.md".into(),
-                source: FormatError::NotATask {
+                path: "/s/notes.md".into(),
+                source: FormatError::NotFrontmatter {
                     first_line: "# Notes".into(),
                 },
             }
             .to_string(),
-            "/nb/notes.md: not a task: first line \"# Notes\" is not '# [ ] Title' or '# [x] Title'"
+            "/s/notes.md: not a task file: first line \"# Notes\" is not '---'"
         );
         assert_eq!(
             StoreError::Config {
-                setting: "store.notebook",
+                setting: "store.name",
                 file: Some("/etc/tasq.toml".into()),
-                message: "notebook \"work\" not found".into(),
+                message: "no home directory".into(),
             }
             .to_string(),
-            "store.notebook (set in /etc/tasq.toml): notebook \"work\" not found"
+            "store.name (set in /etc/tasq.toml): no home directory"
         );
         assert_eq!(
             StoreError::Config {
-                setting: "store.notebook",
+                setting: "store.name",
                 file: None,
                 message: "m".into(),
             }
             .to_string(),
-            "store.notebook: m"
-        );
-        assert_eq!(
-            StoreError::Index {
-                path: "/nb/.index".into(),
-                message: "missing".into(),
-            }
-            .to_string(),
-            "/nb/.index: missing"
+            "store.name: m"
         );
         assert_eq!(
             StoreError::Bookkeeping {
-                message: "run nb index reconcile".into(),
+                message: "commit by hand".into(),
             }
             .to_string(),
-            "bookkeeping failed after the write: run nb index reconcile"
+            "bookkeeping failed after the write: commit by hand"
         );
         assert_eq!(
             StoreError::AmbiguousId {
@@ -501,7 +465,7 @@ mod tests {
         assert!(e.source().is_some());
         let e = StoreError::Format {
             path: "/p".into(),
-            source: FormatError::NotATask {
+            source: FormatError::NotFrontmatter {
                 first_line: String::new(),
             },
         };
@@ -512,17 +476,14 @@ mod tests {
     #[test]
     fn store_info_serde() {
         let info = StoreInfo {
-            name: "nb".into(),
-            location: "/nb/home".into(),
+            name: "tasq".into(),
+            location: "/stores/default".into(),
             task_count: 4,
-            id_scheme: IdScheme::Positional,
-            ids_may_change_on_reconcile: true,
             bookkeeper: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert_eq!(
-            json,
-            "{\"name\":\"nb\",\"location\":\"/nb/home\",\"task_count\":4,\"id_scheme\":\"positional\",\"ids_may_change_on_reconcile\":true}",
+            json, "{\"name\":\"tasq\",\"location\":\"/stores/default\",\"task_count\":4}",
             "no bookkeeper: the key is left out"
         );
         let back: StoreInfo = serde_json::from_str(&json).unwrap();
@@ -535,10 +496,6 @@ mod tests {
         assert!(json.ends_with(",\"bookkeeper\":\"native\"}"), "{json}");
         let back: StoreInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(back, with_bookkeeper);
-        assert_eq!(
-            serde_json::to_string(&IdScheme::Stable).unwrap(),
-            "\"stable\""
-        );
     }
 
     mod memory {
@@ -731,8 +688,6 @@ mod tests {
                     name: "memory".to_owned(),
                     location: PathBuf::from("memory"),
                     task_count: 2,
-                    id_scheme: IdScheme::Stable,
-                    ids_may_change_on_reconcile: false,
                     bookkeeper: None,
                 }
             );

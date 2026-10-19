@@ -13,7 +13,7 @@ use super::ModelError;
 /// all three as `#word`; see the [module docs](super).
 ///
 /// A tag is any non-empty text without whitespace that does not start with
-/// `#`. Case is preserved (nb tags are case-sensitive).
+/// `#`. Case is preserved and compares exactly.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Tag(String);
@@ -40,7 +40,7 @@ impl Tag {
         &self.0
     }
 
-    /// The tag form the file uses: `#gitlab`.
+    /// The `#` form listings show: `#gitlab`.
     pub fn to_hash(&self) -> String {
         format!("#{}", self.0)
     }

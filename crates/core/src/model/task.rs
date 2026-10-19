@@ -183,7 +183,7 @@ pub struct Origin {
     pub url: Option<String>,
 }
 
-/// A task: one nb todo file.
+/// A task: one task file.
 ///
 /// Status and priority are fields, not tags; `tags` holds topic tags only.
 /// Mutating methods keep the simple invariants (a done task has no status;
@@ -192,19 +192,20 @@ pub struct Origin {
 pub struct Task {
     /// Store-local id.
     pub id: TaskId,
-    /// Title line, without the `# [ ] ` prefix.
+    /// Title line, without the `# ` prefix.
     pub title: String,
-    /// `# [x]` in the file.
+    /// `status: done` in the file.
     pub done: bool,
-    /// Workflow status; `None` for done tasks and for open tasks with no status tag.
+    /// Workflow status; `None` for done tasks and for open tasks with no
+    /// `status` key.
     pub status: Option<Status>,
-    /// Priority; `B` when the file has no priority tag.
+    /// Priority; `B` when the file has no `priority` key.
     pub priority: Priority,
-    /// `## Due`.
+    /// `due`.
     pub due: Option<NaiveDate>,
     /// `## Description`, verbatim.
     pub description: Option<String>,
-    /// `## Project`: directory sessions start in when no worktree exists.
+    /// `project`: directory sessions start in when no worktree exists.
     pub project: Option<PathBuf>,
     /// Topic tags (never status or priority).
     pub tags: Vec<Tag>,
@@ -220,23 +221,23 @@ pub struct Task {
     pub sessions: Vec<Session>,
     /// `## Progress`, oldest first.
     pub progress: Vec<ProgressEntry>,
-    /// `## Source`, for synced tasks.
+    /// The `source` keys, for synced tasks.
     pub origin: Option<Origin>,
-    /// `## Closed`: when the task was closed, to the minute (local time).
-    /// `None` on open tasks and on tasks closed without it (`nb todo do`,
-    /// the original script, tasq before ADR 0020). Absent from older JSON.
+    /// `closed`: when the task was closed, to the minute (local time).
+    /// `None` on open tasks and on tasks closed without it (tasq before
+    /// ADR 0020). Absent from older JSON.
     #[serde(default, with = "crate::clock::timestamp_serde::option")]
     pub closed_at: Option<NaiveDateTime>,
-    /// `## Rank`: the task's manual place within its status group, smaller
+    /// `rank`: the task's manual place within its status group, smaller
     /// first (ADR 0025). `None` on tasks never moved, which follow the
     /// priority, due, id order after the ranked ones. Left out of JSON when
     /// unset; missing on input means "unchanged" to `tasq apply`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rank: Option<i64>,
     /// When the task was created, to the millisecond (local time), for a
-    /// task whose store knows it: a v2 store reads it from the task file's
-    /// ULID name (ADR 0026). `None` for a v1 (nb) task. Not a field of the
-    /// file, so edits never compare it. `created` in JSON, to the minute,
+    /// task whose store knows it: the tasq store reads it from the task
+    /// file's ULID name (ADR 0026). Not a field of the file, so edits never
+    /// compare it. `created` in JSON, to the minute,
     /// left out when unknown; ignored on input (`tasq apply`).
     #[serde(
         rename = "created",

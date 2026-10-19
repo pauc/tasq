@@ -14,13 +14,11 @@
 //!   one is broken, a live one waited on.
 //! - [`ulid`]: the file name, whose timestamp is the task's creation time.
 //! - [`draft`]: the check and the defaults a draft gets before it is
-//!   written, shared with the nb store.
+//!   written.
 //! - [`Revision`]: change detection for a task file (mtime, length, hash), so
 //!   an update refuses to overwrite a file that changed since it was read.
 //! - [`diff::apply`]: turns a whole-task write into the edit operations of
 //!   [`tasq_core::format::ops`] and reports the fields they could not express.
-//!
-//! The last two are shared with the nb store until it is deleted.
 //!
 //! [`Store`]: tasq_core::store::Store
 

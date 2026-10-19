@@ -1,4 +1,4 @@
-//! Harness for the CLI integration tests: a temporary copy of the v2 fixture
+//! Harness for the CLI integration tests: a temporary copy of the fixture
 //! store as the default store under an isolated `HOME`
 //! (`~/.local/share/tasq/stores/default`, ADR-0026), a `PATH` holding only
 //! `git`, and `TZ=UTC` (file names are ULIDs minted from the clock), so the
@@ -224,7 +224,7 @@ impl TestEnv {
     }
 }
 
-/// A v2 task file: the frontmatter block (`id` first, then `front`: zero or
+/// A task file: the frontmatter block (`id` first, then `front`: zero or
 /// more `key: value` lines, each ending in `\n`) and `body`, which starts
 /// with the `# Title` line and ends in `\n`.
 pub fn v2(id: u64, front: &str, body: &str) -> String {
@@ -320,7 +320,7 @@ pub fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-/// The v2 fixture store in the source tree.
+/// The fixture store in the source tree.
 pub fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../store/tests/fixtures/stores/default")

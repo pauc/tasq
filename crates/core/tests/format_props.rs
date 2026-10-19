@@ -1,19 +1,15 @@
 //! Property tests: parsing never panics, every parseable text renders back
-//! unchanged, operations never panic, and tasks written with
-//! `Document::from_task` read back equal.
+//! unchanged, operations never panic and keep every other line, and tasks
+//! written with `Document::from_task_v2` read back equal.
 
 #![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
-#![allow(
-    clippy::disallowed_methods,
-    reason = "tests build fixtures on disk; the no-I/O rule is for the library"
-)]
 
 use std::path::{Path, PathBuf};
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use proptest::prelude::*;
-use tasq_core::clock::{FixedClock, When};
-use tasq_core::format::{self, Document, key, ops};
+use tasq_core::clock::When;
+use tasq_core::format::{self, Document, FormatError, key, ops};
 use tasq_core::model::{
     Link, Origin, Priority, ProgressEntry, Session, Status, Tag, Task, TaskId, Workflow, Worktree,
 };
@@ -97,7 +93,7 @@ fn key_of(line: &str) -> Option<&str> {
     (!key.is_empty() && !key.contains(char::is_whitespace)).then_some(key)
 }
 
-/// A line of a v2 frontmatter block that is not the `id` line: a known or
+/// A line of a frontmatter block that is not the `id` line: a known or
 /// unknown key with some value, a blank line, or a line of another shape.
 fn front_line() -> impl Strategy<Value = String> {
     prop_oneof![
@@ -114,6 +110,12 @@ fn front_line() -> impl Strategy<Value = String> {
         "[a-z ]{1,8}".prop_map(String::from),
         "# [a-z]{1,8}".prop_map(String::from),
     ]
+}
+
+/// A body: the title line and up to a dozen lines of headings, list items
+/// and text, with any line endings.
+fn body() -> impl Strategy<Value = String> {
+    "(\\r?\\n(## [A-Za-z ]{0,10}|### Merge requests|- .*|.*)){0,12}(\\r?\\n)?"
 }
 
 prop_compose! {
@@ -158,42 +160,28 @@ prop_compose! {
 proptest! {
     #[test]
     fn parsing_any_string_never_panics(text in "\\PC*") {
-        let _ = format::parse(&text, TaskId::from(1), &workflow());
+        let _ = format::parse_v2(&text, None, &workflow());
     }
 
     #[test]
     fn parsing_task_shaped_text_never_panics(body in ".*") {
-        let text = format!("# [ ] T\n{body}");
-        let parsed = format::parse(&text, TaskId::from(1), &workflow()).unwrap();
+        let text = format!("---\nid: 1\n---\n# T\n{body}");
+        let parsed = format::parse_v2(&text, None, &workflow()).unwrap();
         prop_assert_eq!(format::render(&parsed.document), text);
     }
 
+    /// Any block of `key: value`, blank and stray lines around an `id`
+    /// line, any blank lines before the title, any body: the id read is the
+    /// one written, `status: done` is the done marker, and the bytes come
+    /// back unchanged.
     #[test]
     fn every_parseable_text_renders_back_unchanged(
-        marker in prop_oneof![Just("# [ ] "), Just("# [x] ")],
-        title in "[^\\r\\n]{1,20}",
-        body in "(\\r?\\n(## [A-Za-z ]{0,10}|### Merge requests|- .*|.*)){0,12}(\\r?\\n)?",
-    ) {
-        let text = format!("{marker}{title}{body}");
-        let parsed = format::parse(&text, TaskId::from(1), &workflow()).unwrap();
-        prop_assert_eq!(format::render(&parsed.document), text.clone());
-        prop_assert_eq!(parsed.document.is_done(), marker.contains('x'));
-        let again = format::parse(&format::render(&parsed.document), TaskId::from(1), &workflow()).unwrap();
-        prop_assert_eq!(again, parsed);
-    }
-
-    /// The v2 arm: any block of `key: value`, blank and stray lines around an
-    /// `id` line, any blank lines before the title, any body. The id read is
-    /// the one written whatever `parse` is told, `status: done` is the done
-    /// marker, and the bytes come back unchanged.
-    #[test]
-    fn every_v2_text_renders_back_unchanged(
         id in 1u64..100_000,
         before in proptest::collection::vec(front_line(), 0..4),
         after in proptest::collection::vec(front_line(), 0..4),
         gap in "(\\r?\\n *){0,2}",
         title in "[^\\r\\n]{1,20}",
-        body in "(\\r?\\n(## [A-Za-z ]{0,10}|### Merge requests|- .*|.*)){0,12}(\\r?\\n)?",
+        body in body(),
         crlf in any::<bool>(),
         created in proptest::option::of(date_time()),
     ) {
@@ -204,38 +192,35 @@ proptest! {
         prop_assert_eq!(format::render(&parsed.document), text.clone());
         prop_assert_eq!(&parsed.task.id, &TaskId::from(id));
         prop_assert_eq!(parsed.task.created_at, created);
-        let front = parsed.document.frontmatter().unwrap();
+        let front = parsed.document.frontmatter();
         let expected: Vec<&str> = block.iter().map(String::as_str).collect();
         prop_assert_eq!(front.lines(), expected.as_slice());
         let first_status = block.iter().find_map(|l| l.strip_prefix("status:")).map(str::trim);
         prop_assert_eq!(parsed.document.is_done(), first_status == Some("done"));
         prop_assert_eq!(parsed.task.done, first_status == Some("done"));
         prop_assert_eq!(parsed.task.title.as_str(), title.as_str());
-        let again = format::parse(&format::render(&parsed.document), TaskId::from(1), &workflow()).unwrap();
-        prop_assert_eq!(&again.task.id, &parsed.task.id);
-        prop_assert_eq!(&again.document, &parsed.document);
+        let again = format::parse_v2(&format::render(&parsed.document), created, &workflow()).unwrap();
+        prop_assert_eq!(again, parsed);
     }
 
     #[test]
-    fn operations_never_panic_and_stay_parseable(
-        body in "(\\r?\\n(## (Tags|Progress|Related|Project|Description|Worktrees|Sessions|[A-Za-z]{1,6})|### Merge requests|- .*|#[a-z]{1,8}( #[A-Z])?|.*)){0,12}(\\r?\\n)?",
-        n in 0usize..8,
+    fn list_operations_never_panic_and_stay_parseable(
+        body in "(\\r?\\n(## (Progress|Related|Description|Worktrees|Sessions|[A-Za-z]{1,6})|### Merge requests|- .*|.*)){0,12}(\\r?\\n)?",
+        n in 0usize..6,
     ) {
         let wf = workflow();
-        let text = format!("# [ ] T{body}");
+        let text = format!("---\nid: 1\n---\n# T{body}");
         let mut doc = Document::parse(&text).unwrap();
         let entry = ProgressEntry::new(NaiveDate::from_ymd_opt(2026, 10, 4).unwrap().and_time(NaiveTime::MIN), "n");
         // The append ops report `false` when the entry is already tracked
         // and leave the file untouched, missing final newline included.
         let changed = match n {
-            0 => { ops::set_status(&mut doc, &Status::READY, &wf); true }
-            1 => { ops::set_priority(&mut doc, Priority::A, &wf); true }
-            2 => { ops::append_progress(&mut doc, &entry); true }
-            3 => ops::append_worktree(&mut doc, &Worktree::new("/w")),
-            4 => ops::append_session(&mut doc, &Session { at: entry.at.date_time(), id: "s".into(), launcher: None, description: None }),
-            5 => ops::append_merge_request(&mut doc, &Link::labelled("u", "t")),
-            6 => { ops::set_project(&mut doc, Path::new("/p")); true }
-            _ => { ops::set_done(&mut doc, &wf); true }
+            0 => { ops::append_progress(&mut doc, &entry); true }
+            1 => ops::append_worktree(&mut doc, &Worktree::new("/w")),
+            2 => ops::append_session(&mut doc, &Session { at: entry.at.date_time(), id: "s".into(), launcher: None, description: None }),
+            3 => ops::append_merge_request(&mut doc, &Link::labelled("u", "t")),
+            4 => ops::append_related(&mut doc, &Link::new("r")),
+            _ => { ops::set_description(&mut doc, "d"); true }
         };
         let rendered = format::render(&doc);
         let again = Document::parse(&rendered).unwrap();
@@ -245,33 +230,22 @@ proptest! {
         } else {
             prop_assert_eq!(rendered, text.clone());
         }
-        let task = format::project(&doc, TaskId::from(1), &wf);
+        let task = format::project(&doc, &wf);
         match n {
-            0 => prop_assert_eq!(task.status, Some(Status::READY)),
-            1 => prop_assert_eq!(task.priority, Priority::A),
-            2 => prop_assert_eq!(task.progress.last(), Some(&entry)),
-            3 => prop_assert!(task.worktrees.iter().any(|w| w.path == Path::new("/w"))),
-            4 => prop_assert!(task.sessions.iter().any(|s| s.id == "s") || text.contains("`s`")),
-            5 => prop_assert!(task.merge_requests.iter().any(|l| l.url == "u") || !text.contains("## Related") || text.contains("### Merge requests")),
-            6 => prop_assert_eq!(task.project, Some(PathBuf::from("/p"))),
-            _ => { prop_assert!(task.done); prop_assert_eq!(task.status, None); }
+            0 => prop_assert_eq!(task.progress.last(), Some(&entry)),
+            1 => prop_assert!(task.worktrees.iter().any(|w| w.path == Path::new("/w"))),
+            2 => prop_assert!(task.sessions.iter().any(|s| s.id == "s") || text.contains("`s`")),
+            3 => prop_assert!(task.merge_requests.iter().any(|l| l.url == "u") || !text.contains("## Related") || text.contains("### Merge requests")),
+            4 => prop_assert!(task.related.iter().any(|l| l.url == "r")),
+            // A `###` line after the title joins the new section (it ends at `## `).
+            _ => prop_assert!(task.description.as_deref().is_some_and(|d| d.starts_with('d'))),
         }
     }
 
+    /// A fresh document reads back the same task, and its block has every
+    /// key once in canonical order.
     #[test]
-    fn tasks_written_from_scratch_read_back_equal(task in task()) {
-        let wf = workflow();
-        let doc = Document::from_task(&task, &wf);
-        let text = format::render(&doc);
-        let parsed = format::parse(&text, TaskId::from(1), &wf).unwrap();
-        prop_assert_eq!(&parsed.task, &task, "{}", text);
-        prop_assert_eq!(format::render(&parsed.document), text);
-    }
-
-    /// The v2 arm: a fresh v2 document reads back the same task, its block
-    /// has every key once in canonical order, and it is a v2 file only.
-    #[test]
-    fn tasks_written_from_scratch_as_v2_read_back_equal(task in task(), created in proptest::option::of(date_time())) {
+    fn tasks_written_from_scratch_read_back_equal(task in task(), created in proptest::option::of(date_time())) {
         let wf = workflow();
         let mut task = task;
         task.created_at = created;
@@ -280,7 +254,7 @@ proptest! {
         let parsed = format::parse_v2(&text, created, &wf).unwrap();
         prop_assert_eq!(&parsed.task, &task, "{}", text);
         prop_assert_eq!(format::render(&parsed.document), text.clone());
-        let ranks: Vec<usize> = parsed.document.frontmatter().unwrap().entries()
+        let ranks: Vec<usize> = parsed.document.frontmatter().entries()
             .map(|(k, _)| key::ORDER.iter().position(|o| *o == k).unwrap())
             .collect();
         prop_assert!(ranks.windows(2).all(|w| w[0] < w[1]), "{:?} in {}", ranks, text);
@@ -288,20 +262,19 @@ proptest! {
         prop_assert!(!text.contains("## Tags") && !text.contains("## Source") && !text.contains("## Closed"));
     }
 
-    /// Any scalar op on any v2 block: the result re-parses, the body and the
+    /// Any scalar op on any block: the result re-parses, the body and the
     /// lines of the other keys are untouched, and the key reads back.
     #[test]
-    fn scalar_ops_on_any_v2_block_keep_every_other_line(
+    fn scalar_ops_on_any_block_keep_every_other_line(
         id in 1u64..100_000,
         before in proptest::collection::vec(front_line(), 0..4),
         after in proptest::collection::vec(front_line(), 0..4),
         gap in "(\\r?\\n *){0,2}",
         title in "[^\\r\\n]{1,20}",
-        body in "(\\r?\\n(## [A-Za-z ]{0,10}|### Merge requests|- .*|.*)){0,12}(\\r?\\n)?",
+        body in body(),
         crlf in any::<bool>(),
         n in 0usize..14,
     ) {
-        let wf = workflow();
         let nl = if crlf { "\r\n" } else { "\n" };
         let block: Vec<String> = before.iter().cloned().chain([format!("id: {id}")]).chain(after.iter().cloned()).collect();
         let text = format!("---{nl}{}{nl}---{gap}{nl}# {title}{body}", block.join(nl));
@@ -311,18 +284,18 @@ proptest! {
         let date = NaiveDate::from_ymd_opt(2026, 10, 4).unwrap();
         // The keys the op owns and the value the first of them must read.
         let (keys, value): (Vec<&str>, Option<&str>) = match n {
-            0 => { ops::set_status(&mut doc, &Status::READY, &wf); (vec![key::STATUS], Some("ready")) }
-            1 => { ops::set_priority(&mut doc, Priority::A, &wf); (vec![key::PRIORITY], Some("A")) }
+            0 => { ops::set_status(&mut doc, &Status::READY); (vec![key::STATUS], Some("ready")) }
+            1 => { ops::set_priority(&mut doc, Priority::A); (vec![key::PRIORITY], Some("A")) }
             2 => { ops::set_rank(&mut doc, -3); (vec![key::RANK], Some("-3")) }
             3 => { ops::set_due(&mut doc, date); (vec![key::DUE], Some("2026-10-04")) }
             4 => { ops::set_closed(&mut doc, date.and_time(NaiveTime::MIN)); (vec![key::CLOSED], Some("2026-10-04 00:00")) }
             5 => { ops::set_project(&mut doc, Path::new("/p")); (vec![key::PROJECT], Some("/p")) }
-            6 => { ops::set_tags(&mut doc, &[Tag::new("a").unwrap()], &wf); (vec![key::TAGS], Some("[a]")) }
-            7 => { ops::set_done(&mut doc, &wf); (vec![key::STATUS], Some("done")) }
+            6 => { ops::set_tags(&mut doc, &[Tag::new("a").unwrap()]); (vec![key::TAGS], Some("[a]")) }
+            7 => { ops::set_done(&mut doc); (vec![key::STATUS], Some("done")) }
             8 => { ops::set_origin(&mut doc, &origin); (vec![key::SOURCE, key::SOURCE_ID, key::SOURCE_URL], Some("gl")) }
-            9 => { ops::strip_status_tag(&mut doc, &wf); (vec![key::STATUS], None) }
+            9 => { ops::clear_status(&mut doc); (vec![key::STATUS], None) }
             10 => { ops::clear_rank(&mut doc); (vec![key::RANK], None) }
-            11 => { ops::set_tags(&mut doc, &[], &wf); (vec![key::TAGS], None) }
+            11 => { ops::set_tags(&mut doc, &[]); (vec![key::TAGS], None) }
             12 => { ops::clear_origin(&mut doc); (vec![key::SOURCE, key::SOURCE_ID, key::SOURCE_URL], None) }
             _ => {
                 // `set_open` touches the block only when it said `done`.
@@ -336,7 +309,7 @@ proptest! {
         prop_assert_eq!(&again, &doc);
         prop_assert_eq!(again.lines().collect::<Vec<_>>(), body_before.iter().map(String::as_str).collect::<Vec<_>>());
         prop_assert_eq!(doc.ends_with_newline(), text.ends_with('\n'));
-        let front = doc.frontmatter().unwrap();
+        let front = doc.frontmatter();
         let owned = |line: &&str| key_of(line).is_some_and(|k| keys.contains(&k));
         let others: Vec<&str> = front.lines().iter().filter(|l| !owned(l)).copied().collect();
         let others_before: Vec<&str> = block.iter().map(String::as_str).filter(|l| !owned(l)).collect();
@@ -350,166 +323,27 @@ proptest! {
             prop_assert!(!doc.is_done());
         }
     }
-}
 
-#[test]
-fn from_task_writes_the_create_shape() {
-    let wf = workflow();
-    let mut task = Task::new(TaskId::from(1), "Full task");
-    task.status = Some(Status::IN_PROGRESS);
-    task.priority = Priority::A;
-    task.description =
-        Some("Rewrite the tasks script in Rust.\nSecond paragraph of the description.".into());
-    task.project = Some("/home/pau/code/tasks".into());
-    task.due = NaiveDate::from_ymd_opt(2026, 10, 10);
-    task.related = vec![
-        Link::new("https://gitlab.example.invalid/group/project/-/issues/42"),
-        Link::new("https://example.invalid/docs/spec"),
-    ];
-    task.tags = vec![
-        Tag::new("gitlab").unwrap(),
-        Tag::new("review-request").unwrap(),
-    ];
-    task.progress = vec![ProgressEntry::new(
-        NaiveDate::from_ymd_opt(2026, 10, 4)
-            .unwrap()
-            .and_hms_opt(10, 15, 0)
-            .unwrap(),
-        "created from the issue",
-    )];
-    task.merge_requests = vec![Link::labelled(
-        "https://gitlab.example.invalid/group/project/-/merge_requests/123",
-        "Add parser",
-    )];
-    task.worktrees = vec![Worktree::on_branch(
-        "/home/pau/code/tasks-wt/feature-a",
-        "feature-a",
-    )];
-    task.sessions = vec![Session {
-        at: NaiveDate::from_ymd_opt(2026, 10, 4)
-            .unwrap()
-            .and_hms_opt(10, 20, 0)
-            .unwrap(),
-        id: "abc-123".into(),
-        launcher: None,
-        description: Some("first session".into()),
-    }];
-    let text = format::render(&Document::from_task(&task, &wf));
-    let full = std::fs::read_to_string(format!(
-        "{}/tests/fixtures/full.md",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .unwrap();
-    // Same as the script's file up to the entries added afterwards.
-    let prefix_end = full.find("- [Add writer]").unwrap();
-    assert_eq!(&text[..prefix_end], &full[..prefix_end]);
-    assert_eq!(
-        &text[prefix_end..],
-        concat!(
-            "\n## Tags\n\n#gitlab #review-request #A #in-progress\n\n",
-            "## Worktrees\n\n- /home/pau/code/tasks-wt/feature-a (`feature-a`)\n\n",
-            "## Sessions\n\n- 2026-10-04 10:20: `abc-123` \u{2014} first session\n\n",
-            "## Progress\n\n- 2026-10-04 10:15: created from the issue\n"
-        )
-    );
-}
-
-#[test]
-fn from_task_minimal_done_and_source() {
-    let wf = workflow();
-    let mut task = Task::new(TaskId::from(1), "Minimal");
-    assert_eq!(
-        format::render(&Document::from_task(&task, &wf)),
-        "# [ ] Minimal\n\n## Tags\n\n#B\n\n## Progress\n"
-    );
-    task.done = true;
-    task.status = Some(Status::READY);
-    task.description = Some(String::new());
-    task.origin = Some(Origin {
-        source: "gitlab".into(),
-        external_id: "!1".into(),
-        url: Some("https://gl.invalid/1".into()),
-    });
-    assert_eq!(
-        format::render(&Document::from_task(&task, &wf)),
-        "# [x] Minimal\n\n## Source\n\ngitlab: !1 https://gl.invalid/1\n\n## Tags\n\n#B\n\n## Progress\n"
-    );
-    task.closed_at = Some(FixedClock::at("2026-10-07 14:32").0);
-    assert_eq!(
-        format::render(&Document::from_task(&task, &wf)),
-        "# [x] Minimal\n\n## Source\n\ngitlab: !1 https://gl.invalid/1\n\n## Closed\n\n2026-10-07 14:32\n\n## Tags\n\n#B\n\n## Progress\n"
-    );
-    task.rank = Some(1024);
-    assert_eq!(
-        format::render(&Document::from_task(&task, &wf)),
-        "# [x] Minimal\n\n## Source\n\ngitlab: !1 https://gl.invalid/1\n\n## Closed\n\n2026-10-07 14:32\n\n## Rank\n\n1024\n\n## Tags\n\n#B\n\n## Progress\n"
-    );
-    task.rank = None;
-    task.done = false;
-    // An open task is not closed: `closed_at` is not written.
-    assert!(!format::render(&Document::from_task(&task, &wf)).contains("## Closed"));
-    assert!(format::render(&Document::from_task(&task, &wf)).contains("#B #ready\n"));
-    let parsed = format::parse(
-        &format::render(&Document::from_task(&task, &wf)),
-        TaskId::from(1),
-        &wf,
-    )
-    .unwrap();
-    assert_eq!(parsed.task.origin, task.origin);
-    assert_eq!(parsed.task.description, None);
-}
-
-#[test]
-fn source_line_omits_a_url_equal_to_the_id() {
-    // `gitlab: <url>` parses as id = url = <url>; writing the url twice would
-    // still read back equal, so the rendered line is checked exactly.
-    let wf = workflow();
-    let mut task = Task::new(TaskId::from(1), "From a url");
-    task.origin = Some(Origin {
-        source: "gitlab".into(),
-        external_id: "https://gl.invalid/g/p/-/issues/7".into(),
-        url: Some("https://gl.invalid/g/p/-/issues/7".into()),
-    });
-    assert_eq!(
-        format::render(&Document::from_task(&task, &wf)),
-        "# [ ] From a url\n\n## Source\n\ngitlab: https://gl.invalid/g/p/-/issues/7\n\n## Tags\n\n#B\n\n## Progress\n"
-    );
-    task.origin.as_mut().unwrap().url = None;
-    assert_eq!(
-        format::render(&Document::from_task(&task, &wf)),
-        "# [ ] From a url\n\n## Source\n\ngitlab: https://gl.invalid/g/p/-/issues/7\n\n## Tags\n\n#B\n\n## Progress\n"
-    );
-}
-
-fn is_title_line(text: &str) -> bool {
-    [format::OPEN_PREFIX, format::DONE_PREFIX]
-        .iter()
-        .any(|p| text.len() > p.len() && text.starts_with(p))
-}
-
-proptest! {
+    /// Whatever follows, a text whose first line is not the fence is not a
+    /// task file, and the error names that line.
     #[test]
-    fn text_without_a_title_line_is_not_a_task(
-        first in prop_oneof![
-            "\\PC*",
-            "# \\[[ xX]?\\]\\PC*",
-            " ?#? ?\\[ \\] \\PC*",
-        ].prop_filter("would be a title line", |t| !is_title_line(t)),
+    fn text_without_a_fence_first_is_not_a_task_file(
+        first in "\\PC*".prop_filter("would be the fence", |t| t != "---"),
         rest in "(\\r?\\n\\PC*){0,3}",
     ) {
         let text = format!("{first}{rest}");
-        let err = format::parse(&text, TaskId::from(1), &workflow()).unwrap_err();
-        prop_assert_eq!(&err, &format::FormatError::NotATask { first_line: first.clone() });
+        let err = format::parse_v2(&text, None, &workflow()).unwrap_err();
+        prop_assert_eq!(&err, &FormatError::NotFrontmatter { first_line: first.clone() });
         prop_assert_eq!(Document::parse(&text), Err(err));
     }
 }
 
-/// Found by `operations_never_panic_and_stay_parseable` in CI: a session
-/// that is already tracked in a file without a final newline is a no-op,
-/// and the file keeps its bytes.
+/// Found by `list_operations_never_panic_and_stay_parseable` in CI: a
+/// session that is already tracked in a file without a final newline is a
+/// no-op, and the file keeps its bytes.
 #[test]
 fn duplicate_session_without_final_newline_is_untouched() {
-    let text = "# [ ] T\n\n## Sessions\n\n- 2026-10-04 00:00: `s`";
+    let text = "---\nid: 1\n---\n# T\n\n## Sessions\n\n- 2026-10-04 00:00: `s`";
     let mut doc = Document::parse(text).unwrap();
     let at = NaiveDate::from_ymd_opt(2026, 10, 4)
         .unwrap()

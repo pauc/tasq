@@ -469,7 +469,7 @@ pub fn describe(
 
 /// [`describe`] for a task the caller read earlier, such as before opening
 /// an editor on its description. A store that checks for conflicts
-/// compares against its own last read of the id (the nb store keeps one
+/// compares against its own last read of the id (the store keeps one
 /// revision per id), so the check covers the time since that read only
 /// when the caller does not read the same id again in between.
 ///

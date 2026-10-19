@@ -174,48 +174,14 @@ pub struct StoreConfig {
     /// neither empty nor `.`/`..`, no `/` ([`Config::load`] checks).
     /// Default: `default`.
     pub name: String,
-    /// Removed with ADR 0026; setting it is an error naming the replacement.
-    #[serde(skip_serializing, deserialize_with = "removed_store_kind")]
-    kind: Removed,
-    /// Removed with ADR 0026; setting it is an error naming the replacement.
-    #[serde(skip_serializing, deserialize_with = "removed_store_notebook")]
-    notebook: Removed,
-    /// Removed with ADR 0026; setting it is an error naming the reason.
-    #[serde(skip_serializing, deserialize_with = "removed_store_sync_interval")]
-    sync_interval: Removed,
 }
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             name: "default".to_owned(),
-            kind: Removed,
-            notebook: Removed,
-            sync_interval: Removed,
         }
     }
-}
-
-fn removed_store_kind<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Removed, D::Error> {
-    Err(serde::de::Error::custom(
-        "store.kind was removed (ADR-0026): tasq always opens its own store at <data_dir>/<store.name>",
-    ))
-}
-
-fn removed_store_notebook<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Removed, D::Error> {
-    Err(serde::de::Error::custom(
-        "store.notebook was removed (ADR-0026): tasks live in <data_dir>/<store.name>; \
-         convert the notebook once with `tasq migrate <notebook>`",
-    ))
-}
-
-fn removed_store_sync_interval<'de, D: serde::Deserializer<'de>>(
-    _: D,
-) -> Result<Removed, D::Error> {
-    Err(serde::de::Error::custom(
-        "store.sync_interval was removed (ADR-0026): the store does not run git; \
-         sync comes back as a feature of its own",
-    ))
 }
 
 /// `[workflow]`: the ordered status list.

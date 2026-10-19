@@ -2,13 +2,14 @@
 source: crates/launch/tests/launchers.rs
 expression: normalized
 ---
-Work with me on my next task: todo [3] from my tasq store (file: /nb/home/20260902100000.todo.md).
+Work with me on my next task: todo [3] from my tasq store (file: /store/01ARZ3NDEKTSV4RRFFQ69G5FAV.md).
 
-# [ ] Fix the login form validation
-
-## Tags
-
-#B #ready
+---
+id: 3
+status: ready
+priority: B
+---
+# Fix the login form validation
 
 Working directory: [WORK]
 

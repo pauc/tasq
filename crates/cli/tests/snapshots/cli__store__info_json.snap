@@ -10,8 +10,6 @@ expression: env.normalize(&stdout(&out))
   },
   "schema": 1,
   "store": {
-    "id_scheme": "stable",
-    "ids_may_change_on_reconcile": false,
     "location": "[ROOT]/home/.local/share/tasq/stores/default",
     "name": "tasq",
     "task_count": 5
