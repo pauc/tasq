@@ -20,6 +20,26 @@ _Avoid_: Reorder, drag
 A directory owned by tasq that holds one task file per task. A store has a name; its directory is the name under the data directory.
 _Avoid_: Repository, database
 
+**Sync**:
+Refreshing tasks from their sources: creating, updating and closing tasks for the merge requests, issues and inbox items the sources report.
+_Avoid_: Sync when a store's history is meant (that is store sync)
+
+**Store sync**:
+Exchanging a store's history with a remote copy of it, so that every machine sees the same tasks. Opt-in; a store without it has no history at all.
+_Avoid_: Sync, pull, push, replication
+
+**Plugin**:
+A separate program, enabled by name, that adds commands to tasq and is told about its events. Store sync is a plugin.
+_Avoid_: Extension, add-on, integration
+
+**Event**:
+A moment in a tasq command that plugins and hooks are told about, such as the store being opened or a command having written tasks.
+_Avoid_: Callback, trigger
+
+**Hook**:
+A command line configured by the user to run on one event.
+_Avoid_: Plugin (a plugin is enabled, not configured per event)
+
 **Task file**:
 The markdown file that holds one task: a frontmatter block of scalar fields, then the title heading and the list sections. Its name is a ULID, from which the task's creation time is read; nothing else is read from it.
 _Avoid_: Todo file, note
