@@ -327,9 +327,9 @@ README, CONTRIBUTING, CLAUDE.md, `docs/agents/` and the plugin prompts.
 
 **Blocked by:** RN-002, RN-003, RN-004, RN-005.
 
-**Status:** ready
+**Status:** done
 
-- [ ] No living doc mentions nb, notebooks, v1/v2, positional ids, `tasq migrate` or the nb crate, except where it describes `original/tasks`.
-- [ ] The CLAUDE.md and architecture crate tables match the workspace.
-- [ ] The fixture store is described as a hand-maintained store, with no regeneration command.
-- [ ] Docs only; no mutation run.
+- [x] No living doc mentions nb, notebooks, v1/v2, positional ids, `tasq migrate` or the nb crate, except where it describes `original/tasks`.
+- [x] The CLAUDE.md and architecture crate tables match the workspace.
+- [x] The fixture store is described as a hand-maintained store, with no regeneration command.
+- [x] Docs only; no mutation run.
