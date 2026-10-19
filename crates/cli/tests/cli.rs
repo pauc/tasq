@@ -208,7 +208,7 @@ mod list {
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(
             stdout(&out),
-            "in-progress\n  \
+            "IN PROGRESS\n  \
              [ 9] #C Ranked first\n  \
              [ 8] #C Ranked\n  \
              [ 1] #A Rewrite the tasks script in Rust (due in 4d)  #gitlab \n  \
@@ -5116,7 +5116,7 @@ mod plugins {
             .stdout("plugin ready\n");
         // ...and `tasq list ready` is the filter view.
         let out = env.tasq().args(["list", "ready"]).output().unwrap();
-        assert!(stdout(&out).starts_with("ready\n"), "{}", stdout(&out));
+        assert!(stdout(&out).starts_with("READY\n"), "{}", stdout(&out));
         // A built-in name, or its alias, is never dispatched.
         for builtin in ["list", "ls"] {
             let out = env.tasq().arg(builtin).output().unwrap();

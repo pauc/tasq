@@ -68,7 +68,7 @@ pub fn run(app: &App, args: &ListArgs) -> Result<()> {
             .is_terminal()
             .then(|| terminal_width(&app.env_vec(), stdout_columns())),
     };
-    let text = render(&groups, &done, &look, criteria.status.is_some());
+    let text = render(&groups, &done, &look);
     app.out.page(&text)
 }
 
@@ -236,25 +236,16 @@ pub struct Look<'a> {
 }
 
 /// Renders the groups, then `done` as a `DONE` group when non-empty.
-/// `single_status` reproduces the script's one-status view: the header is
-/// the status name, bold but uncoloured.
-pub fn render(
-    groups: &[Group<'_>],
-    done: &[&Task],
-    look: &Look<'_>,
-    single_status: bool,
-) -> String {
+/// Every header is the upper-case [`group_label`] in the status colour,
+/// with or without a status filter.
+pub fn render(groups: &[Group<'_>], done: &[&Task], look: &Look<'_>) -> String {
     let (theme, style) = (look.theme, look.style);
     let mut out = String::new();
     for group in groups {
-        let header = match (&group.status, single_status) {
-            (Some(status), true) => style.bold(status.as_str()),
-            (status, _) => style.bold_color(
-                theme.status_color(status.as_ref()),
-                &group_label(status.as_ref()),
-            ),
-        };
-        out.push_str(&header);
+        out.push_str(&style.bold_color(
+            theme.status_color(group.status.as_ref()),
+            &group_label(group.status.as_ref()),
+        ));
         out.push('\n');
         for task in &group.tasks {
             out.push_str(&row(task, look));
@@ -481,11 +472,11 @@ mod tests {
         let done: Vec<&Task> = tasks.iter().filter(|t| t.done).collect();
         let theme = Theme::from_config(&UiConfig::default());
         assert_eq!(
-            render(&groups, &done, &look(&theme, Style::OFF), false),
+            render(&groups, &done, &look(&theme, Style::OFF)),
             "READY\n  [ 1] #B A\n\nDONE\n  [ 2] #B D\n\n"
         );
         assert_eq!(
-            render(&[], &done, &look(&theme, Style::ON), false),
+            render(&[], &done, &look(&theme, Style::ON)),
             "\x1b[1;2mDONE\x1b[0m\n  \x1b[2m[ 2]\x1b[0m \x1b[2m#B\x1b[0m D\n\n"
         );
     }
@@ -648,7 +639,7 @@ mod tests {
         let groups = query::list(&tasks, &Filter::default(), &Workflow::default());
         let theme = Theme::from_config(&UiConfig::default());
         assert_eq!(
-            render(&groups, &[], &look(&theme, Style::OFF), false),
+            render(&groups, &[], &look(&theme, Style::OFF)),
             "READY\n  [ 1] #B A\n\nNO STATUS\n  [ 2] #B B\n\n"
         );
         let one = query::list(
@@ -657,11 +648,7 @@ mod tests {
             &Workflow::default(),
         );
         assert_eq!(
-            render(&one, &[], &look(&theme, Style::ON), true),
-            "\x1b[1mready\x1b[0m\n  \x1b[2m[ 1]\x1b[0m \x1b[2m#B\x1b[0m A\n\n"
-        );
-        assert_eq!(
-            render(&one, &[], &look(&theme, Style::ON), false),
+            render(&one, &[], &look(&theme, Style::ON)),
             "\x1b[1;32mREADY\x1b[0m\n  \x1b[2m[ 1]\x1b[0m \x1b[2m#B\x1b[0m A\n\n"
         );
     }

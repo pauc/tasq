@@ -2,5 +2,5 @@
 source: crates/cli/tests/cli.rs
 expression: stdout(&out)
 ---
-ready
+READY
   [ 3] #B Answer the support ticket  #support

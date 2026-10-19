@@ -3,5 +3,5 @@ source: crates/cli/tests/cli.rs
 assertion_line: 214
 expression: stdout(&out)
 ---
-in-progress
+IN PROGRESS
   [ 1] #A Rewrite the tasks script in Rust (due in 4d)  #gitlab
