@@ -311,11 +311,11 @@ becomes the fixture directory, and the v2 test files take plain names. No logic 
 
 **Blocked by:** RN-004.
 
-**Status:** ready
+**Status:** done
 
-- [ ] No identifier, file or directory carries a `v2` suffix or prefix for the task file format.
-- [ ] The diff is renames only: no logic, assertion or fixture content changes.
-- [ ] `mutants-in` on core's format module: zero missed (`--in-diff` sees a rename as no hunks).
+- [x] No identifier, file or directory carries a `v2` suffix or prefix for the task file format.
+- [x] The diff is renames only: no logic, assertion or fixture content changes.
+- [x] `mutants-in` on core's format module: zero missed (`--in-diff` sees a rename as no hunks).
 
 ### RN-006: the docs describe what exists
 
