@@ -406,7 +406,7 @@ fn next_id(scan: &Scan) -> TaskId {
 }
 
 /// 128 random bits from the OS; [`Ulid::from_parts`] keeps 80. The
-/// default random source of [`TasqStore`], and the one a migration takes.
+/// default random source of [`TasqStore`].
 /// Reason: reads the OS entropy source; nothing deterministic to assert.
 #[mutants::skip]
 pub fn os_random() -> u128 {

@@ -20,7 +20,6 @@ pub mod edit;
 pub mod fields;
 pub mod launch;
 pub mod list;
-pub mod migrate;
 pub mod mr;
 pub mod plugins;
 pub mod project;

@@ -155,14 +155,6 @@ impl TestEnv {
         std::fs::read_to_string(self.file_of(id)).unwrap()
     }
 
-    /// A copy of the nb fixture notebook as `<home>/.nb/home`, the notebook
-    /// `tasq migrate home` finds; returns its directory.
-    pub fn notebook(&self) -> PathBuf {
-        let dir = self.home.join(".nb").join("home");
-        copy_dir(&nb_fixture_dir(), &dir);
-        dir
-    }
-
     /// Writes `<home>/.tasq.toml`.
     pub fn write_project_config(&self, text: &str) {
         std::fs::write(self.home.join(".tasq.toml"), text).unwrap();
@@ -334,30 +326,6 @@ pub fn fixture_dir() -> PathBuf {
         .join("../store/tests/fixtures/stores/default")
         .canonicalize()
         .expect("fixture store exists")
-}
-
-/// The nb fixture notebook of the store-nb crate, the input of `tasq
-/// migrate` (ids 1, 3, 4, 6 and 7, the fixture store's tasks).
-pub fn nb_fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../store-nb/tests/fixtures/nb/home")
-        .canonicalize()
-        .expect("nb fixture notebook exists")
-}
-
-/// Every file under `dir` with its bytes, sorted by path.
-pub fn dir_bytes(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
-    let mut out = Vec::new();
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
-            out.extend(dir_bytes(&path));
-        } else {
-            out.push((path.clone(), std::fs::read(&path).unwrap()));
-        }
-    }
-    out.sort();
-    out
 }
 
 /// Copies `from` into `to` recursively (`to` is created).

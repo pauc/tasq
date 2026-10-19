@@ -8,7 +8,6 @@ use tasq_core::dates::DateError;
 use tasq_core::model::ModelError;
 use tasq_core::report::ReportError;
 use tasq_core::store::StoreError;
-use tasq_store::migrate::MigrateError;
 use tasq_worktree::create::CreateError;
 use tasq_worktree::hooks::HookFailure;
 use tasq_worktree::release::ReleaseError;
@@ -68,12 +67,6 @@ impl std::error::Error for CliError {}
 
 impl From<StoreError> for CliError {
     fn from(e: StoreError) -> Self {
-        Self::User(e.to_string())
-    }
-}
-
-impl From<MigrateError> for CliError {
-    fn from(e: MigrateError) -> Self {
         Self::User(e.to_string())
     }
 }

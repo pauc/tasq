@@ -334,25 +334,6 @@ pub enum Command {
     #[command(subcommand)]
     Store(StoreCommand),
 
-    /// Convert an nb notebook into a tasq store, once (ADR-0026).
-    ///
-    /// Every task, open and done, keeps its id. Prints one line per task
-    /// (id, new file, title) and the config lines that select the new
-    /// store. The notebook is only read; no git command runs.
-    Migrate {
-        /// The notebook: a name under $NB_DIR (default ~/.nb), or a
-        /// directory when it contains a slash.
-        #[arg(value_name = "NOTEBOOK")]
-        notebook: String,
-        /// The store directory to create; it must not exist or be empty
-        /// [default: the configured store, <data_dir>/<store.name>].
-        #[arg(long, value_name = "DIR")]
-        to: Option<PathBuf>,
-        /// Print the mapping and write nothing.
-        #[arg(long)]
-        dry_run: bool,
-    },
-
     /// Check the configuration, the store and optional tools.
     ///
     /// Prints one line per check (OK, WARN or FAIL) with a hint for anything

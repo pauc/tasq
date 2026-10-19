@@ -24,8 +24,6 @@ mutants = "0.0.4"
 # Create writes a temp file in the store directory and renames it into
 # place without overwriting (`NamedTempFile::persist_noclobber`).
 tempfile = "3"
-# `migrate::MigrateError`.
-thiserror = "2"
 
 [lints]
 workspace = true
