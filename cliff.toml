@@ -1,7 +1,7 @@
 # git-cliff configuration (https://git-cliff.org/docs/configuration).
 #
 # Renders Keep a Changelog sections from the workspace's conventional commits
-# (`feat(store-nb): ...`, `fix(core): ...`, `docs(plan): ...`). Used by
+# (`feat(store): ...`, `fix(core): ...`, `docs(plan): ...`). Used by
 # .github/workflows/release.yml to write the notes of one release, and by hand
 # to regenerate CHANGELOG.md; see docs/release.md.
 

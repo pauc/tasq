@@ -1,5 +1,4 @@
-//! `Revision` and `diff::apply` through the crate's public paths, the ones
-//! `tasq-store-nb` re-exports.
+//! `Revision` and `diff::apply` through the crate's public paths.
 
 #![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
 

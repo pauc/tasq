@@ -1,10 +1,9 @@
 //! The [`Store`] extension trait: where tasks live.
 //!
 //! A store maps opaque [`TaskId`]s to [`Task`]s and persists whole tasks.
-//! The first implementation is the nb-compatible notebook store in
-//! `tasq-store-nb`; the CLI and TUI only ever talk to this trait, so a
-//! database-backed store can be added without touching them (ADR-0002,
-//! ADR-0003).
+//! The implementation is `TasqStore` in `tasq-store`, a directory of task
+//! files; the CLI and TUI only ever talk to this trait, so a database-backed
+//! store can be added without touching them (ADR-0002, ADR-0003).
 //!
 //! Reads are infallible with respect to concurrency: a store may be read by
 //! several processes at once. Writes are whole-task: [`Store::update`] takes

@@ -2106,21 +2106,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tasq-store-nb"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "mutants",
- "serde",
- "serde_json",
- "tasq-core",
- "tasq-launch",
- "tasq-store",
- "tempfile",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "tasq-tui"
 version = "0.1.0"
 dependencies = [

@@ -44,7 +44,7 @@ disallowed-methods = [
 disallowed-types = [
     { path = "std::fs::File", reason = "tasq-core does no I/O" },
     { path = "std::fs::OpenOptions", reason = "tasq-core does no I/O" },
-    { path = "std::process::Command", reason = "tasq-core runs no processes; see store-nb, worktree, launch" },
+    { path = "std::process::Command", reason = "tasq-core runs no processes; see worktree, launch" },
     { path = "std::process::Child", reason = "tasq-core runs no processes" },
     { path = "std::net::TcpStream", reason = "tasq-core has no network access" },
 ]

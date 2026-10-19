@@ -25,7 +25,6 @@
 examine_globs = [
     "crates/core/**",
     "crates/store/**",
-    "crates/store-nb/**",
     "crates/sources/**",
     "crates/launch/**",
     "crates/worktree/**",
