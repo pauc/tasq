@@ -273,12 +273,12 @@ the changelog config and core's clippy config stop naming it; CI no longer insta
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready
+**Status:** done
 
-- [ ] The crate directory, its fixtures and its tests are deleted; the workspace member and the lockfile entry are gone.
-- [ ] The release publish list, the mutants config, the changelog scope and core's clippy config have no nb crate entry.
-- [ ] CI installs no nb; nothing reads `TASQ_REQUIRE_NB`.
-- [ ] Deletion only; no mutation run.
+- [x] The crate directory, its fixtures and its tests are deleted; the workspace member and the lockfile entry are gone.
+- [x] The release publish list, the mutants config, the changelog scope and core's clippy config have no nb crate entry.
+- [x] CI installs no nb; nothing reads `TASQ_REQUIRE_NB`.
+- [x] Deletion only; no mutation run.
 
 ### RN-004: core has one task file format
 
