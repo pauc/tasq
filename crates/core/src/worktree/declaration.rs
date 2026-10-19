@@ -34,7 +34,7 @@ pub fn wanted(on_create: OnCreate, asked: bool, in_work_tree: bool) -> bool {
     asked || (on_create == OnCreate::Auto && in_work_tree)
 }
 
-/// Whether the argument of `tasq worktree <id> <ARG>` names a directory
+/// Whether the argument of `tasq worktree set <id> <ARG>` names a directory
 /// rather than a branch: an existing directory (`is_dir`), or text git
 /// refuses in a branch name and paths use (a leading `/` or `.`, any `~`),
 /// so a mistyped path is reported missing instead of declared as a branch.

@@ -45,7 +45,7 @@ The list is the grouped view of `tasq`; Right shows the selected task's
 detail beside it (or, below 100 columns, in its place) and Left hides it
 again. Keys: j/k move, g/G first
 and last, / filter (text matches titles; #word is a status, tag or
-priority as for `tasq <word>`), t status, p priority, l log a note, d mark
+priority as for `tasq list <word>`), t status, p priority, l log a note, d mark
 done (with an optional final note), E open the file in $VISUAL or $EDITOR,
 Enter open a work session here (`tasq pick`), Ctrl+Enter open it in a new
 window and switch to it, Shift+Enter open it in a new window and stay

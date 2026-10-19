@@ -242,7 +242,7 @@ once worktrees are enabled.
 Declaring writes the task's `## Worktrees` entry and nothing else: no `git` runs and nothing is
 created on disk. `tasq create ... --worktree [BRANCH]` declares one for the new task, and with
 `on_create = "auto"` every new task whose project is inside a git work tree gets one without the
-flag (the check reads the filesystem). `tasq worktree <id> [BRANCH]` declares one on an existing
+flag (the check reads the filesystem). `tasq worktree set <id> [BRANCH]` declares one on an existing
 task; an argument that is an existing directory, starts with `/` or `.`, or contains `~` is
 tracked as an existing worktree instead. A relative rendered `path` is taken from the project.
 
@@ -253,7 +253,7 @@ path, in the task's project repository. The branch is the local one when it exis
 `worktree.base` that tracks nothing; without `origin/HEAD` the default base falls back to
 `HEAD` with a warning. A failure stops the launch with git's error and leaves nothing at the
 path; `--dry-run` lists the step and fetches and creates nothing. `tasq worktree up <id>
-[--from REF] [--dry-run]` does the same without launching, and the hidden `tasq worktree <id>
+[--from REF] [--dry-run]` does the same without launching, and the hidden `tasq worktree set <id>
 --create <branch>` declares on `branch` and creates it at once.
 
 Once git has created it, the worktree is provisioned: `copies` first, then `symlinks`, then

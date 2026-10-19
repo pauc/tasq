@@ -17,7 +17,7 @@ of the file) and its `tasq` counterpart.
 | `tasks` | `tasq` | Notes |
 |---|---|---|
 | `tasks` | `tasq` (= `tasq list`) | Same grouped view. |
-| `tasks <status\|tag>` (`tasks review-request`, `tasks A`) | `tasq <status\|tag\|prio>` or `tasq list <WORD>` | Also `--status`, `--tag` (repeatable), `--prio`, `--text`. |
+| `tasks <status\|tag>` (`tasks review-request`, `tasks A`) | `tasq list <WORD>` (alias `tasq ls <WORD>`) | Also `--status`, `--tag` (repeatable), `--prio`, `--text`. The bare `tasq <WORD>` form was dropped (ADR-0028). |
 | `tasks create <title> [--desc] [--status] [--prio] [--due] [--project] [--tag]... [--related]... [--mr]... [--note]` | `tasq create <TITLE>` with the same flags | `--status done` creates it closed, as before. Default note is `created via tasq create`. |
 | `tasks set <id> <status\|priority> [note]` | `tasq set <ID> <VALUE> [NOTE]` | Priority with or without `#`. The note can also be `--note TEXT` (not both). A value the task already has writes nothing (`status unchanged`); with a note that is an error, since the note is not logged either (`tasq log` adds one alone). |
 | `tasks log <id> <note>` | `tasq log <ID> <NOTE>` | |
@@ -32,8 +32,8 @@ of the file) and its `tasq` counterpart.
 | `tasks view <id>` | `tasq view <ID>` | glow rendering and OSC 8 links as before. |
 | `tasks view <id> <nb args>` (nb passthrough) | none; `tasq view <ID> --raw` prints the file | Decided in T-305. |
 | `tasks project <id> [path]` | `tasq project <ID> [PATH]` | |
-| `tasks worktree <id> <path>` | `tasq worktree <ID> <PATH>` | |
-| `tasks worktree <id> --create <branch>` | `tasq worktree <ID> --create <BRANCH>` (hidden), or `tasq worktree <ID> <BRANCH>` then `tasq worktree up <ID>` | Declares the worktree at `worktree.path` and runs `git worktree add`. The script called gwm; tasq provisions worktrees itself under `[worktree]` (`docs/config.md`, "Worktrees"). |
+| `tasks worktree <id> <path>` | `tasq worktree set <ID> <PATH>` | |
+| `tasks worktree <id> --create <branch>` | `tasq worktree set <ID> --create <BRANCH>` (hidden), or `tasq worktree set <ID> <BRANCH>` then `tasq worktree up <ID>` | Declares the worktree at `worktree.path` and runs `git worktree add`. The script called gwm; tasq provisions worktrees itself under `[worktree]` (`docs/config.md`, "Worktrees"). |
 | `tasks session <id> <session-id> [desc]` | `tasq session <ID> <SESSION_ID> [DESC] [--launcher L]` | |
 | `tasks mr <id> <mr-url> [title]` | `tasq mr <ID> <URL> [TITLE]` | Title resolved through the configured `[forge.*]`; without one it records the short reference (`group/project!123`). The script used `glab api` from `TASKS_DEFAULT_WORKTREE`. |
 | `tasks update [args]` (Claude `/update-tasks` session) | `tasq sync --interactive` (the same session, running `/tasq:sync` in `work.default_project`); `tasq sync [--source NAME] [--dry-run] [--json]` headless | Sources are `[[source]]` blocks: GitLab/GitHub review requests and work items, plus an LLM bridge for Slack/Gmail-style inboxes ([`docs/sources.md`](sources.md)). The bridge was verified headless on 2026-10-05 (same connectors, ~90 s and ~$2 per run), so Slack/Gmail triage no longer needs an interactive session. |
@@ -123,7 +123,7 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
 - `tasq dates "this week"` ends on Friday (the script ended on today, even on
   a weekend). Explicit ranges are clamped to today; a start after today is an
   error.
-- `tasq <status>` on an empty status group prints a message instead of nothing.
+- `tasq list <status>` on an empty status group prints a message instead of nothing.
 - Usage errors exit 2 (clap convention); domain errors exit 1 with
   `tasq: ...`. The script exited 1 for both.
 - `tasq view` has no nb passthrough; `--raw` prints the file verbatim.
@@ -132,7 +132,7 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
 - Nothing is committed (the script committed every change through nb); sync
   for a tasq store is task 57.
 - A launch creates the task's declared worktree when it is gone, without
-  asking (the script offered to recreate it); `tasq worktree --create` runs
+  asking (the script offered to recreate it); `tasq worktree set --create` runs
   plain `git worktree add`, and worktree provisioning (links, copies,
   templates, hooks) is configured under `[worktree]` instead of an external
   tool.

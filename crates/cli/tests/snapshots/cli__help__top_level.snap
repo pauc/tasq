@@ -12,10 +12,10 @@ Every command accepts --json for machine-readable output. Exit codes: 0 on
 success, 1 for an error you can fix (`tasq: <message>` on stderr), 2 for a
 usage error or an internal failure.
 
-Usage: tasq [OPTIONS] [WORD] [COMMAND]
+Usage: tasq [OPTIONS] [COMMAND]
 
 Commands:
-  list         List open tasks grouped by status (the default command)
+  list         List open tasks grouped by status (the default command) [alias: ls]
   create       Create a task
   set          Set the status or the priority of a task, optionally logging a note
   log          Append a dated progress note to a task
@@ -43,10 +43,6 @@ Commands:
   plugins      Plugins: `tasq-<name>` executables on PATH and the configured hooks
   completions  Print a shell completion script to stdout
   help         Print this message or the help of the given subcommand(s)
-
-Arguments:
-  [WORD]
-          Status, tag or priority to list; same as `tasq list <WORD>`
 
 Options:
       --profile <NAME>
@@ -88,9 +84,9 @@ Options:
 
 Examples:
   tasq                       open tasks grouped by status
-  tasq ready                 only the READY group
-  tasq gitlab                grouped view of the tasks tagged #gitlab
-  tasq A                     grouped view of the priority-A tasks
+  tasq list ready            only the READY group
+  tasq ls gitlab             grouped view of the tasks tagged #gitlab
+  tasq ls A                  grouped view of the priority-A tasks
   tasq list --status waiting --tag support
   tasq list --all            open tasks, then the done ones
   tasq create "Fix the build" --prio A --due tomorrow --tag ci

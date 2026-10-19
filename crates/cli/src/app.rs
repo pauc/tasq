@@ -57,17 +57,7 @@ pub struct App {
 
 /// Runs the parsed command line.
 pub fn run(cli: Cli) -> Result<()> {
-    let Cli {
-        global,
-        word,
-        command,
-    } = cli;
-    if let (Some(word), Some(command)) = (&word, &command) {
-        return Err(CliError::user(format!(
-            "unexpected argument {word:?} before the '{}' command",
-            command_name(command)
-        )));
-    }
+    let Cli { global, command } = cli;
     let opts = load_options(&global)?;
     match command {
         Some(Command::Completions { shell }) => commands::completions::run(shell, &global),
@@ -75,13 +65,7 @@ pub fn run(cli: Cli) -> Result<()> {
         other => {
             let app = App::load(global, opts)?;
             match other {
-                None => commands::list::run(
-                    &app,
-                    &ListArgs {
-                        word,
-                        ..ListArgs::default()
-                    },
-                ),
+                None => commands::list::run(&app, &ListArgs::default()),
                 Some(Command::List(args)) => commands::list::run(&app, &args),
                 Some(Command::Create(args)) => commands::create::run(&app, &args),
                 Some(Command::Edit(command)) => edit(&app, command),
@@ -178,41 +162,6 @@ fn edit(app: &App, command: EditCommand) -> Result<()> {
             let target = commands::rank::target(top, unrank, before.as_deref(), after.as_deref())?;
             commands::rank::run(app, &id, &target)
         }
-    }
-}
-
-fn command_name(command: &Command) -> &'static str {
-    match command {
-        Command::List(_) => "list",
-        Command::Create(_) => "create",
-        Command::Edit(edit) => match edit {
-            EditCommand::Set { .. } => "set",
-            EditCommand::Log { .. } => "log",
-            EditCommand::Done { .. } => "done",
-            EditCommand::Reopen { .. } => "reopen",
-            EditCommand::Rename { .. } => "rename",
-            EditCommand::Due { .. } => "due",
-            EditCommand::Tag { .. } => "tag",
-            EditCommand::Desc { .. } => "desc",
-            EditCommand::Move { .. } => "move",
-        },
-        Command::Next { .. } => "next",
-        Command::Pick { .. } => "pick",
-        Command::View { .. } => "view",
-        Command::Project { .. } => "project",
-        Command::Worktree { .. } => "worktree",
-        Command::Session { .. } => "session",
-        Command::Mr { .. } => "mr",
-        Command::Apply { .. } => "apply",
-        Command::Sync { .. } => "sync",
-        Command::Summary { .. } => "summary",
-        Command::Dates { .. } => "dates",
-        Command::Ui => "ui",
-        Command::Store(_) => "store",
-        Command::Doctor => "doctor",
-        Command::Config(_) => "config",
-        Command::Plugins(_) => "plugins",
-        Command::Completions { .. } => "completions",
     }
 }
 

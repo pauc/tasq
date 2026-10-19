@@ -1,9 +1,7 @@
 //! Command-line definition (clap derive).
 //!
-//! `tasq` with no subcommand lists open tasks; `tasq <word>` is shorthand
-//! for `tasq list <word>`, where the word is a status, a tag or a priority,
-//! exactly as the original script did. Global flags are accepted before or
-//! after the subcommand.
+//! `tasq` with no subcommand lists open tasks, as `tasq list` (alias `ls`)
+//! does. Global flags are accepted before or after the subcommand.
 
 #![allow(
     clippy::doc_markdown,
@@ -32,9 +30,9 @@ usage error or an internal failure.";
 const EXAMPLES: &str = "\
 Examples:
   tasq                       open tasks grouped by status
-  tasq ready                 only the READY group
-  tasq gitlab                grouped view of the tasks tagged #gitlab
-  tasq A                     grouped view of the priority-A tasks
+  tasq list ready            only the READY group
+  tasq ls gitlab             grouped view of the tasks tagged #gitlab
+  tasq ls A                  grouped view of the priority-A tasks
   tasq list --status waiting --tag support
   tasq list --all            open tasks, then the done ones
   tasq create \"Fix the build\" --prio A --due tomorrow --tag ci
@@ -67,10 +65,6 @@ pub struct Cli {
     /// Flags every command accepts.
     #[command(flatten)]
     pub global: GlobalArgs,
-
-    /// Status, tag or priority to list; same as `tasq list <WORD>`.
-    #[arg(value_name = "WORD")]
-    pub word: Option<String>,
 
     /// The command to run; `list` when omitted.
     #[command(subcommand)]
@@ -131,7 +125,7 @@ pub enum ColorChoice {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// List open tasks grouped by status (the default command).
-    #[command(after_help = LIST_HELP)]
+    #[command(visible_alias = "ls", after_help = LIST_HELP)]
     List(ListArgs),
 
     /// Create a task.
@@ -216,31 +210,12 @@ pub enum Command {
         path: Option<PathBuf>,
     },
 
-    /// Declare a git worktree for the task, track an existing one, or
-    /// create the declared one now (`up`).
-    ///
-    /// `tasq worktree <ID> [BRANCH]` declares a worktree on BRANCH
-    /// (default: worktree.branch rendered for the task) at worktree.path:
-    /// it writes the `## Worktrees` entry and creates nothing; the worktree
-    /// is created when the task is launched, or by `tasq worktree up`.
-    /// `tasq worktree <ID> <PATH>` tracks an existing directory and its
-    /// current branch (idempotent). An argument that is an existing
-    /// directory, starts with `/` or `.`, or contains `~` is a path;
-    /// anything else is a branch.
-    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
+    /// Declare a git worktree for the task (`set`), track an existing one,
+    /// or create the declared one now (`up`).
     Worktree {
-        /// `up`.
+        /// `set`, `up`, `release`, ...
         #[command(subcommand)]
-        action: Option<WorktreeAction>,
-        /// Task id.
-        #[arg(value_name = "ID", required = true)]
-        id: Option<String>,
-        /// Branch to declare, or existing worktree directory to track.
-        #[arg(value_name = "BRANCH|PATH", conflicts_with = "create")]
-        target: Option<String>,
-        /// Declare a worktree on BRANCH and create it now.
-        #[arg(long, value_name = "BRANCH", hide = true)]
-        create: Option<String>,
+        action: WorktreeAction,
     },
 
     /// Track an agent session on a task (idempotent by session id).
@@ -680,7 +655,7 @@ The list is the grouped view of `tasq`; Right shows the selected task's
 detail beside it (or, below 100 columns, in its place) and Left hides it
 again. Keys: j/k move, g/G first
 and last, / filter (text matches titles; #word is a status, tag or
-priority as for `tasq <word>`), t status, p priority, l log a note, d mark
+priority as for `tasq list <word>`), t status, p priority, l log a note, d mark
 done (with an optional final note), E open the file in $VISUAL or $EDITOR,
 Enter open a work session here (`tasq pick`), Ctrl+Enter open it in a new
 window and switch to it, Shift+Enter open it in a new window and stay
@@ -700,9 +675,8 @@ const PLUGINS_HELP: &str = "\
 <name> is not a built-in command, with the remaining arguments verbatim and
 TASQ_BIN (this binary), TASQ_PROFILE, TASQ_CONFIG and TASQ_SET (the --set
 flags, one per line) in its environment, so `$TASQ_BIN ... --json` inside
-the plugin sees the same configuration. Built-in commands always win; a
-plugin also wins over the bare `tasq <word>` filter, which stays available
-as `tasq list <word>`.
+the plugin sees the same configuration. Built-in commands (and their
+aliases, such as `ls`) always win.
 
 Hooks are command lines under [hooks] in the config: post-create (after
 `tasq create`), post-done (after `tasq done`) and pre-launch (before
@@ -713,6 +687,27 @@ TASQ_TASK_ID and TASQ_BIN in its environment. See docs/plugins.md.";
 /// `tasq worktree` subcommands.
 #[derive(Debug, Clone, Subcommand)]
 pub enum WorktreeAction {
+    /// Declare a worktree for the task, or track an existing one.
+    ///
+    /// `tasq worktree set <ID> [BRANCH]` declares a worktree on BRANCH
+    /// (default: worktree.branch rendered for the task) at worktree.path:
+    /// it writes the `## Worktrees` entry and creates nothing; the worktree
+    /// is created when the task is launched, or by `tasq worktree up`.
+    /// `tasq worktree set <ID> <PATH>` tracks an existing directory and its
+    /// current branch (idempotent). An argument that is an existing
+    /// directory, starts with `/` or `.`, or contains `~` is a path;
+    /// anything else is a branch.
+    Set {
+        /// Task id.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Branch to declare, or existing worktree directory to track.
+        #[arg(value_name = "BRANCH|PATH", conflicts_with = "create")]
+        target: Option<String>,
+        /// Declare a worktree on BRANCH and create it now.
+        #[arg(long, value_name = "BRANCH", hide = true)]
+        create: Option<String>,
+    },
     /// Create the task's declared worktree now, as launching it would.
     ///
     /// When none of the declared worktrees exists, the first one with a
@@ -1197,13 +1192,17 @@ mod tests {
     }
 
     #[test]
-    fn bare_word_is_a_list_filter() {
-        let cli = Cli::try_parse_from(["tasq", "ready"]).unwrap();
-        assert_eq!(cli.word.as_deref(), Some("ready"));
-        assert!(cli.command.is_none());
+    fn list_takes_the_word_and_ls_is_its_alias() {
+        assert!(Cli::try_parse_from(["tasq", "ready"]).is_err());
         let cli = Cli::try_parse_from(["tasq"]).unwrap();
-        assert_eq!(cli.word, None);
         assert!(cli.command.is_none());
+        for name in ["list", "ls"] {
+            let cli = Cli::try_parse_from(["tasq", name, "ready"]).unwrap();
+            let Some(Command::List(args)) = cli.command else {
+                panic!("{name}: expected list");
+            };
+            assert_eq!(args.word.as_deref(), Some("ready"), "{name}");
+        }
     }
 
     #[test]
@@ -1213,9 +1212,9 @@ mod tests {
         let cli = Cli::try_parse_from(["tasq", "store", "info", "--json", "-vv"]).unwrap();
         assert!(cli.global.json);
         assert_eq!(cli.global.verbose, 2);
-        let cli = Cli::try_parse_from(["tasq", "--no-color", "ready"]).unwrap();
+        let cli = Cli::try_parse_from(["tasq", "--no-color", "ls", "ready"]).unwrap();
         assert!(cli.global.no_color);
-        assert_eq!(cli.word.as_deref(), Some("ready"));
+        assert!(matches!(cli.command, Some(Command::List(_))));
     }
 
     #[test]

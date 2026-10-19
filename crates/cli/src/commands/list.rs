@@ -1,4 +1,4 @@
-//! `tasq list` (and the bare `tasq [WORD]`): the status-grouped view of
+//! `tasq list` (alias `ls`, and the bare `tasq`): the status-grouped view of
 //! the original script.
 //!
 //! Rendering reproduces `print_group` from the script: a bold, coloured

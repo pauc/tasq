@@ -78,8 +78,8 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    name = "work"
    ```
 
-   `tasq ready`, `tasq gitlab` and `tasq A` print one status group, the tasks carrying a tag,
-   and the tasks of a priority; `tasq list --status waiting --tag support --text export`
+   `tasq list ready`, `tasq ls gitlab` and `tasq ls A` print one status group, the tasks carrying
+   a tag, and the tasks of a priority (`ls` is an alias of `list`); `tasq list --status waiting --tag support --text export`
    combines filters.
 
 3. Create and edit tasks:
@@ -210,9 +210,8 @@ environment.
 **Plugins and hooks.** `tasq <name> [args...]` runs an executable `tasq-<name>` found on
 `PATH` when `<name>` is not a built-in command, passing the remaining arguments verbatim and
 `TASQ_BIN` (plus `TASQ_PROFILE`, `TASQ_CONFIG`, `TASQ_SET` when in effect) so the plugin can
-call back into `tasq --json` and `tasq apply` with the same configuration. Built-ins always
-win; a plugin wins over the bare `tasq <word>` filter, which stays available as
-`tasq list <word>`. `[hooks]` runs command lines after `create`
+call back into `tasq --json` and `tasq apply` with the same configuration. Built-ins and
+their aliases always win. `[hooks]` runs command lines after `create`
 and `done` and before a session starts, with the task as JSON on stdin. `tasq plugins list`
 shows what was found. [`docs/plugins.md`](docs/plugins.md); reference plugin under
 [`examples/plugins/`](examples/plugins/).
@@ -227,7 +226,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 
 | Command | Purpose |
 |---|---|
-| `tasq [WORD]`, `tasq list [WORD] [--status S] [--tag T]... [--prio P] [--text TEXT] [--all \| --done]` | Open tasks grouped by status; `WORD` is a status, a tag or a priority; `--all` adds a DONE group, `--done` shows only closed tasks |
+| `tasq`, `tasq list [WORD] [--status S] [--tag T]... [--prio P] [--text TEXT] [--all \| --done]` | Open tasks grouped by status (`ls` is an alias of `list`); `WORD` is a status, a tag or a priority; `--all` adds a DONE group, `--done` shows only closed tasks |
 | `tasq create TITLE [--desc] [--status] [--prio] [--due] [--project] [--tag]... [--related]... [--mr]... [--note]` | Create a task |
 | `tasq set ID VALUE [NOTE]` | Set the status or the priority, optionally logging a note; a value the task already has writes nothing |
 | `tasq log ID NOTE` | Append a dated progress note |
@@ -241,7 +240,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq pick ID [--launcher NAME] [--dry-run]` | Open a session on a specific task |
 | `tasq view ID [--raw]` | Show a task (glow on a terminal, plain markdown otherwise; `--raw` is verbatim) |
 | `tasq project ID [PATH]` | Show or set the task's project directory |
-| `tasq worktree ID [BRANCH]` / `tasq worktree ID PATH` | Declare a worktree for the task (no git, nothing on disk), or track an existing one (with `worktree.enabled`) |
+| `tasq worktree set ID [BRANCH]` / `tasq worktree set ID PATH` | Declare a worktree for the task (no git, nothing on disk), or track an existing one (with `worktree.enabled`) |
 | `tasq session ID SESSION_ID [DESC] [--launcher NAME]` | Track an agent session |
 | `tasq mr ID URL [TITLE]` | Track a merge request |
 | `tasq sync [--source NAME] [--dry-run] [ID]...` | Refresh tasks from the configured sources, or re-check the given tasks |

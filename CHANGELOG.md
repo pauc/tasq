@@ -128,6 +128,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cargo workspace with the `tasq-core`, `tasq-store-nb`, `tasq-sources`,
   `tasq-launch`, `tasq` and `tasq-tui` crates, shared lints and quality gates.
 
+### Changed
+
+- **Breaking:** no positional argument shares a slot with subcommands any more (ADR-0028),
+  so the generated shell completions reach every subcommand (`tasq worktree rel<TAB>`,
+  `tasq store <TAB>`, ...).
+  - The list filter is `tasq list [WORD]`, with the new alias `tasq ls [WORD]`; the bare
+    `tasq <WORD>` shorthand is gone (`tasq ready` is now an unknown command, exit 2, unless a
+    `tasq-ready` plugin exists). A bare `tasq` still lists open tasks.
+  - Declaring or tracking a worktree is `tasq worktree set <ID> [BRANCH|PATH]` (and
+    `tasq worktree set <ID> --create <BRANCH>`); the `tasq worktree <ID> ...` form is gone. The
+    session prompt and the `/tasq:wrapup` skill use the new form; a bare `tasq worktree` prints
+    the subcommand list.
+
 ### Fixed
 
 - The herdr launcher no longer races the new pane's shell: `herdr agent start` was sent a

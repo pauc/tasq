@@ -1,4 +1,4 @@
-//! `tasq worktree <id> [BRANCH|PATH]`: declare a worktree or track an
+//! `tasq worktree set <id> [BRANCH|PATH]`: declare a worktree or track an
 //! existing one; `tasq worktree up <id>` creates the declared one now, as a
 //! launch does; `--create <branch>` (hidden) is "declare, then up";
 //! `tasq worktree release <id>` does what closing the task does to its
@@ -29,46 +29,37 @@ use crate::error::{CliError, Result};
 use crate::json;
 use crate::plugins::HookEvent;
 
-/// `tasq worktree`: a subcommand, else declare or track (`run`).
+/// `tasq worktree <subcommand>`.
 pub fn dispatch(app: &App, command: &Command) -> Result<()> {
-    let Command::Worktree {
-        action,
-        id,
-        target,
-        create,
-    } = command
-    else {
+    let Command::Worktree { action } = command else {
         unreachable!("dispatch is only called for the worktree command");
     };
     match action {
-        Some(WorktreeAction::Up {
+        WorktreeAction::Set { id, target, create } => {
+            run(app, id, target.as_deref(), create.as_deref())
+        }
+        WorktreeAction::Up {
             id,
             from,
             dry_run,
             yes,
-        }) => up(app, id, from.as_deref(), *yes, *dry_run),
-        Some(WorktreeAction::Trust { dir }) => trust(app, dir.as_deref()),
-        Some(WorktreeAction::Ls { id, all }) => worktree_nav::ls(app, id.as_deref(), *all),
-        Some(WorktreeAction::Switch { target, yes }) => {
+        } => up(app, id, from.as_deref(), *yes, *dry_run),
+        WorktreeAction::Trust { dir } => trust(app, dir.as_deref()),
+        WorktreeAction::Ls { id, all } => worktree_nav::ls(app, id.as_deref(), *all),
+        WorktreeAction::Switch { target, yes } => {
             worktree_nav::switch(app, target.as_deref(), *yes)
         }
-        Some(WorktreeAction::Path { target }) => worktree_nav::path(app, target),
-        Some(WorktreeAction::ShellInit { shell }) => worktree_nav::shell_init(app, *shell),
-        Some(WorktreeAction::Release {
+        WorktreeAction::Path { target } => worktree_nav::path(app, target),
+        WorktreeAction::ShellInit { shell } => worktree_nav::shell_init(app, *shell),
+        WorktreeAction::Release {
             id,
             force,
             dry_run,
             yes,
-        }) => release_command(app, id, *force, *yes, *dry_run),
-        Some(WorktreeAction::Prune { all, dry_run, yes }) => {
+        } => release_command(app, id, *force, *yes, *dry_run),
+        WorktreeAction::Prune { all, dry_run, yes } => {
             worktree_nav::prune(app, *all, *yes, *dry_run)
         }
-        None => run(
-            app,
-            id.as_deref().unwrap_or_default(),
-            target.as_deref(),
-            create.as_deref(),
-        ),
     }
 }
 
@@ -211,7 +202,7 @@ pub fn repo_settings(app: &App, project: &Path) -> Result<RepoSettings> {
     })
 }
 
-/// `tasq worktree <id> --create <branch>`: declares a worktree on
+/// `tasq worktree set <id> --create <branch>`: declares a worktree on
 /// `branch` and creates it, unless its directory exists already.
 pub fn create_and_track(app: &App, store: &mut dyn Store, id: &TaskId, branch: &str) -> Result<()> {
     let mut task = store.get(id)?;
@@ -247,7 +238,7 @@ pub fn up(app: &App, id: &str, from: Option<&str>, yes: bool, dry_run: bool) -> 
             Some(existing) => format!("[{id}] worktree exists: {}\n", describe(existing)),
             None => {
                 return Err(CliError::user(format!(
-                    "task {id} declares no worktree with a branch; declare one with tasq worktree {id} [BRANCH]"
+                    "task {id} declares no worktree with a branch; declare one with tasq worktree set {id} [BRANCH]"
                 )));
             }
         },

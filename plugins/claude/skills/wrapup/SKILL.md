@@ -56,7 +56,7 @@ Only what is not tracked yet (compare with the JSON from step 1):
 
 ```sh
 tasq mr <id> <merge-request-url> [title]      # every MR opened or worked on
-tasq worktree <id> <path>                     # only when worktrees are enabled: the git
+tasq worktree set <id> <path>                 # only when worktrees are enabled: the git
                                               # worktree the session worked in
 tasq session <id> <session-id> "<what for>"   # only when the session id is known
 tasq project <id> <dir>                       # when the task had no project yet

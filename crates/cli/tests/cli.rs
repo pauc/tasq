@@ -105,7 +105,7 @@ mod errors {
     #[test]
     fn invalid_filter_word() {
         let env = TestEnv::fixture();
-        let out = env.tasq().arg("##x").output().unwrap();
+        let out = env.tasq().args(["list", "##x"]).output().unwrap();
         assert_eq!(out.status.code(), Some(1));
         assert!(stderr(&out).starts_with("tasq: "), "{}", stderr(&out));
     }
@@ -164,7 +164,7 @@ mod list {
     #[test]
     fn one_status() {
         let env = TestEnv::fixture();
-        let out = env.tasq().arg("ready").output().unwrap();
+        let out = env.tasq().args(["list", "ready"]).output().unwrap();
         assert!(out.status.success());
         assert_snapshot!(stdout(&out));
         let explicit = env
@@ -204,7 +204,7 @@ mod list {
                 "# Rank by hand\n\n## Progress\n\n- 2026-10-09 17:00: created\n",
             ),
         );
-        let out = env.tasq().arg("in-progress").output().unwrap();
+        let out = env.tasq().args(["ls", "in-progress"]).output().unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         assert_eq!(
             stdout(&out),
@@ -215,7 +215,11 @@ mod list {
              [10] #A Rank by hand\n\n"
         );
         assert!(!stdout(&out).contains("1024"), "{}", stdout(&out));
-        let json = env.tasq().args(["in-progress", "--json"]).output().unwrap();
+        let json = env
+            .tasq()
+            .args(["ls", "in-progress", "--json"])
+            .output()
+            .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
         let ids: Vec<&str> = value["tasks"]
             .as_array()
@@ -232,10 +236,10 @@ mod list {
     #[test]
     fn by_tag() {
         let env = TestEnv::fixture();
-        let out = env.tasq().arg("gitlab").output().unwrap();
+        let out = env.tasq().args(["list", "gitlab"]).output().unwrap();
         assert!(out.status.success());
         assert_snapshot!(stdout(&out));
-        let hashed = env.tasq().arg("#gitlab").output().unwrap();
+        let hashed = env.tasq().args(["ls", "#gitlab"]).output().unwrap();
         assert_eq!(stdout(&hashed), stdout(&out));
         let explicit = env
             .tasq()
@@ -248,7 +252,7 @@ mod list {
     #[test]
     fn by_priority() {
         let env = TestEnv::fixture();
-        let out = env.tasq().arg("A").output().unwrap();
+        let out = env.tasq().args(["ls", "A"]).output().unwrap();
         assert!(out.status.success());
         assert_snapshot!(stdout(&out));
         let explicit = env.tasq().args(["list", "--prio", "A"]).output().unwrap();
@@ -279,12 +283,12 @@ mod list {
     fn nothing_matches() {
         let env = TestEnv::fixture();
         env.tasq()
-            .arg("nosuch")
+            .args(["list", "nosuch"])
             .assert()
             .success()
             .stdout("No open todos tagged #nosuch.\n");
         env.tasq()
-            .arg("blocked")
+            .args(["list", "blocked"])
             .assert()
             .success()
             .stdout("No open todos with status blocked.\n");
@@ -385,7 +389,7 @@ mod list {
         let env = TestEnv::empty();
         env.tasq().assert().success().stdout("No open todos.\n");
         env.tasq()
-            .arg("gitlab")
+            .args(["ls", "gitlab"])
             .assert()
             .success()
             .stdout("No open todos.\n");
@@ -419,7 +423,7 @@ mod list {
     fn json_for_an_empty_result_is_an_empty_array() {
         let env = TestEnv::fixture();
         env.tasq()
-            .args(["--json", "nosuch"])
+            .args(["--json", "list", "nosuch"])
             .assert()
             .success()
             .stdout("{\n  \"schema\": 1,\n  \"tasks\": []\n}\n");
@@ -855,13 +859,15 @@ mod completions {
 }
 
 #[test]
-fn a_word_and_a_subcommand_together_are_rejected() {
+fn a_bare_word_is_not_a_list_filter() {
     let env = TestEnv::fixture();
-    env.tasq()
-        .args(["ready", "store", "info"])
-        .assert()
-        .code(1)
-        .stderr("tasq: unexpected argument \"ready\" before the 'store' command\n");
+    for argv in [&["ready"][..], &["ready", "store", "info"]] {
+        env.tasq()
+            .args(argv)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("unrecognized subcommand 'ready'"));
+    }
 }
 
 /// A fixed "now" for every write in these tests.
@@ -2338,7 +2344,7 @@ mod create {
             "{name} does not start with the clock's time"
         );
         // The new task shows up in the list under READY with its id.
-        let out = env.tasq().arg("ready").output().unwrap();
+        let out = env.tasq().args(["list", "ready"]).output().unwrap();
         assert!(stdout(&out).contains("[ 8] #B Minimal"), "{}", stdout(&out));
     }
 
@@ -2574,7 +2580,7 @@ mod worktree {
         env.git(&wt, &["checkout", "-q", "-b", "feature/x"]);
         let out = env
             .tasq_wt()
-            .args(["worktree", "3", wt.to_str().unwrap()])
+            .args(["worktree", "set", "3", wt.to_str().unwrap()])
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
@@ -2589,7 +2595,7 @@ mod worktree {
         );
         let again = env
             .tasq_wt()
-            .args(["worktree", "3", wt.to_str().unwrap()])
+            .args(["worktree", "set", "3", wt.to_str().unwrap()])
             .output()
             .unwrap();
         assert_eq!(
@@ -2601,7 +2607,7 @@ mod worktree {
         std::fs::create_dir(&plain).unwrap();
         let out = env
             .tasq_wt()
-            .args(["worktree", "3", plain.to_str().unwrap()])
+            .args(["worktree", "set", "3", plain.to_str().unwrap()])
             .output()
             .unwrap();
         assert_eq!(
@@ -2609,12 +2615,12 @@ mod worktree {
             "[3] worktree: [ROOT]/home/plain\n"
         );
         env.tasq_wt()
-            .args(["worktree", "3", "/definitely/not/here"])
+            .args(["worktree", "set", "3", "/definitely/not/here"])
             .assert()
             .code(1)
             .stderr("tasq: worktree path not found: /definitely/not/here\n");
         env.tasq_wt()
-            .args(["worktree", "3"])
+            .args(["worktree", "set", "3"])
             .assert()
             .code(1)
             .stderr("tasq: task 3 tracks no project and work.default_project is unset; set one with tasq project 3 <path>\n");
@@ -2644,7 +2650,7 @@ mod worktree {
             let out = env
                 .tasq_wt()
                 .env("PATH", "")
-                .args(["worktree", "3"])
+                .args(["worktree", "set", "3"])
                 .args(args)
                 .output()
                 .unwrap();
@@ -2675,7 +2681,7 @@ mod worktree {
         );
         assert!(!env.home.join("proj-feature_x").exists(), "nothing on disk");
         env.tasq_wt()
-            .args(["worktree", "3", "a~b"])
+            .args(["worktree", "set", "3", "a~b"])
             .assert()
             .code(1)
             .stderr("tasq: worktree path not found: a~b\n");
@@ -2706,7 +2712,7 @@ mod worktree {
                 "TASQ_WORKTREE_PATH",
                 "{{project}}/../wt/{{repo}}/{{project_name}}-{{branch}}",
             )
-            .args(["worktree", "3", "b"])
+            .args(["worktree", "set", "3", "b"])
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
@@ -2732,7 +2738,7 @@ mod worktree {
             .success();
         env.tasq_wt()
             .env("PATH", "")
-            .args(["worktree", "3", "c"])
+            .args(["worktree", "set", "3", "c"])
             .assert()
             .success()
             .stdout(predicate::str::ends_with("/home/sep-c (c)\n"));
@@ -2832,12 +2838,12 @@ mod worktree {
         let other = env.home.join("other");
         std::fs::create_dir(&other).unwrap();
         env.tasq_wt()
-            .args(["worktree", "3", other.to_str().unwrap()])
+            .args(["worktree", "set", "3", other.to_str().unwrap()])
             .assert()
             .success();
         let out = env
             .tasq_wt()
-            .args(["worktree", "3", "--create", "feature/y"])
+            .args(["worktree", "set", "3", "--create", "feature/y"])
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
@@ -2851,7 +2857,7 @@ mod worktree {
                 .contains("- [ROOT]/home/proj-feature_y (`feature/y`)\n")
         );
         env.tasq_wt()
-            .args(["worktree", "3", "--create", "feature/y"])
+            .args(["worktree", "set", "3", "--create", "feature/y"])
             .assert()
             .success()
             .stdout(predicate::str::ends_with(
@@ -2873,7 +2879,7 @@ mod worktree {
             .assert()
             .success();
         env.tasq_wt()
-            .args(["worktree", "3", "feat/r"])
+            .args(["worktree", "set", "3", "feat/r"])
             .assert()
             .success();
         env.tasq_wt()
@@ -2928,7 +2934,7 @@ mod worktree {
             .assert()
             .success();
         env.tasq_wt()
-            .args(["worktree", "3", "b"])
+            .args(["worktree", "set", "3", "b"])
             .assert()
             .success();
         project
@@ -3015,7 +3021,7 @@ mod worktree {
             .assert()
             .success();
         env.tasq_wt()
-            .args(["worktree", "3", "b"])
+            .args(["worktree", "set", "3", "b"])
             .assert()
             .success();
         project
@@ -3272,10 +3278,10 @@ mod worktree {
             .assert()
             .code(1)
             .stderr(
-                "tasq: task 3 declares no worktree with a branch; declare one with tasq worktree 3 [BRANCH]\n",
+                "tasq: task 3 declares no worktree with a branch; declare one with tasq worktree set 3 [BRANCH]\n",
             );
         env.tasq_wt()
-            .args(["worktree", "3", "b"])
+            .args(["worktree", "set", "3", "b"])
             .assert()
             .success();
         let up = |args: &[&str]| {
@@ -3313,7 +3319,7 @@ mod worktree {
     fn create_errors() {
         let env = TestEnv::fixture();
         env.tasq_wt()
-            .args(["worktree", "3", "--create", "b"])
+            .args(["worktree", "set", "3", "--create", "b"])
             .assert()
             .code(1)
             .stderr("tasq: task 3 tracks no project and work.default_project is unset; set one with tasq project 3 <path>\n");
@@ -3323,6 +3329,7 @@ mod worktree {
         env.tasq_wt()
             .args([
                 "worktree",
+                "set",
                 "3",
                 "--create",
                 "b",
@@ -3335,7 +3342,7 @@ mod worktree {
         // git needs a repository; nothing is left at the path.
         env.tasq_wt()
             .env("TASQ_DEFAULT_PROJECT", project.to_str().unwrap())
-            .args(["worktree", "3", "--create", "b"])
+            .args(["worktree", "set", "3", "--create", "b"])
             .assert()
             .code(1)
             .stderr(predicate::str::contains(
@@ -3687,7 +3694,7 @@ mod launch {
             .assert()
             .success();
         env.tasq_wt()
-            .args(["worktree", "3", branch])
+            .args(["worktree", "set", "3", branch])
             .assert()
             .success();
         env.fake_tool("fakesh", "pwd");
@@ -3788,7 +3795,7 @@ mod launch {
             .assert()
             .success();
         env.tasq_wt()
-            .args(["worktree", "3", plain.to_str().unwrap()])
+            .args(["worktree", "set", "3", plain.to_str().unwrap()])
             .assert()
             .success();
         std::fs::remove_dir(&plain).unwrap();
@@ -5096,39 +5103,44 @@ mod plugins {
     }
 
     #[test]
-    fn plugin_wins_over_the_filter_word_but_never_over_a_builtin() {
+    fn plugin_runs_for_any_word_but_never_for_a_builtin() {
         let env = TestEnv::fixture();
         env.fake_tool("tasq-ready", &format!("{PROBE}\necho plugin ready"));
         env.fake_tool("tasq-list", &format!("{PROBE}\necho plugin list"));
-        // The ready plugin shadows the bare `tasq ready` filter...
+        env.fake_tool("tasq-ls", &format!("{PROBE}\necho plugin ls"));
+        // A status word is a plugin name like any other...
         env.tasq()
             .arg("ready")
             .assert()
             .success()
             .stdout("plugin ready\n");
-        // ...but `tasq list ready` is still the filter view.
+        // ...and `tasq list ready` is the filter view.
         let out = env.tasq().args(["list", "ready"]).output().unwrap();
         assert!(stdout(&out).starts_with("ready\n"), "{}", stdout(&out));
-        // A built-in name is never dispatched.
-        let out = env.tasq().arg("list").output().unwrap();
-        assert!(
-            stdout(&out).starts_with("IN PROGRESS\n"),
-            "{}",
-            stdout(&out)
-        );
-        // Without an executable the word is a tag filter as before.
+        // A built-in name, or its alias, is never dispatched.
+        for builtin in ["list", "ls"] {
+            let out = env.tasq().arg(builtin).output().unwrap();
+            assert!(
+                stdout(&out).starts_with("IN PROGRESS\n"),
+                "{builtin}: {}",
+                stdout(&out)
+            );
+        }
+        // Without an executable the word is an unknown command.
         env.tasq()
             .arg("nope-plugin")
             .assert()
-            .success()
-            .stdout("No open todos tagged #nope-plugin.\n");
+            .code(2)
+            .stderr(predicate::str::contains(
+                "unrecognized subcommand 'nope-plugin'",
+            ));
         // A plugin file that is not executable does not count.
         std::fs::write(env.bin.join("tasq-plain"), "#!/bin/sh\necho ran\n").unwrap();
         env.tasq()
             .arg("plain")
             .assert()
-            .success()
-            .stdout("No open todos tagged #plain.\n");
+            .code(2)
+            .stderr(predicate::str::contains("unrecognized subcommand 'plain'"));
     }
 
     #[test]
@@ -5451,7 +5463,7 @@ mod worktrees_disabled {
     fn the_worktree_command_is_refused() {
         let env = TestEnv::fixture();
         env.tasq()
-            .args(["worktree", "3", "--create", "b"])
+            .args(["worktree", "set", "3", "--create", "b"])
             .assert()
             .code(1)
             .stderr("tasq: worktrees are disabled; set worktree.enabled = true (docs/config.md#worktrees)\n");
@@ -5534,7 +5546,7 @@ mod worktree_release {
             .assert()
             .success();
         env.tasq_wt()
-            .args(["worktree", "3", "b"])
+            .args(["worktree", "set", "3", "b"])
             .assert()
             .success();
         env.tasq_wt()
@@ -5703,13 +5715,13 @@ mod worktree_release {
         // The main checkout, tracked by hand, is kept without a word; a
         // directory git does not list is named.
         env.tasq_wt()
-            .args(["worktree", "3", project.to_str().unwrap()])
+            .args(["worktree", "set", "3", project.to_str().unwrap()])
             .assert()
             .success();
         let stray = env.home.join("stray");
         std::fs::create_dir(&stray).unwrap();
         env.tasq_wt()
-            .args(["worktree", "3", stray.to_str().unwrap()])
+            .args(["worktree", "set", "3", stray.to_str().unwrap()])
             .assert()
             .success();
         let (out, err) = run(&env, &["worktree", "release", "3"]);
@@ -5805,7 +5817,7 @@ mod worktree_release {
         for (id, branch) in [("4", "e"), ("6", "d")] {
             for args in [
                 vec!["project", id, project.to_str().unwrap()],
-                vec!["worktree", id, branch],
+                vec!["worktree", "set", id, branch],
                 vec!["worktree", "up", id],
             ] {
                 env.tasq_wt().args(args).assert().success();
@@ -5915,7 +5927,7 @@ mod worktree_release {
             .assert()
             .success();
         env.tasq_wt()
-            .args(["worktree", "7", wt.to_str().unwrap()])
+            .args(["worktree", "set", "7", wt.to_str().unwrap()])
             .assert()
             .success();
         let out = env.tasq_wt().args(["done", "7"]).output().unwrap();
@@ -5959,7 +5971,7 @@ mod worktree_nav {
                 .assert()
                 .success();
             env.tasq_wt()
-                .args(["worktree", id, branch])
+                .args(["worktree", "set", id, branch])
                 .assert()
                 .success();
         }

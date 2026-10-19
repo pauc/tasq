@@ -16,13 +16,13 @@ tasq plugins list             # what is on PATH, and the configured hooks
 
 `tasq <name> [args...]` runs `tasq-<name>` when:
 
-1. `<name>` is not a built-in command (`list`, `create`, `plugins`, ... and `help`).
-   Built-ins always win; a plugin called `tasq-list` is never run.
+1. `<name>` is not a built-in command or alias (`list`, `ls`, `create`, `plugins`, ... and
+   `help`). Built-ins always win; a plugin called `tasq-list` or `tasq-ls` is never run.
 2. An executable file `tasq-<name>` exists in a `PATH` entry (the first one wins).
 
-Otherwise the command line is parsed as usual, so `tasq ready` is the READY group unless a
-`tasq-ready` executable exists. A plugin therefore shadows the bare `tasq <word>` filter for
-its name; `tasq list <word>` always reaches the filter.
+Otherwise the command line is parsed as usual, and an unknown name is a usage error
+(`unrecognized subcommand`). Filters always go through `tasq list <word>` (or `tasq ls
+<word>`), so a plugin named after a status or a tag shadows nothing.
 
 The plugin receives the arguments after its name verbatim (`tasq tlogs --json x` runs
 `tasq-tlogs --json x`) and replaces the `tasq` process, so its exit code, stdin and streams are

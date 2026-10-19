@@ -430,7 +430,7 @@ impl Model {
     }
 
     /// The core filter for the filter text: `#word` is a status, priority
-    /// or tag like `tasq <word>` (an invalid word matches nothing),
+    /// or tag like `tasq list <word>` (an invalid word matches nothing),
     /// anything else matches titles case-insensitively.
     pub fn filter(&self) -> Filter {
         let text = self.filter.trim();

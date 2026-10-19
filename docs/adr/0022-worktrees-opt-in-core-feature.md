@@ -32,7 +32,7 @@ Worktrees are a core feature behind `worktree.enabled` (default `false`).
   never shows the section, the default Claude prompt drops its worktree line, and
   `resolve_workdir` ignores tracked worktrees. Files are never rewritten because of the toggle;
   an existing `## Worktrees` section is preserved byte for byte and used again when re-enabled.
-- **On** provides the command family of the plan (`tasq worktree <id> [BRANCH]` to declare, `up`,
+- **On** provides the command family of the plan (`tasq worktree set <id> [BRANCH]` to declare, `up`,
   `release`, `ls`, `prune`, `switch`, `path`, `shell-init`, `trust`) and a provisioning model like gwm's (symlinks, copies,
   templates, variables, hooks) configured under `[worktree]` in the existing layered config.
   Worktree commands load that config from the task's project directory, so a `.tasq.toml` next
@@ -73,8 +73,9 @@ Worktrees are a core feature behind `worktree.enabled` (default `false`).
 - `docs/json.md` changes: `"worktrees"` becomes conditional. `tasq apply` keeps accepting
   documents with or without it, and an absent key never drops stored worktrees.
 - Removing `work.worktree_*` breaks configs that set them; the error names the replacement.
-- Existing sessions call `tasq worktree <id> <path>` (kept as is) and `--create` (a hidden alias
-  of declare-then-`up` for one release).
+- Existing sessions call `tasq worktree <id> <path>` and `--create` (a hidden alias of
+  declare-then-`up` for one release). Both moved under `tasq worktree set` on 2026-10-19: a
+  positional `<ID>` next to the subcommands broke shell completion of the subcommand names.
 
 ## Alternatives considered
 

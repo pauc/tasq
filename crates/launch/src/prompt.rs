@@ -92,7 +92,7 @@ mod tests {
             "tasq log {{id}}",
             "tasq set {{id}}",
             "tasq project {{id}}",
-            "tasq worktree {{id}}",
+            "tasq worktree set {{id}}",
             "tasq session {{id}}",
             "tasq mr {{id}}",
             "tasq done {{id}}",

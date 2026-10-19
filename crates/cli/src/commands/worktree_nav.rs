@@ -325,7 +325,7 @@ fn task_dir(app: &App, task: &Task, create: Option<bool>) -> Result<PathBuf> {
             Ok(created.path)
         }
         None => Err(CliError::user(format!(
-            "task {id} declares no worktree with a branch; declare one with tasq worktree {id} [BRANCH]"
+            "task {id} declares no worktree with a branch; declare one with tasq worktree set {id} [BRANCH]"
         ))),
     }
 }

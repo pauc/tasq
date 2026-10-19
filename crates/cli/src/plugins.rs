@@ -5,8 +5,7 @@
 //! - **Dispatch.** `tasq <name> [args...]`, where `<name>` is not a built-in
 //!   command, runs an executable called `tasq-<name>` found on `PATH` with
 //!   the remaining arguments verbatim ([`External::parse`], [`find`],
-//!   [`exec`]). Built-in commands always win; a plugin wins over the bare
-//!   `tasq <word>` filter view, which stays reachable as `tasq list <word>`.
+//!   [`exec`]). Built-in commands and their aliases always win.
 //! - **Hooks.** `[hooks]` command lines run around CLI events
 //!   ([`Hook`], [`run_hooks`]): after `create`, after `done`, before a
 //!   session is launched. Each gets a JSON document on stdin.
@@ -481,8 +480,9 @@ mod tests {
         }
         assert_eq!(External::parse(&argv(&[])), None);
         assert_eq!(External::parse(&argv(&["--json"])), None);
-        // A status word is a candidate too: the plugin wins if it exists.
+        // Any other word is a candidate, a status included.
         assert_eq!(External::parse(&argv(&["ready"])).unwrap().name, "ready");
+        assert_eq!(External::parse(&argv(&["ls", "x"])), None);
     }
 
     #[test]
