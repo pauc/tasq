@@ -242,12 +242,12 @@ No library code changes.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready
+**Status:** done
 
-- [ ] Each list-section scenario has a current-format pair, checked byte for byte through the scenario table; the on-disk/scenario consistency checks cover the new pairs.
-- [ ] Last duplicate heading wins, duplicates are checked per section, merge request scanning, worktree path-prefix matching, line endings and the round trip through the task each have a current-format test.
-- [ ] The insertion rules from the script (new sections before `## Progress`, merge requests nested in `## Related`) are pinned on the current format.
-- [ ] No library change; no mutation run.
+- [x] Each list-section scenario has a current-format pair, checked byte for byte through the scenario table; the on-disk/scenario consistency checks cover the new pairs.
+- [x] Last duplicate heading wins, duplicates are checked per section, merge request scanning, worktree path-prefix matching, line endings and the round trip through the task each have a current-format test.
+- [x] The insertion rules from the script (new sections before `## Progress`, merge requests nested in `## Related`) are pinned on the current format.
+- [x] No library change; no mutation run.
 
 ### RN-002: `tasq migrate` is gone
 
@@ -258,12 +258,12 @@ fixture store keeps its bytes and every CLI test that reads it is unchanged.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready
+**Status:** done
 
-- [ ] `tasq migrate ...` fails as an unknown command; the help snapshot no longer lists it.
-- [ ] The CLI's migrate command module, its error conversion and its tests are gone; the store crate's public-API test no longer pins migrate.
-- [ ] The fixture store is byte for byte unchanged.
-- [ ] `mutants-in` on the store crate's sources: zero missed.
+- [x] `tasq migrate ...` fails as an unknown command; the help snapshot no longer lists it.
+- [x] The CLI's migrate command module, its error conversion and its tests are gone; the store crate's public-API test no longer pins migrate.
+- [x] The fixture store is byte for byte unchanged.
+- [x] `mutants-in` on the store crate's sources: zero missed.
 
 ### RN-003: the nb crate is gone
 
