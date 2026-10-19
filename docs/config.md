@@ -204,12 +204,6 @@ Source of truth: `crates/core/src/config/mod.rs`.
 Empty values count as unset. `XDG_CONFIG_HOME` is honoured for the global file location,
 `XDG_DATA_HOME` for the default `data_dir`.
 
-Removed keys (ADR-0026): `store.kind`, `store.notebook` and `store.sync_interval`, and the
-`TASQ_NOTEBOOK` variable. A file that still sets one of the keys fails with the file, line and
-column and a message naming the replacement. Every command loads the config, `tasq migrate`
-included, so remove the old keys first, then convert the nb notebook once with `tasq migrate
-<notebook>` and set the `data_dir` / `store.name` lines it prints (`docs/migration.md`).
-
 Variables that are not configuration: `NO_COLOR` turns colour off; `TASQ_NOW="YYYY-MM-DD
 HH:MM"` fixes the clock (see `docs/testing.md`); `TASQ_TASK_ID`, `TASQ_DATA_DIR`,
 `TASQ_STORE_NAME` and `TASQ_PROFILE` are set in launched sessions (the first two double as the
@@ -221,9 +215,6 @@ overrides above, so the session's `tasq` opens the same store); `TASQ_BIN`, `TAS
 - `workflow.default_status` must be one of `workflow.statuses`.
 - `store.name` is one directory name: not empty, not `.` or `..`, no `/`; the error names the
   layer that set it.
-- `store.kind`, `store.notebook` and `store.sync_interval` no longer exist (ADR-0026); setting
-  one is an error naming the file, line and column and the replacement (`data_dir`,
-  `store.name`, `tasq migrate`).
 - `[worktree.ports]` needs `block` of at least 1, `span` of at least `block`, and
   `base + span` at most 65536.
 - `work.worktree_manager` and `work.worktree_command` no longer exist; setting them is an error
@@ -409,7 +400,7 @@ checked when they are rendered.
 ## Launchers
 
 `tasq next` and `tasq pick <id>` set the task to in-progress and open a session in the first
-tracked worktree that exists, else the task's `## Project`, else `work.default_project`.
+tracked worktree that exists, else the task's `project`, else `work.default_project`.
 `launch.default` (or `--launcher`) picks how:
 
 - `claude`: runs `claude "<prompt>"` in that directory. With `launch.env = "direnv"` and an

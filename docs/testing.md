@@ -9,10 +9,10 @@ Quality gates run locally with `just check` (or the cargo commands it wraps) and
 - Logic lives in pure functions with injected `Clock`, filesystem views, environment and fake
   processes, so it is cheap to run thousands of times. That is what makes mutation testing
   affordable.
-- Fixtures for the markdown format live under `crates/core/tests/fixtures/v2/*.md` (format v2,
-  `format_v2.rs`, `format_v2_write.rs`) and `crates/core/tests/fixtures/*.md` (format v1, read
-  by `tasq migrate` only, `format_fixtures.rs`); round trips must be byte-identical. Property
-  tests use `proptest` (`format_props.rs`, one arm per format).
+- Fixtures for the markdown format live under `crates/core/tests/fixtures/*.md` (`format.rs`,
+  `format_write.rs`), and the op before/after pairs under `crates/core/tests/fixtures/ops/`
+  (`format_ops.rs`); round trips must be byte-identical. Property tests use `proptest`
+  (`format_props.rs`).
 - Snapshot tests use `insta`. Accept changes with `INSTA_UPDATE=always scripts/guard cargo test
   -p <crate>` (no `cargo insta` needed), then review the snapshot diff.
 - The CLI is tested end to end with `assert_cmd` (`crates/cli/tests/cli.rs`) against the
@@ -25,18 +25,15 @@ Quality gates run locally with `just check` (or the cargo commands it wraps) and
   table (`crates/cli/tests/support/mod.rs`) reached through `forge.<name>.url`. No `wiremock`
   and no tokio in the dependency tree.
 
-## The v2 fixture store
+## The fixture store
 
-`crates/store/tests/fixtures/stores/default` is the nb fixture notebook converted by
-`tasq_store::migrate`: one `<ULID>.md` per task (ids 1, 3, 4, 6, 7, the nb ids), laid out as
-`<data_dir>/<store.name>` with the default name, for the CLI tests to copy. Each file name is a
-ULID of the nb file's second read as UTC (what `migrate` writes with `TZ=UTC`) with the random
-part counting up from 1, so the committed names do not depend on the zone of the machine that
-made them; `created_at` read back is that instant in local time.
-`the_committed_fixture_store_is_the_migrated_nb_fixture` (`crates/store/tests/migrate.rs`) fails when the fixture and the
-migration of the notebook disagree; after a deliberate change to either, regenerate it with
-`TASQ_UPDATE_FIXTURES=1 scripts/guard cargo test -p tasq-store --test migrate` and review the
-diff. Hand edits to the fixture are overwritten by that run.
+`crates/store/tests/fixtures/stores/default` is a store maintained by hand, like any other
+fixture: one `<ULID>.md` per task (ids 1, 3, 4, 6, 7; the gaps are normal, ids are never
+reused), laid out as `<data_dir>/<store.name>` with the default name, for the CLI tests to copy.
+Each file name is a ULID of a fixed instant read as UTC with the random part counting up from 1,
+so the names do not depend on the zone of the machine; `created_at` read back is that instant in
+local time. A change to it changes what every CLI test reads, so review the snapshot diff that
+follows.
 
 ## Testing the store
 
@@ -47,29 +44,19 @@ create) or empty (`TempStore::empty()`). `open()` opens a `TasqStore` on it with
 workflow and a fixed clock; `open_with(clock, random)` also scripts the random part of minted
 ULIDs, so a created file's name is an exact-string assertion and a name collision can be forced
 by returning the same value twice. `write(name, text)` places a task file by hand, `entries(dir)`
-lists a directory. Nothing in these tests runs a process: the store never runs `nb` or `git`.
+lists a directory. Nothing in these tests runs a process: the store never runs `git`.
 Creation times are compared through the same local-time conversion the store uses
 (`local_millis`), so the tests hold in any `TZ`. The lock tests set the lock file's mtime
 relative to the fixed clock, which is what makes stale and live locks deterministic.
 
-## The nb crate (migrate only)
+## Testing the CLI
 
-`crates/store-nb` and the v1 reader stay only until the follow-up task that deletes them;
-nothing in the CLI opens an nb notebook, and `tasq migrate` reads the notebook through
-`tasq-core` alone (`tasq_store::migrate`). Its tests still build an `NbEnv`
-(`crates/store-nb/tests/support/mod.rs`): a temporary copy of
-`crates/store-nb/tests/fixtures/nb/home` with `NB_DIR`, `NBRC_PATH`, an isolated `HOME` and
-`NB_AUTO_SYNC=0`, so the real `~/.nb` is never read or written. `crates/store-nb/tests/migrate.rs`
-checks that a migrated notebook reads back through the tasq store equal, field by field, to the
-nb store's tasks. The tests that run the real `nb` start with `nb_or_skip("<test name>")`: they
-pass vacuously when `nb` is not on `PATH`, unless `TASQ_REQUIRE_NB=1` is set (CI sets it).
-
-The CLI harness (`crates/cli/tests/support/mod.rs`, `TestEnv`) copies the v2 fixture store
+The CLI harness (`crates/cli/tests/support/mod.rs`, `TestEnv`) copies the fixture store
 (above) to `<home>/.local/share/tasq/stores/default`, the default store under an isolated
 `HOME`, sets `PATH` to a directory holding only a `git` symlink and `TZ=UTC` (minted file
 names are ULIDs of the clock's time), so the binary never sees the real store, the real config
 or the machine's zone. `TestEnv::empty()` has no store directory at all, which is an empty
-store. Tests place a task by hand with `write_task(ulid_name(when, n), v2(id, front, body))`
+store. Tests place a task by hand with `write_task(ulid_name(when, n), task_text(id, front, body))`
 and read one back by id (`read_task(id)`, `file_of(id)`: the store names files, not the test).
 `fake_tool(name, body)` installs a script on that `PATH` to stand in for `claude`, `glow`,
 `tmux` or `herdr`; fakes must use absolute paths for anything that is not a shell builtin.
@@ -78,8 +65,7 @@ Snapshots normalise the temp root to `[ROOT]`.
 ## Claude Code plugin
 
 `crates/cli/tests/plugin.rs` checks the layout of `plugins/claude` (manifest name `tasq`, one
-`SKILL.md` per skill with matching `name` and a `description`, no mention of task files,
-`.index` or a notebook: every write goes through the CLI) and that
+`SKILL.md` per skill with matching `name` and a `description`) and that
 the launch prompt template only names skills the plugin ships. The authoritative check needs
 Claude Code and is not in CI: `claude plugin validate --strict plugins/claude` (and the same for
 `.claude-plugin/marketplace.json` and `plugins/claude/skills`).
@@ -129,7 +115,7 @@ least one test to fail. Install it with `cargo install cargo-mutants --locked`.
 
 - `just mutants` tests only code changed since `main`. Run it before opening a PR. CI fails if a
   mutant in the diff survives.
-- `just mutants-full` tests every mutant in `tasq-core`, `tasq-store`, `tasq-store-nb`,
+- `just mutants-full` tests every mutant in `tasq-core`, `tasq-store`,
   `tasq-sources`, `tasq-launch` and `tasq-worktree`. CI runs it nightly on `main` and keeps the
   issue "Surviving mutants (nightly)" up to date.
 - `just mutants-in crates/core/src/format` checks a single module, which is how the per-task

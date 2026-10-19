@@ -13,8 +13,7 @@ and `tasq` edits coexist. On top of the files it adds a status workflow, priorit
 progress notes, a standup summary, work sessions (Claude Code, tmux, herdr, a shell) started
 in the task's worktree, external sources (GitLab and GitHub review requests and issues, an LLM
 inbox) that create and close tasks, a full-screen terminal UI, `--json` on every command, and
-out-of-process plugins. An existing [nb](https://github.com/xwmx/nb) todo notebook converts
-with one command, `tasq migrate` ([`docs/migration.md`](docs/migration.md)).
+out-of-process plugins.
 
 ![tasq listing tasks, setting a status and printing a standup summary, then tasq ui with the status picker and the help overlay](docs/demo/tasq.gif)
 

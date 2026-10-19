@@ -6,7 +6,7 @@ status: waiting
 
 ## Description
 
-Has sections tasq does not know, and v1 sections that are unknown in v2.
+Has sections tasq does not know, some of them named like frontmatter keys.
 
 ## Due
 

@@ -1,10 +1,10 @@
 # Architecture
 
-`tasq` is a Cargo workspace of eight crates. One crate holds the domain and knows nothing about
+`tasq` is a Cargo workspace of seven crates. One crate holds the domain and knows nothing about
 the outside world; the adapter crates implement its extension traits against real things (a
 store directory, GitLab and GitHub, child processes, git worktrees, a terminal); one crate, the
-`tasq` binary, wires them together; one, the nb store, is legacy and waits for deletion. This document describes each crate, what it owns, and how the crates talk to
-each other. The decisions behind the shape are in [`docs/adr/`](adr/README.md).
+`tasq` binary, wires them together. This document describes each crate, what it owns, and how
+the crates talk to each other. The decisions behind the shape are in [`docs/adr/`](adr/README.md).
 
 ## The workspace at a glance
 
@@ -17,7 +17,6 @@ flowchart TB
 
     subgraph adapters["Adapters (the only crates that do I/O)"]
         tstore["<b>tasq-store</b><br/>Store over a tasq directory<br/>(ULID files, Revision, diff; ADR-0026)"]
-        store["<b>tasq-store-nb</b><br/>legacy: Store over an nb notebook<br/>(deleted by a follow-up task)"]
         sources["<b>tasq-sources</b><br/>Source: GitLab, GitHub, LLM bridge"]
         launch["<b>tasq-launch</b><br/>Launcher, Summarizer"]
         worktree["<b>tasq-worktree</b><br/>git worktree add"]
@@ -26,7 +25,6 @@ flowchart TB
     core["<b>tasq-core</b> (crates/core)<br/>model · format · query · config · clock<br/>Store / Source / Launcher traits"]
 
     cli --> tstore
-    store --> tstore
     tstore --> core
     cli --> sources
     cli --> launch
@@ -34,21 +32,17 @@ flowchart TB
     cli --> tui
     cli --> core
     tui --> core
-    store --> core
     sources --> core
     launch --> core
 ```
 
-Dependencies flow one way, toward `tasq-core`. The adapters never depend on each other (the one
-exception is `tasq-store-nb` taking `Revision` and `diff` from `tasq-store` until the nb crate
-is deleted, ADR-0026), and the TUI depends on core only; the CLI is the single place where
-everything meets.
+Dependencies flow one way, toward `tasq-core`. The adapters never depend on each other, and the
+TUI depends on core only; the CLI is the single place where everything meets.
 
 | Crate | Package | Role | Talks to the world through |
 |---|---|---|---|
 | `crates/core` | `tasq-core` | Domain model, lossless markdown format, queries, config, clock, reconciliation, reports, and the `Store`, `Source`, `Launcher`, `Summarizer` traits; the worktree lifecycle decisions (`worktree`). | Nothing. No filesystem, no processes, no terminal, no network. |
-| `crates/store` | `tasq-store` | The `Store` the CLI opens (ADR-0026): `TasqStore` over a directory of `<ULID>.md` files with a frontmatter block. Reads (the id map is the files' frontmatter, scanned on every call; the creation time is the ULID's), `create` under the store lock (`.tasq/lock`; highest id plus one, a ULID minted from the clock, a no-clobber write), `update` and `set_done` under the same lock (conflict detection by `Revision`, `diff::apply` to the v2 ops, an atomic write over the file), `doctor` checks (`store`, `task-files`, `ids`, `lock`), `migrate` (an nb notebook into a store directory, keeping every id), `Revision` (mtime, length, hash) and `diff::apply` (whole-task write to `format::ops` calls). | Files. |
-| `crates/store-nb` | `tasq-store-nb` | Legacy: the `Store` over an nb notebook the CLI used before ADR-0026, with its git bookkeeping. Nothing opens it any more; it stays for the migrate parity test until a follow-up task deletes it with the v1 reader. | Files; `git` child processes. |
+| `crates/store` | `tasq-store` | The `Store` the CLI opens (ADR-0026): `TasqStore` over a directory of `<ULID>.md` files with a frontmatter block. Reads (the id map is the files' frontmatter, scanned on every call; the creation time is the ULID's), `create` under the store lock (`.tasq/lock`; highest id plus one, a ULID minted from the clock, a no-clobber write), `update` and `set_done` under the same lock (conflict detection by `Revision`, `diff::apply` to the format ops, an atomic write over the file), `doctor` checks (`store`, `task-files`, `ids`, `lock`), `Revision` (mtime, length, hash) and `diff::apply` (whole-task write to `format::ops` calls). | Files. |
 | `crates/sources` | `tasq-sources` | `Source` implementations: GitLab and GitHub review requests and work items over a shared forge client, and the LLM bridge that turns a command's JSON into items. | HTTPS (`ureq`); a child process for the LLM bridge and `token_cmd`. |
 | `crates/launch` | `tasq-launch` | `Launcher` implementations (shell, tmux, Claude Code, herdr), the command `Summarizer` behind `tasq summary`. | Child processes, with an explicitly injected environment. |
 | `crates/worktree` | `tasq-worktree` | Carries out the worktree lifecycle (ADR 0022): where a branch lives, `git worktree add` at the declared path, provisioning and the `pre-create`/`post-create` hooks around it, the release at close (removal, branch deletion, `pre-remove`/`post-remove` hooks), the declared worktrees `worktree ls` lists and their changes, hook approvals in the trust file. | `git` child processes, with an explicitly injected environment. |
@@ -111,7 +105,7 @@ flowchart LR
 | `query` | Pure functions over borrowed tasks: `Filter`, `sort`, `group_by_status`, `next`, `list`. |
 | `edit` | The script's `set`, `log` and `done` as operations on a `Store`. Both front ends call these, so they cannot drift. |
 | `source` | `Source` trait, `SourceItem`, `reconcile` (items vs tasks, producing `Change`s) and `apply` (writes the changes through a `Store`). |
-| `launch` | `Launcher` trait, `LaunchContext`, `resolve_workdir` (first existing worktree, else `## Project`, else `work.default_project`). |
+| `launch` | `Launcher` trait, `LaunchContext`, `resolve_workdir` (first existing worktree, else the task's `project`, else `work.default_project`). |
 | `work` | `project_dir`: the task's project, else `work.default_project`. |
 | `worktree` | The worktree feature's pure parts: `lifecycle` (declare, `on_launch`, `on_close`), `declaration` (templates rendered into an entry), `vars`, `git` (reading `.git` files). |
 | `report` | `DaySummary` from progress notes, `Summarizer` trait, `RawSummarizer`. |
@@ -119,7 +113,7 @@ flowchart LR
 | `clock` | `Clock`, `SystemClock`, `FixedClock`, `When`, timestamp helpers. Local wall-clock time, no zone, as the script wrote it. |
 | `dates` | `today`, `yesterday`, weekday names, ISO dates, report ranges. |
 | `theme` | `Color` and `Theme`: colour decisions shared by CLI and TUI; rendering is the front ends' job. |
-| `store` | `Store` trait (`list`, `get`, `create`, `update`, `set_done`, `describe`, `take_warnings`, `doctor`, `file_of`), `StoreError`, `StoreInfo`, `IdScheme`, `impl Store for Box<S>`, and `MemoryStore` for tests. |
+| `store` | `Store` trait (`list`, `get`, `create`, `update`, `set_done`, `describe`, `take_warnings`, `doctor`, `file_of`), `StoreError`, `StoreInfo`, `impl Store for Box<S>`, and `MemoryStore` for tests. |
 | `doctor` | `Check` and `CheckStatus`, the diagnostics a `Store::doctor` reports and `tasq doctor` prints; `any_failed`. |
 
 ### Two ideas that shape everything else
@@ -127,9 +121,8 @@ flowchart LR
 **The file has keys and sections, the model has fields.** A task file's frontmatter holds
 `status: ready`, `priority: A`, `tags: [gitlab]` (done is `status: done`); `Task::status` is
 `Some(READY)`, `Task::priority` is `A`, `Task::tags` is `[gitlab]` and `Task::done` a bool. The
-format layer does the mapping both ways against the configured `Workflow` (and, for the v1 nb
-files `tasq migrate` reads, from `#gitlab #A #ready` tags). Nothing outside `format` asks "is
-this value a status?".
+format layer does the mapping both ways against the configured `Workflow`. Nothing outside
+`format` asks "is this value a status?".
 
 **Edits are operations, not diffs.** `Document` keeps every byte it does not understand: the
 frontmatter's unknown keys and key order, unknown sections, blank lines, line endings. A scalar
@@ -142,15 +135,15 @@ ops, re-parses, and compares with the requested task; anything it could not expr
 ## tasq-store
 
 The store of ADR-0026 (`ruli/features/store-v2/PLAN.md`), and the only one the CLI opens.
-Reads scan the directory on every call: every non-dot `.md` file is read and parsed as a v2
-task file, the id map is the files' frontmatter, a file that is not a v2 task file is skipped
+Reads scan the directory on every call: every non-dot `.md` file is read and parsed as a
+task file, the id map is the files' frontmatter, a file that is not a task file is skipped
 by `list` and reported by `doctor`, an id claimed by two files is `StoreError::AmbiguousId`
 from `get` (both files named) and a warning from `list`. A directory that does not exist is
 an empty store; reads never lock and never create it.
 
 A `create` takes the store lock, `.tasq/lock` inside the directory (an exclusive create; a
 lock older than two minutes is removed, a live one is waited on), reads the id map, allocates
-the highest id plus one, renders the draft as a fresh v2 document, writes it to a temp file in
+the highest id plus one, renders the draft as a fresh document, writes it to a temp file in
 the directory and renames it into place without overwriting as `<ULID>.md`, the ULID minted
 from the store's clock and the OS's randomness (a name that exists gets a fresh ULID, a bounded
 number of times), then releases the lock and reads the task back. The first write creates the
@@ -159,7 +152,7 @@ directory. No job, no git: dropping the lock removes the file.
 An `update` takes the same lock, scans, finds the one file claiming the id and compares its
 `Revision` with the one remembered when this store last handed the task out (`get`, `list`,
 and the read-back at the end of `create`); a mismatch is `StoreError::Conflict` and nothing
-is written. Then `diff::apply` edits the document with the v2 ops; a field the ops cannot
+is written. Then `diff::apply` edits the document with the format ops; a field the ops cannot
 express (a removed or rewritten list entry) is `StoreError::Unsupported`, also with nothing
 written. When the rendered bytes changed, they go to a temp file in the directory, given the
 task file's permissions, and are renamed over it; the new revision becomes the baseline, so
@@ -205,15 +198,12 @@ sequenceDiagram
 
 | Module | What it holds |
 |---|---|
-| `store` | `TasqStore`: `list`, `get`, `file_of`, `describe` (`tasq`, stable ids), `doctor` (`store`, `task-files`, `ids`, `lock` checks), warnings, `create`, `update`, `set_done`; the remembered revisions; the injected `Clock` and random source (`with_clock`, `with_random`). |
-| `migrate` | `plan` (reads an nb notebook: the nb ids, unlisted todo files numbered after the last one, a ULID from the nb file's second, then the first progress entry, then the clock; a fresh v2 document per task, unknown sections appended verbatim; refuses a target that is not absent or empty; writes nothing) and `Plan::write` (no-clobber files into the target). Reads the notebook through `tasq-core` only, never through `tasq-store-nb`, never `nb` or `git`. |
+| `store` | `TasqStore`: `list`, `get`, `file_of`, `describe` (`tasq`, the directory, the task count), `doctor` (`store`, `task-files`, `ids`, `lock` checks), warnings, `create`, `update`, `set_done`; the remembered revisions; the injected `Clock` and random source (`with_clock`, `with_random`). |
 | `lock` | `StoreLock`: `.tasq/lock`, taken with an exclusive create, stale after `STALE_AFTER`, released on drop. |
-| `draft` | `check_draft` (a merge request needs a title) and `materialize` (the default note, the done-draft rules), shared with the nb store. |
+| `draft` | `check_draft` (a merge request needs a title) and `materialize` (the default note, the done-draft rules). |
 | `ulid` | `Ulid`: the file name; parse, render, and the millisecond timestamp that is the task's creation time. |
 | `revision` | `Revision`: mtime, length and a content hash, captured on read and compared on write; a mismatch is `StoreError::Conflict`. |
 | `diff` | `apply`: edits the stored `Document` with `format::ops` until its projection equals the requested `Task`, or names the fields it could not express (`StoreError::Unsupported` in the caller). |
-
-`revision` and `diff` were moved out of the nb crate, which re-exports them until it is deleted.
 
 ## tasq-sources
 
@@ -359,7 +349,7 @@ sees the traits.
 | `homebrew/` | The Homebrew formula template used by the release workflow. |
 | `scripts/guard`, `scripts/test-runner` | Memory-capped wrappers every cargo invocation goes through (see `CONTRIBUTING.md`). |
 | `original/tasks` | The bash script this project rewrites. Never modified. |
-| `ruli/features/rust-rewrite/` | `PLAN.md` (tasks, acceptance criteria, decisions) and `PROGRESS.md` (status, learnings, nb facts). |
+| `ruli/features/rust-rewrite/` | `PLAN.md` (tasks, acceptance criteria, decisions) and `PROGRESS.md` (status, learnings). |
 | `ruli/features/<slug>/` | One plan and progress log per larger task since then, e.g. `store-v2/` for ADR-0026. |
 | `docs/adr/` | Architecture decision records. |
 
@@ -394,13 +384,12 @@ The dependency direction is what makes the test strategy work:
 
 | Crate | How it is tested |
 |---|---|
-| `tasq-core` | Unit and integration tests, property tests (`proptest`) for format round trips, byte-identical fixtures in `tests/fixtures/v2/*.md` (and the v1 ones `migrate` reads in `tests/fixtures/*.md`). Mutation-tested with zero missed mutants as the acceptance bar. |
-| `tasq-store` | Unit tests on `revision`, `diff`, `lock` and `draft`; integration tests through the `Store` trait over a temporary directory (`tests/support/mod.rs` builds a `TempStore`; `open_with` freezes the clock and scripts the random part of minted ULIDs, so file names are predictable and a name collision can be forced); no `nb`, no `git`. Mutation-tested (`just mutants-in crates/store/src`). |
-| `tasq-store-nb` | Legacy, until deleted: tests against a temp copy of the fixture notebook (`NbEnv`), including the parity test that a migrated notebook reads back equal through the tasq store. |
+| `tasq-core` | Unit and integration tests, property tests (`proptest`) for format round trips, byte-identical fixtures in `tests/fixtures/*.md` and op before/after pairs in `tests/fixtures/ops/`. Mutation-tested with zero missed mutants as the acceptance bar. |
+| `tasq-store` | Unit tests on `revision`, `diff`, `lock` and `draft`; integration tests through the `Store` trait over a temporary directory (`tests/support/mod.rs` builds a `TempStore`; `open_with` freezes the clock and scripts the random part of minted ULIDs, so file names are predictable and a name collision can be forced); no `git`. Mutation-tested (`just mutants-in crates/store/src`). |
 | `tasq-sources` | Unit tests with a scripted `Transport`; no network in `cargo test`. |
 | `tasq-launch` | Fake executables on an injected `PATH`; `insta` snapshots of the commands that would run. |
 | `tasq-worktree` | Real `git` against temporary repositories: a bare `origin`, a clone to work in, a second clone that pushes branches. Mutation-tested. |
 | `tasq-tui` | `dispatch` against `MemoryStore` and `RecordingHost`; `insta` snapshots of rendered frames. |
-| `tasq` (CLI) | Integration tests run the binary against a copy of the v2 fixture store and snapshot its output with `insta`. Not mutation-tested; the logic lives in core. |
+| `tasq` (CLI) | Integration tests run the binary against a copy of the fixture store and snapshot its output with `insta`. Not mutation-tested; the logic lives in core. |
 
 Conventions, the fixture store and the mutation-testing workflow: [`docs/testing.md`](testing.md).

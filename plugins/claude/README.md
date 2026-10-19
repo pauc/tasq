@@ -50,5 +50,5 @@ It needs `tasq` on `PATH`; `jq` is optional (used for the directory fallback).
 
 The original `tasks` script's `/wrapup`, `/update-tasks`, `/update-support-tasks` and
 `/time-logs` skills are untouched and keep working against the script. Freshdesk and time logs
-are out of scope for tasq v1 (plan Non-Goals); time logs are meant to become an external plugin
+are out of scope for tasq (plan Non-Goals); time logs are meant to become an external plugin
 on top of `tasq dates` and `tasq summary --json`.

@@ -31,7 +31,6 @@ scripts/guard cargo clippy --workspace --all-targets -- -D warnings
 scripts/guard cargo test --workspace
 scripts/guard cargo doc --workspace --no-deps
 scripts/guard cargo test -p tasq-core --test format_ops set_status      # one test
-TASQ_REQUIRE_NB=1 scripts/guard cargo test -p tasq-store-nb              # nb-gated tests must run
 ```
 
 ## Quality gates
@@ -45,8 +44,8 @@ changed code fails the PR.
 |---|---|
 | `cargo fmt --all --check` | No diff |
 | `cargo clippy --workspace --all-targets -- -D warnings` | `all` and `pedantic` enabled in `Cargo.toml`; the few allowed lints are listed there with a reason. Clippy 1.99: write `assert_eq!(v, Vec::new())`, not `assert!(v.is_empty())` |
-| `cargo test --workspace` | Offline. nb-gated tests skip silently without `nb` on `PATH`; set `TASQ_REQUIRE_NB=1` to make a skip a failure (CI does) |
-| `cargo doc --workspace --no-deps` | No warnings; `tasq-core`, `tasq-store` and `tasq-store-nb` have `#![warn(missing_docs)]` |
+| `cargo test --workspace` | Offline |
+| `cargo doc --workspace --no-deps` | No warnings; every crate has `#![warn(missing_docs)]` |
 | `cargo deny check` | Every dependency GPL-3.0-compatible (`deny.toml`) |
 | Mutation testing | Zero missed mutants in the module touched (below) |
 
@@ -86,20 +85,16 @@ Conventions, with examples, in [`docs/testing.md`](docs/testing.md). The short v
 - Logic is pure with injected `Clock`, filesystem views, environment and fake processes, so a
   test runs it against a temp dir in microseconds. Keep new code in that shape; it is what makes
   mutation testing affordable.
-- Markdown fixtures live in `crates/core/tests/fixtures/v2/*.md` (format v2) and
-  `crates/core/tests/fixtures/*.md` (format v1, read by `tasq migrate` only); round trips must
-  be byte-identical.
+- Markdown fixtures live in `crates/core/tests/fixtures/*.md`, the op before/after pairs in
+  `crates/core/tests/fixtures/ops/`; round trips must be byte-identical.
 - The store tests use a `TempStore` (`crates/store/tests/support/mod.rs`): a temp root whose
   store directory is absent or empty, opened with a fixed clock and, when names matter, a
-  scripted random source. Nothing there runs `nb` or `git`.
-- The legacy nb crate's tests build an `NbEnv` (`crates/store-nb/tests/support/mod.rs`), a temp
-  copy of the fixture notebook, until the crate is deleted; tests that need the real `nb` call
-  `nb_or_skip`.
-- The CLI tests use `TestEnv` (`crates/cli/tests/support/mod.rs`): a copy of the v2 fixture
+  scripted random source. Nothing there runs `git`.
+- The CLI tests use `TestEnv` (`crates/cli/tests/support/mod.rs`): a copy of the fixture
   store (`crates/store/tests/fixtures/stores/default`) as the default store under an isolated
   `HOME`, a `PATH` holding only `git` and `TZ=UTC`, so the binary never sees the real store or
   config. `TASQ_NOW="YYYY-MM-DD HH:MM"` pins timestamps; tasks placed by hand are
-  `write_task(ulid_name(when, n), v2(id, front, body))` and read back by id.
+  `write_task(ulid_name(when, n), task_text(id, front, body))` and read back by id.
 - Snapshots are `insta`; accept changes with `INSTA_UPDATE=always scripts/guard cargo test -p
   <crate>` (no `cargo insta` needed), then review the diff.
 - No test touches the network. HTTP goes through an injected `Transport`.
@@ -110,7 +105,7 @@ Conventional commits scoped by crate or area:
 
 | Prefix | Use |
 |---|---|
-| `feat(core):`, `feat(store):`, `feat(store-nb):`, `feat(sources):`, `feat(launch):`, `feat(cli):`, `feat(tui):` | New behaviour in that crate |
+| `feat(core):`, `feat(store):`, `feat(sources):`, `feat(launch):`, `feat(cli):`, `feat(tui):` | New behaviour in that crate |
 | `fix(<crate>):` | Bug fix |
 | `test(<crate>):` | Tests only |
 | `docs(plan):` | Plan files (`PLAN.md`) |
@@ -149,7 +144,7 @@ Public items in `tasq-core` carry doc comments; `cargo doc` must stay warning-fr
 ## What never changes
 
 - `original/tasks`, the bash script this project rewrites. Read-only reference.
-- The user's real nb notebooks and tasq stores. Tests only ever touch temp copies of the
-  fixtures (an isolated `HOME`), and nb is only ever run with `NB_DIR` pointing inside one.
+- The user's real tasq stores, and the nb notebooks `original/tasks` manages. Tests only ever
+  touch temp copies of the fixtures (an isolated `HOME`).
 - The existing `~/.claude` skills (`/wrapup`, `/update-tasks`, `/update-support-tasks`,
   `/time-logs`). The new tool ships its own plugin under `plugins/claude`.

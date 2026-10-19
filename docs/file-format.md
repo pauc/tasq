@@ -2,9 +2,8 @@
 
 **Status:** normative (2026-10-18, ADR 0026). A task is one markdown file in a
 store directory: a frontmatter block that holds the id and the other scalar
-fields, then a markdown body with the title and the list sections. This is
-format v2. Format v1, the nb notebook shape, is described at the end; only
-`tasq migrate` reads it.
+fields, then a markdown body with the title and the list sections. This
+document is the reference for the task file format.
 
 `tasq` must preserve anything it does not understand (see "Lossless editing").
 The frontmatter is tasq's own flat subset, parsed line by line; it looks like
@@ -22,17 +21,16 @@ not a promise.
   keeps two creates in the same millisecond apart. Nothing else is read from
   the name. A directory listing sorts by creation time.
 - Every other non-dot file whose extension is `md` (any case) is read too. A
-  file that parses as a v2 task file is a task even when its name is not a
+  file that parses as a task file is a task even when its name is not a
   ULID (it has no creation time); one that does not is skipped by reads and
   reported by `tasq doctor`. Dot files, non-`.md` files, directories (even one
   named `x.md`) and the `.tasq/` directory (it holds the write lock,
   `.tasq/lock`) are ignored.
 - Id: the `id` key of the frontmatter, a positive integer. It is written once
   and never changes: `create` takes the highest id in the store plus one (`1`
-  in an empty store), `migrate` keeps the nb id. Ids are never reused while a
-  higher one exists. Two files with the same id make that id ambiguous: any
-  command naming it fails naming both files, `list` shows both, `doctor`
-  reports them.
+  in an empty store). Ids are never reused while a higher one exists. Two
+  files with the same id make that id ambiguous: any command naming it fails
+  naming both files, `list` shows both, `doctor` reports them.
 - Encoding UTF-8. New files use LF. In an existing file every line keeps its
   own ending when the file is rewritten, and lines `tasq` adds use the ending
   of the first line, so CRLF and even mixed endings survive an edit. A file
@@ -95,7 +93,7 @@ value       = any text after the first ":", surrounding whitespace trimmed
 title-line  = "# " title EOL            ; title non-empty
 ```
 
-- Line 1 must be `---`; a file whose first line is anything else is not a v2
+- Line 1 must be `---`; a file whose first line is anything else is not a
   task file. The block runs to the next line that is exactly `---`; with none,
   the file is a format error (`the frontmatter has no closing '---'`).
 - A line of the block is an entry when it has a `:` and the text before the
@@ -111,7 +109,7 @@ title-line  = "# " title EOL            ; title non-empty
   error naming the line.
 - After the closing fence, blank lines are allowed; the first non-blank line
   must be `# Title` with a non-empty title. A done task's title has no marker:
-  `# [x] Title` in a v2 file is a title that starts with `[x]`.
+  `# [x] Title` is a title that starts with `[x]`.
 
 ### Keys
 
@@ -137,8 +135,8 @@ unknown key: kept, never read.
 
 ### Canonical order
 
-A block written from scratch (`create`, `migrate`) has the keys in this order,
-with no other lines and no blank line between the closing fence and the title:
+A block written from scratch (`create`) has the keys in this order, with no
+other lines and no blank line between the closing fence and the title:
 
 ```
 id, status, priority, rank, due, closed, project, source, source_id, source_url, tags
@@ -187,9 +185,8 @@ Each heading is followed by one blank line, then its content, then one blank
 line before the next heading. A fresh file writes Description and Related when
 they have content, Progress always (`- <now>: created via tasq create` unless
 a note is given), then merge requests, Worktrees and Sessions through the
-append rules below. Any other section, including the v1 scalar sections
-(`## Project`, `## Due`, `## Tags`, `## Source`, `## Closed`, `## Rank`), is
-an unknown section in a v2 body: kept verbatim, never read.
+append rules below. Any other section (`## Notes`, or `## Due` and `## Tags`
+written by hand) is an unknown section: kept verbatim, never read.
 
 ### Description
 
@@ -234,8 +231,7 @@ comments today, and like any unknown line they are preserved verbatim.
 
 ## Editing the body
 
-These rules come from the original script's helpers and are the same in both
-formats.
+These rules come from the original script's helpers.
 
 ### Appending an entry to a list section (`append_to_section`)
 
@@ -289,37 +285,3 @@ for, rather than drop a change silently.
 - More than one origin per task.
 - Placement and schema of `<!-- tasq: ... -->` comments (reserved, unused).
 
-## Format v1 (nb notebook): read by `tasq migrate` only
-
-The shape `tasq` used while it shared an nb notebook with nb and the
-`original/tasks` script (ADRs 0002, 0007, 0020, 0023, 0025). Nothing writes
-it any more; `tasq migrate` reads it to build a v2 store (`docs/migration.md`).
-The reader stays in `tasq-core` until the nb crate is deleted.
-
-- Files are `<YYYYMMDDHHMMSS>.todo.md` in the notebook directory, the stamp
-  being nb's creation second. A task's id was the 1-based line number of its
-  file name in the notebook's `.index`, so ids were positional: `nb index
-  reconcile` could renumber them. Index lines that are not `*.todo.md`, whose
-  file is gone, or whose file's first line is not a title are skipped. `migrate` keeps these ids, and gives a
-  todo file the index does not list the id nb's reconcile would have given it
-  (after the last line, in name order).
-- Line 1 is the title and done marker, `# [ ] Title` (open) or `# [x] Title`
-  (done). A file whose first line is anything else is not a task.
-- Every scalar field is a section: `## Project` (first non-empty line, a
-  path), `## Due` (first non-empty line, `YYYY-MM-DD`), `## Source`
-  (`<source>: <external-id> [<url>]`), `## Closed` (`YYYY-MM-DD HH:MM`, done
-  tasks only), `## Rank` (an integer), and `## Tags`: one line of
-  whitespace-separated `#tags` mixing topic tags, the priority (`#A`, `#B`,
-  `#C`; absent is `B`) and the workflow status (absent on done tasks). The
-  last status or priority tag seen wins; `##x` is a topic tag.
-- The list sections (Description, Related with Merge requests, Progress,
-  Worktrees, Sessions) are the v2 body sections above, with the same rules.
-
-`migrate` maps a v1 task to a fresh v2 file: the frontmatter in canonical
-order from the parsed task, the body sections rewritten, every section it does
-not know appended verbatim at the end, and an LF file whatever the source
-endings. The ULID is minted from the nb file name's second (falling back to
-the first progress entry's time, then to now). A done task without
-`## Closed` (closed by `nb todo do` or the script) gets `closed` from its last
-progress entry. A todo file that is not valid UTF-8 stops the migration with
-nothing written, naming the file.

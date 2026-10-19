@@ -1,79 +1,13 @@
 # Migrating from `tasks` to `tasq`
 
-**TL;DR:** `tasq` keeps its tasks in its own store directory, not in the nb
-notebook the original `tasks` bash script uses (ADR 0026). Convert the
-notebook once with `tasq migrate <notebook>`: every task keeps its id, done
-tasks included, and the notebook is never written. Then switch command by
-command using the mapping below. From that point the two tools no longer see
-each other's changes.
+**TL;DR:** `tasq` replaces the original `tasks` bash script. It keeps its
+tasks in its own store directory (ADR 0026), not in the nb notebook the script
+uses, so the two tools do not see each other's tasks, and the script's tasks
+are not imported (ADR 0027). Switch command by command using the mapping
+below.
 
 The one-week side-by-side run the first plan called for (T-904, task 2) is
-obsolete: it was closed when the store moved out of the notebook.
-
-## Converting the notebook
-
-1. Remove `store.kind`, `store.notebook` and `store.sync_interval` from every
-   config file that still sets them, and unset `TASQ_NOTEBOOK`. Every command
-   loads the config, `tasq migrate` included, and an old key is an error naming
-   the file, line and column.
-2. Check the conversion without writing anything:
-
-   ```sh
-   tasq migrate home --dry-run          # or a path: tasq migrate ~/.nb/home
-   ```
-
-   `<notebook>` is a name under `$NB_DIR` (default `~/.nb`), or a directory
-   when it contains `/`. The target defaults to the store the config selects
-   (`tasq store info`); `--to <dir>` picks another one.
-3. Convert:
-
-   ```sh
-   tasq migrate home --to ~/.local/share/tasq/stores/home
-   ```
-
-   It prints one line per task (id, new file, title), then the config lines
-   that select the new store:
-
-   ```
-   1  01M1E34QM0....md  Rewrite the tasks script in Rust
-   3  01M1GRZA80....md  Answer the support ticket
-
-   Wrote 2 tasks to /home/me/.local/share/tasq/stores/home.
-   To use this store, set in the tasq config:
-
-   data_dir = "/home/me/.local/share/tasq/stores"
-
-   [store]
-   name = "home"
-   ```
-
-4. Put those lines in `~/.config/tasq/config.toml` (or a `.tasq.toml`, or a
-   profile), then check: `tasq store info` names the new directory and the
-   task count, `tasq list --all` shows the ids and titles the notebook had,
-   `tasq doctor` reports every check `OK`.
-
-What `migrate` does:
-
-- **Same ids.** Every task keeps the id it had in the notebook (its line in
-  nb's `.index`). A todo file the index does not list gets the id nb's
-  reconcile would have given it. New tasks continue from the highest id.
-- **Creation time kept.** Each file is named with a ULID minted from the nb
-  file name's second (falling back to the first progress entry, then to now),
-  so `created` and `ls` order reflect when the task was created.
-- **Every task, every section.** Open and done tasks are converted. The scalar
-  sections (`## Project`, `## Due`, `## Tags`, `## Source`, `## Closed`,
-  `## Rank`) and the `# [x]` marker become frontmatter keys; Description,
-  Related, Merge requests, Progress, Worktrees and Sessions are copied; any
-  section `tasq` does not know is appended verbatim at the end of the file.
-  A done task without `## Closed` (closed by `nb todo do` or the script)
-  gets `closed` from its last progress entry.
-  CRLF files become LF ([`docs/file-format.md`](file-format.md)).
-- **All or nothing on bad bytes.** A todo file that is not valid UTF-8
-  stops the migration before anything is written, naming the file.
-- **Read-only on the notebook.** Nothing in the notebook directory is
-  written, and no `git` or `nb` command runs.
-- **Refuses to mix stores.** A target that exists and is not empty is refused
-  before anything is written.
+obsolete: it was closed when `tasq` got its own store.
 
 ## Command mapping
 
@@ -104,14 +38,14 @@ of the file) and its `tasq` counterpart.
 | `tasks mr <id> <mr-url> [title]` | `tasq mr <ID> <URL> [TITLE]` | Title resolved through the configured `[forge.*]`; without one it records the short reference (`group/project!123`). The script used `glab api` from `TASKS_DEFAULT_WORKTREE`. |
 | `tasks update [args]` (Claude `/update-tasks` session) | `tasq sync --interactive` (the same session, running `/tasq:sync` in `work.default_project`); `tasq sync [--source NAME] [--dry-run] [--json]` headless | Sources are `[[source]]` blocks: GitLab/GitHub review requests and work items, plus an LLM bridge for Slack/Gmail-style inboxes ([`docs/sources.md`](sources.md)). The bridge was verified headless on 2026-10-05 (same connectors, ~90 s and ~$2 per run), so Slack/Gmail triage no longer needs an interactive session. |
 | `tasks update <id> [<id>...]` | `tasq sync <ID>...` | Re-checks only those tasks. |
-| `tasks update-support [args]` (Freshdesk) | none | Freshdesk is a plan Non-Goal for v1. Keep using the script and its `/update-support-tasks` skill; the `support`-tagged tasks it creates list fine with `tasq support`. |
+| `tasks update-support [args]` (Freshdesk) | none | Freshdesk is a plan Non-Goal. Keep using the script and its `/update-support-tasks` skill; the `support`-tagged tasks it creates list fine with `tasq support`. |
 | `tasks summary [date] [--raw]` | `tasq summary [DAY] [--raw]` | Also weekday names and `last <weekday>`; summarizer from `[report.summary]`. |
 | `tasks tlogs [when]` | `tasq tlogs [when]`, dispatched to the external `tasq-tlogs` plugin | Time logs are a plan Non-Goal for the main repo. `tasq <name>` runs an executable `tasq-<name>` found on `PATH`; `examples/plugins/tasq-tlogs` does what the script did: `tasq dates --json` for the range, then `claude "/time-logs <from> <to>"` from `work.default_project` under `direnv exec`. Put it on `PATH` and set `work.default_project` (the script's `TASKS_DEFAULT_WORKTREE`). `--dry-run` prints the command, `--propose` prints an even split per day without launching anything. |
 | `/wrapup` (the skill the script's session prompt ends with) | `/tasq:wrapup [task-id]` | Claude Code plugin in `plugins/claude`; defaults to `$TASQ_TASK_ID`, set by `tasq next`/`pick`. |
 | `tasks help` | `tasq --help`, `tasq <cmd> --help` | |
 
 New in `tasq`, with no script equivalent: `tasq ui` (TUI), `tasq apply` (JSON
-in), `tasq dates`, `tasq store info`, `tasq migrate`, `tasq doctor`, `tasq config show`,
+in), `tasq dates`, `tasq store info`, `tasq doctor`, `tasq config show`,
 `tasq completions <shell>`, `tasq plugins list` plus `tasq-<name>` dispatch and
 `[hooks]` command lines, and `--json` on every command
 ([`docs/json.md`](json.md)).
@@ -125,8 +59,8 @@ names below are from `crates/core/src/config/mod.rs`.
 
 | Script | Default in the script | `tasq` key | `tasq` env |
 |---|---|---|---|
-| `TASKS_NB_NOTEBOOK` | `home` | `store.name` (a tasq store under `data_dir`, ADR-0026; convert the notebook once with `tasq migrate <notebook>`) | `TASQ_STORE_NAME` |
-| `NB_DIR` | `~/.nb` | read by `tasq migrate <name>` only (`$NB_DIR/<name>`); tasks live in `data_dir` (default `~/.local/share/tasq/stores`) | `TASQ_DATA_DIR` |
+| `TASKS_NB_NOTEBOOK` | `home` | `store.name` (a tasq store under `data_dir`, ADR-0026) | `TASQ_STORE_NAME` |
+| `NB_DIR` | `~/.nb` | none; tasks live in `data_dir` (default `~/.local/share/tasq/stores`) | `TASQ_DATA_DIR` |
 | `TASKS_DEFAULT_WORKTREE` | `~/code/SF/silverfin_worspace/silverfin` | `work.default_project` (no default: unset means "no fallback directory") | `TASQ_DEFAULT_PROJECT` |
 | `TASKS_PAGER` | `less -RFX` | `ui.pager` | `TASQ_PAGER` |
 | `TASKS_GLOW_STYLE` | `dark` | `ui.glow_style` | `TASQ_GLOW_STYLE` |
@@ -147,7 +81,7 @@ A global config that reproduces the script's defaults:
 ```toml
 # ~/.config/tasq/config.toml
 [store]
-name = "home"           # the store `tasq migrate home` wrote, under data_dir
+name = "home"           # the store directory under data_dir
 
 [work]
 default_project = "~/code/SF/silverfin_worspace/silverfin"
@@ -164,7 +98,7 @@ model = "sonnet"
 ```
 
 `export TASKS_NB_NOTEBOOK=Zantop` per project becomes a `.tasq.toml` in that
-project with `[store] name = "Zantop"` (after `tasq migrate Zantop`), or a
+project with `[store] name = "Zantop"`, or a
 `[profile.zantop]` block and `--profile zantop` / `TASQ_PROFILE`.
 
 ## What `tasq` writes that the script never did
@@ -193,10 +127,10 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
 - Usage errors exit 2 (clap convention); domain errors exit 1 with
   `tasq: ...`. The script exited 1 for both.
 - `tasq view` has no nb passthrough; `--raw` prints the file verbatim.
-- Ids never change. In the notebook they were line numbers of `.index` and
+- Ids never change. The script's ids were line numbers of nb's `.index`, and
   `nb index reconcile` could renumber them.
-- Nothing is committed. The notebook's git history stops at the migration;
-  sync for a tasq store is task 57.
+- Nothing is committed (the script committed every change through nb); sync
+  for a tasq store is task 57.
 - A launch creates the task's declared worktree when it is gone, without
   asking (the script offered to recreate it); `tasq worktree --create` runs
   plain `git worktree add`, and worktree provisioning (links, copies,
@@ -214,8 +148,6 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
 
 - [ ] Install: `cargo install tasq` (or a release tarball, or the Homebrew
       tap; [`docs/release.md`](release.md)). `tasq --version`.
-- [ ] Convert the notebook ("Converting the notebook" above) and set the
-      printed `data_dir` / `store.name` lines.
 - [ ] `tasq doctor`: the store location and where it was configured, every
       task file readable, no duplicate ids, no stale lock; optional tools
       (`git`, `glow`, `claude`, `direnv`, `glab`) reported.
@@ -243,9 +175,9 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
       [`plugins/claude/README.md`](../plugins/claude/README.md).
 - [ ] Shell completions: `tasq completions zsh > ~/.zfunc/_tasq` (bash and
       fish in `tasq completions --help`).
-- [ ] Keep `tasks update-support` on the script (no Freshdesk in v1). It writes
-      to the nb notebook, which `tasq` no longer reads: copy those tasks over
-      with `tasq create`, or re-run `tasq migrate` into a fresh `--to` directory.
+- [ ] Keep `tasks update-support` on the script (no Freshdesk in `tasq`). It
+      writes to the script's nb notebook, which `tasq` does not read: copy those
+      tasks over with `tasq create`.
 - [ ] Put `examples/plugins/tasq-tlogs` on your `PATH` and set
       `work.default_project` to the old `TASKS_DEFAULT_WORKTREE`; check with
       `tasq tlogs --dry-run`, then `tasq tlogs` replaces `tasks tlogs`.
@@ -255,7 +187,6 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
 
 ## Rollback
 
-The notebook is exactly as it was before `tasq migrate`: go back to the
-script and nb, and remove the `data_dir` / `store.name` lines. Changes made
-with `tasq` after the migration live only in the store directory; they do not
-flow back to the notebook.
+`tasq` never writes the script's nb notebook: go back to the script and nb.
+Tasks created or changed with `tasq` live only in the store directory; they do
+not flow back to the notebook.
