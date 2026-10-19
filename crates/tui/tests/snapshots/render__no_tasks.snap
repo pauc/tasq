@@ -3,7 +3,7 @@ source: crates/tui/tests/render.rs
 expression: "screen(&mut model, 100, 12)"
 ---
 "┌ Tasks (0/0) ─────────────────────────────────────────────────────────────────────────────────────┐"
-"│No open todos.                                                                                    │"
+"│No open tasks.                                                                                    │"
 "│                                                                                                  │"
 "│                                                                                                  │"
 "│                                                                                                  │"

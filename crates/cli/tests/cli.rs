@@ -56,7 +56,7 @@ mod errors {
             .env("TASQ_DATA_DIR", &nowhere)
             .assert()
             .success()
-            .stdout("No open todos.\n")
+            .stdout("No open tasks.\n")
             .stderr("");
         assert!(!nowhere.exists(), "a read creates nothing");
     }
@@ -286,17 +286,17 @@ mod list {
             .args(["list", "nosuch"])
             .assert()
             .success()
-            .stdout("No open todos tagged #nosuch.\n");
+            .stdout("No open tasks tagged #nosuch.\n");
         env.tasq()
             .args(["list", "blocked"])
             .assert()
             .success()
-            .stdout("No open todos with status blocked.\n");
+            .stdout("No open tasks with status blocked.\n");
         env.tasq()
             .args(["list", "--prio", "C"])
             .assert()
             .success()
-            .stdout("No open todos with priority #C.\n");
+            .stdout("No open tasks with priority #C.\n");
     }
 
     #[test]
@@ -310,7 +310,7 @@ mod list {
             .args(["list", "--all", "--tag", "nosuch"])
             .assert()
             .success()
-            .stdout("No todos tagged #nosuch.\n");
+            .stdout("No tasks tagged #nosuch.\n");
         let out = env
             .tasq()
             .args(["--json", "list", "--all"])
@@ -366,7 +366,7 @@ mod list {
             .args(["list", "--done", "--prio", "A"])
             .assert()
             .success()
-            .stdout("No done todos with priority #A.\n");
+            .stdout("No done tasks with priority #A.\n");
         env.tasq()
             .args(["list", "--all", "--done"])
             .assert()
@@ -376,23 +376,23 @@ mod list {
             .args(["list", "--all"])
             .assert()
             .success()
-            .stdout("No todos.\n");
+            .stdout("No tasks.\n");
         env.tasq()
             .args(["list", "--done"])
             .assert()
             .success()
-            .stdout("No done todos.\n");
+            .stdout("No done tasks.\n");
     }
 
     #[test]
     fn empty_store() {
         let env = TestEnv::empty();
-        env.tasq().assert().success().stdout("No open todos.\n");
+        env.tasq().assert().success().stdout("No open tasks.\n");
         env.tasq()
             .args(["ls", "gitlab"])
             .assert()
             .success()
-            .stdout("No open todos.\n");
+            .stdout("No open tasks.\n");
     }
 
     #[test]
@@ -639,7 +639,7 @@ mod store_location {
             .env("TASQ_DATA_DIR", &other)
             .assert()
             .success()
-            .stdout("No open todos.\n");
+            .stdout("No open tasks.\n");
     }
 
     #[test]
@@ -3568,7 +3568,7 @@ mod apply {
 mod launch {
     use super::*;
 
-    const PROMPT_START: &str = "Work with me on my next task: todo [3]";
+    const PROMPT_START: &str = "Work with me on my next task: [3]";
 
     #[test]
     fn pick_dry_run_shows_the_plan_without_writing() {
@@ -3613,7 +3613,7 @@ mod launch {
         assert_eq!(
             logged,
             format!(
-                "cwd=[ROOT]/home\nid=3 store=default dir=[ROOT]/home/.local/share/tasq/stores\nargc=1\n{PROMPT_START} from my tasq store (f\n"
+                "cwd=[ROOT]/home\nid=3 store=default dir=[ROOT]/home/.local/share/tasq/stores\nargc=1\n{PROMPT_START} from my tasq store (file: \n"
             )
         );
         assert!(env.read_task(3).contains("\nstatus: in-progress\n"));
@@ -3680,7 +3680,7 @@ mod launch {
             .args(["next"])
             .assert()
             .code(1)
-            .stderr("tasq: no in-progress or ready todos\n");
+            .stderr("tasq: no in-progress or ready tasks\n");
     }
 
     /// Task 3 with a git repository at `<home>/proj` as its project and a

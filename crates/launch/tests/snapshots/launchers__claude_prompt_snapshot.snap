@@ -2,7 +2,7 @@
 source: crates/launch/tests/launchers.rs
 expression: normalized
 ---
-Work with me on my next task: todo [3] from my tasq store (file: /store/01ARZ3NDEKTSV4RRFFQ69G5FAV.md).
+Work with me on my next task: [3] from my tasq store (file: /store/01ARZ3NDEKTSV4RRFFQ69G5FAV.md).
 
 ---
 id: 3

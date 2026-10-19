@@ -305,7 +305,7 @@ fn claude_describe_and_hint() {
     );
     assert_eq!(lines[2], "");
     assert_eq!(lines[3], "--- prompt ---");
-    assert!(lines[4].starts_with("Work with me on my next task: todo [3]"));
+    assert!(lines[4].starts_with("Work with me on my next task: [3]"));
     assert_eq!(
         launcher.resume_hint("abc").as_deref(),
         Some("claude --resume abc")

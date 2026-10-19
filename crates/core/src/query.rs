@@ -428,7 +428,7 @@ where
 /// statuses of `workflow` (`in-progress`, then `ready` by default).
 ///
 /// Returns `None` when nothing is in those statuses, where the script died
-/// with "no in-progress or ready todos". Use [`next_from`] to choose the
+/// with "no in-progress or ready tasks". Use [`next_from`] to choose the
 /// statuses explicitly.
 pub fn next<'a, I>(tasks: I, workflow: &Workflow) -> Option<&'a Task>
 where

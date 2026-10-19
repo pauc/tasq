@@ -106,7 +106,7 @@ pub fn next(app: &App, how: &How, dry_run: bool) -> Result<()> {
     let open = store.list(&Filter::default())?;
     let Some(task) = query::next(&open, &workflow) else {
         return Err(CliError::user(format!(
-            "no {} todos",
+            "no {} tasks",
             workflow
                 .statuses
                 .iter()

@@ -10,7 +10,7 @@ cd [ROOT]/home
 TASQ_TASK_ID=3 TASQ_DATA_DIR=[ROOT]/home/.local/share/tasq/stores TASQ_STORE_NAME=default exec claude "<prompt below>"
 
 --- prompt ---
-Work with me on my next task: todo [3] from my tasq store (file: [ROOT]/home/.local/share/tasq/stores/default/01M1GRZA800000000000000002.md).
+Work with me on my next task: [3] from my tasq store (file: [ROOT]/home/.local/share/tasq/stores/default/01M1GRZA800000000000000002.md).
 
 ---
 id: 3

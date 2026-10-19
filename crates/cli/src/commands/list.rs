@@ -104,12 +104,12 @@ impl Scope {
         }
     }
 
-    /// `No open todos` / `No todos` / `No done todos`.
+    /// `No open tasks` / `No tasks` / `No done tasks`.
     pub fn nothing(self) -> &'static str {
         match self {
-            Self::Open => "No open todos",
-            Self::All => "No todos",
-            Self::Done => "No done todos",
+            Self::Open => "No open tasks",
+            Self::All => "No tasks",
+            Self::Done => "No done tasks",
         }
     }
 }
@@ -395,7 +395,7 @@ mod tests {
         assert_eq!(c.text.as_deref(), Some("build"));
         assert_eq!(
             c.empty_message(),
-            "No open todos with status waiting tagged #gitlab #support with priority #C matching \"build\"."
+            "No open tasks with status waiting tagged #gitlab #support with priority #C matching \"build\"."
         );
         let bad = ListArgs {
             status: Some("nope".into()),
@@ -414,9 +414,9 @@ mod tests {
             Criteria::from_args(&args(Some("x")), &wf)
                 .unwrap()
                 .empty_message(),
-            "No open todos tagged #x."
+            "No open tasks tagged #x."
         );
-        assert_eq!(Criteria::default().empty_message(), "No open todos.");
+        assert_eq!(Criteria::default().empty_message(), "No open tasks.");
     }
 
     #[test]
@@ -444,7 +444,7 @@ mod tests {
         };
         let c = Criteria::from_args(&a, &wf).unwrap();
         assert_eq!(c.scope, Scope::All);
-        assert_eq!(c.empty_message(), "No todos tagged #x.");
+        assert_eq!(c.empty_message(), "No tasks tagged #x.");
         let mut tagged_done = done.clone();
         tagged_done.add_tag(Tag::new("x").unwrap());
         assert!(c.filter().matches(&tagged_done));
@@ -455,10 +455,10 @@ mod tests {
         };
         let c = Criteria::from_args(&a, &wf).unwrap();
         assert_eq!(c.scope, Scope::Done);
-        assert_eq!(c.empty_message(), "No done todos.");
+        assert_eq!(c.empty_message(), "No done tasks.");
         assert!(c.filter().matches(&done));
         assert!(!c.filter().matches(&open));
-        assert_eq!(Scope::Open.nothing(), "No open todos");
+        assert_eq!(Scope::Open.nothing(), "No open tasks");
     }
 
     #[test]

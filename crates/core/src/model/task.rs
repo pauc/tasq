@@ -303,7 +303,7 @@ impl Task {
     }
 
     /// Marks the task done and drops its status, as `tasks done` did: a
-    /// closed todo that kept `#ready` would misdescribe itself in every view.
+    /// closed task that kept `#ready` would misdescribe itself in every view.
     pub fn mark_done(&mut self) {
         self.done = true;
         self.status = None;

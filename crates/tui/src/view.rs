@@ -561,18 +561,18 @@ fn render_list(model: &Model, frame: &mut Frame, area: Rect) {
     let block = Block::bordered().title(frame_title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let todos = if model.toggles.done {
-        "todos"
+    let tasks = if model.toggles.done {
+        "tasks"
     } else {
-        "open todos"
+        "open tasks"
     };
     if total == 0 {
-        frame.render_widget(Paragraph::new(format!("No {todos}.")), inner);
+        frame.render_widget(Paragraph::new(format!("No {tasks}.")), inner);
         return;
     }
     if shown == 0 {
         frame.render_widget(
-            Paragraph::new(format!("No {todos} match /{}.", model.filter)),
+            Paragraph::new(format!("No {tasks} match /{}.", model.filter)),
             inner,
         );
         return;
