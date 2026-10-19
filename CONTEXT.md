@@ -18,14 +18,14 @@ _Avoid_: Reorder, drag
 
 **Store**:
 A directory owned by tasq that holds one task file per task. A store has a name; its directory is the name under the data directory.
-_Avoid_: Notebook (the nb word, only in `tasq migrate`), repository, database
+_Avoid_: Repository, database
 
 **Task file**:
 The markdown file that holds one task: a frontmatter block of scalar fields, then the title heading and the list sections. Its name is a ULID, from which the task's creation time is read; nothing else is read from it.
 _Avoid_: Todo file, note
 
 **Id**:
-The short number written in a task's frontmatter that every command uses to name the task. Allocated once on create or migrate and never reused. Never the file name, never a position in an index.
+The short number written in a task's frontmatter that every command uses to name the task. Allocated once on create and never reused. Never the file name, never a position in an index.
 _Avoid_: Number, line, index
 
 **Frontmatter**:

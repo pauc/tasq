@@ -1,6 +1,6 @@
 # ADR-0002: nb-compatible markdown files as the day-one store
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0027 (the nb implementation is removed; ADR-0026 is the store)
 - **Date:** 2026-10-04
 
 ## Context

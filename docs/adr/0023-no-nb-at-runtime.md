@@ -1,6 +1,6 @@
 # ADR-0023: No nb at runtime: native bookkeeping, commits and sync off the critical path
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0027 (the nb implementation is removed; ADR-0026 is the store)
 - **Date:** 2026-10-08
 
 ## Context

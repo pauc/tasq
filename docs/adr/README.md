@@ -27,7 +27,7 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | ADR | Title | Status |
 |-----|-------|--------|
 | [0001](0001-rust.md) | Rust as implementation language | Accepted |
-| [0002](0002-nb-compatible-markdown-store.md) | nb-compatible markdown files as the day-one store | Accepted |
+| [0002](0002-nb-compatible-markdown-store.md) | nb-compatible markdown files as the day-one store | Superseded by ADR-0027 |
 | [0003](0003-store-source-launcher-traits.md) | Store, Source and Launcher extension traits | Accepted |
 | [0004](0004-adapter-decides-sync-strategy.md) | Each Source adapter decides its sync strategy | Accepted |
 | [0005](0005-cli-first-tui-second.md) | CLI first, TUI second | Accepted |
@@ -48,7 +48,8 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0020](0020-closed-section.md) | Recording when a task was closed: `Task::closed_at`, a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`), `Task::close`, `edit::done` in one write | Accepted |
 | [0021](0021-detail-at-the-bottom.md) | The TUI detail under the list: `ui.detail_position = "right" \| "bottom"`, `LayoutKind::Stacked` from 20 rows | Accepted |
 | [0022](0022-worktrees-opt-in-core-feature.md) | Worktrees as an opt-in core feature: `worktree.enabled` hides every surface when off; `[worktree]` provisioning replaces gwm; pure plans in `tasq-core::worktree`, executed by a new `tasq-worktree` crate; trust for repo hooks | Proposed |
-| [0023](0023-no-nb-at-runtime.md) | No nb at runtime: native bookkeeping, commits and sync in a background job behind `.git/tasq/lock`, `store.sync_interval`, `tasq store reconcile` | Accepted |
+| [0023](0023-no-nb-at-runtime.md) | No nb at runtime: native bookkeeping, commits and sync in a background job behind `.git/tasq/lock`, `store.sync_interval`, `tasq store reconcile` | Superseded by ADR-0027 |
 | [0024](0024-format-v2-frontmatter-and-stable-ids.md) | Format v2 after nb compatibility ends: frontmatter for scalar fields (`id`, `status`, `priority`, `due`, `closed`, `project`, `source`, `tags`), stable ids, list sections stay in the body, `tasq migrate` | Superseded by ADR-0026 |
 | [0025](0025-manual-rank-within-a-status-group.md) | Manual rank within a status group: `Task::rank`, a tasq-only `## Rank` section (ascending, step 1024, kept across status changes), `tasq move --before/--after/--top/--unrank`, `ctrl+k`/`ctrl+j` in the TUI | Accepted |
 | [0026](0026-store-v2-frontmatter-tasq-directory-ulid-files.md) | Store v2: frontmatter (`id`, `status`, `priority`, `rank`, `due`, `closed`, `project`, `source*`, `tags`), one directory per store under `data_dir/<store.name>`, `<ULID>.md` files carrying the creation time, sequential ids in the file, a `.tasq/lock` and no git, `tasq migrate <notebook>` | Accepted |
+| [0027](0027-nb-implementation-removed.md) | tasq owns its store: the nb implementation is removed (`crates/store-nb`, the v1 format, `tasq migrate`, `IdScheme`, the nb-only config guards); one task file format without a version suffix | Accepted |
