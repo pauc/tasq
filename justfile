@@ -33,6 +33,10 @@ test:
 doc:
     {{guard}} cargo doc --workspace --no-deps
 
+# Reinstall the tasq binary from an up-to-date, clean main checkout.
+install:
+    scripts/install
+
 # Re-render the README gif (docs/demo/tasq.gif) from docs/demo/demo.tape with VHS in docker.
 demo:
     scripts/demo-gif
