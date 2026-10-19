@@ -14,6 +14,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use ratatui::crossterm::cursor::MoveToColumn;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyboardEnhancementFlags,
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -238,7 +239,7 @@ pub fn run(
             }
         }
     }
-    screen.leave()
+    screen.quit()
 }
 
 /// Waits for Enter after a command whose output the user should read.
@@ -312,11 +313,28 @@ impl Screen {
     }
 }
 
+impl Screen {
+    /// Leaves for good: the terminal is restored and the cursor moved to
+    /// column 0, where leaving the alternate screen may not put it (a
+    /// program run while the terminal was released can overwrite the
+    /// saved cursor), so the shell prompt does not start mid-line.
+    ///
+    /// Reason: terminal mode switching; nothing to assert without a terminal.
+    #[mutants::skip]
+    fn quit(&mut self) -> io::Result<()> {
+        if self.active {
+            self.leave()?;
+            execute!(io::stdout(), MoveToColumn(0))?;
+        }
+        Ok(())
+    }
+}
+
 impl Drop for Screen {
     /// Reason: terminal mode switching; nothing to assert without a terminal.
     #[mutants::skip]
     fn drop(&mut self) {
-        let _ = self.leave();
+        let _ = self.quit();
     }
 }
 
