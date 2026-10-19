@@ -136,7 +136,7 @@ pub mod key {
 
 /// A task file, byte for byte.
 ///
-/// Construct one with [`Document::parse`] (or [`super::parse_v2`], which
+/// Construct one with [`Document::parse`] (or [`super::parse`], which
 /// also projects the typed [`crate::model::Task`]) and write it back with
 /// [`Document::render`]. Edit it through the operations in [`super::ops`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -323,7 +323,7 @@ impl Document {
             .get(body_start)
             .map(|l| l.text.as_str())
             .unwrap_or_default();
-        if v2_title_of(found).is_none() {
+        if title_of(found).is_none() {
             return Err(FormatError::MissingTitle {
                 line: body_start + 1,
                 found: found.to_owned(),
@@ -407,7 +407,7 @@ impl Document {
 
     /// The title text after `# `.
     pub fn title(&self) -> &str {
-        v2_title_of(self.title_line()).unwrap_or_default()
+        title_of(self.title_line()).unwrap_or_default()
     }
 
     /// Whether the task is done: the frontmatter says `status: done`.
@@ -634,7 +634,7 @@ fn closing_fence(lines: &[Line]) -> Option<usize> {
 
 /// The title of a title line (`# Title`), or `None`. The title must be
 /// non-empty: `#` alone is not a title line.
-pub(super) fn v2_title_of(line: &str) -> Option<&str> {
+pub(super) fn title_of(line: &str) -> Option<&str> {
     line.strip_prefix(TITLE_PREFIX).filter(|t| !t.is_empty())
 }
 

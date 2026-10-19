@@ -19,8 +19,7 @@ fn a_rewritten_file_has_a_new_revision() {
 #[test]
 fn apply_edits_the_document_to_match_the_task() {
     let workflow = Workflow::default();
-    let parsed =
-        format::parse_v2("---\nid: 1\nstatus: ready\n---\n# T\n", None, &workflow).unwrap();
+    let parsed = format::parse("---\nid: 1\nstatus: ready\n---\n# T\n", None, &workflow).unwrap();
     let (mut doc, mut task) = (parsed.document, parsed.task);
     task.set_status(Status::BLOCKED);
     diff::apply(&mut doc, &task, &workflow).unwrap();

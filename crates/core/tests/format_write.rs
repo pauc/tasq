@@ -17,7 +17,7 @@ use tasq_core::model::{
     Link, Origin, Priority, ProgressEntry, Status, Tag, Task, TaskId, Workflow,
 };
 
-const V2_FIXTURES: &[&str] = &[
+const FIXTURES: &[&str] = &[
     "minimal",
     "full",
     "done",
@@ -29,13 +29,13 @@ const V2_FIXTURES: &[&str] = &[
     "extra-sections",
 ];
 
-fn v2_fixture(name: &str) -> String {
-    let path = format!("{}/tests/fixtures/v2/{name}.md", env!("CARGO_MANIFEST_DIR"));
+fn fixture(name: &str) -> String {
+    let path = format!("{}/tests/fixtures/{name}.md", env!("CARGO_MANIFEST_DIR"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
 fn parse(text: &str) -> Parsed {
-    format::parse_v2(text, None, &Workflow::default()).expect("text parses")
+    format::parse(text, None, &Workflow::default()).expect("text parses")
 }
 
 fn at(s: &str) -> chrono::NaiveDateTime {
@@ -46,8 +46,8 @@ fn tag(s: &str) -> Tag {
     Tag::new(s).unwrap()
 }
 
-fn render_v2(task: &Task) -> String {
-    format::render(&Document::from_task_v2(task))
+fn render_task(task: &Task) -> String {
+    format::render(&Document::from_task(task))
 }
 
 // ---- fresh documents ------------------------------------------------------
@@ -56,7 +56,7 @@ fn render_v2(task: &Task) -> String {
 fn a_blank_task_renders_the_minimal_block() {
     let task = Task::new(TaskId::from(47), "Minimal task");
     assert_eq!(
-        render_v2(&task),
+        render_task(&task),
         "---\nid: 47\npriority: B\n---\n# Minimal task\n\n## Progress\n"
     );
 }
@@ -100,7 +100,7 @@ fn a_full_task_renders_every_key_in_canonical_order() {
         "created from the issue",
     )];
     assert_eq!(
-        render_v2(&task),
+        render_task(&task),
         concat!(
             "---\n",
             "id: 12\n",
@@ -155,15 +155,15 @@ fn a_done_task_writes_status_done_and_closed() {
         ProgressEntry::new(at("2026-10-04 10:15"), "created via tasq create"),
         ProgressEntry::new(at("2026-10-05 09:00"), "shipped"),
     ];
-    assert_eq!(render_v2(&task), v2_fixture("done"));
+    assert_eq!(render_task(&task), fixture("done"));
     // A status on a done task is not written (the model drops it); a
     // `closed_at` on an open task is not written either.
     task.status = Some(Status::READY);
-    assert_eq!(render_v2(&task), v2_fixture("done"));
+    assert_eq!(render_task(&task), fixture("done"));
     task.done = false;
     task.status = None;
     assert_eq!(
-        render_v2(&task),
+        render_task(&task),
         "---\nid: 3\npriority: C\ntags: [gitlab]\n---\n# Done task\n\n## Progress\n\n- 2026-10-04 10:15: created via tasq create\n- 2026-10-05 09:00: shipped\n"
     );
 }
@@ -184,11 +184,11 @@ fn source_url_is_written_only_when_there_is_one() {
     )];
     // A url equal to the id is still written.
     assert_eq!(
-        render_v2(&task),
-        v2_fixture("source").replacen("status: ready\n", "status: ready\npriority: B\n", 1)
+        render_task(&task),
+        fixture("source").replacen("status: ready\n", "status: ready\npriority: B\n", 1)
     );
     task.origin.as_mut().unwrap().url = None;
-    let text = render_v2(&task);
+    let text = render_task(&task);
     assert!(!text.contains("source_url"), "{text}");
     assert_eq!(parse(&text).task.origin, task.origin);
 }
@@ -198,7 +198,7 @@ fn an_empty_description_is_not_written() {
     let mut task = Task::new(TaskId::from(1), "T");
     task.description = Some(String::new());
     assert_eq!(
-        render_v2(&task),
+        render_task(&task),
         "---\nid: 1\npriority: B\n---\n# T\n\n## Progress\n"
     );
 }
@@ -206,10 +206,10 @@ fn an_empty_description_is_not_written() {
 #[test]
 fn every_fixture_task_round_trips_through_a_fresh_document() {
     let wf = Workflow::default();
-    for name in V2_FIXTURES {
-        let expected = parse(&v2_fixture(name)).task;
-        let text = render_v2(&expected);
-        let parsed = format::parse_v2(&text, None, &wf).unwrap();
+    for name in FIXTURES {
+        let expected = parse(&fixture(name)).task;
+        let text = render_task(&expected);
+        let parsed = format::parse(&text, None, &wf).unwrap();
         assert_eq!(parsed.task, expected, "{name}:\n{text}");
         assert_eq!(format::render(&parsed.document), text, "{name}");
         assert!(
@@ -221,12 +221,12 @@ fn every_fixture_task_round_trips_through_a_fresh_document() {
 }
 
 #[test]
-fn a_fresh_document_knows_its_created_at_only_through_parse_v2() {
+fn a_fresh_document_knows_its_created_at_only_through_parse() {
     let mut task = Task::new(TaskId::from(1), "T");
     task.created_at = Some(at("2026-10-04 10:15"));
-    let text = render_v2(&task);
+    let text = render_task(&task);
     assert!(!text.contains("created"), "{text}");
-    let parsed = format::parse_v2(&text, task.created_at, &Workflow::default()).unwrap();
+    let parsed = format::parse(&text, task.created_at, &Workflow::default()).unwrap();
     assert_eq!(parsed.task, task);
 }
 
@@ -241,7 +241,7 @@ fn with_line(text: &str, from: &str, to: &str) -> String {
 
 #[test]
 fn set_key_replaces_the_line_of_a_present_key() {
-    let text = v2_fixture("full");
+    let text = fixture("full");
     let mut doc = Document::parse(&text).unwrap();
     ops::set_key(&mut doc, key::STATUS, "blocked");
     assert_eq!(
@@ -258,7 +258,7 @@ fn set_key_replaces_the_line_of_a_present_key() {
 
 #[test]
 fn set_key_adds_a_missing_key_after_the_last_known_key_before_it() {
-    let text = v2_fixture("minimal"); // id, status
+    let text = fixture("minimal"); // id, status
     let add = |k: &str, v: &str| {
         let mut doc = Document::parse(&text).unwrap();
         ops::set_key(&mut doc, k, v);
@@ -306,7 +306,7 @@ fn set_key_adds_a_missing_key_after_the_last_known_key_before_it() {
 
 #[test]
 fn set_key_keeps_unknown_keys_and_blank_lines_in_place() {
-    let text = v2_fixture("blank-lines"); // "", id, "", status, "  ", priority
+    let text = fixture("blank-lines"); // "", id, "", status, "  ", priority
     let mut doc = Document::parse(&text).unwrap();
     ops::set_key(&mut doc, key::RANK, "5");
     assert_eq!(
@@ -322,7 +322,7 @@ fn set_key_keeps_unknown_keys_and_blank_lines_in_place() {
             "status: ready\n"
         )
     );
-    let text = v2_fixture("unknown-keys"); // owner, id, estimate, note, ..., status, status
+    let text = fixture("unknown-keys"); // owner, id, estimate, note, ..., status, status
     let mut doc = Document::parse(&text).unwrap();
     ops::set_key(&mut doc, key::PRIORITY, "A");
     assert_eq!(
@@ -334,7 +334,7 @@ fn set_key_keeps_unknown_keys_and_blank_lines_in_place() {
 
 #[test]
 fn set_key_on_a_duplicated_key_keeps_one_line() {
-    let text = v2_fixture("unknown-keys"); // status: waiting, status: ready
+    let text = fixture("unknown-keys"); // status: waiting, status: ready
     let mut doc = Document::parse(&text).unwrap();
     ops::set_key(&mut doc, key::STATUS, "blocked");
     assert_eq!(
@@ -349,7 +349,7 @@ fn set_key_on_a_duplicated_key_keeps_one_line() {
 
 #[test]
 fn set_key_of_an_unknown_key_goes_at_the_end_of_the_block() {
-    let text = v2_fixture("minimal");
+    let text = fixture("minimal");
     let mut doc = Document::parse(&text).unwrap();
     ops::set_key(&mut doc, "owner", "pau");
     assert_eq!(
@@ -370,7 +370,7 @@ fn set_key_of_an_unknown_key_goes_at_the_end_of_the_block() {
 
 #[test]
 fn set_key_uses_the_documents_line_ending() {
-    let text = v2_fixture("crlf");
+    let text = fixture("crlf");
     let mut doc = Document::parse(&text).unwrap();
     ops::set_key(&mut doc, key::PRIORITY, "A");
     assert_eq!(
@@ -385,7 +385,7 @@ fn set_key_uses_the_documents_line_ending() {
 
 #[test]
 fn clear_key_removes_every_line_of_the_key() {
-    let text = v2_fixture("unknown-keys");
+    let text = fixture("unknown-keys");
     let mut doc = Document::parse(&text).unwrap();
     assert!(ops::clear_key(&mut doc, key::STATUS));
     assert_eq!(
@@ -401,7 +401,7 @@ fn clear_key_removes_every_line_of_the_key() {
             .replace("owner: pau\n", "")
     );
     // Every known key of the full fixture, one at a time: only its line goes.
-    let text = v2_fixture("full");
+    let text = fixture("full");
     for k in key::ORDER.iter().filter(|k| **k != key::ID) {
         let mut doc = Document::parse(&text).unwrap();
         let Some(found) = text.find(&format!("\n{k}: ")) else {
@@ -423,7 +423,7 @@ fn clear_key_removes_every_line_of_the_key() {
 
 #[test]
 fn clear_key_never_removes_the_id() {
-    let text = v2_fixture("minimal");
+    let text = fixture("minimal");
     let mut doc = Document::parse(&text).unwrap();
     assert!(!ops::clear_key(&mut doc, key::ID));
     assert_eq!(format::render(&doc), text);
@@ -453,21 +453,21 @@ fn key_order_is_the_canonical_one() {
 
 /// The minimal fixture (`id: 47`, `status: ready`) after `op`.
 fn minimal_after(op: impl FnOnce(&mut Document)) -> String {
-    let mut doc = Document::parse(&v2_fixture("minimal")).unwrap();
+    let mut doc = Document::parse(&fixture("minimal")).unwrap();
     op(&mut doc);
     format::render(&doc)
 }
 
 /// The full fixture after `op`.
 fn full_after(op: impl FnOnce(&mut Document)) -> String {
-    let mut doc = Document::parse(&v2_fixture("full")).unwrap();
+    let mut doc = Document::parse(&fixture("full")).unwrap();
     op(&mut doc);
     format::render(&doc)
 }
 
 fn minimal_with(block_after_status: &str) -> String {
     with_line(
-        &v2_fixture("minimal"),
+        &fixture("minimal"),
         "status: ready\n",
         &format!("status: ready\n{block_after_status}"),
     )
@@ -477,7 +477,7 @@ fn minimal_with(block_after_status: &str) -> String {
 fn set_status_and_set_priority_write_their_keys() {
     assert_eq!(
         minimal_after(|d| ops::set_status(d, &Status::BLOCKED)),
-        v2_fixture("minimal").replace("status: ready", "status: blocked")
+        fixture("minimal").replace("status: ready", "status: blocked")
     );
     assert_eq!(
         minimal_after(|d| ops::set_priority(d, Priority::A)),
@@ -485,15 +485,15 @@ fn set_status_and_set_priority_write_their_keys() {
     );
     assert_eq!(
         full_after(|d| ops::set_priority(d, Priority::C)),
-        v2_fixture("full").replace("priority: A", "priority: C")
+        fixture("full").replace("priority: A", "priority: C")
     );
     // A status on a done task replaces `done`; the model never asks for it
     // (the store's compare refuses it), but the op is a plain key write.
-    let mut doc = Document::parse(&v2_fixture("done")).unwrap();
+    let mut doc = Document::parse(&fixture("done")).unwrap();
     ops::set_status(&mut doc, &Status::READY);
     assert_eq!(
         format::render(&doc),
-        v2_fixture("done").replace("status: done", "status: ready")
+        fixture("done").replace("status: done", "status: ready")
     );
 }
 
@@ -503,9 +503,9 @@ fn clear_status_removes_the_status_key_whatever_it_says() {
         minimal_after(|d| {
             assert!(ops::clear_status(d));
         }),
-        v2_fixture("minimal").replace("status: ready\n", "")
+        fixture("minimal").replace("status: ready\n", "")
     );
-    let text = v2_fixture("done");
+    let text = fixture("done");
     let mut doc = Document::parse(&text).unwrap();
     assert!(ops::clear_status(&mut doc));
     assert_eq!(format::render(&doc), text.replace("status: done\n", ""));
@@ -518,7 +518,7 @@ fn set_done_writes_status_done_and_set_open_clears_it() {
     let done = minimal_after(ops::set_done);
     assert_eq!(
         done,
-        v2_fixture("minimal").replace("status: ready", "status: done")
+        fixture("minimal").replace("status: ready", "status: done")
     );
     let parsed = parse(&done);
     assert!(parsed.task.done);
@@ -531,7 +531,7 @@ fn set_done_writes_status_done_and_set_open_clears_it() {
     ops::set_open(&mut doc);
     assert_eq!(
         format::render(&doc),
-        v2_fixture("minimal").replace("status: ready\n", "")
+        fixture("minimal").replace("status: ready\n", "")
     );
     let reopened = parse(&format::render(&doc)).task;
     assert!(!reopened.done);
@@ -544,7 +544,7 @@ fn set_done_writes_status_done_and_set_open_clears_it() {
         "---\nid: 2\nstatus: done\npriority: B\n---\n# T\n"
     );
     // Open on an open task changes nothing.
-    let text = v2_fixture("full");
+    let text = fixture("full");
     let mut doc = Document::parse(&text).unwrap();
     ops::set_open(&mut doc);
     assert_eq!(format::render(&doc), text);
@@ -573,7 +573,7 @@ fn rank_due_closed_and_project_are_keys() {
         minimal_with("project: /home/pau/code/x\n")
     );
     // Replacing keeps the line where it was.
-    let text = v2_fixture("full");
+    let text = fixture("full");
     assert_eq!(
         full_after(|d| ops::set_rank(d, 2)),
         text.replace("rank: 1024", "rank: 2")
@@ -586,7 +586,7 @@ fn rank_due_closed_and_project_are_keys() {
         full_after(|d| ops::set_project(d, std::path::Path::new("/new"))),
         text.replace("project: /home/pau/code/tasks", "project: /new")
     );
-    let closed = v2_fixture("done");
+    let closed = fixture("done");
     let mut doc = Document::parse(&closed).unwrap();
     ops::set_closed(&mut doc, at("2026-10-06 08:00"));
     assert_eq!(
@@ -597,7 +597,7 @@ fn rank_due_closed_and_project_are_keys() {
 
 #[test]
 fn clearing_rank_due_closed_and_project_removes_their_lines() {
-    let text = v2_fixture("full");
+    let text = fixture("full");
     let mut doc = Document::parse(&text).unwrap();
     assert!(ops::clear_rank(&mut doc));
     assert!(ops::clear_due(&mut doc));
@@ -612,7 +612,7 @@ fn clearing_rank_due_closed_and_project_removes_their_lines() {
     assert!(!ops::clear_rank(&mut doc));
     assert!(!ops::clear_due(&mut doc));
     assert!(!ops::clear_project(&mut doc));
-    let closed = v2_fixture("done");
+    let closed = fixture("done");
     let mut doc = Document::parse(&closed).unwrap();
     assert!(ops::clear_closed(&mut doc));
     assert_eq!(
@@ -629,10 +629,10 @@ fn set_tags_writes_the_list_and_an_empty_list_clears_it() {
     );
     assert_eq!(
         minimal_after(|d| ops::set_tags(d, &[])),
-        v2_fixture("minimal"),
+        fixture("minimal"),
         "no tags and no key is a no-op"
     );
-    let text = v2_fixture("full");
+    let text = fixture("full");
     assert_eq!(
         full_after(|d| ops::set_tags(d, &[tag("x")])),
         text.replace("tags: [gitlab, review-request]", "tags: [x]")
@@ -654,17 +654,17 @@ fn set_tags_writes_the_list_and_an_empty_list_clears_it() {
 fn set_title_rewrites_the_title_line_without_a_marker() {
     assert_eq!(
         minimal_after(|d| ops::set_title(d, "Renamed")),
-        v2_fixture("minimal").replace("# Minimal task", "# Renamed")
+        fixture("minimal").replace("# Minimal task", "# Renamed")
     );
-    let mut doc = Document::parse(&v2_fixture("done")).unwrap();
+    let mut doc = Document::parse(&fixture("done")).unwrap();
     ops::set_title(&mut doc, "Still done");
     assert_eq!(
         format::render(&doc),
-        v2_fixture("done").replace("# Done task", "# Still done")
+        fixture("done").replace("# Done task", "# Still done")
     );
     assert!(parse(&format::render(&doc)).task.done);
     // The blank line between the fence and the title stays.
-    let text = v2_fixture("full");
+    let text = fixture("full");
     assert!(text.contains("---\n\n# Full task\n"));
     assert_eq!(
         full_after(|d| ops::set_title(d, "Renamed")),
@@ -692,7 +692,7 @@ fn set_origin_writes_the_three_source_keys_and_clear_origin_removes_them() {
         minimal_with("source: gitlab\nsource_id: !7\n")
     );
     // Replacing: the lines stay where they are; a url that goes is removed.
-    let text = v2_fixture("full");
+    let text = fixture("full");
     assert_eq!(
         full_after(|d| ops::set_origin(d, &origin)),
         text.replace("source_id: !123", "source_id: !7").replace(
@@ -729,7 +729,7 @@ fn every_scalar_op_leaves_the_body_untouched() {
     // The body of the full fixture, with its unknown `## Notes` section and
     // every list, survives each scalar op; only the block changes.
     type Op = Box<dyn Fn(&mut Document)>;
-    let text = v2_fixture("full");
+    let text = fixture("full");
     let body = &text[text.find("\n# Full task").unwrap()..];
     let ops: Vec<(&str, Op)> = vec![
         (

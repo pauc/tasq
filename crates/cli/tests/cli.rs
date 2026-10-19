@@ -11,7 +11,7 @@ use std::path::Path;
 
 use insta::assert_snapshot;
 use predicates::prelude::*;
-use support::{TestEnv, stderr, stdout, ulid_name, v2};
+use support::{TestEnv, stderr, stdout, task_text, ulid_name};
 
 mod help {
     use super::*;
@@ -182,7 +182,7 @@ mod list {
         let env = TestEnv::fixture();
         env.write_task(
             &ulid_name("2026-09-07 15:00", 8),
-            &v2(
+            &task_text(
                 8,
                 "status: in-progress\npriority: C\nrank: 1024\n",
                 "# Ranked\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
@@ -190,7 +190,7 @@ mod list {
         );
         env.write_task(
             &ulid_name("2026-09-08 16:00", 9),
-            &v2(
+            &task_text(
                 9,
                 "status: in-progress\npriority: C\nrank: -1024\n",
                 "# Ranked first\n\n## Progress\n\n- 2026-10-08 16:00: created\n",
@@ -198,7 +198,7 @@ mod list {
         );
         env.write_task(
             &ulid_name("2026-09-09 17:00", 10),
-            &v2(
+            &task_text(
                 10,
                 "status: in-progress\npriority: A\nrank: soon\n",
                 "# Rank by hand\n\n## Progress\n\n- 2026-10-09 17:00: created\n",
@@ -326,7 +326,7 @@ mod list {
         let env = TestEnv::fixture();
         env.write_task(
             &ulid_name("2026-09-07 15:00", 8),
-            &v2(
+            &task_text(
                 8,
                 "status: done\npriority: C\nrank: -1024\n",
                 "# Closed with a rank\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
@@ -433,7 +433,7 @@ mod list {
         );
         env.write_task(
             &ulid_name("2026-09-07 15:00", 8),
-            &v2(8, "status: review\n", "# Needs a review\n"),
+            &task_text(8, "status: review\n", "# Needs a review\n"),
         );
         let out = env.tasq().args(["--color", "always"]).output().unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
@@ -1148,7 +1148,7 @@ mod rank {
         let env = TestEnv::fixture();
         env.write_task(
             &ulid_name("2026-09-07 15:00", 8),
-            &v2(
+            &task_text(
                 8,
                 &format!("status: in-progress\npriority: C\n{rank_line}"),
                 "# Second\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
@@ -1159,7 +1159,7 @@ mod rank {
 
     /// Task 8 as written with `rank_line` in its frontmatter.
     fn second(rank_line: &str) -> String {
-        v2(
+        task_text(
             8,
             &format!("status: in-progress\npriority: C\n{rank_line}"),
             "# Second\n\n## Progress\n\n- 2026-10-07 15:00: created\n",
@@ -1318,7 +1318,7 @@ mod rank {
     /// Task 9, a second `#C` in-progress task below task 8 by id, as
     /// written with `rank_line` in its frontmatter.
     fn third(rank_line: &str) -> String {
-        v2(
+        task_text(
             9,
             &format!("status: in-progress\npriority: C\n{rank_line}"),
             "# Third\n\n## Progress\n\n- 2026-10-08 16:00: created\n",
@@ -1535,7 +1535,7 @@ mod fields {
             .stdout("[3] renamed\n");
         assert_eq!(
             support(&env),
-            v2(
+            task_text(
                 3,
                 SUPPORT_FRONT,
                 &SUPPORT_BODY.replace("Answer the support ticket", "Answer the export question")
@@ -1573,7 +1573,7 @@ mod fields {
             .stdout("[3] due 2026-10-17\n");
         assert_eq!(
             support(&env),
-            v2(
+            task_text(
                 3,
                 "status: ready\npriority: B\ndue: 2026-10-17\ntags: [support]\n",
                 SUPPORT_BODY
@@ -1650,7 +1650,7 @@ mod fields {
             .stdout("[3] tags: +needs-info -support +urgent\n");
         assert_eq!(
             support(&env),
-            v2(
+            task_text(
                 3,
                 "status: ready\npriority: B\ntags: [needs-info, urgent]\n",
                 SUPPORT_BODY
@@ -1712,7 +1712,7 @@ mod fields {
             .stdout("[7] tags: +new\n");
         assert_eq!(
             env.read_task(7),
-            v2(
+            task_text(
                 7,
                 "priority: B\ntags: [new]\n",
                 "# Task without a tags section\n\n## Progress\n\n\
@@ -1766,7 +1766,7 @@ mod fields {
             .stdout("[3] description updated\n");
         assert_eq!(
             support(&env),
-            v2(
+            task_text(
                 3,
                 SUPPORT_FRONT,
                 &SUPPORT_BODY.replace(
@@ -1782,7 +1782,7 @@ mod fields {
             .stdout("[7] description updated\n");
         assert_eq!(
             env.read_task(7),
-            v2(
+            task_text(
                 7,
                 "priority: B\n",
                 "# Task without a tags section\n\n## Description\n\nNew\n\n## Progress\n\n\
@@ -1908,7 +1908,7 @@ mod fields {
             .stdout("[3] description cleared\n");
         assert_eq!(
             support(&env),
-            v2(
+            task_text(
                 3,
                 SUPPORT_FRONT,
                 "# Answer the support ticket\n\n\
@@ -3646,7 +3646,7 @@ mod launch {
         let env = TestEnv::fixture();
         env.write_task(
             &ulid_name("2026-09-07 15:00", 8),
-            &v2(
+            &task_text(
                 8,
                 "status: in-progress\npriority: C\nrank: 1024\n",
                 "# Ranked\n\n## Progress\n\n- 2026-10-07 15:00: created\n",

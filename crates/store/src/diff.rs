@@ -191,7 +191,7 @@ mod tests {
     const TEXT: &str = "---\nid: 1\nstatus: ready\npriority: B\ntags: [gitlab]\n---\n# Title\n\n## Progress\n\n- 2026-10-01 09:00: created\n";
 
     fn parse(text: &str) -> (Document, Task) {
-        let p = format::parse_v2(text, None, &Workflow::default()).unwrap();
+        let p = format::parse(text, None, &Workflow::default()).unwrap();
         (p.document, p.task)
     }
 

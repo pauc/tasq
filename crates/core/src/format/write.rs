@@ -1,5 +1,5 @@
 //! Writing a whole [`Task`] as a new [`Document`]: the canonical file
-//! (ADR 0026, [`Document::from_task_v2`]).
+//! (ADR 0026, [`Document::from_task`]).
 
 use crate::clock::{format_date, format_timestamp};
 use crate::model::Task;
@@ -66,7 +66,7 @@ impl Document {
     /// merge requests, Worktrees and Sessions through the operations the
     /// commands use. `## Progress` is always present; no scalar is ever
     /// written as a section.
-    pub fn from_task_v2(task: &Task) -> Self {
+    pub fn from_task(task: &Task) -> Self {
         let mut lines = vec![FENCE.to_owned()];
         lines.extend(frontmatter_lines(task));
         lines.push(FENCE.to_owned());

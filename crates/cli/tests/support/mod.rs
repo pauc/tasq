@@ -227,7 +227,7 @@ impl TestEnv {
 /// A task file: the frontmatter block (`id` first, then `front`: zero or
 /// more `key: value` lines, each ending in `\n`) and `body`, which starts
 /// with the `# Title` line and ends in `\n`.
-pub fn v2(id: u64, front: &str, body: &str) -> String {
+pub fn task_text(id: u64, front: &str, body: &str) -> String {
     assert!(
         front.is_empty() || front.ends_with('\n'),
         "front must end in a newline: {front:?}"

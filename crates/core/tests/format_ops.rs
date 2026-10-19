@@ -1,6 +1,6 @@
 //! The list-section operations, pinned byte for byte.
 //!
-//! Every `fixtures/v2/ops/<name>.before.md` / `.after.md` pair is a
+//! Every `fixtures/ops/<name>.before.md` / `.after.md` pair is a
 //! hand-maintained task file and the bytes it must have after one
 //! operation, with the clock fixed at 2026-10-04 10:15. The pairs keep the
 //! insertion rules the original script's awk had for the body (new
@@ -21,7 +21,7 @@ use tasq_core::model::{Link, ProgressEntry, Session, Task, Workflow, Worktree};
 
 type Op = fn(&mut Document) -> Option<bool>;
 
-const DIR: &str = "v2/ops";
+const DIR: &str = "ops";
 
 /// The block every hand-written document below starts with.
 const FRONT: &str = "---\nid: 1\n---\n";
@@ -58,7 +58,7 @@ fn file(body: &str) -> String {
 }
 
 fn reparse(doc: &Document) -> Task {
-    format::parse_v2(&format::render(doc), None, &Workflow::default())
+    format::parse(&format::render(doc), None, &Workflow::default())
         .unwrap()
         .task
 }
@@ -638,11 +638,11 @@ fn duplicates_are_checked_in_their_own_section_only() {
 fn operations_round_trip_through_the_task() {
     let wf = Workflow::default();
     let text = std::fs::read_to_string(format!(
-        "{}/tests/fixtures/v2/full.md",
+        "{}/tests/fixtures/full.md",
         env!("CARGO_MANIFEST_DIR")
     ))
     .unwrap();
-    let mut parsed = format::parse_v2(&text, None, &wf).unwrap();
+    let mut parsed = format::parse(&text, None, &wf).unwrap();
     ops::set_description(&mut parsed.document, "Rewritten.");
     ops::append_progress(&mut parsed.document, &note("more"));
     ops::append_worktree(&mut parsed.document, &Worktree::new("/w"));

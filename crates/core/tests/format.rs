@@ -1,6 +1,6 @@
 //! The task file format (ADR 0026): a frontmatter block of scalar fields,
-//! then the title heading and the list sections. Every fixture under
-//! `fixtures/v2/` parses, renders back byte for byte and re-parses to the
+//! then the title heading and the list sections. Every `fixtures/*.md`
+//! file parses, renders back byte for byte and re-parses to the
 //! same task; the document's structured view is checked on hand-written
 //! files.
 
@@ -32,12 +32,12 @@ const FIXTURES: &[&str] = &[
 ];
 
 fn fixture(name: &str) -> String {
-    let path = format!("{}/tests/fixtures/v2/{name}.md", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/tests/fixtures/{name}.md", env!("CARGO_MANIFEST_DIR"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
 fn parse(text: &str) -> Parsed {
-    format::parse_v2(text, None, &Workflow::default()).expect("fixture parses")
+    format::parse(text, None, &Workflow::default()).expect("fixture parses")
 }
 
 fn at(s: &str) -> chrono::NaiveDateTime {
@@ -142,7 +142,7 @@ fn minimal() {
 #[test]
 fn created_at_is_what_the_caller_passes() {
     let created = at("2026-10-04 10:15");
-    let task = format::parse_v2(&fixture("minimal"), Some(created), &Workflow::default())
+    let task = format::parse(&fixture("minimal"), Some(created), &Workflow::default())
         .unwrap()
         .task;
     assert_eq!(task.created_at, Some(created));
@@ -405,7 +405,7 @@ fn status_uses_the_given_workflow() {
         Status::new("doing").unwrap(),
     ]);
     let text = "---\nid: 1\nstatus: doing\n---\n# T\n";
-    let t = format::parse_v2(text, None, &wf).unwrap().task;
+    let t = format::parse(text, None, &wf).unwrap().task;
     assert_eq!(t.status, Some(Status::new("doing").unwrap()));
     let t = parse(text).task;
     assert_eq!(t.status, None, "an unknown status reads as none and stays");
@@ -519,7 +519,7 @@ fn origin_needs_a_source_and_an_id() {
 }
 
 fn err(text: &str) -> FormatError {
-    format::parse_v2(text, None, &Workflow::default()).unwrap_err()
+    format::parse(text, None, &Workflow::default()).unwrap_err()
 }
 
 #[test]
@@ -570,7 +570,7 @@ fn an_invalid_id_is_an_error_naming_its_line() {
     }
     // The value is trimmed, like every value.
     assert_eq!(
-        format::parse_v2("---\nid:  7 \n---\n# T\n", None, &Workflow::default())
+        format::parse("---\nid:  7 \n---\n# T\n", None, &Workflow::default())
             .unwrap()
             .task
             .id,
@@ -589,7 +589,7 @@ fn an_invalid_id_is_an_error_naming_its_line() {
         }
     );
     assert_eq!(
-        format::parse_v2("---\nid: 1\nid: x\n---\n# T\n", None, &Workflow::default())
+        format::parse("---\nid: 1\nid: x\n---\n# T\n", None, &Workflow::default())
             .unwrap()
             .task
             .id,
@@ -674,7 +674,7 @@ fn a_file_without_a_frontmatter_block_is_not_a_task_file() {
             first_line: first_line.into(),
         };
         assert_eq!(
-            format::parse_v2(text, None, &wf).unwrap_err(),
+            format::parse(text, None, &wf).unwrap_err(),
             expected,
             "{text:?}"
         );
@@ -695,7 +695,7 @@ fn a_file_without_a_frontmatter_block_is_not_a_task_file() {
 /// round trip.
 #[test]
 fn every_ops_fixture_round_trips() {
-    let dir = format!("{}/tests/fixtures/v2/ops", env!("CARGO_MANIFEST_DIR"));
+    let dir = format!("{}/tests/fixtures/ops", env!("CARGO_MANIFEST_DIR"));
     let mut count = 0;
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();

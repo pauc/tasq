@@ -345,7 +345,7 @@ impl TasqStore {
             let revision = Revision::of(&path, &bytes).map_err(|e| io_error(&path, e))?;
             let text = String::from_utf8_lossy(&bytes);
             let invalid_utf8 = matches!(text, std::borrow::Cow::Owned(_));
-            match format::parse_v2(&text, created_at(&name), &self.workflow) {
+            match format::parse(&text, created_at(&name), &self.workflow) {
                 Ok(parsed) => scan.tasks.push(TaskFile {
                     path,
                     parsed,
@@ -455,7 +455,7 @@ impl Store for TasqStore {
         let lock = self.lock()?;
         let id = next_id(&self.scan()?);
         let task = draft::materialize(draft, id.clone(), self.clock.as_ref());
-        let text = format::render(&Document::from_task_v2(&task));
+        let text = format::render(&Document::from_task(&task));
         self.write_new(unix_millis(instant(self.clock.as_ref())), &text)?;
         drop(lock);
         self.get(&id)

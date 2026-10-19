@@ -299,7 +299,7 @@ fn a_refused_draft_writes_nothing_and_creates_no_directory() {
 }
 
 #[test]
-fn a_full_draft_is_written_as_a_canonical_v2_file() {
+fn a_full_draft_is_written_as_a_canonical_task_file() {
     use tasq_core::model::{Link, Origin, Priority, Tag};
     let temp = TempStore::empty();
     let mut store = temp.open_at(&[RANDOM, 0xB]);

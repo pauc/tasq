@@ -1,7 +1,7 @@
 //! Grammar edge cases of the body's list sections, on hand-written
 //! documents: how progress notes, worktrees, sessions, links and
 //! descriptions read, and how duplicate and unknown sections behave. The
-//! frontmatter grammar is `format_v2.rs`.
+//! frontmatter grammar is `format.rs`.
 
 #![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
 
@@ -12,7 +12,7 @@ use tasq_core::model::{Link, ProgressEntry, Task, Workflow, Worktree};
 
 /// The task of a document whose body is `body`, behind a minimal block.
 fn task(body: &str) -> Task {
-    format::parse_v2(
+    format::parse(
         &format!("---\nid: 1\n---\n{body}"),
         None,
         &Workflow::default(),

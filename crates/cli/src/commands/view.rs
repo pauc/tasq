@@ -435,7 +435,7 @@ mod tests {
     const GL: &str = "https://gitlab.example.com/group/project/-/merge_requests/123";
     const ISSUE: &str = "https://gitlab.example.com/group/project/-/issues/42";
 
-    const V2: &str = "---\nid: 1\nstatus: ready\n---\n# T\n\n---\n";
+    const TEXT: &str = "---\nid: 1\nstatus: ready\n---\n# T\n\n---\n";
 
     #[test]
     fn with_created_closes_the_frontmatter_with_the_creation_time() {
@@ -444,10 +444,10 @@ mod tests {
             .and_hms_milli_opt(9, 0, 5, 123)
             .unwrap();
         assert_eq!(
-            with_created(V2, Some(at)),
+            with_created(TEXT, Some(at)),
             "---\nid: 1\nstatus: ready\ncreated: 2026-09-01 09:00\n---\n# T\n\n---\n"
         );
-        assert_eq!(with_created(V2, None), V2);
+        assert_eq!(with_created(TEXT, None), TEXT);
         // A file without a block, or whose block never closes, is shown as it is.
         assert_eq!(with_created("# [ ] T\n---\n", Some(at)), "# [ ] T\n---\n");
         assert_eq!(with_created("---\nid: 1\n", Some(at)), "---\nid: 1\n");
@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn fence_frontmatter_turns_the_block_into_code_glow_keeps() {
         assert_eq!(
-            fence_frontmatter(V2),
+            fence_frontmatter(TEXT),
             "```\nid: 1\nstatus: ready\n```\n# T\n\n---\n"
         );
         assert_eq!(fence_frontmatter("# [ ] T\n---\n"), "# [ ] T\n---\n");

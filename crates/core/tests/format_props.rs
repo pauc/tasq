@@ -1,6 +1,6 @@
 //! Property tests: parsing never panics, every parseable text renders back
 //! unchanged, operations never panic and keep every other line, and tasks
-//! written with `Document::from_task_v2` read back equal.
+//! written with `Document::from_task` read back equal.
 
 #![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
 
@@ -160,13 +160,13 @@ prop_compose! {
 proptest! {
     #[test]
     fn parsing_any_string_never_panics(text in "\\PC*") {
-        let _ = format::parse_v2(&text, None, &workflow());
+        let _ = format::parse(&text, None, &workflow());
     }
 
     #[test]
     fn parsing_task_shaped_text_never_panics(body in ".*") {
         let text = format!("---\nid: 1\n---\n# T\n{body}");
-        let parsed = format::parse_v2(&text, None, &workflow()).unwrap();
+        let parsed = format::parse(&text, None, &workflow()).unwrap();
         prop_assert_eq!(format::render(&parsed.document), text);
     }
 
@@ -188,7 +188,7 @@ proptest! {
         let nl = if crlf { "\r\n" } else { "\n" };
         let block: Vec<String> = before.iter().cloned().chain([format!("id: {id}")]).chain(after.iter().cloned()).collect();
         let text = format!("---{nl}{}{nl}---{gap}{nl}# {title}{body}", block.join(nl));
-        let parsed = format::parse_v2(&text, created, &workflow()).unwrap();
+        let parsed = format::parse(&text, created, &workflow()).unwrap();
         prop_assert_eq!(format::render(&parsed.document), text.clone());
         prop_assert_eq!(&parsed.task.id, &TaskId::from(id));
         prop_assert_eq!(parsed.task.created_at, created);
@@ -199,7 +199,7 @@ proptest! {
         prop_assert_eq!(parsed.document.is_done(), first_status == Some("done"));
         prop_assert_eq!(parsed.task.done, first_status == Some("done"));
         prop_assert_eq!(parsed.task.title.as_str(), title.as_str());
-        let again = format::parse_v2(&format::render(&parsed.document), created, &workflow()).unwrap();
+        let again = format::parse(&format::render(&parsed.document), created, &workflow()).unwrap();
         prop_assert_eq!(again, parsed);
     }
 
@@ -249,9 +249,9 @@ proptest! {
         let wf = workflow();
         let mut task = task;
         task.created_at = created;
-        let doc = Document::from_task_v2(&task);
+        let doc = Document::from_task(&task);
         let text = format::render(&doc);
-        let parsed = format::parse_v2(&text, created, &wf).unwrap();
+        let parsed = format::parse(&text, created, &wf).unwrap();
         prop_assert_eq!(&parsed.task, &task, "{}", text);
         prop_assert_eq!(format::render(&parsed.document), text.clone());
         let ranks: Vec<usize> = parsed.document.frontmatter().entries()
@@ -332,7 +332,7 @@ proptest! {
         rest in "(\\r?\\n\\PC*){0,3}",
     ) {
         let text = format!("{first}{rest}");
-        let err = format::parse_v2(&text, None, &workflow()).unwrap_err();
+        let err = format::parse(&text, None, &workflow()).unwrap_err();
         prop_assert_eq!(&err, &FormatError::NotFrontmatter { first_line: first.clone() });
         prop_assert_eq!(Document::parse(&text), Err(err));
     }
