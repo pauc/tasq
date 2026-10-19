@@ -17,8 +17,9 @@ out-of-process plugins.
 
 ![tasq listing tasks, setting a status and printing a standup summary, then tasq ui with the status picker and the help overlay](docs/demo/tasq.gif)
 
-The recording is [`docs/demo/demo.tape`](docs/demo/demo.tape) against a throwaway store;
-`scripts/demo-gif` re-renders it with [VHS](https://github.com/charmbracelet/vhs) in docker.
+The recordings are the `docs/demo/*.tape` files against a throwaway store
+([`docs/demo/setup.sh`](docs/demo/setup.sh)); `scripts/demo-gif` re-renders them with
+[VHS](https://github.com/charmbracelet/vhs) in docker.
 
 ## Install
 
@@ -94,6 +95,8 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
 
    Ids are the numbers in brackets in the list. A task keeps its id for life.
 
+   ![tasq creating a task, logging a note, adding a tag, listing the ready group, viewing the file and closing it](docs/demo/cli.gif)
+
 4. Work on a task:
 
    ```sh
@@ -107,7 +110,7 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    task; `shell`, `tmux`, `herdr` and `auto` are the others (`launch.default`). With
    worktrees enabled (`[worktree] enabled = true`), the session opens in the task's worktree
    instead, creating it first when it does not exist; `tasq create ... --worktree [BRANCH]` and
-   `tasq worktree 12 [BRANCH]` declare one, `tasq worktree up 12` creates it without launching.
+   `tasq worktree set 12 [BRANCH]` declare one, `tasq worktree up 12` creates it without launching.
 
 5. Pull in work from outside: declare `[forge.<name>]` and `[[source]]` blocks (see
    [`docs/sources.md`](docs/sources.md) and [`examples/sources/`](examples/sources/)), then
@@ -142,6 +145,8 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    `Shift+Enter` does the same without leaving the list, `s` runs the sources that run by
    default, `S` picks which sources to run, `?` lists every key. Every key can be rebound under `[ui.keys]` in the config: Ghostty on Linux keeps
    `Ctrl+Enter` for fullscreen, so `launch-detached = "alt+enter"` moves the action there.
+
+   ![tasq ui creating a task in the edit view with the due-date calendar, then filtering, logging a note and marking a task done](docs/demo/ui-edit.gif)
 
 ## Concepts
 
@@ -241,6 +246,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq view ID [--raw]` | Show a task (glow on a terminal, plain markdown otherwise; `--raw` is verbatim) |
 | `tasq project ID [PATH]` | Show or set the task's project directory |
 | `tasq worktree set ID [BRANCH]` / `tasq worktree set ID PATH` | Declare a worktree for the task (no git, nothing on disk), or track an existing one (with `worktree.enabled`) |
+| `tasq worktree up ID` / `ls` / `switch [TARGET]` / `path TARGET` / `release ID` / `prune` / `trust` | Create the declared worktree now, list worktrees, cd into one (after `eval "$(tasq worktree shell-init zsh)"`), release what closing does, forget missing ones, approve a repository's hooks |
 | `tasq session ID SESSION_ID [DESC] [--launcher NAME]` | Track an agent session |
 | `tasq mr ID URL [TITLE]` | Track a merge request |
 | `tasq sync [--source NAME] [--dry-run] [ID]...` | Refresh tasks from the configured sources, or re-check the given tasks |
