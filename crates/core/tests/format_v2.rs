@@ -710,6 +710,25 @@ fn a_v1_file_is_not_a_v2_file_and_vice_versa() {
     );
 }
 
+/// Every before/after file of the list-section operation scenarios
+/// (`format_ops.rs`) is a task file: all of them survive a parse/render
+/// round trip.
+#[test]
+fn every_ops_fixture_round_trips() {
+    let dir = format!("{}/tests/fixtures/v2/ops", env!("CARGO_MANIFEST_DIR"));
+    let mut count = 0;
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let once = parse(&text);
+        assert_eq!(format::render(&once.document), text, "{}", path.display());
+        let twice = parse(&format::render(&once.document));
+        assert_eq!(once, twice, "{}", path.display());
+        count += 1;
+    }
+    assert!(count > 60, "expected the ops fixtures, found {count} files");
+}
+
 #[test]
 fn constants() {
     assert_eq!(format::FENCE, "---");
