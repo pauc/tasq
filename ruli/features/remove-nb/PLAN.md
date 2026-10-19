@@ -294,14 +294,14 @@ or migrate.
 
 **Blocked by:** RN-001, RN-002, RN-003.
 
-**Status:** ready
+**Status:** done
 
-- [ ] Every scalar op writes a frontmatter key with no shape check; the shape check and the v1-only ops are gone.
-- [ ] Parsing a v1 file is a plain "not a task file" error, the same as any other markdown file.
-- [ ] `store info` text and JSON snapshots regenerated and reviewed; `IdScheme` exists nowhere.
-- [ ] A CLI test shows an old `store.*` key failing with the generic unknown-field error and file:line:column.
-- [ ] No nb, notebook, v1/v2, positional-id or migrate wording left in code, comments or snapshots, except in names RN-005 renames.
-- [ ] `mutants-in` on core's format module: zero missed.
+- [x] Every scalar op writes a frontmatter key with no shape check; the shape check and the v1-only ops are gone.
+- [x] Parsing a v1 file is a plain "not a task file" error, the same as any other markdown file.
+- [x] `store info` text and JSON snapshots regenerated and reviewed; `IdScheme` exists nowhere.
+- [x] A CLI test shows an old `store.*` key failing with the generic unknown-field error and file:line:column.
+- [x] No nb, notebook, v1/v2, positional-id or migrate wording left in code, comments or snapshots, except in names RN-005 renames.
+- [x] `mutants-in` on core's format module: zero missed.
 
 ### RN-005: the `v2` names are gone (rename only)
 
