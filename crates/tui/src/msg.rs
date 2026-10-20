@@ -86,7 +86,7 @@ pub enum Msg {
     Launch,
     /// `Ctrl+Enter` / `Shift+Enter` in normal mode: open a work session in
     /// a new window, switching to it or not.
-    LaunchDetached {
+    LaunchWindow {
         /// Whether to switch to the new window.
         focus: bool,
     },
@@ -174,8 +174,8 @@ pub enum Cmd {
 pub enum LaunchTarget {
     /// This terminal, with `launch.default`; the UI waits for it.
     Here,
-    /// A new window, with `launch.detached`; the UI stays up.
-    Detached {
+    /// A new window, with `launch.window`; the UI stays up.
+    Window {
         /// Whether to switch to the new window.
         focus: bool,
     },
@@ -215,7 +215,7 @@ pub trait Host {
 
     /// Opens a work session on the task: `tasq pick <id>` in this terminal
     /// for [`LaunchTarget::Here`], waiting for it; `tasq pick <id>
-    /// --detached [--no-focus]` for [`LaunchTarget::Detached`], with its
+    /// --window [--no-focus]` for [`LaunchTarget::Window`], with its
     /// output captured so the screen is untouched and its last line is
     /// the result.
     fn launch(&mut self, id: &TaskId, target: LaunchTarget) -> HostResult;
@@ -291,7 +291,7 @@ impl Host for NoHost {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecordingHost {
     /// Every call, as `edit <id> <file>`, `launch <id>`, `launch <id>
-    /// detached` / `launch <id> detached no-focus`, `view <id>`, `sync` /
+    /// window` / `launch <id> window no-focus`, `view <id>`, `sync` /
     /// `sync <name>...`,
     /// `worktree <id> [branch]`, `after_done <id>` or `after_create <id>`.
     pub calls: Vec<String>,
@@ -317,8 +317,8 @@ impl Host for RecordingHost {
     fn launch(&mut self, id: &TaskId, target: LaunchTarget) -> HostResult {
         let suffix = match target {
             LaunchTarget::Here => "",
-            LaunchTarget::Detached { focus: true } => " detached",
-            LaunchTarget::Detached { focus: false } => " detached no-focus",
+            LaunchTarget::Window { focus: true } => " window",
+            LaunchTarget::Window { focus: false } => " window no-focus",
         };
         self.reply(format!("launch {id}{suffix}"))
     }
@@ -368,9 +368,9 @@ mod tests {
         assert!(Cmd::Launch(id.clone(), LaunchTarget::Here).releases_terminal());
         assert!(Cmd::Sync(Vec::new()).releases_terminal());
         for focus in [true, false] {
-            let detached = Cmd::Launch(id.clone(), LaunchTarget::Detached { focus });
-            assert!(!detached.releases_terminal(), "{detached:?}");
-            assert!(!detached.pauses_after(), "{detached:?}");
+            let window = Cmd::Launch(id.clone(), LaunchTarget::Window { focus });
+            assert!(!window.releases_terminal(), "{window:?}");
+            assert!(!window.pauses_after(), "{window:?}");
         }
         assert!(!Cmd::Load.releases_terminal());
         let before = tasq_core::edit::Target::Before(TaskId::from(2));

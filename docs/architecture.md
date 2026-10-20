@@ -250,7 +250,7 @@ Process-running adapters. Every process gets an explicitly injected environment,
 
 | Module | What it holds |
 |---|---|
-| `registry` | `launcher_for(name)`, `LAUNCHER_NAMES`, `LaunchSettings`; `resolve_detached` for `launch.detached` (`auto` is herdr inside herdr, tmux inside tmux, else an error). |
+| `registry` | `launcher_for(name)`, `LAUNCHER_NAMES`, `LaunchSettings`; `resolve_window` for `launch.window` (`auto` is herdr inside herdr, tmux inside tmux, else an error). |
 | `shell`, `tmux`, `claude`, `herdr` | The four `Launcher`s. `herdr` is behind the default-on `herdr` feature; `launch.herdr.placement` says whether it opens a workspace or a tab. `tmux` and `herdr` honour `LaunchContext::focus` (ADR-0012). |
 | `prompt` | The tiny template engine (`{{name}}`, `{{#name}}…{{/name}}`) behind the Claude prompt. Templates are data, in `templates/`. |
 | `env` | Environment strategy: run through `direnv exec` so the session gets the target directory's `.envrc`, or inherit. |
@@ -296,8 +296,8 @@ CLI); the worktree it declares comes from the host (`Host::worktree`, the same r
 that need the outside world (open an editor, start a work session, run a sync) are `Host`
 methods; the CLI implements them by running itself (`tasq pick <id>`, `tasq sync`) while the
 UI has released the terminal (ADR-0009). A work session in a new window (`Ctrl+Enter`,
-`Shift+Enter`) is `Host::launch` with a `LaunchTarget::Detached`; the CLI runs
-`tasq pick <id> --detached [--no-focus]` with its output captured, so the UI keeps the screen
+`Shift+Enter`) is `Host::launch` with a `LaunchTarget::Window`; the CLI runs
+`tasq pick <id> --window [--no-focus]` with its output captured, so the UI keeps the screen
 and shows the result in the status bar (ADR-0012). The `d` and `c` keys also reach the
 `post-done` and `post-create` hooks through `Host::after_done` and `Host::after_create`
 (ADR-0010, ADR-0011).

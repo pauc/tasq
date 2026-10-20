@@ -142,9 +142,9 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::Launch | Msg::Enter => {
             return with_selection(model, |id| Cmd::Launch(id, LaunchTarget::Here));
         }
-        Msg::LaunchDetached { focus } => {
+        Msg::LaunchWindow { focus } => {
             return with_selection(model, |id| {
-                Cmd::Launch(id, LaunchTarget::Detached { focus: *focus })
+                Cmd::Launch(id, LaunchTarget::Window { focus: *focus })
             });
         }
         Msg::Sync => return vec![Cmd::Sync(Vec::new())],
@@ -2056,11 +2056,8 @@ mod tests {
         );
         for focus in [true, false] {
             assert_eq!(
-                update(&mut m, Msg::LaunchDetached { focus }),
-                vec![Cmd::Launch(
-                    TaskId::from(1),
-                    LaunchTarget::Detached { focus }
-                )]
+                update(&mut m, Msg::LaunchWindow { focus }),
+                vec![Cmd::Launch(TaskId::from(1), LaunchTarget::Window { focus })]
             );
             assert_eq!(m.mode, Mode::Normal);
         }
@@ -2070,8 +2067,8 @@ mod tests {
             Msg::Editor,
             Msg::View,
             Msg::Launch,
-            Msg::LaunchDetached { focus: true },
-            Msg::LaunchDetached { focus: false },
+            Msg::LaunchWindow { focus: true },
+            Msg::LaunchWindow { focus: false },
             Msg::BeginStatus,
             Msg::BeginPriority,
             Msg::BeginNote,

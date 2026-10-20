@@ -811,7 +811,7 @@ mod tests {
         assert_eq!(loaded_ids(&msgs), ["1", "2"]);
         for focus in [true, false] {
             let msgs = dispatch(
-                &Cmd::Launch(TaskId::from(1), LaunchTarget::Detached { focus }),
+                &Cmd::Launch(TaskId::from(1), LaunchTarget::Window { focus }),
                 &mut store,
                 &clock(),
                 &mut host,
@@ -853,8 +853,8 @@ mod tests {
             host.calls,
             vec![
                 "launch 1",
-                "launch 1 detached",
-                "launch 1 detached no-focus",
+                "launch 1 window",
+                "launch 1 window no-focus",
                 "view 2",
                 "sync",
                 "sync gitlab inbox"

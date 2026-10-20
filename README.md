@@ -144,7 +144,7 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    a session here, `Ctrl+Enter` starts it in a new herdr or tmux window and switches to it,
    `Shift+Enter` does the same without leaving the list, `s` runs the sources that run by
    default, `S` picks which sources to run, `?` lists every key. Every key can be rebound under `[ui.keys]` in the config: Ghostty on Linux keeps
-   `Ctrl+Enter` for fullscreen, so `launch-detached = "alt+enter"` moves the action there.
+   `Ctrl+Enter` for fullscreen, so `launch-window = "alt+enter"` moves the action there.
 
    ![tasq ui creating a task in the edit view with the due-date calendar, then filtering, logging a note and marking a task done](docs/demo/ui-edit.gif)
 

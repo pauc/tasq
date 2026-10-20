@@ -63,13 +63,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when given, else the directory `tasq` runs in. `tasq pick` therefore always has somewhere
   to start; `tasq project <id> <path>` changes it. The original script left the section out
   unless `--project` was passed.
-- Work sessions in a new window: `tasq pick|next --detached [--no-focus]` opens the session
-  with `launch.detached` (`herdr`, `tmux`, or `auto` for whichever the terminal runs in)
+- Work sessions in a new window: `tasq pick|next --window [--no-focus]` (`-w` for short) opens the session
+  with `launch.window` (`herdr`, `tmux`, or `auto` for whichever the terminal runs in)
   instead of the current terminal, in the background with `--no-focus`. In `tasq ui`,
   `Ctrl+Enter` opens the selected task in a new window and switches to it, `Shift+Enter`
   opens it without leaving the list; plain `Enter` is unchanged. `launch.herdr.placement`
   (`auto` | `workspace` | `tab`) says what a herdr window is. The two chords need a
-  terminal with the kitty keyboard protocol (herdr has it). ADR 0012.
+  terminal with the kitty keyboard protocol (herdr has it). ADR 0012, ADR 0029.
 - `tasq list --all` (done tasks in a `DONE` group after the open ones, also in `--json`) and
   `tasq list --done` (only closed tasks); the other filters apply to both. `[ui.colors] done`
   colours the group.

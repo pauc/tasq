@@ -19,8 +19,8 @@ statuses = ["in-progress", "ready", "waiting", "blocked", "later"] # defaults
 
 [launch]
 default = "claude"                           # defaults
-detached = "auto"                            # defaults
 env = "direnv"                               # defaults
+window = "auto"                              # defaults
 
 [launch.claude]
 

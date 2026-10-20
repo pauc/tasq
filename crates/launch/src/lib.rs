@@ -26,7 +26,7 @@ pub use self::env::{EnvrcStatus, envrc_status, envrc_warning, parse_direnv_statu
 #[cfg(feature = "herdr")]
 pub use self::herdr::HerdrLauncher;
 pub use self::registry::{
-    DETACHED_LAUNCHER_NAMES, LAUNCHER_NAMES, LaunchSettings, launcher_for, resolve_detached,
+    LAUNCHER_NAMES, LaunchSettings, WINDOW_LAUNCHER_NAMES, launcher_for, resolve_window,
 };
 pub use self::shell::ShellLauncher;
 pub use self::summarizer::{CommandSummarizer, summarizer_for};

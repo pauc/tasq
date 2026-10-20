@@ -25,8 +25,8 @@ default_project = "[ROOT]/home/code/x" # [ROOT]/home/.tasq.toml
 
 [launch]
 default = "claude"                           # defaults
-detached = "auto"                            # defaults
 env = "direnv"                               # defaults
+window = "auto"                              # defaults
 
 [launch.claude]
 

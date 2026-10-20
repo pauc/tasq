@@ -42,7 +42,7 @@ default_status = "ready"
 
 [launch]
 default = "claude"           # auto | claude | shell | tmux | herdr
-detached = "auto"            # auto | tmux | herdr   (--detached, the TUI's Ctrl/Shift+Enter)
+window = "auto"              # auto | tmux | herdr   (--window, the TUI's Ctrl/Shift+Enter)
 env = "direnv"               # inherit | direnv
 # log = "~/.local/state/tasq/launch.log"
 
@@ -63,7 +63,7 @@ detail_position = "right"    # where Right shows the task detail in tasq ui: rig
 [ui.colors]                  # status name (or "no-status") = colour, see "Colours"
 
 [ui.keys]                    # action = key or list of keys, [] unbinds; see "Key bindings"
-# launch-detached = "alt+enter"
+# launch-window = "alt+enter"
 
 [ui.theme]
 preset = "dark"              # dark, light, solarized, gruvbox or mono; see "Colours"
@@ -119,7 +119,7 @@ pre-launch = []
 | `workflow.default_status` | string | `ready` | Status of new tasks. Must be one of `statuses`. |
 | `work.default_project` | path | unset | Directory a session starts in when the task tracks neither a worktree nor a project. `~` expanded. |
 | `launch.default` | string | `claude` | Launcher for `next`/`pick`: `auto`, `claude`, `shell`, `tmux`, `herdr`. Not validated at load time. |
-| `launch.detached` | string | `auto` | Launcher for `next`/`pick --detached` (the TUI's `Ctrl+Enter` and `Shift+Enter`): `herdr`, `tmux`, or `auto` for whichever the terminal runs in; an error when neither. See "Launchers". |
+| `launch.window` | string | `auto` | Launcher for `next`/`pick --window` (the TUI's `Ctrl+Enter` and `Shift+Enter`): `herdr`, `tmux`, or `auto` for whichever the terminal runs in; an error when neither. See "Launchers". |
 | `launch.env` | `inherit` \| `direnv` | `direnv` | Where the session's environment comes from. |
 | `launch.log` | path | unset | File every `next`/`pick` appends its launch trace to. See "Debugging a launch". `~` expanded. |
 | `launch.claude.prompt_file` | path | unset | Prompt template replacing the built-in `crates/launch/templates/claude.md`. `~` expanded. |
@@ -178,7 +178,7 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_STORE_NAME` | `store.name` |
 | `TASQ_DEFAULT_PROJECT` | `work.default_project` |
 | `TASQ_LAUNCHER` | `launch.default` |
-| `TASQ_LAUNCH_DETACHED` | `launch.detached` |
+| `TASQ_LAUNCH_WINDOW` | `launch.window` |
 | `TASQ_LAUNCH_ENV` | `launch.env` |
 | `TASQ_LAUNCH_LOG` | `launch.log` |
 | `TASQ_HERDR_PLACEMENT` | `launch.herdr.placement` |
@@ -418,10 +418,10 @@ tracked worktree that exists, else the task's `project`, else `work.default_proj
   herdr); falls back to `claude` in the current pane when herdr cannot open one.
 - `auto`: `herdr` when `HERDR_ENV` is set, else `claude`.
 
-### Detached sessions
+### Sessions in a new window
 
-`tasq pick <id> --detached` (and `tasq next --detached`) opens the session in a new window
-instead of the current terminal, with `launch.detached` rather than `launch.default`: `herdr`
+`tasq pick <id> --window` (and `tasq next --window`) opens the session in a new window
+instead of the current terminal, with `launch.window` rather than `launch.default`: `herdr`
 or `tmux`, or `auto` for whichever of the two the terminal runs in (`HERDR_ENV`, then
 `TMUX`); outside both, `auto` is an error and nothing is written. `--launcher` overrides it as
 usual. `--no-focus` opens the window in the background: herdr skips the focus step, tmux
@@ -430,7 +430,7 @@ passes `-d`. The TUI binds these to `Ctrl+Enter` (new window, switch to it) and 
 plain `Enter` stays "here, with `launch.default`". The two chords need a terminal that speaks
 the kitty keyboard protocol and does not keep the chord for itself; elsewhere they arrive as a
 plain `Enter`. Ghostty binds `Ctrl+Enter` to fullscreen on Linux: rebind the action
-(`launch-detached = "alt+enter"` under `[ui.keys]`, see "Key bindings") or free the chord with
+(`launch-window = "alt+enter"` under `[ui.keys]`, see "Key bindings") or free the chord with
 `keybind = ctrl+enter=unbind` in its config.
 
 ### Debugging a launch
@@ -564,8 +564,8 @@ listed keep their defaults, so the table is normally one or two lines:
 
 ```toml
 [ui.keys]
-launch-detached = "alt+enter"              # Ghostty keeps Ctrl+Enter for fullscreen
-launch-detached-stay = ["shift+enter", "alt+shift+enter"]
+launch-window = "alt+enter"              # Ghostty keeps Ctrl+Enter for fullscreen
+launch-window-stay = ["shift+enter", "alt+shift+enter"]
 sync = []                                  # s does nothing
 ```
 
@@ -593,8 +593,8 @@ not `ctrl+shift+enter`. `--set ui.keys.<action>=k1,k2` takes a comma-separated l
 | `editor` | `E` | list | open the file in the editor |
 | `view` | `v` | list | `tasq view <id>`: the task rendered by glow, in the pager. With less (`ui.pager`), it runs with `-+F -+X` so it stays open full screen and `q` returns; with another pager, a key returns after it |
 | `launch` | `enter` | list | `tasq pick <id>` here |
-| `launch-detached` | `ctrl+enter` | list | `tasq pick <id> --detached` |
-| `launch-detached-stay` | `shift+enter` | list | `tasq pick <id> --detached --no-focus` |
+| `launch-window` | `ctrl+enter` | list | `tasq pick <id> --window` |
+| `launch-window-stay` | `shift+enter` | list | `tasq pick <id> --window --no-focus` |
 | `sync`, `sources` | `s` / `S` | list | `tasq sync` (the `auto = true` sources) / the source picker |
 | `reload` | `r` | list | reload |
 | `help` | `?` | list | the key overlay (any key closes it) |

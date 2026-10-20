@@ -3846,21 +3846,14 @@ mod launch {
     }
 
     #[test]
-    fn detached_uses_launch_detached_and_no_focus_stays_put() {
+    fn window_uses_launch_window_and_no_focus_stays_put() {
         let env = TestEnv::fixture();
         // Inside herdr, `auto` is herdr; `--no-focus` drops the focus step.
         let out = env
             .tasq()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .env("HERDR_ENV", "1")
-            .args([
-                "pick",
-                "3",
-                "--detached",
-                "--no-focus",
-                "--dry-run",
-                "--json",
-            ])
+            .args(["pick", "3", "--window", "--no-focus", "--dry-run", "--json"])
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
@@ -3886,14 +3879,7 @@ mod launch {
             .tasq()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .env("TMUX", "/tmp/tmux-1000/default,1,0")
-            .args([
-                "pick",
-                "3",
-                "--detached",
-                "--no-focus",
-                "--dry-run",
-                "--json",
-            ])
+            .args(["pick", "3", "--window", "--no-focus", "--dry-run", "--json"])
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
@@ -3907,12 +3893,12 @@ mod launch {
             "{}",
             value["steps"]
         );
-        // With focus (the default) the tmux window is selected.
+        // With focus (the default) the tmux window is selected; `-w` is `--window`.
         let out = env
             .tasq()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .env("TMUX", "/tmp/tmux-1000/default,1,0")
-            .args(["pick", "3", "--detached", "--dry-run", "--json"])
+            .args(["pick", "3", "-w", "--dry-run", "--json"])
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
@@ -3928,7 +3914,7 @@ mod launch {
     }
 
     #[test]
-    fn detached_launch_traces_to_stderr_at_verbose_and_to_launch_log() {
+    fn window_launch_traces_to_stderr_at_verbose_and_to_launch_log() {
         let env = TestEnv::fixture();
         env.fake_tool(
             "tmux",
@@ -3940,7 +3926,7 @@ mod launch {
             .env("TASQ_DEFAULT_PROJECT", &home)
             .env("TASQ_LAUNCH_LOG", "~/logs/launch.log")
             .env("TMUX", "/tmp/tmux-1000/default,1,0")
-            .args(["-v", "pick", "3", "--detached", "--no-focus"])
+            .args(["-v", "pick", "3", "--window", "--no-focus"])
             .assert()
             .code(1)
             .stderr(predicate::str::contains(format!(
@@ -3970,7 +3956,7 @@ mod launch {
             .env("TASQ_DEFAULT_PROJECT", &home)
             .env("TASQ_LAUNCH_LOG", log.to_str().unwrap())
             .env("TMUX", "/tmp/tmux-1000/default,1,0")
-            .args(["pick", "3", "--detached"])
+            .args(["pick", "3", "--window"])
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
@@ -3989,29 +3975,29 @@ mod launch {
     }
 
     #[test]
-    fn detached_outside_a_window_manager_is_refused_before_any_write() {
+    fn window_outside_a_window_manager_is_refused_before_any_write() {
         let env = TestEnv::fixture();
         // Outside herdr and tmux there is nowhere to open: the task stays ready.
         env.tasq()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
-            .args(["pick", "3", "--detached"])
+            .args(["pick", "3", "--window"])
             .assert()
             .code(1)
             .stderr(predicate::str::ends_with(
-                "tasq: launch.detached: auto: no window to open a session in: not inside herdr or tmux (set launch.detached)\n",
+                "tasq: launch.window: auto: no window to open a session in: not inside herdr or tmux (set launch.window)\n",
             ));
         let out = env.tasq().args(["view", "3", "--json"]).output().unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(value["task"]["status"], "ready");
-        // `--launcher` wins over `launch.detached`; `--no-focus` needs `--detached`.
+        // `--launcher` wins over `launch.window`; `--no-focus` needs `--window`.
         let out = env
             .tasq()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
             .args([
                 "pick",
                 "3",
-                "--detached",
+                "--window",
                 "--launcher",
                 "shell",
                 "--dry-run",
@@ -4026,7 +4012,7 @@ mod launch {
             .args(["pick", "3", "--no-focus", "--dry-run"])
             .assert()
             .code(2)
-            .stderr(predicate::str::contains("--detached"));
+            .stderr(predicate::str::contains("--window"));
     }
 
     #[test]
@@ -5031,7 +5017,7 @@ mod ui {
             )
         );
 
-        env.write_global_config("[ui.keys]\nlaunch-detached = \"alt+enter\"\n");
+        env.write_global_config("[ui.keys]\nlaunch-window = \"alt+enter\"\n");
         let out = env.tasq().arg("ui").output().unwrap();
         assert_eq!(stderr(&out), "tasq: tasq ui needs a terminal\n");
     }

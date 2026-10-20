@@ -36,7 +36,7 @@ pub const ENV_STORE_NAME: &str = "TASQ_STORE_NAME";
 /// | `TASQ_STORE_NAME` | `store.name` |
 /// | `TASQ_DEFAULT_PROJECT` | `work.default_project` |
 /// | `TASQ_LAUNCHER` | `launch.default` |
-/// | `TASQ_LAUNCH_DETACHED` | `launch.detached` |
+/// | `TASQ_LAUNCH_WINDOW` | `launch.window` |
 /// | `TASQ_LAUNCH_ENV` | `launch.env` |
 /// | `TASQ_LAUNCH_LOG` | `launch.log` |
 /// | `TASQ_HERDR_PLACEMENT` | `launch.herdr.placement` |
@@ -69,7 +69,7 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     (ENV_STORE_NAME, "store.name"),
     ("TASQ_DEFAULT_PROJECT", "work.default_project"),
     ("TASQ_LAUNCHER", "launch.default"),
-    ("TASQ_LAUNCH_DETACHED", "launch.detached"),
+    ("TASQ_LAUNCH_WINDOW", "launch.window"),
     ("TASQ_LAUNCH_ENV", "launch.env"),
     ("TASQ_LAUNCH_LOG", "launch.log"),
     ("TASQ_HERDR_PLACEMENT", "launch.herdr.placement"),

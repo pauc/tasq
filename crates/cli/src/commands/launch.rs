@@ -9,7 +9,7 @@ use tasq_core::store::{Store, StoreError};
 use tasq_launch::process::Trace;
 use tasq_launch::prompt::DEFAULT_TEMPLATE;
 use tasq_launch::registry::resolve_name;
-use tasq_launch::{LaunchSettings, launcher_for, resolve_detached};
+use tasq_launch::{LaunchSettings, launcher_for, resolve_window};
 
 use crate::app::App;
 use crate::cli::Command;
@@ -18,15 +18,15 @@ use crate::error::{CliError, Result};
 use crate::json;
 use crate::plugins::{self, Hook};
 
-/// How `next`/`pick` open the session: `--launcher`, `--detached`,
+/// How `next`/`pick` open the session: `--launcher`, `--window`,
 /// `--no-focus`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct How {
     /// `--launcher`: a launcher name overriding the configured one.
     pub launcher: Option<String>,
-    /// `--detached`: a new window with `launch.detached` instead of this
+    /// `--window`: a new window with `launch.window` instead of this
     /// terminal with `launch.default`.
-    pub detached: bool,
+    pub window: bool,
     /// `--no-focus`: leave the new window in the background.
     pub focus: bool,
     /// `--yes`: run a repository's own worktree hooks without asking.
@@ -35,10 +35,10 @@ pub struct How {
 
 impl How {
     /// From the flags as clap parsed them.
-    pub fn new(launcher: Option<&str>, detached: bool, no_focus: bool, yes: bool) -> Self {
+    pub fn new(launcher: Option<&str>, window: bool, no_focus: bool, yes: bool) -> Self {
         Self {
             launcher: launcher.map(str::to_owned),
-            detached,
+            window,
             focus: !no_focus,
             yes,
         }
@@ -50,7 +50,7 @@ impl How {
     }
 
     /// The launcher name to build, before `auto` is resolved: the flag,
-    /// else `launch.detached` or `launch.default`. A detached `auto` is
+    /// else `launch.window` or `launch.default`. `auto` in `launch.window` is
     /// resolved here (herdr or tmux, else an error naming the config key)
     /// because unlike `launch.default` it has no in-terminal fallback.
     pub fn launcher_name(&self, app: &App) -> Result<String> {
@@ -58,10 +58,10 @@ impl How {
             return Ok(name.clone());
         }
         let launch = &app.config().launch;
-        if self.detached {
-            resolve_detached(&launch.detached, &app.env_vec())
+        if self.window {
+            resolve_window(&launch.window, &app.env_vec())
                 .map(str::to_owned)
-                .map_err(|e| CliError::user(format!("launch.detached: {e}")))
+                .map_err(|e| CliError::user(format!("launch.window: {e}")))
         } else {
             Ok(launch.default.clone())
         }
@@ -73,26 +73,26 @@ pub fn dispatch(app: &App, command: &Command) -> Result<()> {
     match command {
         Command::Next {
             launcher,
-            detached,
+            window,
             no_focus,
             dry_run,
             yes,
         } => next(
             app,
-            &How::new(launcher.as_deref(), *detached, *no_focus, *yes),
+            &How::new(launcher.as_deref(), *window, *no_focus, *yes),
             *dry_run,
         ),
         Command::Pick {
             id,
             launcher,
-            detached,
+            window,
             no_focus,
             dry_run,
             yes,
         } => pick(
             app,
             id,
-            &How::new(launcher.as_deref(), *detached, *no_focus, *yes),
+            &How::new(launcher.as_deref(), *window, *no_focus, *yes),
             *dry_run,
         ),
         _ => unreachable!("dispatch is only called for next and pick"),
@@ -158,7 +158,7 @@ fn open_session(
     how: &How,
     dry_run: bool,
 ) -> Result<()> {
-    // Before any write: a `--detached` with nowhere to open is a usage
+    // Before any write: a `--window` with nowhere to open is a usage
     // error, not a task left in-progress with no session.
     let name = how.launcher_name(app)?;
     let mut task = store.get(id)?;

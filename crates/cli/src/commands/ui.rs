@@ -10,8 +10,8 @@
 //! `$VISUAL`, else `$EDITOR`, else `vi`; sessions and syncs run
 //! `tasq pick <id>` and `tasq sync` through this same binary, with the
 //! global flags passed on, so the TUI and the CLI cannot disagree about
-//! what those commands do. A detached session (`Ctrl+Enter`,
-//! `Shift+Enter`) is `tasq pick <id> --detached [--no-focus]` with its
+//! what those commands do. A session in a new window (`Ctrl+Enter`,
+//! `Shift+Enter`) is `tasq pick <id> --window [--no-focus]` with its
 //! output captured, so the UI keeps the screen and shows the last line
 //! (ADR-0012).
 
@@ -147,8 +147,8 @@ impl Host for CliHost<'_> {
         match target {
             LaunchTarget::Here => wait_for(Command::new(&self.exe).args(&args), "tasq pick")
                 .map(|()| format!("[{id}] session finished")),
-            LaunchTarget::Detached { focus } => {
-                args.push("--detached".to_owned());
+            LaunchTarget::Window { focus } => {
+                args.push("--window".to_owned());
                 if !focus {
                     args.push("--no-focus".to_owned());
                 }
@@ -686,7 +686,7 @@ post-create = [
             .unwrap_err();
         assert!(err.starts_with("could not run tasq pick: "), "{err}");
         let err = host
-            .launch(&TaskId::from(1), LaunchTarget::Detached { focus: true })
+            .launch(&TaskId::from(1), LaunchTarget::Window { focus: true })
             .unwrap_err();
         assert!(err.starts_with("could not run tasq pick: "), "{err}");
         let err = host.sync(&["inbox".to_owned()]).unwrap_err();
@@ -699,10 +699,10 @@ post-create = [
     }
 
     #[test]
-    fn detached_launches_are_captured_and_report_the_last_line() {
+    fn window_launches_are_captured_and_report_the_last_line() {
         let dir = tempfile::tempdir().unwrap();
         let app = app_in(dir.path(), "");
-        // `sh -c '<script>' pick 1 --detached [--no-focus]`: the script sees
+        // `sh -c '<script>' pick 1 --window [--no-focus]`: the script sees
         // the arguments the host would give `tasq`.
         let script = |body: &str| CliHost {
             app: &app,
@@ -714,31 +714,31 @@ post-create = [
             "echo \"args: $*\"; echo; echo 'Opened herdr workspace w1 (\"x\") with agent task-1'",
         );
         assert_eq!(
-            host.launch(&TaskId::from(1), LaunchTarget::Detached { focus: true }),
+            host.launch(&TaskId::from(1), LaunchTarget::Window { focus: true }),
             Ok("Opened herdr workspace w1 (\"x\") with agent task-1".into())
         );
         let mut host = script("echo \"args: $*\"");
         assert_eq!(
-            host.launch(&TaskId::from(1), LaunchTarget::Detached { focus: false }),
-            Ok("args: pick 1 --detached --no-focus".into())
+            host.launch(&TaskId::from(1), LaunchTarget::Window { focus: false }),
+            Ok("args: pick 1 --window --no-focus".into())
         );
         assert_eq!(
-            host.launch(&TaskId::from(1), LaunchTarget::Detached { focus: true }),
-            Ok("args: pick 1 --detached".into())
+            host.launch(&TaskId::from(1), LaunchTarget::Window { focus: true }),
+            Ok("args: pick 1 --window".into())
         );
         let mut host = script("exit 0");
         assert_eq!(
-            host.launch(&TaskId::from(1), LaunchTarget::Detached { focus: true }),
+            host.launch(&TaskId::from(1), LaunchTarget::Window { focus: true }),
             Ok("tasq pick finished".into())
         );
-        let mut host = script("echo 'tasq: error: launch.detached: auto: no window' >&2; exit 2");
+        let mut host = script("echo 'tasq: error: launch.window: auto: no window' >&2; exit 2");
         assert_eq!(
-            host.launch(&TaskId::from(1), LaunchTarget::Detached { focus: true }),
-            Err("launch.detached: auto: no window".into())
+            host.launch(&TaskId::from(1), LaunchTarget::Window { focus: true }),
+            Err("launch.window: auto: no window".into())
         );
         let mut host = script("exit 3");
         assert_eq!(
-            host.launch(&TaskId::from(1), LaunchTarget::Detached { focus: true }),
+            host.launch(&TaskId::from(1), LaunchTarget::Window { focus: true }),
             Err("tasq pick exited with 3".into())
         );
     }

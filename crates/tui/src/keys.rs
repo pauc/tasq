@@ -66,9 +66,9 @@ pub enum Action {
     /// Open a work session in this terminal.
     Launch,
     /// Open a work session in a new window and switch to it.
-    LaunchDetached,
+    LaunchWindow,
     /// Open a work session in a new window and stay.
-    LaunchDetachedStay,
+    LaunchWindowStay,
     /// Run the sources that run by default (`auto = true`).
     Sync,
     /// Choose the sources to run.
@@ -118,8 +118,8 @@ pub const NORMAL: &[Action] = &[
     Action::Editor,
     Action::View,
     Action::Launch,
-    Action::LaunchDetached,
-    Action::LaunchDetachedStay,
+    Action::LaunchWindow,
+    Action::LaunchWindowStay,
     Action::Sync,
     Action::Sources,
     Action::Reload,
@@ -166,8 +166,8 @@ impl Action {
         Action::Editor,
         Action::View,
         Action::Launch,
-        Action::LaunchDetached,
-        Action::LaunchDetachedStay,
+        Action::LaunchWindow,
+        Action::LaunchWindowStay,
         Action::Sync,
         Action::Sources,
         Action::Reload,
@@ -206,8 +206,8 @@ impl Action {
             Self::Editor => "editor",
             Self::View => "view",
             Self::Launch => "launch",
-            Self::LaunchDetached => "launch-detached",
-            Self::LaunchDetachedStay => "launch-detached-stay",
+            Self::LaunchWindow => "launch-window",
+            Self::LaunchWindowStay => "launch-window-stay",
             Self::Sync => "sync",
             Self::Sources => "sources",
             Self::Reload => "reload",
@@ -252,8 +252,8 @@ impl Action {
             Self::Editor => &["E"],
             Self::View => &["v"],
             Self::Launch | Self::Confirm => &["enter"],
-            Self::LaunchDetached => &["ctrl+enter"],
-            Self::LaunchDetachedStay => &["shift+enter"],
+            Self::LaunchWindow => &["ctrl+enter"],
+            Self::LaunchWindowStay => &["shift+enter"],
             Self::Sync => &["s"],
             Self::Sources => &["S"],
             Self::Reload => &["r"],
@@ -292,8 +292,8 @@ impl Action {
             Self::Editor => Msg::Editor,
             Self::View => Msg::View,
             Self::Launch => Msg::Launch,
-            Self::LaunchDetached => Msg::LaunchDetached { focus: true },
-            Self::LaunchDetachedStay => Msg::LaunchDetached { focus: false },
+            Self::LaunchWindow => Msg::LaunchWindow { focus: true },
+            Self::LaunchWindowStay => Msg::LaunchWindow { focus: false },
             Self::Sync => Msg::Sync,
             Self::Sources => Msg::BeginSources,
             Self::Reload => Msg::Reload,
@@ -851,11 +851,11 @@ mod tests {
             (key(KeyCode::Enter), Msg::Launch),
             (
                 KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
-                Msg::LaunchDetached { focus: true },
+                Msg::LaunchWindow { focus: true },
             ),
             (
                 KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
-                Msg::LaunchDetached { focus: false },
+                Msg::LaunchWindow { focus: false },
             ),
             (ch('s'), Msg::Sync),
             (ch('S'), Msg::BeginSources),
@@ -1165,10 +1165,7 @@ mod tests {
         for action in Action::ALL {
             assert_eq!(Action::parse(action.name()), Some(*action));
         }
-        assert_eq!(
-            Action::parse("launch-detached"),
-            Some(Action::LaunchDetached)
-        );
+        assert_eq!(Action::parse("launch-window"), Some(Action::LaunchWindow));
         assert_eq!(Action::parse("Launch"), None);
         assert_eq!(Action::parse("detail-down"), Some(Action::DetailDown));
         assert_eq!(Action::parse("detail-up"), Some(Action::DetailUp));
@@ -1394,11 +1391,8 @@ mod tests {
         assert_eq!(keys.keys(Action::Edit), [chord("e")]);
         assert_eq!(keys.keys(Action::Editor), [chord("E")]);
         assert_eq!(keys.keys(Action::Launch), [chord("enter")]);
-        assert_eq!(keys.keys(Action::LaunchDetached), [chord("ctrl+enter")]);
-        assert_eq!(
-            keys.keys(Action::LaunchDetachedStay),
-            [chord("shift+enter")]
-        );
+        assert_eq!(keys.keys(Action::LaunchWindow), [chord("ctrl+enter")]);
+        assert_eq!(keys.keys(Action::LaunchWindowStay), [chord("shift+enter")]);
         assert_eq!(keys.keys(Action::Sync), [chord("s")]);
         assert_eq!(keys.keys(Action::Sources), [chord("S")]);
         assert_eq!(keys.keys(Action::Reload), [chord("r")]);
@@ -1415,7 +1409,7 @@ mod tests {
         let keys = KeyMap::from_config(&config(&[("sync", many(&[]))])).unwrap();
         assert_eq!(keys.display(Action::Up), "k/Up");
         assert_eq!(keys.display(Action::PageDown), "C-d/PgDn");
-        assert_eq!(keys.display(Action::LaunchDetached), "C-Enter");
+        assert_eq!(keys.display(Action::LaunchWindow), "C-Enter");
         assert_eq!(keys.display(Action::Sync), "none");
         assert_eq!(keys.hint(Action::Up), Some("k".to_owned()));
         assert_eq!(keys.hint(Action::Launch), Some("Enter".to_owned()));
@@ -1426,18 +1420,18 @@ mod tests {
     #[test]
     fn config_rebinds_unbinds_and_keeps_the_rest() {
         let keys = KeyMap::from_config(&config(&[
-            ("launch-detached", one("alt+enter")),
+            ("launch-window", one("alt+enter")),
             (
-                "launch-detached-stay",
+                "launch-window-stay",
                 many(&["shift+enter", "alt+shift+enter"]),
             ),
             ("sync", many(&[])),
             ("quit", many(&["x"])),
         ]))
         .unwrap();
-        assert_eq!(keys.keys(Action::LaunchDetached), [chord("alt+enter")]);
+        assert_eq!(keys.keys(Action::LaunchWindow), [chord("alt+enter")]);
         assert_eq!(
-            keys.keys(Action::LaunchDetachedStay),
+            keys.keys(Action::LaunchWindowStay),
             [chord("shift+enter"), chord("alt+shift+enter")]
         );
         assert_eq!(keys.keys(Action::Sync), []);
@@ -1447,7 +1441,7 @@ mod tests {
         let t = |event: &KeyEvent| translate(&keys, &m, event);
         assert_eq!(
             t(&KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
-            Some(Msg::LaunchDetached { focus: true })
+            Some(Msg::LaunchWindow { focus: true })
         );
         assert_eq!(
             t(&KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)),
@@ -1459,7 +1453,7 @@ mod tests {
                 KeyCode::Enter,
                 KeyModifiers::ALT | KeyModifiers::SHIFT
             )),
-            Some(Msg::LaunchDetached { focus: false })
+            Some(Msg::LaunchWindow { focus: false })
         );
         assert_eq!(t(&ch('s')), None, "unbound");
         assert_eq!(

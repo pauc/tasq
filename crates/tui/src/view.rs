@@ -80,11 +80,11 @@ pub const HELP: &[(&[Action], &str)] = &[
     ),
     (&[Action::Launch], "open a work session here (tasq pick)"),
     (
-        &[Action::LaunchDetached],
-        "open it in a new window (tasq pick --detached)",
+        &[Action::LaunchWindow],
+        "open it in a new window (tasq pick --window)",
     ),
     (
-        &[Action::LaunchDetachedStay],
+        &[Action::LaunchWindowStay],
         "open it in a new window without switching to it",
     ),
     (

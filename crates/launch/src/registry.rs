@@ -14,9 +14,9 @@ use crate::tmux::TmuxLauncher;
 /// (`HERDR_ENV` set), else `claude`.
 pub const LAUNCHER_NAMES: &[&str] = &["auto", "claude", "shell", "tmux", "herdr"];
 
-/// Names `launch.detached` accepts: the launchers that open another window.
+/// Names `launch.window` accepts: the launchers that open another window.
 /// `auto` is `herdr` inside herdr, `tmux` inside tmux, and an error elsewhere.
-pub const DETACHED_LAUNCHER_NAMES: &[&str] = &["auto", "tmux", "herdr"];
+pub const WINDOW_LAUNCHER_NAMES: &[&str] = &["auto", "tmux", "herdr"];
 
 /// What every launcher is built from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,14 +48,11 @@ pub fn resolve_name<'a>(name: &'a str, env: &[(String, String)]) -> &'a str {
     }
 }
 
-/// Resolves a `launch.detached` name: `auto` becomes the window manager
+/// Resolves a `launch.window` name: `auto` becomes the window manager
 /// the current terminal runs in, other names pass through when they open
 /// a window. A launcher that takes over the current terminal (`claude`,
-/// `shell`) is refused, since a detached launch exists to not do that.
-pub fn resolve_detached<'a>(
-    name: &'a str,
-    env: &[(String, String)],
-) -> Result<&'a str, LaunchError> {
+/// `shell`) is refused, since a window launch exists to not do that.
+pub fn resolve_window<'a>(name: &'a str, env: &[(String, String)]) -> Result<&'a str, LaunchError> {
     match name {
         "auto" => {
             if env_var(env, "HERDR_ENV").is_some() {
@@ -66,7 +63,7 @@ pub fn resolve_detached<'a>(
                 Err(LaunchError::Unavailable {
                     launcher: "auto".to_owned(),
                     reason: "no window to open a session in: not inside herdr or tmux \
-                             (set launch.detached)"
+                             (set launch.window)"
                         .to_owned(),
                 })
             }
@@ -75,8 +72,8 @@ pub fn resolve_detached<'a>(
         other => Err(LaunchError::Unavailable {
             launcher: other.to_owned(),
             reason: format!(
-                "not a detached launcher (available: {})",
-                DETACHED_LAUNCHER_NAMES.join(", ")
+                "not a window launcher (available: {})",
+                WINDOW_LAUNCHER_NAMES.join(", ")
             ),
         }),
     }
@@ -169,34 +166,30 @@ mod tests {
     }
 
     #[test]
-    fn detached_follows_the_window_manager_and_refuses_in_pane_launchers() {
+    fn window_follows_the_window_manager_and_refuses_in_pane_launchers() {
         let herdr = settings(&[("HERDR_ENV", "1"), ("TMUX", "/tmp/tmux-1/default,1,0")]);
         let tmux = settings(&[("TMUX", "/tmp/tmux-1/default,1,0")]);
         let plain = settings(&[]);
-        assert_eq!(resolve_detached("auto", &herdr.env), Ok("herdr"));
-        assert_eq!(resolve_detached("auto", &tmux.env), Ok("tmux"));
+        assert_eq!(resolve_window("auto", &herdr.env), Ok("herdr"));
+        assert_eq!(resolve_window("auto", &tmux.env), Ok("tmux"));
         assert_eq!(
-            resolve_detached("auto", &plain.env)
-                .unwrap_err()
-                .to_string(),
-            "auto: no window to open a session in: not inside herdr or tmux (set launch.detached)"
+            resolve_window("auto", &plain.env).unwrap_err().to_string(),
+            "auto: no window to open a session in: not inside herdr or tmux (set launch.window)"
         );
-        assert_eq!(resolve_detached("tmux", &plain.env), Ok("tmux"));
-        assert_eq!(resolve_detached("herdr", &plain.env), Ok("herdr"));
-        for name in DETACHED_LAUNCHER_NAMES {
+        assert_eq!(resolve_window("tmux", &plain.env), Ok("tmux"));
+        assert_eq!(resolve_window("herdr", &plain.env), Ok("herdr"));
+        for name in WINDOW_LAUNCHER_NAMES {
             assert!(LAUNCHER_NAMES.contains(name), "{name}");
         }
         assert_eq!(
-            resolve_detached("claude", &herdr.env)
+            resolve_window("claude", &herdr.env)
                 .unwrap_err()
                 .to_string(),
-            "claude: not a detached launcher (available: auto, tmux, herdr)"
+            "claude: not a window launcher (available: auto, tmux, herdr)"
         );
         assert_eq!(
-            resolve_detached("shell", &herdr.env)
-                .unwrap_err()
-                .to_string(),
-            "shell: not a detached launcher (available: auto, tmux, herdr)"
+            resolve_window("shell", &herdr.env).unwrap_err().to_string(),
+            "shell: not a window launcher (available: auto, tmux, herdr)"
         );
     }
 

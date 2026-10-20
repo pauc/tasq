@@ -139,14 +139,14 @@ pub enum Command {
     /// Open a work session on the next task: the first in-progress one, else the first ready one.
     #[command(after_help = LAUNCH_HELP)]
     Next {
-        /// Launcher to use [default: launch.default, or launch.detached with --detached].
+        /// Launcher to use [default: launch.default, or launch.window with --window].
         #[arg(long, value_name = "NAME")]
         launcher: Option<String>,
-        /// Open the session in a new window (launch.detached: herdr or tmux) instead of here.
-        #[arg(long)]
-        detached: bool,
-        /// With --detached: open the window without switching to it.
-        #[arg(long, requires = "detached")]
+        /// Open the session in a new window (launch.window: herdr or tmux) instead of here.
+        #[arg(short, long)]
+        window: bool,
+        /// With --window: open the window without switching to it.
+        #[arg(long, requires = "window")]
         no_focus: bool,
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
@@ -162,14 +162,14 @@ pub enum Command {
         /// Task id.
         #[arg(value_name = "ID")]
         id: String,
-        /// Launcher to use [default: launch.default, or launch.detached with --detached].
+        /// Launcher to use [default: launch.default, or launch.window with --window].
         #[arg(long, value_name = "NAME")]
         launcher: Option<String>,
-        /// Open the session in a new window (launch.detached: herdr or tmux) instead of here.
-        #[arg(long)]
-        detached: bool,
-        /// With --detached: open the window without switching to it.
-        #[arg(long, requires = "detached")]
+        /// Open the session in a new window (launch.window: herdr or tmux) instead of here.
+        #[arg(short, long)]
+        window: bool,
+        /// With --window: open the window without switching to it.
+        #[arg(long, requires = "window")]
         no_focus: bool,
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
@@ -578,7 +578,7 @@ task prompt (template: launch.claude.prompt_file), through `direnv exec`
 when launch.env = direnv and the directory's .envrc is allowed; shell execs
 $SHELL there; tmux opens a new window (inside tmux only); herdr opens a
 workspace with a Claude agent (inside herdr only); auto is herdr inside
-herdr, else claude. --detached uses launch.detached instead (herdr, tmux,
+herdr, else claude. --window uses launch.window instead (herdr, tmux,
 or auto for whichever the terminal runs in) and --no-focus leaves the new
 window in the background; launch.herdr.placement says whether a herdr
 window is a workspace or a tab. The session gets TASQ_TASK_ID,
@@ -659,7 +659,7 @@ priority as for `tasq list <word>`), t status, p priority, l log a note, d mark
 done (with an optional final note), E open the file in $VISUAL or $EDITOR,
 Enter open a work session here (`tasq pick`), Ctrl+Enter open it in a new
 window and switch to it, Shift+Enter open it in a new window and stay
-(`tasq pick --detached [--no-focus]`, launch.detached), s run the sources
+(`tasq pick --window [--no-focus]`, launch.window), s run the sources
 that run by default (`tasq sync`), S pick the sources to run (Space
 toggles, Enter runs `tasq sync --source ...`), r reload, ? help, q quit.
 Edits are the same operations as
@@ -667,7 +667,7 @@ Edits are the same operations as
 name, or `no-status`); NO_COLOR or --color never gives a monochrome UI.
 Ctrl+Enter and Shift+Enter need a terminal with the kitty keyboard
 protocol; elsewhere they are a plain Enter. Every key but Ctrl+C is an
-action that [ui.keys] can rebind (`launch-detached = \"alt+enter\"`); the
+action that [ui.keys] can rebind (`launch-window = \"alt+enter\"`); the
 ? overlay shows the configured keys. See docs/config.md, \"Key bindings\".";
 
 const PLUGINS_HELP: &str = "\

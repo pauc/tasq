@@ -37,7 +37,7 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0009](0009-tui-host-actions-through-the-cli.md) | TUI edits through core, host actions through the CLI binary | Accepted |
 | [0010](0010-post-done-hook-from-the-tui.md) | The TUI's close reaches the `post-done` hooks through the `Host` | Accepted |
 | [0011](0011-create-from-the-tui.md) | Creating a task from the TUI: title only, through the `Store`, hooks through the `Host` | Accepted |
-| [0012](0012-detached-sessions-from-the-tui.md) | Opening a work session in a new window from the TUI: `Ctrl+Enter`/`Shift+Enter`, `--detached`, `launch.herdr.placement` | Accepted |
+| [0012](0012-detached-sessions-from-the-tui.md) | Opening a work session in a new window from the TUI: `Ctrl+Enter`/`Shift+Enter`, `--detached`, `launch.herdr.placement` | Accepted, renamed by ADR-0029 |
 | [0013](0013-configurable-key-bindings.md) | Configurable TUI key bindings: `[ui.keys]`, action = key or list, parsed by the TUI | Accepted |
 | [0014](0014-sync-sources-on-demand.md) | Choosing which sources a sync runs: `source[].auto`, repeatable `--source`, a source picker in the TUI | Accepted |
 | [0015](0015-edit-form-in-the-tui.md) | Editing a task in a form inside the TUI: `e`, `edit::revise`, title/due/tags rewrites in the store | Superseded by ADR-0016 |
@@ -54,3 +54,4 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0026](0026-store-v2-frontmatter-tasq-directory-ulid-files.md) | Store v2: frontmatter (`id`, `status`, `priority`, `rank`, `due`, `closed`, `project`, `source*`, `tags`), one directory per store under `data_dir/<store.name>`, `<ULID>.md` files carrying the creation time, sequential ids in the file, a `.tasq/lock` and no git, `tasq migrate <notebook>` | Accepted |
 | [0027](0027-nb-implementation-removed.md) | tasq owns its store: the nb implementation is removed (`crates/store-nb`, the v1 format, `tasq migrate`, `IdScheme`, the nb-only config guards); one task file format without a version suffix | Accepted |
 | [0028](0028-no-positional-ahead-of-subcommands.md) | No positional argument ahead of subcommands: `tasq list [WORD]` (alias `ls`) replaces the bare `tasq <WORD>`, `tasq worktree set <ID> [BRANCH\|PATH]` replaces `tasq worktree <ID> ...`, so the generated shell completions reach every subcommand | Accepted |
+| [0029](0029-window-not-detached.md) | `--window` (`-w`), `launch.window` and `launch-window` replace `--detached`, `launch.detached` and `launch-detached`: the flag names where the session opens, `--no-focus` whether you follow | Accepted |

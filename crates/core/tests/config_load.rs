@@ -139,7 +139,7 @@ fn defaults_match_the_script() {
     );
     assert_eq!(c.worktree.ports, None);
     assert_eq!(c.launch.default, "claude");
-    assert_eq!(c.launch.detached, "auto");
+    assert_eq!(c.launch.window, "auto");
     assert_eq!(c.launch.env, EnvStrategy::Direnv);
     assert_eq!(c.launch.herdr.placement, tasq_core::config::Placement::Auto);
     assert_eq!(c.launch.claude.prompt_file, None);
@@ -180,7 +180,7 @@ default_status = \"ready\"
 
 [launch]
 default = \"claude\"
-detached = \"auto\"
+window = \"auto\"
 env = \"direnv\"
 
 [launch.claude]
@@ -539,7 +539,7 @@ fn ui_keys_take_a_string_or_a_list_and_merge_per_action() {
     let project = sb.write_project("[ui.keys]\nquit = [\"y\"]\n");
     let mut opts = sb.opts();
     opts.overrides = vec![(
-        "ui.keys.launch-detached".into(),
+        "ui.keys.launch-window".into(),
         "alt+enter, ctrl+enter".into(),
     )];
     let loaded = Config::load(&opts).unwrap();
@@ -551,7 +551,7 @@ fn ui_keys_take_a_string_or_a_list_and_merge_per_action() {
     );
     assert_eq!(keys["filter"], KeySpec::Many(Vec::new()));
     assert_eq!(
-        keys["launch-detached"],
+        keys["launch-window"],
         KeySpec::Many(vec!["alt+enter".to_owned(), "ctrl+enter".to_owned()])
     );
     assert_eq!(keys.len(), 4);
@@ -1188,7 +1188,7 @@ fn env_overrides_files() {
         ("TASQ_WORKTREE_ON_DONE", "keep"),
         ("TASQ_WORKTREE_DELETE_BRANCH", "never"),
         ("TASQ_LAUNCHER", "tmux"),
-        ("TASQ_LAUNCH_DETACHED", "herdr"),
+        ("TASQ_LAUNCH_WINDOW", "herdr"),
         ("TASQ_LAUNCH_ENV", "inherit"),
         ("TASQ_LAUNCH_LOG", "~/tasq/launch.log"),
         ("TASQ_HERDR_PLACEMENT", "workspace"),
@@ -1221,7 +1221,7 @@ fn env_overrides_files() {
         tasq_core::worktree::lifecycle::DeleteBranch::Never
     );
     assert_eq!(c.launch.default, "tmux");
-    assert_eq!(c.launch.detached, "herdr");
+    assert_eq!(c.launch.window, "herdr");
     assert_eq!(c.launch.env, EnvStrategy::Inherit);
     assert_eq!(c.launch.log, Some(sb.home.join("tasq/launch.log")));
     assert_eq!(

@@ -49,7 +49,7 @@ priority as for `tasq list <word>`), t status, p priority, l log a note, d mark
 done (with an optional final note), E open the file in $VISUAL or $EDITOR,
 Enter open a work session here (`tasq pick`), Ctrl+Enter open it in a new
 window and switch to it, Shift+Enter open it in a new window and stay
-(`tasq pick --detached [--no-focus]`, launch.detached), s run the sources
+(`tasq pick --window [--no-focus]`, launch.window), s run the sources
 that run by default (`tasq sync`), S pick the sources to run (Space
 toggles, Enter runs `tasq sync --source ...`), r reload, ? help, q quit.
 Edits are the same operations as
@@ -57,5 +57,5 @@ Edits are the same operations as
 name, or `no-status`); NO_COLOR or --color never gives a monochrome UI.
 Ctrl+Enter and Shift+Enter need a terminal with the kitty keyboard
 protocol; elsewhere they are a plain Enter. Every key but Ctrl+C is an
-action that [ui.keys] can rebind (`launch-detached = "alt+enter"`); the
+action that [ui.keys] can rebind (`launch-window = "alt+enter"`); the
 ? overlay shows the configured keys. See docs/config.md, "Key bindings".

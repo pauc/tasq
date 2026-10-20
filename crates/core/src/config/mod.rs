@@ -50,7 +50,7 @@
 //!
 //! [launch]
 //! default = "claude"
-//! detached = "auto"
+//! window = "auto"
 //! env = "direnv"
 //!
 //! [launch.claude]
@@ -382,10 +382,10 @@ pub struct LaunchConfig {
     /// Not validated here because launchers are registered by other crates.
     /// Default: `claude`.
     pub default: String,
-    /// Launcher for a session in a new window (`--detached`, the TUI's
+    /// Launcher for a session in a new window (`--window`, the TUI's
     /// `Ctrl+Enter` and `Shift+Enter`): `herdr`, `tmux`, or `auto` for
     /// whichever of the two the current terminal runs in. Default: `auto`.
-    pub detached: String,
+    pub window: String,
     /// Where the session's environment comes from. Default: `direnv`.
     pub env: EnvStrategy,
     /// File every launch appends a trace to: the commands the launcher
@@ -403,7 +403,7 @@ impl Default for LaunchConfig {
     fn default() -> Self {
         Self {
             default: "claude".to_owned(),
-            detached: "auto".to_owned(),
+            window: "auto".to_owned(),
             env: EnvStrategy::Direnv,
             log: None,
             claude: ClaudeLaunchConfig::default(),
