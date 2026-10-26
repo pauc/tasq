@@ -846,7 +846,6 @@ mod tests {
                 name: "mem".into(),
                 location: "/".into(),
                 task_count: self.tasks.len(),
-                bookkeeper: None,
             }
         }
         fn take_warnings(&mut self) -> Vec<String> {

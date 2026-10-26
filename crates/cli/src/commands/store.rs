@@ -15,23 +15,23 @@ pub fn run(app: &App, command: StoreCommand) -> Result<()> {
         StoreCommand::Info => {
             let info = store.describe();
             let provenance = app.store_provenance()?;
+            let plugins = &app.config().plugins.enabled;
             if app.out.json_mode() {
-                return app.out.json(&info_json(info, &provenance));
+                return app.out.json(&info_json(&info, &provenance, plugins));
             }
-            app.out.print(&render_info(&info, &provenance))
+            app.out.print(&render_info(&info, &provenance, plugins))
         }
     }
 }
 
-/// The `store info` document: `"store"` holds the info without its
-/// bookkeeper, which is the top-level `"bookkeeper"` (`null` for a store
-/// that has none); `"data_dir"` and `"store_name"` are `{value, from}`.
-fn info_json(mut info: StoreInfo, provenance: &Provenance) -> Value {
-    let bookkeeper = info.bookkeeper.take();
+/// The `store info` document: `"store"` holds the info, `"plugins"` the
+/// enabled plugin names, `"data_dir"` and `"store_name"` are
+/// `{value, from}`.
+fn info_json(info: &StoreInfo, provenance: &Provenance, plugins: &[String]) -> Value {
     let setting = |value: Value, from: &str| serde_json::json!({ "value": value, "from": from });
     json::document([
-        ("store", json::to_value(&info)),
-        ("bookkeeper", Value::from(bookkeeper)),
+        ("store", json::to_value(info)),
+        ("plugins", Value::from(plugins)),
         (
             "data_dir",
             setting(
@@ -46,16 +46,16 @@ fn info_json(mut info: StoreInfo, provenance: &Provenance) -> Value {
     ])
 }
 
-/// The `store info` text; the `bookkeeper:` line only for a store that has
-/// one.
-pub fn render_info(info: &StoreInfo, provenance: &Provenance) -> String {
-    let bookkeeper = info
-        .bookkeeper
-        .as_deref()
-        .map(|name| format!("bookkeeper:  {name}\n"))
-        .unwrap_or_default();
+/// The `store info` text; `plugins:` names the enabled plugins, `(none)`
+/// when there are none.
+pub fn render_info(info: &StoreInfo, provenance: &Provenance, plugins: &[String]) -> String {
+    let plugins = if plugins.is_empty() {
+        "(none)".to_owned()
+    } else {
+        plugins.join(", ")
+    };
     format!(
-        "store:       {}\nlocation:    {}\ndata_dir:    {} (from {})\nstore.name:  {} (from {})\ntasks:       {} (open and done)\n{bookkeeper}",
+        "store:       {}\nlocation:    {}\ndata_dir:    {} (from {})\nstore.name:  {} (from {})\ntasks:       {} (open and done)\nplugins:     {plugins}\n",
         info.name,
         info.location.display(),
         provenance.data_dir.display(),
@@ -75,7 +75,6 @@ mod tests {
             name: "tasq".into(),
             location: "/data/work".into(),
             task_count: 6,
-            bookkeeper: Some("git".into()),
         }
     }
 
@@ -90,24 +89,21 @@ mod tests {
 
     #[test]
     fn info_text() {
+        let head = "store:       tasq\nlocation:    /data/work\ndata_dir:    /data (from env)\nstore.name:  work (from --set)\ntasks:       6 (open and done)\n";
         assert_eq!(
-            render_info(&info(), &provenance()),
-            "store:       tasq\nlocation:    /data/work\ndata_dir:    /data (from env)\nstore.name:  work (from --set)\ntasks:       6 (open and done)\nbookkeeper:  git\n"
+            render_info(&info(), &provenance(), &["git".into(), "echo".into()]),
+            format!("{head}plugins:     git, echo\n")
         );
-        let without_bookkeeper = StoreInfo {
-            bookkeeper: None,
-            ..info()
-        };
         assert_eq!(
-            render_info(&without_bookkeeper, &provenance()),
-            "store:       tasq\nlocation:    /data/work\ndata_dir:    /data (from env)\nstore.name:  work (from --set)\ntasks:       6 (open and done)\n"
+            render_info(&info(), &provenance(), &[]),
+            format!("{head}plugins:     (none)\n")
         );
     }
 
     #[test]
-    fn info_json_keeps_the_bookkeeper_at_the_top_level() {
-        let value = info_json(info(), &provenance());
-        assert_eq!(value["bookkeeper"], "git");
+    fn info_json_settings_and_plugins() {
+        let value = info_json(&info(), &provenance(), &["git".into()]);
+        assert_eq!(value["plugins"], serde_json::json!(["git"]));
         assert_eq!(
             value["data_dir"],
             serde_json::json!({"value": "/data", "from": "env"})
@@ -120,13 +116,7 @@ mod tests {
             value["store"],
             serde_json::json!({"name": "tasq", "location": "/data/work", "task_count": 6})
         );
-        let value = info_json(
-            StoreInfo {
-                bookkeeper: None,
-                ..info()
-            },
-            &provenance(),
-        );
-        assert_eq!(value["bookkeeper"], Value::Null);
+        let value = info_json(&info(), &provenance(), &[]);
+        assert_eq!(value["plugins"], serde_json::json!([]));
     }
 }

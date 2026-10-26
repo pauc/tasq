@@ -137,10 +137,6 @@ pub struct StoreInfo {
     pub location: PathBuf,
     /// Number of tasks, open and done.
     pub task_count: usize,
-    /// The strategy that does the bookkeeping after a write, for stores
-    /// that have one. Left out of the JSON when `None`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bookkeeper: Option<String>,
 }
 
 /// Task persistence.
@@ -356,7 +352,6 @@ impl Store for MemoryStore {
             name: "memory".to_owned(),
             location: PathBuf::from("memory"),
             task_count: self.tasks.len(),
-            bookkeeper: None,
         }
     }
 
@@ -479,23 +474,14 @@ mod tests {
             name: "tasq".into(),
             location: "/stores/default".into(),
             task_count: 4,
-            bookkeeper: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert_eq!(
-            json, "{\"name\":\"tasq\",\"location\":\"/stores/default\",\"task_count\":4}",
-            "no bookkeeper: the key is left out"
+            json,
+            "{\"name\":\"tasq\",\"location\":\"/stores/default\",\"task_count\":4}"
         );
         let back: StoreInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(back, info);
-        let with_bookkeeper = StoreInfo {
-            bookkeeper: Some("native".to_owned()),
-            ..info
-        };
-        let json = serde_json::to_string(&with_bookkeeper).unwrap();
-        assert!(json.ends_with(",\"bookkeeper\":\"native\"}"), "{json}");
-        let back: StoreInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, with_bookkeeper);
     }
 
     mod memory {
@@ -688,7 +674,6 @@ mod tests {
                     name: "memory".to_owned(),
                     location: PathBuf::from("memory"),
                     task_count: 2,
-                    bookkeeper: None,
                 }
             );
         }

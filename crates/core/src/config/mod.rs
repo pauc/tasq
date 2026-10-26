@@ -86,6 +86,11 @@
 //! post-done = []
 //! pre-launch = []
 //!
+//! [plugins]
+//! enabled = []
+//!
+//! [plugin]
+//!
 //! [worktree]
 //! enabled = false
 //! path = "{{project_parent}}/{{project_name}}-{{branch_safe}}"
@@ -133,7 +138,7 @@ pub use self::path::{contract_tilde, expand_tilde};
 /// Build it with [`Config::load`] (layered files, profile and environment)
 /// or start from [`Config::default`]. Unknown keys anywhere in the document
 /// are errors, so a typo never silently falls back to a default.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// The directory holding the stores, each a subdirectory named by
@@ -162,6 +167,12 @@ pub struct Config {
     pub report: ReportConfig,
     /// Commands run around CLI events (`[hooks]`).
     pub hooks: HooksConfig,
+    /// The plugins told about events (`[plugins]`, ADR 0030).
+    pub plugins: PluginsConfig,
+    /// Each plugin's own settings (`[plugin.<name>]`), passed to it as they
+    /// are: tasq checks no key inside, so a value can be anything TOML
+    /// holds.
+    pub plugin: BTreeMap<String, toml::Table>,
     /// Worktrees per task, off unless `enabled` (`[worktree]`, ADR 0022).
     pub worktree: WorktreeConfig,
 }
@@ -862,6 +873,15 @@ impl HooksConfig {
             .iter()
             .all(|(_, commands)| commands.is_empty())
     }
+}
+
+/// `[plugins]`: the plugins tasq runs on events (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PluginsConfig {
+    /// Plugin names, each run as `tasq-<name>` from `PATH`, in this order.
+    /// A name is a command name: not empty, no `/`. Default: none.
+    pub enabled: Vec<String>,
 }
 
 /// Summary strategies.

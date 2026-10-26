@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Plugins are enabled by name: `[plugins] enabled = ["git"]` lists the `tasq-<name>`
+  executables tasq will tell about events (ADR 0030), and `[plugin.<name>]` holds each
+  plugin's own settings, loaded from every config layer (`--set plugin.git.interval=30`
+  included) and not checked by tasq. An unknown key under `[plugins]` fails with
+  file:line:column; a name that is empty, has `/`, whitespace or a leading `-`, is a built-in
+  command or is listed twice is an error. `tasq plugins list` shows the enabled plugins and
+  where each is installed (`--json` `"enabled": [{name, path}]`), `tasq store info` lists them
+  (`plugins:`, `--json` `"plugins"`), and an enabled plugin missing from `PATH` is a warning on
+  every command that opens the store and a `FAIL` check in `tasq doctor`.
 - Review-request sources skip draft merge requests unless `drafts = true`, and
   `exclude_authors = ["dependabot"]` drops merge requests by those usernames (exact), as the
   `/update-tasks` skill did; without it a first `tasq sync` against a busy GitLab creates a
@@ -153,6 +162,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `tasq store info --json` no longer has the top-level `"bookkeeper"` key (always `null`; the
+  store has no bookkeeper), and `StoreInfo::bookkeeper` is gone. Enabled plugins are listed
+  under `"plugins"` instead.
 - `work.worktree_manager`, `work.worktree_command` and their `TASQ_WORKTREE_MANAGER` and
   `TASQ_WORKTREE_COMMAND` variables: `tasq worktree --create` always runs `git worktree add`,
   and worktree provisioning moves to `[worktree]`. A config that still sets them fails with the

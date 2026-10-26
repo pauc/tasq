@@ -226,12 +226,12 @@ lists the enabled plugins and `bookkeeper` is gone.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready
+**Status:** done
 
-- [ ] An unknown key under `[plugins]` fails with file:line:column; anything under `[plugin.<name>]` loads.
-- [ ] `plugins list` and `store info` (text and JSON) snapshots show the enabled plugins.
-- [ ] Missing plugin: warning on stderr, exit code unchanged; `doctor` `Fail` with the fix text.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] An unknown key under `[plugins]` fails with file:line:column; anything under `[plugin.<name>]` loads.
+- [x] `plugins list` and `store info` (text and JSON) snapshots show the enabled plugins.
+- [x] Missing plugin: warning on stderr, exit code unchanged; `doctor` `Fail` with the fix text.
+- [x] `mutants-in` the diff: zero missed.
 
 ### PE-002: the `store-open` event
 

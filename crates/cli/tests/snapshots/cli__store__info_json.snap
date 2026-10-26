@@ -3,11 +3,11 @@ source: crates/cli/tests/cli.rs
 expression: env.normalize(&stdout(&out))
 ---
 {
-  "bookkeeper": null,
   "data_dir": {
     "from": "defaults",
     "value": "[ROOT]/home/.local/share/tasq/stores"
   },
+  "plugins": [],
   "schema": 1,
   "store": {
     "location": "[ROOT]/home/.local/share/tasq/stores/default",

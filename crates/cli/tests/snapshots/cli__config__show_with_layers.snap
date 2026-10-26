@@ -61,6 +61,11 @@ post-create = []                             # defaults
 post-done = []                               # defaults
 pre-launch = []                              # defaults
 
+[plugin]
+
+[plugins]
+enabled = []                                 # defaults
+
 [worktree]
 base = "origin/HEAD"                         # defaults
 branch = "{{id}}-{{slug}}"                   # defaults

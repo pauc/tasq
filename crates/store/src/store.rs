@@ -545,7 +545,6 @@ impl Store for TasqStore {
             name: NAME.to_owned(),
             location: self.dir.clone(),
             task_count,
-            bookkeeper: None,
         }
     }
 

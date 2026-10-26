@@ -216,6 +216,11 @@ post-create = []
 post-done = []
 pre-launch = []
 
+[plugins]
+enabled = []
+
+[plugin]
+
 [worktree]
 enabled = false
 path = \"{{project_parent}}/{{project_name}}-{{branch_safe}}\"
@@ -455,6 +460,116 @@ fn hooks_are_read_from_files_and_set_overrides() {
         )),
         "{err}"
     );
+}
+
+#[test]
+fn plugins_are_enabled_by_name_and_their_tables_load_unchecked() {
+    let sb = Sandbox::new();
+    sb.write_global(
+        "[plugins]\nenabled = [\"git\"]\n\n[plugin.git]\ninterval = 60\nratio = 0.5\nremote = \"origin\"\n[plugin.git.deep]\nanything = [1, \"two\"]\n",
+    );
+    sb.write_project("[plugin.git]\ninterval = 30\n\n[plugin.echo]\nlog = \"/tmp/x\"\n");
+    let mut opts = sb.opts();
+    let c = Config::load(&opts).unwrap().config;
+    assert_eq!(c.plugins.enabled, vec!["git".to_owned()]);
+    let git = &c.plugin["git"];
+    assert_eq!(
+        git["interval"].as_integer(),
+        Some(30),
+        "project file wins key by key"
+    );
+    assert_eq!(git["remote"].as_str(), Some("origin"));
+    assert_eq!(
+        git["deep"]["anything"],
+        toml::Value::Array(vec![1.into(), "two".into()])
+    );
+    assert_eq!(c.plugin["echo"]["log"].as_str(), Some("/tmp/x"));
+
+    // Env and --set reach both tables. A plugin value takes the type the
+    // key has in the layers below, and is a string when no layer set it.
+    opts.env = env(&[(
+        "TASQ_SET",
+        "plugin.git.remote=1.0\nplugin.new.on=true\nplugin.git.deep.anything=a, b",
+    )]);
+    opts.overrides = vec![
+        ("plugins.enabled".to_owned(), "git, echo".to_owned()),
+        ("plugin.git.interval".to_owned(), "5".to_owned()),
+        ("plugin.git.name".to_owned(), "a b".to_owned()),
+        ("plugin.git.ratio".to_owned(), "2".to_owned()),
+    ];
+    let c = Config::load(&opts).unwrap().config;
+    assert_eq!(c.plugins.enabled, vec!["git".to_owned(), "echo".to_owned()]);
+    assert_eq!(c.plugin["git"]["interval"].as_integer(), Some(5));
+    assert_eq!(c.plugin["git"]["name"].as_str(), Some("a b"));
+    assert_eq!(c.plugin["git"]["ratio"].as_float(), Some(2.0));
+    assert_eq!(c.plugin["git"]["remote"].as_str(), Some("1.0"));
+    assert_eq!(c.plugin["new"]["on"].as_str(), Some("true"));
+    assert_eq!(
+        c.plugin["git"]["deep"]["anything"],
+        toml::Value::Array(vec!["a".into(), "b".into()])
+    );
+    opts.env = BTreeMap::new();
+    opts.overrides = vec![("plugin.git.interval".to_owned(), "soon".to_owned())];
+    assert_eq!(
+        Config::load(&opts).unwrap_err().to_string(),
+        "--set: plugin.git.interval=\"soon\": expected an integer"
+    );
+    opts.overrides = vec![("plugin.git.ratio".to_owned(), "half".to_owned())];
+    assert_eq!(
+        Config::load(&opts).unwrap_err().to_string(),
+        "--set: plugin.git.ratio=\"half\": expected a number"
+    );
+
+    // A whole plugin table cannot be set from one value.
+    opts.overrides = vec![("plugin.git".to_owned(), "x".to_owned())];
+    assert!(matches!(
+        Config::load(&opts).unwrap_err(),
+        ConfigError::UnknownKey { .. }
+    ));
+
+    // Profiles carry plugin settings too.
+    sb.write_project(
+        "[profile.work.plugins]\nenabled = [\"echo\"]\n[profile.work.plugin.echo]\nlog = \"w\"\n",
+    );
+    let mut opts = sb.opts();
+    opts.profile = Some("work".to_owned());
+    let c = Config::load(&opts).unwrap().config;
+    assert_eq!(c.plugins.enabled, vec!["echo".to_owned()]);
+    assert_eq!(c.plugin["echo"]["log"].as_str(), Some("w"));
+    assert_eq!(c.plugin["git"]["interval"].as_integer(), Some(60));
+}
+
+#[test]
+fn an_unknown_key_under_plugins_names_file_line_and_column() {
+    let sb = Sandbox::new();
+    let file = sb.write_project("[plugins]\nenabled = []\nenable = [\"git\"]\n");
+    let err = Config::load(&sb.opts()).unwrap_err().to_string();
+    assert!(
+        err.starts_with(&format!("{}:3:1: unknown field `enable`", file.display())),
+        "{err}"
+    );
+}
+
+#[test]
+fn plugin_names_are_command_names() {
+    for (name, reason) in [
+        ("", "a plugin name must not be empty"),
+        ("a/b", "a plugin name must not contain '/'"),
+        ("-v", "a plugin name must not start with '-'"),
+        ("a b", "a plugin name must not contain whitespace"),
+        ("a\tb", "a plugin name must not contain whitespace"),
+        ("ok", "a plugin name must not be listed twice"),
+    ] {
+        let sb = Sandbox::new();
+        let file = sb.write_project(&format!("[plugins]\nenabled = [\"ok\", {name:?}]\n"));
+        assert_eq!(
+            Config::load(&sb.opts()).unwrap_err().to_string(),
+            format!(
+                "plugins.enabled: {name:?} (set by {}): {reason}",
+                file.display()
+            )
+        );
+    }
 }
 
 #[test]

@@ -208,7 +208,7 @@ pub struct Layer {
 }
 
 /// The result of [`Config::load`]: the config plus where it came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Loaded {
     /// The effective configuration.
     pub config: Config,
@@ -221,6 +221,38 @@ pub struct Loaded {
 }
 
 impl Loaded {
+    /// Checks that every `plugins.enabled` entry can name a `tasq-<name>`
+    /// command reached as `tasq <name>` (ADR-0006): not empty, no `/`, no
+    /// whitespace, no leading `-`, not one of `reserved` (the CLI's
+    /// built-in commands), and listed once. [`Config::load`] checks all but
+    /// `reserved`, which only the CLI knows.
+    pub fn check_plugin_names(&self, reserved: &[String]) -> Result<(), ConfigError> {
+        let enabled = &self.config.plugins.enabled;
+        for (i, name) in enabled.iter().enumerate() {
+            let reason = if name.is_empty() {
+                "a plugin name must not be empty"
+            } else if name.contains('/') {
+                "a plugin name must not contain '/'"
+            } else if name.contains(char::is_whitespace) {
+                "a plugin name must not contain whitespace"
+            } else if name.starts_with('-') {
+                "a plugin name must not start with '-'"
+            } else if reserved.contains(name) {
+                "a plugin name must not be a built-in command"
+            } else if enabled[..i].contains(name) {
+                "a plugin name must not be listed twice"
+            } else {
+                continue;
+            };
+            return Err(ConfigError::BadPluginName {
+                name: name.clone(),
+                reason,
+                origin: origin_of(self, "plugins.enabled"),
+            });
+        }
+        Ok(())
+    }
+
     /// The layer that decided `key`, a dotted path such as `store.name`.
     ///
     /// Also answers for prefixes (`store`) and for paths below a leaf
@@ -315,6 +347,8 @@ struct FileSchema {
     source: Vec<super::SourceConfig>,
     report: super::ReportConfig,
     hooks: super::HooksConfig,
+    plugins: super::PluginsConfig,
+    plugin: BTreeMap<String, Table>,
     worktree: super::WorktreeConfig,
     profile: BTreeMap<String, Config>,
 }
@@ -332,6 +366,8 @@ impl Default for FileSchema {
             source,
             report,
             hooks,
+            plugins,
+            plugin,
             worktree,
         } = Config::default();
         Self {
@@ -345,6 +381,8 @@ impl Default for FileSchema {
             source,
             report,
             hooks,
+            plugins,
+            plugin,
             worktree,
             profile: BTreeMap::new(),
         }
@@ -520,12 +558,28 @@ fn template_lookup<'a>(mut table: &'a Table, key: &str) -> Option<&'a Value> {
 }
 
 /// Converts the text of an env var or `--set` value to the type `key` has.
-fn coerce(template: &Table, origin: &Origin, key: &str, raw: &str) -> Result<Value, ConfigError> {
-    let Some(shape) = template_lookup(template, key) else {
-        return Err(ConfigError::UnknownKey {
+/// A `plugin.<name>.<key>` is not in the template: it takes the type the
+/// layers merged so far (`below`) gave it, and is a string when none set it.
+fn coerce(
+    template: &Table,
+    below: &Table,
+    origin: &Origin,
+    key: &str,
+    raw: &str,
+) -> Result<Value, ConfigError> {
+    let plugin_key = key
+        .strip_prefix("plugin.")
+        .is_some_and(|rest| rest.contains('.'));
+    let shape = if plugin_key {
+        match template_lookup(below, key) {
+            Some(shape) => shape,
+            None => return Ok(Value::String(raw.to_owned())),
+        }
+    } else {
+        template_lookup(template, key).ok_or_else(|| ConfigError::UnknownKey {
             origin: origin.clone(),
             key: key.to_owned(),
-        });
+        })?
     };
     let invalid = |expected: &str| ConfigError::InvalidValue {
         origin: origin.clone(),
@@ -544,6 +598,11 @@ fn coerce(template: &Table, origin: &Origin, key: &str, raw: &str) -> Result<Val
             .parse()
             .map(Value::Integer)
             .map_err(|_| invalid("an integer")),
+        Value::Float(_) => raw
+            .trim()
+            .parse()
+            .map(Value::Float)
+            .map_err(|_| invalid("a number")),
         Value::Array(_) => Ok(Value::Array(
             raw.split(',')
                 .map(str::trim)
@@ -558,14 +617,14 @@ fn coerce(template: &Table, origin: &Origin, key: &str, raw: &str) -> Result<Val
 
 /// The environment layer: [`ENV_KEYS`] variables, then [`ENV_SET`]
 /// entries (which win for the same key), coerced to the key's type.
-fn env_layer(opts: &LoadOptions, template: &Table) -> Result<Table, ConfigError> {
+fn env_layer(opts: &LoadOptions, template: &Table, below: &Table) -> Result<Table, ConfigError> {
     let mut env_table = Table::new();
     for (var, key) in ENV_KEYS {
         if let Some(raw) = opts.env_nonempty(var) {
             set_leaf(
                 &mut env_table,
                 key,
-                coerce(template, &Origin::Env, key, raw)?,
+                coerce(template, below, &Origin::Env, key, raw)?,
             );
         }
     }
@@ -574,7 +633,7 @@ fn env_layer(opts: &LoadOptions, template: &Table) -> Result<Table, ConfigError>
             set_leaf(
                 &mut env_table,
                 &key,
-                coerce(template, &Origin::Env, &key, &raw)?,
+                coerce(template, below, &Origin::Env, &key, &raw)?,
             );
         }
     }
@@ -713,7 +772,7 @@ impl Config {
         }
 
         let template = template();
-        let env_table = env_layer(opts, &template)?;
+        let env_table = env_layer(opts, &template, &merged)?;
         if !env_table.is_empty() {
             layers.push(Layer {
                 origin: Origin::Env,
@@ -727,7 +786,7 @@ impl Config {
             set_leaf(
                 &mut override_table,
                 key,
-                coerce(&template, &Origin::Overrides, key, raw)?,
+                coerce(&template, &merged, &Origin::Overrides, key, raw)?,
             );
         }
         if !override_table.is_empty() {
@@ -751,6 +810,7 @@ impl Config {
         };
         finalize(&mut loaded, opts.home.as_deref())?;
         check_store_name(&loaded)?;
+        loaded.check_plugin_names(&[])?;
         Ok(loaded)
     }
 }
@@ -954,10 +1014,10 @@ mod tests {
         template.insert("limit".to_owned(), Value::Integer(0));
         let origin = Origin::Overrides;
         assert_eq!(
-            coerce(&template, &origin, "limit", " 42 ").unwrap(),
+            coerce(&template, &Table::new(), &origin, "limit", " 42 ").unwrap(),
             Value::Integer(42)
         );
-        let err = coerce(&template, &origin, "limit", "many").unwrap_err();
+        let err = coerce(&template, &Table::new(), &origin, "limit", "many").unwrap_err();
         assert_eq!(
             err.to_string(),
             "--set: limit=\"many\": expected an integer"

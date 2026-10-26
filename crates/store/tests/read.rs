@@ -29,7 +29,6 @@ fn an_absent_directory_is_an_empty_store_and_is_not_created() {
             name: "tasq".into(),
             location: temp.dir(),
             task_count: 0,
-            bookkeeper: None,
         }
     );
     assert!(!temp.dir().exists(), "a read never creates the directory");

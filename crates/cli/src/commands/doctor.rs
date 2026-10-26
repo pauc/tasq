@@ -2,7 +2,8 @@
 //!
 //! The store checks come from [`Store::doctor`]; this module adds the
 //! `config` check (the layers that loaded, or why loading failed) and one
-//! check per optional tool. Any `FAIL` makes the exit code 1.
+//! check per enabled plugin (installed or not) and one check per optional
+//! tool. Any `FAIL` makes the exit code 1.
 //!
 //! [`Store::doctor`]: tasq_core::store::Store::doctor
 
@@ -18,6 +19,7 @@ use crate::cli::GlobalArgs;
 use crate::error::{CliError, Result};
 use crate::json;
 use crate::output::{Color, Output, Style};
+use crate::plugins::Enabled;
 
 /// Optional tools and what each one is for.
 pub const TOOLS: &[(&str, &str)] = &[
@@ -53,7 +55,10 @@ pub const TOOLS: &[(&str, &str)] = &[
 pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
     let mut checks = Vec::new();
     let env = env_vec(&opts.env);
-    let loaded = match Config::load(&opts) {
+    let loaded = match Config::load(&opts)
+        .map_err(CliError::from)
+        .and_then(|loaded| crate::plugins::check_names(&loaded).map(|()| loaded))
+    {
         Ok(loaded) => {
             checks.push(Check::ok("config", describe_layers(&loaded)));
             Some(loaded)
@@ -78,7 +83,7 @@ pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
         if let Ok(provenance) = app.store_provenance() {
             checks.push(location_check(&provenance));
         }
-        match app.open_store() {
+        match app.open_store_quietly() {
             Ok(store) => checks.extend(store.doctor()),
             Err(e) => checks.push(Check::fail(
                 "store",
@@ -86,6 +91,7 @@ pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
                 "check data_dir and store.name (tasq config show)",
             )),
         }
+        checks.extend(app.plugins().iter().map(Enabled::check));
     }
     for (tool, fix) in TOOLS {
         checks.push(tool_check(tool, &env, fix));

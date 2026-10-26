@@ -468,6 +468,25 @@ mod store {
         assert_snapshot!(env.normalize(&stdout(&out)));
     }
 
+    /// The enabled plugins follow the store's writes, so they are part of
+    /// its description (ADR 0030).
+    #[test]
+    fn info_lists_the_enabled_plugins() {
+        let env = TestEnv::fixture();
+        env.fake_tool("tasq-echo", "exit 0");
+        env.fake_tool("tasq-git", "exit 0");
+        env.write_project_config("[plugins]\nenabled = [\"git\", \"echo\"]\n");
+        let out = env.tasq().args(["store", "info"]).output().unwrap();
+        assert_eq!(stderr(&out), "");
+        assert_snapshot!(env.normalize(&stdout(&out)));
+        let out = env
+            .tasq()
+            .args(["store", "info", "--json"])
+            .output()
+            .unwrap();
+        assert_snapshot!(env.normalize(&stdout(&out)));
+    }
+
     /// `data_dir` and `store.name`, each with the layer that set it, the way
     /// `tasq config show` annotates them.
     #[test]
@@ -5162,7 +5181,101 @@ mod plugins {
 
         let env = TestEnv::fixture();
         env.tasq().args(["plugins", "list"]).assert().success().stdout(
-            "Plugins on PATH (tasq-<name>):\n  (none)\n\nHooks ([hooks] in the config):\n  (none)\n",
+            "Enabled plugins ([plugins] in the config):\n  (none)\n\nPlugins on PATH (tasq-<name>):\n  (none)\n\nHooks ([hooks] in the config):\n  (none)\n",
+        );
+    }
+
+    #[test]
+    fn list_shows_the_enabled_plugins_and_whether_each_is_installed() {
+        let env = TestEnv::fixture();
+        env.fake_tool("tasq-echo", PROBE);
+        env.write_project_config("[plugins]\nenabled = [\"git\", \"echo\"]\n");
+        let out = env.tasq().args(["plugins", "list"]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stderr(&out), "", "plugins list does not open the store");
+        assert_snapshot!(env.normalize(&stdout(&out)));
+
+        let out = env
+            .tasq()
+            .args(["--json", "plugins", "list"])
+            .output()
+            .unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&env.normalize(&stdout(&out))).unwrap();
+        assert_eq!(
+            doc["enabled"],
+            serde_json::json!([
+                {"name": "git", "path": null},
+                {"name": "echo", "path": "[ROOT]/bin/tasq-echo"},
+            ])
+        );
+    }
+
+    /// A missing plugin never blocks a command and never goes unnoticed
+    /// (ADR 0030): every command that opens the store warns, `doctor` fails.
+    #[test]
+    fn an_enabled_plugin_missing_from_path_warns_and_fails_doctor() {
+        let env = TestEnv::fixture();
+        env.fake_tool("tasq-echo", PROBE);
+        env.write_project_config("[plugins]\nenabled = [\"git\", \"echo\"]\n");
+        let warning = "tasq: warning: plugin git is enabled but tasq-git is not on PATH\n";
+        for args in [&["list"][..], &["log", "1", "a note"], &["store", "info"]] {
+            let out = env.tasq().args(args).output().unwrap();
+            assert_eq!(out.status.code(), Some(0), "{args:?}");
+            assert_eq!(stderr(&out), warning, "{args:?}");
+        }
+        // A failing command keeps its exit code and still warns.
+        let out = env.tasq().args(["view", "99"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert!(stderr(&out).starts_with(warning), "{}", stderr(&out));
+        // Commands that never open the store say nothing.
+        let out = env.tasq().args(["config", "show"]).output().unwrap();
+        assert_eq!(stderr(&out), "");
+
+        let out = env.tasq().args(["--json", "doctor"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(stderr(&out), "", "doctor reports it as a check only");
+        let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let checks = doc["checks"].as_array().unwrap();
+        let names: Vec<&str> = checks.iter().map(|c| c["name"].as_str().unwrap()).collect();
+        let at = |name: &str| names.iter().position(|n| *n == name).unwrap();
+        assert!(at("store") < at("tasq-git"), "{names:?}");
+        assert_eq!(at("tasq-git") + 1, at("tasq-echo"), "{names:?}");
+        assert!(at("tasq-echo") < at("glow"), "{names:?}");
+        assert_eq!(
+            checks[at("tasq-git")],
+            serde_json::json!({
+                "name": "tasq-git",
+                "status": "fail",
+                "detail": "plugin git is enabled but tasq-git is not on PATH",
+                "fix": "install tasq-git or remove it from [plugins] enabled",
+            })
+        );
+        assert_eq!(checks[at("tasq-echo")]["status"], "ok");
+        assert_eq!(
+            env.normalize(checks[at("tasq-echo")]["detail"].as_str().unwrap()),
+            "plugin echo is [ROOT]/bin/tasq-echo"
+        );
+        // Text: the failure and its fix.
+        let out = env.tasq().arg("doctor").output().unwrap();
+        assert!(
+            stdout(&out).contains(
+                "FAIL  tasq-git     plugin git is enabled but tasq-git is not on PATH\n\
+                 \x20                  fix: install tasq-git or remove it from [plugins] enabled\n"
+            ),
+            "{}",
+            stdout(&out)
+        );
+    }
+
+    #[test]
+    fn a_builtin_command_name_is_not_a_plugin_name() {
+        let env = TestEnv::fixture();
+        env.write_project_config("[plugins]\nenabled = [\"echo\", \"list\"]\n");
+        let out = env.tasq().arg("list").output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            "tasq: plugins.enabled: \"list\" (set by [ROOT]/home/.tasq.toml): a plugin name must not be a built-in command\n"
         );
     }
 

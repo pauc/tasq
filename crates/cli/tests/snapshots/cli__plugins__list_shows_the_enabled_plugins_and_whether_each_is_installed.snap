@@ -1,0 +1,13 @@
+---
+source: crates/cli/tests/cli.rs
+expression: env.normalize(&stdout(&out))
+---
+Enabled plugins ([plugins] in the config):
+  git   not on PATH
+  echo  [ROOT]/bin/tasq-echo
+
+Plugins on PATH (tasq-<name>):
+  echo  [ROOT]/bin/tasq-echo
+
+Hooks ([hooks] in the config):
+  (none)

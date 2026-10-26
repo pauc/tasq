@@ -1,0 +1,24 @@
+---
+source: crates/cli/tests/cli.rs
+expression: env.normalize(&stdout(&out))
+---
+{
+  "data_dir": {
+    "from": "defaults",
+    "value": "[ROOT]/home/.local/share/tasq/stores"
+  },
+  "plugins": [
+    "git",
+    "echo"
+  ],
+  "schema": 1,
+  "store": {
+    "location": "[ROOT]/home/.local/share/tasq/stores/default",
+    "name": "tasq",
+    "task_count": 5
+  },
+  "store_name": {
+    "from": "defaults",
+    "value": "default"
+  }
+}

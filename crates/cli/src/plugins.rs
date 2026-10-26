@@ -10,6 +10,9 @@
 //!   ([`Hook`], [`run_hooks`]): after `create`, after `done`, before a
 //!   session is launched. Each gets a JSON document on stdin.
 //! - **Discovery.** `tasq plugins list` ([`discover`]).
+//! - **Enabled plugins.** `[plugins] enabled` names the plugins told about
+//!   events (ADR 0030); one that is not on `PATH` is a warning on every
+//!   command that opens the store and a `doctor` failure ([`enabled`]).
 //!
 //! Plugins and hooks call back into `tasq` through [`ENV_BIN`] and see the
 //! same configuration because [`passthrough_env`] forwards `--profile`,
@@ -23,7 +26,8 @@ use std::process::{Command, Stdio};
 use clap::CommandFactory;
 use serde::Serialize;
 use serde_json::Value;
-use tasq_core::config::{ENV_CONFIG, ENV_PROFILE, ENV_SET, expand_tilde};
+use tasq_core::config::{ENV_CONFIG, ENV_PROFILE, ENV_SET, Loaded, expand_tilde};
+use tasq_core::doctor::Check;
 use tasq_core::launch::ENV_TASK_ID;
 use tasq_core::model::Task;
 
@@ -179,6 +183,65 @@ pub fn discover(path: Option<&OsStr>) -> Vec<Plugin> {
     }
     found.sort_by(|a, b| a.name.cmp(&b.name));
     found
+}
+
+/// An enabled plugin (`[plugins] enabled`) and its executable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Enabled {
+    /// The plugin name (`git` for `tasq-git`).
+    pub name: String,
+    /// `tasq-<name>` as found on `PATH`; `None` when it is not installed.
+    pub path: Option<PathBuf>,
+}
+
+impl Enabled {
+    /// The warning for a plugin that is not installed, `None` when it is.
+    pub fn missing(&self) -> Option<String> {
+        self.path.is_none().then(|| not_on_path(&self.name))
+    }
+
+    /// The plugin's `doctor` check, named after its executable: `Ok` with
+    /// the path, `Fail` when it is not installed.
+    pub fn check(&self) -> Check {
+        let executable = format!("{PREFIX}{}", self.name);
+        match &self.path {
+            Some(path) => Check::ok(
+                &executable,
+                format!("plugin {} is {}", self.name, path.display()),
+            ),
+            None => Check::fail(
+                &executable,
+                not_on_path(&self.name),
+                format!("install {executable} or remove it from [plugins] enabled"),
+            ),
+        }
+    }
+}
+
+/// What an enabled plugin missing from `PATH` is reported as.
+fn not_on_path(name: &str) -> String {
+    format!("plugin {name} is enabled but {PREFIX}{name} is not on PATH")
+}
+
+/// The enabled plugins, in `names` order, each with its executable on
+/// `path`.
+pub fn enabled(names: &[String], path: Option<&OsStr>) -> Vec<Enabled> {
+    names
+        .iter()
+        .map(|name| Enabled {
+            name: name.clone(),
+            path: find(name, path),
+        })
+        .collect()
+}
+
+/// Checks the `plugins.enabled` names, built-in command names included
+/// (see [`Loaded::check_plugin_names`]).
+pub fn check_names(loaded: &Loaded) -> Result<()> {
+    if loaded.config.plugins.enabled.is_empty() {
+        return Ok(());
+    }
+    Ok(loaded.check_plugin_names(&builtin_names())?)
 }
 
 /// A regular file the current user may execute.

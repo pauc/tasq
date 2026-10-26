@@ -16,6 +16,7 @@ use crate::cli::{Cli, Command, EditCommand, GlobalArgs, ListArgs};
 use crate::commands;
 use crate::error::{CliError, Result};
 use crate::output::Output;
+use crate::plugins::Enabled;
 
 /// Environment variable fixing "now" (`YYYY-MM-DD HH:MM`) for every
 /// timestamp `tasq` writes; for tests and reproducible demos.
@@ -189,6 +190,7 @@ impl App {
     /// Loads the configuration for `opts` and decides output settings.
     pub fn load(global: GlobalArgs, opts: LoadOptions) -> Result<Self> {
         let loaded = Config::load(&opts)?;
+        crate::plugins::check_names(&loaded)?;
         let out = Output::from_process(&global, &loaded.config.ui, &opts.env);
         Ok(Self::new(global, opts, loaded, out))
     }
@@ -217,6 +219,17 @@ impl App {
         let mut opts = self.opts.clone();
         opts.cwd = dir.to_path_buf();
         Ok(Config::load(&opts)?)
+    }
+
+    /// The enabled plugins (`[plugins] enabled`), each with its
+    /// executable on this `PATH`.
+    pub fn plugins(&self) -> Vec<Enabled> {
+        crate::plugins::enabled(&self.config().plugins.enabled, self.path().as_deref())
+    }
+
+    /// `PATH` as the plugins are looked up on.
+    pub fn path(&self) -> Option<std::ffi::OsString> {
+        self.opts.env.get("PATH").map(std::ffi::OsString::from)
     }
 
     /// The configured status workflow.
@@ -318,8 +331,19 @@ impl App {
     /// Opens the configured store as a [`Store`] trait object: this is the
     /// one place that knows which implementation backs the commands (the
     /// tasq store at [`App::store_dir`], ADR-0026). Warnings raised while
-    /// opening go to stderr.
+    /// opening go to stderr, then one per enabled plugin that is not on
+    /// `PATH`.
     pub fn open_store(&self) -> Result<Box<dyn Store>> {
+        let store = self.open_store_quietly()?;
+        for missing in self.plugins().iter().filter_map(Enabled::missing) {
+            self.out.warn(&missing);
+        }
+        Ok(store)
+    }
+
+    /// [`App::open_store`] without the missing-plugin warnings, for
+    /// `doctor`, which reports them as checks.
+    pub fn open_store_quietly(&self) -> Result<Box<dyn Store>> {
         let mut store: Box<dyn Store> =
             Box::new(TasqStore::new(self.store_dir()?, self.workflow()).with_clock(self.clock()?));
         for warning in store.take_warnings() {

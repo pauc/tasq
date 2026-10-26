@@ -17,13 +17,13 @@ refuse anything else; a future shape change bumps the number.
 | `tasq worktree trust` | `"file"`: the repository's `.tasq.toml` (its main checkout when it has none), `"approved": [{kind, line}]`: each hook line now approved, `kind` one of `"pre-create"`, `"post-create"`, `"pre-remove"`, `"post-remove"` (in that order, then the lines in file order); `[]` when the file sets no hooks |
 | `tasq project <id>` (show) | `"task": Task`, `"default_project": path or null` |
 | `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool` (only with worktrees enabled), `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
-| `tasq store info` | `"store": {name, location, task_count}` (`"tasq"`, the directory, the count), `"bookkeeper": null` (the tasq store commits nothing; the key stays for the opt-in git sync ADR-0026 defers), `"data_dir": {value, from}` (the resolved directory and the layer that set it, as `tasq config show` names it: `defaults`, a file, `env`, `--set`), `"store_name": {value, from}` |
+| `tasq store info` | `"store": {name, location, task_count}` (`"tasq"`, the directory, the count), `"plugins": [name, ...]` (the enabled plugins, `[plugins] enabled`, ADR 0030), `"data_dir": {value, from}` (the resolved directory and the layer that set it, as `tasq config show` names it: `defaults`, a file, `env`, `--set`), `"store_name": {value, from}` |
 | `tasq doctor` | `"checks": [{name, status: "ok" \| "warn" \| "fail", detail, fix}]`, `"ok": bool` |
 | `tasq sync` | `"dry_run": bool`, `"ok": bool`, `"sources": [{name, changes: [string], applied: [{id, description}], error}]` |
 | `tasq summary` | `"day"`, `"header"` (`Friday 2026-10-02`), `"summarizer": "raw" \| "llm"`, `"tasks": [{id, title, done, notes: [string]}]`, `"notes"` (the raw text), `"summary"` (the distilled text, `null` when raw) |
 | `tasq dates` | `"spec"`, `"from"`, `"to"` (`YYYY-MM-DD`), `"days": [...]`, `"working_days": [...]` (Monday to Friday only) |
 | `tasq config show` | `"config": the effective config`, `"profile"`, `"profiles"`, `"layers": [{origin, keys}]` |
-| `tasq plugins list` | `"plugins": [{name, path}]` (executables `tasq-<name>` found on `PATH`), `"hooks": {"post-create": [string], "post-done": [string], "pre-launch": [string]}` |
+| `tasq plugins list` | `"enabled": [{name, path}]` (`[plugins] enabled` in order, `path` `null` when `tasq-<name>` is not on `PATH`), `"plugins": [{name, path}]` (executables `tasq-<name>` found on `PATH`), `"hooks": {"post-create": [string], "post-done": [string], "pre-launch": [string]}` |
 
 `tasq <plugin> [args...]` is not covered by this table: its output is the plugin's own, `--json`
 included, and `tasq` passes the arguments through verbatim (see `docs/plugins.md`).

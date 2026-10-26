@@ -117,6 +117,17 @@ pub enum ConfigError {
         /// Where it was set.
         origin: Origin,
     },
+    /// A `plugins.enabled` entry that cannot be a `tasq-<name>` command
+    /// name: empty or with a `/` in it (ADR-0006).
+    #[error("plugins.enabled: {name:?} (set by {origin}): {reason}")]
+    BadPluginName {
+        /// The name as written.
+        name: String,
+        /// What is wrong with it.
+        reason: &'static str,
+        /// Where `plugins.enabled` was set.
+        origin: Origin,
+    },
     /// A `[worktree.variables]` name that cannot be used in a template.
     #[error("worktree.variables.{name} (set by {origin}): {reason}")]
     BadWorktreeVariable {

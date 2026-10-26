@@ -2,6 +2,9 @@
 source: crates/cli/tests/cli.rs
 expression: env.normalize(&stdout(&out))
 ---
+Enabled plugins ([plugins] in the config):
+  (none)
+
 Plugins on PATH (tasq-<name>):
   tlogs  [ROOT]/bin/tasq-tlogs
   zed    [ROOT]/bin/tasq-zed
