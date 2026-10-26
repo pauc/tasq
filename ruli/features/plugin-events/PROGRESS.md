@@ -12,7 +12,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 | PE-004 | Lasting plugin warnings and the `doctor` event | done | 48d5086. Mutants on the diff with `--no-config`: 0 missed (58 mutants: 51 caught, 7 unviable; a first run missed 3 on `NoHost::warnings`, now pinned and written `vec![]`). |
 | PE-005 | `tasq store lock -- <cmd>` | done | e9fe2c7. Mutants on the diff with `--no-config`: 0 missed (14 mutants: 9 caught, 2 unviable, 3 timeouts that make `acquire_within` loop forever; `run_locked` skipped as process I/O). |
 | PE-006 | The TUI reloads when the store changes | done | ad4d481. Mutants on the diff with `--no-config`: 0 missed (40 mutants: 37 caught, 3 unviable; `run` stays skipped as terminal I/O). |
-| PE-007 | The docs describe plugins and events | done | SHA_TBD. Docs only, no mutation run: the diff has no Rust, so 0 mutants and 0 missed. `cargo doc` (no new warnings) and the full suite pass. |
+| PE-007 | The docs describe plugins and events | done | a054f06. Docs only, no mutation run: the diff has no Rust, so 0 mutants and 0 missed. `cargo doc` (no new warnings) and the full suite pass. |
 
 ## Learnings
 
