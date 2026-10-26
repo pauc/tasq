@@ -500,16 +500,13 @@ pub fn fire(
     event: Event,
     report: &mut dyn FnMut(HookEvent),
 ) -> Result<()> {
-    if app.opts.env.get(ENV_EVENT).is_some_and(|v| !v.is_empty()) {
+    if !listening(app, plugins) {
         return Ok(());
     }
     let installed: Vec<(&str, &Path)> = plugins
         .iter()
         .filter_map(|p| Some((p.name.as_str(), p.path.as_deref()?)))
         .collect();
-    if installed.is_empty() {
-        return Ok(());
-    }
     let location = app.store_dir()?;
     let store = StoreRef {
         name: &app.config().store.name,
@@ -541,6 +538,13 @@ pub fn fire(
         }
     }
     Ok(())
+}
+
+/// Whether [`fire`] would tell any of `plugins` about an event: one is
+/// installed, and this `tasq` was not run by a plugin during an event.
+pub fn listening(app: &App, plugins: &[Enabled]) -> bool {
+    app.opts.env.get(ENV_EVENT).is_none_or(String::is_empty)
+        && plugins.iter().any(|p| p.path.is_some())
 }
 
 /// Splits a hook command line into argv (no shell) and expands `~` in the

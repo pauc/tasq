@@ -14,8 +14,8 @@
 //! `Shift+Enter`) is `tasq pick <id> --window [--no-focus]` with its
 //! output captured, so the UI keeps the screen and shows the last line
 //! (ADR-0012). The UI reloads by itself when the host's fingerprint of
-//! the store directory changes, and `r` tells the plugins `store-open`
-//! (ADR 0030).
+//! the store directory changes, `r` tells the plugins `store-open`, and an
+//! action that wrote through the store tells them `post-write` (ADR 0030).
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ use std::process::Command;
 
 use tasq_core::config::Config;
 use tasq_core::model::{Task, TaskId, Worktree};
-use tasq_core::plugin::Event;
+use tasq_core::plugin::{Event, Write, WriteKind};
 use tasq_core::theme::Theme;
 use tasq_tui::{Host, HostResult, KeyMap, LaunchTarget, Model, SourceChoice};
 
@@ -140,8 +140,18 @@ impl Host for CliHost<'_> {
             .ok_or_else(|| "no editor configured (set $EDITOR)".to_owned())?;
         let mut argv: Vec<String> = leading.to_vec();
         argv.push(file.display().to_string());
-        wait_for(Command::new(program).args(&argv), program)
-            .map(|()| format!("[{id}] edited with {program}"))
+        let before = std::fs::read(file).ok();
+        let edited = wait_for(Command::new(program).args(&argv), program);
+        // Written outside the store, so noted here for `post-write`; an
+        // editor that failed may still have saved.
+        if std::fs::read(file).ok() != before {
+            self.app.written.note(Write {
+                id: id.clone(),
+                file: file.to_path_buf(),
+                kind: WriteKind::Update,
+            });
+        }
+        edited.map(|()| format!("[{id}] edited with {program}"))
     }
 
     fn launch(&mut self, id: &TaskId, target: LaunchTarget) -> HostResult {
@@ -230,6 +240,12 @@ impl Host for CliHost<'_> {
     /// `store-open` to the enabled plugins, as at start.
     fn store_open(&mut self) -> std::result::Result<(), String> {
         warnings(|report| plugins::fire(self.app, &self.app.plugins(), Event::StoreOpen, report))
+    }
+
+    /// `post-write` to the enabled plugins, as from the `ui` command, when
+    /// the action wrote through the store.
+    fn post_write(&mut self) -> std::result::Result<(), String> {
+        warnings(|report| self.app.post_write_with("ui", report))
     }
 }
 
@@ -896,5 +912,149 @@ post-create = [
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains("# One, renamed\n"), "{text}");
         assert!(text.contains("noted"), "{text}");
+    }
+
+    /// The real store and host: an action that wrote is one `post-write`,
+    /// from `ui`, with the task; one that wrote nothing, and a reload, are
+    /// none.
+    #[test]
+    fn a_writing_action_tells_the_plugins_post_write_once() {
+        use tasq_core::clock::FixedClock;
+        use tasq_core::model::Status;
+        use tasq_core::store::Store;
+        use tasq_tui::{Cmd, dispatch};
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("events.log");
+        let echo = format!(
+            "read -r payload; printf '%s %s\\n' \"$TASQ_EVENT\" \"$payload\" >> '{}'",
+            log.display()
+        );
+        let app = with_plugins(dir.path(), &[("echo", &echo)]);
+        let mut host = host(&app);
+        let mut store = app.open_store().unwrap();
+        let id = store
+            .create(tasq_core::model::TaskDraft::new("One"))
+            .unwrap()
+            .id;
+        // What the TUI did not write itself (here, before it started) is
+        // not its to report.
+        app.written.take();
+        std::fs::remove_file(&log).unwrap();
+        let clock = FixedClock::at("2026-10-26 09:00");
+        let run = |cmd: Cmd, store: &mut dyn Store, host: &mut CliHost<'_>| {
+            dispatch(&cmd, store, &clock, host);
+            std::fs::read_to_string(&log).unwrap_or_default()
+        };
+
+        let logged = run(
+            Cmd::Log(id.clone(), "noted".into()),
+            store.as_mut(),
+            &mut host,
+        );
+        let file = app.store_dir().unwrap().join(
+            std::fs::read_dir(app.store_dir().unwrap())
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .find(|n| n.to_string_lossy().ends_with(".md"))
+                .unwrap(),
+        );
+        assert_eq!(
+            logged.lines().collect::<Vec<_>>(),
+            [format!(
+                "post-write {{\"schema\":1,\"event\":\"post-write\",\"store\":{{\"name\":\"default\",\
+                 \"location\":\"{}\"}},\"config\":{{}},\"command\":\"ui\",\"writes\":[{{\"id\":\"1\",\
+                 \"file\":\"{}\",\"kind\":\"update\"}}]}}",
+                app.store_dir().unwrap().display(),
+                file.display()
+            )]
+        );
+        std::fs::remove_file(&log).unwrap();
+        let mut ready = store.get(&id).unwrap();
+        ready.set_status(Status::READY);
+        store.update(&ready).unwrap();
+        app.written.take();
+        assert_eq!(
+            run(
+                Cmd::SetStatus(id.clone(), Status::READY),
+                store.as_mut(),
+                &mut host
+            ),
+            "",
+            "unchanged"
+        );
+        assert_eq!(
+            run(Cmd::Refresh, store.as_mut(), &mut host),
+            "store-open {\"schema\":1,\"event\":\"store-open\",\
+             \"store\":{\"name\":\"default\",\"location\":\"@\"},\"config\":{}}\n"
+                .replace('@', &app.store_dir().unwrap().display().to_string())
+        );
+    }
+
+    /// `e` hands the file to the editor, outside the store: a saved change
+    /// is a write all the same, an editor that changed nothing is none.
+    #[test]
+    fn an_edit_in_the_editor_tells_the_plugins_post_write() {
+        use tasq_core::clock::FixedClock;
+        use tasq_tui::{Cmd, dispatch};
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("events.log");
+        let echo = format!(
+            "read -r payload; printf '%s %s\\n' \"$TASQ_EVENT\" \"$payload\" >> '{}'",
+            log.display()
+        );
+        let app = with_plugins(dir.path(), &[("echo", &echo)]);
+        let mut store = app.open_store().unwrap();
+        let id = store
+            .create(tasq_core::model::TaskDraft::new("One"))
+            .unwrap()
+            .id;
+        let file = store.file_of(&id).unwrap().unwrap();
+        app.written.take();
+        std::fs::remove_file(&log).unwrap();
+        let clock = FixedClock::at("2026-10-26 09:00");
+        let mut host = host(&app);
+        host.editor = ["/bin/sh", "-c", "true", "sh"].map(String::from).to_vec();
+        dispatch(&Cmd::Editor(id.clone()), store.as_mut(), &clock, &mut host);
+        assert!(!log.exists(), "saved unchanged");
+        host.editor[2] = "echo more >> \"$1\"; exit 1".to_owned();
+        dispatch(&Cmd::Editor(id.clone()), store.as_mut(), &clock, &mut host);
+        let logged = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            logged.starts_with("post-write {") && logged.lines().count() == 1,
+            "{logged}"
+        );
+        assert!(
+            logged.contains(&format!(
+                "\"command\":\"ui\",\"writes\":[{{\"id\":\"1\",\"file\":\"{}\",\"kind\":\"update\"}}]",
+                file.display()
+            )),
+            "a failing editor may still have saved: {logged}"
+        );
+    }
+
+    /// Writes are noted only for a plugin that will hear of them.
+    #[test]
+    fn writes_are_noted_only_while_a_plugin_listens() {
+        let dir = tempfile::tempdir().unwrap();
+        let create = |app: &App| {
+            app.open_store()
+                .unwrap()
+                .create(tasq_core::model::TaskDraft::new("One"))
+                .unwrap();
+            app.written.take().len()
+        };
+        assert_eq!(create(&app_in(dir.path(), "")), 0, "no plugin");
+        let mut app = with_plugins(dir.path(), &[("echo", "exit 0")]);
+        assert_eq!(create(&app), 1);
+        app.opts
+            .env
+            .insert(plugins::ENV_EVENT.to_owned(), "store-open".to_owned());
+        assert_eq!(create(&app), 0, "run by a plugin during an event");
+        app.opts
+            .env
+            .insert(plugins::ENV_EVENT.to_owned(), String::new());
+        assert_eq!(create(&app), 1, "an empty TASQ_EVENT is none");
+        let missing = app_in(dir.path(), "[plugins]\nenabled = [\"gone\"]\n");
+        assert_eq!(create(&missing), 0, "not installed");
     }
 }

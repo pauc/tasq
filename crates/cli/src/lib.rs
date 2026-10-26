@@ -25,6 +25,7 @@ pub mod error;
 pub mod json;
 pub mod output;
 pub mod plugins;
+pub mod writes;
 
 use std::ffi::OsString;
 use std::process::ExitCode;

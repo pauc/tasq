@@ -8,7 +8,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 |---|---|---|---|
 | PE-001 | Plugins are enabled by name | done | f90c7da. Mutants on the diff with `--no-config`: 0 missed (30 mutants plus a re-run of `config/load.rs` after the `Float` arm fix). |
 | PE-002 | The `store-open` event | done | 6a720a5. Mutants on the diff with `--no-config`: 0 missed (27 mutants; `wait_until` and `kill_group` skipped as process I/O). |
-| PE-003 | The `post-write` event | ready | |
+| PE-003 | The `post-write` event | done | SHA. Mutants on the diff with `--no-config`: 0 missed (44 mutants: 33 caught, 11 unviable; a first run missed 3 forwardings of `Recording`, now unit-tested). |
 | PE-004 | Lasting plugin warnings and the `doctor` event | ready | |
 | PE-005 | `tasq store lock -- <cmd>` | done | e9fe2c7. Mutants on the diff with `--no-config`: 0 missed (14 mutants: 9 caught, 2 unviable, 3 timeouts that make `acquire_within` loop forever; `run_locked` skipped as process I/O). |
 | PE-006 | The TUI reloads when the store changes | done | ad4d481. Mutants on the diff with `--no-config`: 0 missed (40 mutants: 37 caught, 3 unviable; `run` stays skipped as terminal I/O). |
@@ -60,6 +60,18 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
   `Watch` is not consulted meanwhile, so the change is seen on the first tick back.
 - 2026-10-26 (PE-006): a tick that runs only when `event::poll` times out is starved by a
   held key. `run` checks the deadline before waiting for a key.
+- 2026-10-26 (PE-003): a successful `Store::update` does not mean a write. `TasqStore` skips
+  the write when the file already says so, and several commands call `update` with an
+  unchanged task (`project` to the same path, `apply` of an unchanged document). The recorder
+  therefore reads the task's file before and after each write and notes it only when the
+  bytes differ. It must not call `get` for that: `get` resets the revision `update` checks
+  for conflicts; `file_of` does not.
+- 2026-10-26 (PE-003): `pick` and `next` never return to `app::run` when the launcher
+  replaces the process (`exec`), so the event fired at the end of the command was lost.
+  `post-write` is also fired just before the launcher runs; the recorder is drained there, so
+  the end-of-command call sends nothing twice.
+- 2026-10-26 (PE-003): a plugin's environment is cleared to tasq's own, so a fake plugin in a
+  unit test (`PATH` = its own bin directory) has no `cat`; read stdin with `read -r`.
 
 ## Blockers
 
@@ -125,6 +137,32 @@ None.
   defines; a slow plugin freezes the UI on `r` up to `plugins.timeout`, as at start; when
   the reload after `r` also fails, its error replaces the plugin warning in the status bar;
   `with_plugins` in the `ui.rs` tests is one more fake-executable helper.
+- PE-003: the recorder lives in the CLI (`crates/cli/src/writes.rs`, `Recording` and the
+  shared `Written`), as planned, but notes a task only when its file's bytes changed, not on
+  every successful call (Learnings). A task written twice by one command is listed once, with
+  its first kind (`create --worktree` stays a `create`).
+- PE-003: the command name comes from clap (`Cli::name`, `matches.subcommand_name()`), so an
+  alias reports the command (`ls` is `list`) and `worktree set` is `worktree`. It is kept on
+  `App::command`.
+- PE-003: in the TUI the runtime calls a new `Host::post_write` after every action (not after
+  `Load`, `r` or the tick); `CliHost` sends `post-write` from `ui` when the action wrote
+  through the store. A plugin warning joins the action's outcome as a failure, like a
+  `post-done` hook warning. Actions run as child processes (`pick`, `sync`) send their own
+  event. `e` (`$EDITOR` on the task file) writes outside the store, so `CliHost::edit`
+  compares the file before and after and notes the change itself.
+- PE-003: the store is wrapped only while a plugin listens (`plugins::listening`: one is
+  installed and `TASQ_EVENT` is not set), so without plugins no write costs an extra scan.
+  With one, each write costs one extra `file_of` scan and two reads of the task's file.
+- PE-003: two unit tests on `Recording` itself, outside the plan's seams: no command calls
+  `set_done` through the wrapped store, and `doctor` and the store's warnings never go
+  through it in a command, so the CLI tests cannot reach those forwardings.
+- PE-003: review findings left as is: the snapshots are taken outside the store lock, so a
+  write by another process in between can add that task to `writes` (its file did change);
+  the store reporting its own writes would be exact but changes the `Store` trait, which the
+  plan keeps unaware of this; a plugin warning in the TUI is failure-styled, as `post-done`
+  warnings are; `App::post_write` drops `fire`'s error, which only a missing store directory
+  raises after the store opened; a bare `tasq` has an empty `App::command`, and writes
+  nothing; `CliHost` names its command `ui` itself, as the payload contract says.
 - PE-005: review findings left as is: `Drop` removes the lock file without checking it is
   still ours (pre-existing; with the refresh only a holder that stopped refreshing loses it);
   Ctrl-C kills `tasq` and leaves the lock until it goes stale (no signal handling without a

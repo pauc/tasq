@@ -69,6 +69,11 @@ pub struct Cli {
     /// The command to run; `list` when omitted.
     #[command(subcommand)]
     pub command: Option<Command>,
+
+    /// The name of the command as clap matched it (`list` for `ls`), the
+    /// `command` of the `post-write` event; `None` without one.
+    #[arg(skip)]
+    pub name: Option<String>,
 }
 
 /// Flags accepted by every command, before or after the subcommand.
@@ -1127,7 +1132,11 @@ pub fn parse_from(worktrees: bool, argv: &[OsString]) -> Result<Cli, clap::Error
     let parse = |argv: &[OsString]| {
         command(worktrees)
             .try_get_matches_from(argv)
-            .and_then(|matches| Cli::from_arg_matches(&matches))
+            .and_then(|matches| {
+                let mut cli = Cli::from_arg_matches(&matches)?;
+                cli.name = matches.subcommand_name().map(str::to_owned);
+                Ok(cli)
+            })
     };
     let cli = parse(argv)?;
     let Some(Command::Edit(EditCommand::Tag { tags, .. })) = &cli.command else {

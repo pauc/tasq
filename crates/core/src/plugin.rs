@@ -6,28 +6,60 @@
 //! are only ever added. Building them is pure; running the plugin is the
 //! CLI's job.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde::ser::{SerializeMap, SerializeSeq, Serializer};
+
+use crate::model::TaskId;
 
 /// The payload schema version.
 pub const SCHEMA: u32 = 1;
 
 /// What a plugin is told about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Event {
+pub enum Event<'a> {
     /// A command (or the TUI, at start and on `r`) opened the store.
     StoreOpen,
+    /// A command (or a TUI action) wrote tasks; sent once, after its last
+    /// write, and only when it wrote something.
+    PostWrite {
+        /// The subcommand name (`ui` in the TUI).
+        command: &'a str,
+        /// Every task written, once each, in the order first written.
+        writes: &'a [Write],
+    },
 }
 
-impl Event {
+impl Event<'_> {
     /// The `event` field of the payload and the value of `TASQ_EVENT`.
     pub fn name(self) -> &'static str {
         match self {
             Self::StoreOpen => "store-open",
+            Self::PostWrite { .. } => "post-write",
         }
     }
+}
+
+/// A task a command wrote, as `post-write` lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Write {
+    /// The task's id.
+    pub id: TaskId,
+    /// The file holding it.
+    pub file: PathBuf,
+    /// Whether the command created the task or changed it.
+    pub kind: WriteKind,
+}
+
+/// How a task was written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WriteKind {
+    /// A new task file.
+    Create,
+    /// An existing task file rewritten.
+    Update,
 }
 
 /// The store an event is about.
@@ -42,22 +74,33 @@ pub struct StoreRef<'a> {
 /// `{"schema": 1, "event": <name>, "store": {"name", "location"},
 /// "config": {...}}`, `config` being the plugin's `[plugin.<name>]` table
 /// (`{}` when there is none). TOML datetimes become their TOML text.
+/// `post-write` adds `"command"` and `"writes": [{"id", "file", "kind"}]`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Payload<'a> {
     schema: u32,
     event: &'static str,
     store: StoreRef<'a>,
     config: Table<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    writes: Option<&'a [Write]>,
 }
 
 impl<'a> Payload<'a> {
     /// The payload of `event` for `store`, with the plugin's `config`.
-    pub fn new(event: Event, store: StoreRef<'a>, config: Option<&'a toml::Table>) -> Self {
+    pub fn new(event: Event<'a>, store: StoreRef<'a>, config: Option<&'a toml::Table>) -> Self {
+        let (command, writes) = match event {
+            Event::StoreOpen => (None, None),
+            Event::PostWrite { command, writes } => (Some(command), Some(writes)),
+        };
         Self {
             schema: SCHEMA,
             event: event.name(),
             store,
             config: Table(config),
+            command,
+            writes,
         }
     }
 }

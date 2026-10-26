@@ -256,13 +256,13 @@ and the writes before a failure; one per writing action in the TUI.
 
 **Blocked by:** PE-002.
 
-**Status:** ready
+**Status:** done
 
-- [ ] A table test over every writing command asserts the exact writes received.
-- [ ] No event after a read, a no-op write or `--dry-run`.
-- [ ] A command failing after its first write still sends that write.
-- [ ] The TUI host sends one event after a writing action and none after navigation.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] A table test over every writing command asserts the exact writes received.
+- [x] No event after a read, a no-op write or `--dry-run`.
+- [x] A command failing after its first write still sends that write.
+- [x] The TUI host sends one event after a writing action and none after navigation.
+- [x] `mutants-in` the diff: zero missed.
 
 ### PE-004: lasting plugin warnings and the `doctor` event
 

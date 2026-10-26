@@ -56,16 +56,16 @@ mod store_open {
     fn fires_once_for_each_command_that_opens_the_store() {
         let env = TestEnv::fixture();
         let Some(log) = echo(&env) else { return };
-        let opening: &[&[&str]] = &[
-            &[],
-            &["list"],
-            &["view", "3"],
-            &["store", "info"],
-            &["log", "3", "a note"],
-            &["create", "Fresh"],
-            &["done", "6"],
+        let opening: &[(&[&str], &[&str])] = &[
+            (&[], &["store-open"]),
+            (&["list"], &["store-open"]),
+            (&["view", "3"], &["store-open"]),
+            (&["store", "info"], &["store-open"]),
+            (&["log", "3", "a note"], &["store-open", "post-write"]),
+            (&["create", "Fresh"], &["store-open", "post-write"]),
+            (&["done", "6"], &["store-open", "post-write"]),
         ];
-        for args in opening {
+        for (args, events) in opening {
             let out = env
                 .tasq()
                 .env("TASQ_ECHO_LOG", &log)
@@ -73,7 +73,7 @@ mod store_open {
                 .output()
                 .unwrap();
             assert!(out.status.success(), "{args:?}: {}", stderr(&out));
-            assert_eq!(take_events(&log), vec!["store-open"], "{args:?}");
+            assert_eq!(take_events(&log), *events, "{args:?}");
         }
         let not_opening: &[&[&str]] = &[
             &["config", "show"],
@@ -283,5 +283,381 @@ mod runner {
         env.write_project_config("[plugins]\nenabled = [\"reader\"]\ntimeout = 5\n");
         env.tasq().arg("list").assert().success().stderr("");
         assert_eq!(std::fs::read_to_string(&log).unwrap(), "store-open\n");
+    }
+}
+
+/// One `post-write` as the plugin read it: the command, then each write
+/// as `<kind> <id> <file name>`.
+#[derive(Debug, PartialEq, Eq)]
+struct PostWrite {
+    command: String,
+    writes: Vec<String>,
+}
+
+/// The `post-write` events logged by `tasq-echo` since the log was last
+/// cleared (other events are dropped), and clears it. Every file must be in
+/// `store`.
+fn take_post_writes(log: &Path, store: &Path) -> Vec<PostWrite> {
+    let text = std::fs::read_to_string(log).unwrap_or_default();
+    let _ = std::fs::remove_file(log);
+    text.lines()
+        .filter_map(|line| line.strip_prefix("post-write "))
+        .map(|json| {
+            let payload: serde_json::Value = serde_json::from_str(json).unwrap();
+            let writes = payload["writes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|w| {
+                    let file = Path::new(w["file"].as_str().unwrap());
+                    assert_eq!(file.parent(), Some(store), "{w}");
+                    format!(
+                        "{} {} {}",
+                        w["kind"].as_str().unwrap(),
+                        w["id"].as_str().unwrap(),
+                        file.file_name().unwrap().to_string_lossy()
+                    )
+                })
+                .collect();
+            PostWrite {
+                command: payload["command"].as_str().unwrap().to_owned(),
+                writes,
+            }
+        })
+        .collect()
+}
+
+fn post_write(command: &str, writes: &[String]) -> PostWrite {
+    PostWrite {
+        command: command.to_owned(),
+        writes: writes.to_vec(),
+    }
+}
+
+mod post_write {
+    use super::*;
+
+    /// `update <id> <file name>` of a fixture task.
+    fn update(env: &TestEnv, id: u64) -> String {
+        let file = env.file_of(id);
+        format!(
+            "update {id} {}",
+            file.file_name().unwrap().to_string_lossy()
+        )
+    }
+
+    /// `create <id> <file name>` of a task the command created.
+    fn create(env: &TestEnv, id: u64) -> String {
+        update(env, id).replacen("update", "create", 1)
+    }
+
+    /// Runs `tasq <args>` with the echo plugin logging to `log`; it must
+    /// succeed.
+    fn run(env: &TestEnv, log: &Path, args: &[&str]) {
+        let out = env
+            .tasq()
+            .env("TASQ_ECHO_LOG", log)
+            .env("TASQ_DEFAULT_PROJECT", &env.home)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+    }
+
+    /// Every one-task edit: one event, named after the command, with the
+    /// task updated.
+    #[test]
+    fn every_edit_command_sends_its_one_update() {
+        let home_dir = "@HOME@";
+        let edits: &[(&[&str], &str)] = &[
+            (&["set", "3", "A"], "set"),
+            (&["log", "3", "a note"], "log"),
+            (&["done", "3"], "done"),
+            (&["reopen", "4"], "reopen"),
+            (&["rename", "3", "Answer it"], "rename"),
+            (&["tag", "3", "+extra"], "tag"),
+            (&["due", "3", "2026-11-01"], "due"),
+            (&["desc", "3", "Some words."], "desc"),
+            (
+                &["mr", "3", "https://gl.test/g/p/-/merge_requests/9", "Fix"],
+                "mr",
+            ),
+            (&["session", "3", "sess-1"], "session"),
+            (&["project", "3", home_dir], "project"),
+        ];
+        for (args, command) in edits {
+            let env = TestEnv::fixture();
+            let Some(log) = echo(&env) else { return };
+            let home = env.home.display().to_string();
+            let args: Vec<&str> = args
+                .iter()
+                .map(|a| if *a == home_dir { home.as_str() } else { a })
+                .collect();
+            run(&env, &log, &args);
+            let id = if args[1] == "4" { 4 } else { 3 };
+            assert_eq!(
+                take_post_writes(&log, &env.store()),
+                vec![post_write(command, &[update(&env, id)])],
+                "{args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn create_sends_the_new_task_once_even_when_it_also_updates_it() {
+        let env = TestEnv::fixture();
+        let Some(log) = echo(&env) else { return };
+        run(&env, &log, &["create", "Fresh"]);
+        assert_eq!(
+            take_post_writes(&log, &env.store()),
+            vec![post_write("create", &[create(&env, 8)])]
+        );
+        // `--worktree` writes the task twice: still one create.
+        run(
+            &env,
+            &log,
+            &[
+                "--set",
+                "worktree.enabled=true",
+                "create",
+                "Again",
+                "--worktree",
+                "b",
+            ],
+        );
+        assert_eq!(
+            take_post_writes(&log, &env.store()),
+            vec![post_write("create", &[create(&env, 9)])]
+        );
+        assert!(env.read_task(9).contains("## Worktrees"), "written twice");
+    }
+
+    /// A move that ranks the other tasks of the group lists them all.
+    #[test]
+    fn move_sends_every_task_it_ranked() {
+        let env = TestEnv::fixture();
+        let Some(log) = echo(&env) else { return };
+        for id in [9, 10] {
+            env.write_task(
+                &support::ulid_name("2026-10-05 09:00", id),
+                &support::task_text(id, "status: ready\n", "# Another ready one\n"),
+            );
+        }
+        // Below an unranked task: that one is ranked too.
+        run(&env, &log, &["move", "10", "--after", "3"]);
+        assert_eq!(
+            take_post_writes(&log, &env.store()),
+            vec![post_write("move", &[update(&env, 3), update(&env, 10)])]
+        );
+        // Where it already is: nothing written, no event.
+        run(&env, &log, &["move", "10", "--after", "3"]);
+        assert_eq!(take_post_writes(&log, &env.store()), Vec::new());
+    }
+
+    #[test]
+    fn apply_sends_the_task_it_wrote() {
+        let env = TestEnv::fixture();
+        let Some(log) = echo(&env) else { return };
+        let out = env.tasq().args(["--json", "view", "3"]).output().unwrap();
+        let document = stdout(&out).replace("Answer the support ticket", "Answered");
+        env.tasq()
+            .env("TASQ_ECHO_LOG", &log)
+            .arg("apply")
+            .write_stdin(document)
+            .assert()
+            .success();
+        assert_eq!(
+            take_post_writes(&log, &env.store()),
+            vec![post_write("apply", &[update(&env, 3)])]
+        );
+    }
+
+    /// One event for the whole sync, however many tasks it wrote.
+    #[test]
+    fn sync_sends_one_event_for_every_task_it_wrote() {
+        let env = TestEnv::fixture();
+        let Some(log) = echo(&env) else { return };
+        std::fs::write(env.home.join("prompt.md"), "triage\n").unwrap();
+        env.fake_tool(
+            "inbox-bridge",
+            &format!(
+                "{PROBE}\nread -r prompt\necho '[{{\"external_id\":\"a\",\"title\":\"One\"}},\
+                 {{\"external_id\":\"b\",\"title\":\"Two\"}}]'"
+            ),
+        );
+        env.write_project_config(&format!(
+            "[plugins]\nenabled = [\"echo\"]\n\n[[source]]\nname = \"inbox\"\n\
+             kind = \"llm-bridge\"\ncommand = \"inbox-bridge\"\nprompt_file = \"{}\"\n",
+            env.home.join("prompt.md").display()
+        ));
+        run(&env, &log, &["sync"]);
+        assert_eq!(
+            take_post_writes(&log, &env.store()),
+            vec![post_write("sync", &[create(&env, 8), create(&env, 9)])]
+        );
+    }
+
+    /// `pick` and `next` write the task they set in progress.
+    #[test]
+    fn launching_sends_the_status_change() {
+        let env = TestEnv::fixture();
+        let Some(log) = echo(&env) else { return };
+        env.fake_tool("claude", "exit 0");
+        run(&env, &log, &["pick", "3"]);
+        assert_eq!(
+            take_post_writes(&log, &env.store()),
+            vec![post_write("pick", &[update(&env, 3)])]
+        );
+        // Already in progress: nothing written, no event.
+        run(&env, &log, &["pick", "3"]);
+        run(&env, &log, &["next"]);
+        assert_eq!(take_post_writes(&log, &env.store()), Vec::new());
+        run(&env, &log, &["set", "3", "ready"]);
+        run(&env, &log, &["set", "1", "ready"]);
+        take_post_writes(&log, &env.store());
+        run(&env, &log, &["next"]);
+        assert_eq!(
+            take_post_writes(&log, &env.store()),
+            vec![post_write("next", &[update(&env, 1)])]
+        );
+    }
+
+    #[test]
+    fn worktree_set_sends_the_task_it_declared_on() {
+        let env = TestEnv::fixture();
+        let Some(log) = echo(&env) else { return };
+        run(&env, &log, &["project", "3", env.home.to_str().unwrap()]);
+        take_post_writes(&log, &env.store());
+        run(
+            &env,
+            &log,
+            &[
+                "--set",
+                "worktree.enabled=true",
+                "worktree",
+                "set",
+                "3",
+                "b",
+            ],
+        );
+        assert_eq!(
+            take_post_writes(&log, &env.store()),
+            vec![post_write("worktree", &[update(&env, 3)])]
+        );
+    }
+
+    /// Reads, edits that change nothing (whether or not the command calls
+    /// the store) and dry runs send no event.
+    #[test]
+    fn nothing_written_sends_nothing() {
+        let env = TestEnv::fixture();
+        let Some(log) = echo(&env) else { return };
+        let home = env.home.display().to_string();
+        run(&env, &log, &["project", "3", &home]);
+        run(&env, &log, &["tag", "3", "+extra"]);
+        take_post_writes(&log, &env.store());
+        let out = env.tasq().args(["--json", "view", "3"]).output().unwrap();
+        let unchanged = stdout(&out);
+        let quiet: &[&[&str]] = &[
+            &[],
+            &["list"],
+            &["view", "3"],
+            &["store", "info"],
+            &["set", "3", "ready"],
+            &["tag", "3", "+extra"],
+            &["rename", "3", "Answer the support ticket"],
+            // Written through the store, but the file already says so.
+            &["project", "3", &home],
+            &["pick", "3", "--dry-run"],
+            &["move", "3", "--top"],
+        ];
+        for args in quiet {
+            run(&env, &log, args);
+            assert_eq!(take_post_writes(&log, &env.store()), Vec::new(), "{args:?}");
+        }
+        env.tasq()
+            .env("TASQ_ECHO_LOG", &log)
+            .arg("apply")
+            .write_stdin(unchanged)
+            .assert()
+            .success();
+        assert_eq!(take_post_writes(&log, &env.store()), Vec::new(), "apply");
+        // Refused before any write.
+        env.tasq()
+            .env("TASQ_ECHO_LOG", &log)
+            .args(["log", "99", "a note"])
+            .assert()
+            .failure();
+        assert_eq!(take_post_writes(&log, &env.store()), Vec::new(), "log 99");
+        assert!(
+            std::fs::read_to_string(&log).is_err(),
+            "every other event was taken"
+        );
+    }
+
+    #[test]
+    fn a_dry_run_sync_sends_nothing() {
+        let env = TestEnv::fixture();
+        let Some(log) = echo(&env) else { return };
+        std::fs::write(env.home.join("prompt.md"), "triage\n").unwrap();
+        env.fake_tool(
+            "inbox-bridge",
+            &format!(
+                "{PROBE}\nread -r prompt\necho '[{{\"external_id\":\"a\",\"title\":\"One\"}}]'"
+            ),
+        );
+        env.write_project_config(&format!(
+            "[plugins]\nenabled = [\"echo\"]\n\n[[source]]\nname = \"inbox\"\n\
+             kind = \"llm-bridge\"\ncommand = \"inbox-bridge\"\nprompt_file = \"{}\"\n",
+            env.home.join("prompt.md").display()
+        ));
+        run(&env, &log, &["sync", "--dry-run"]);
+        assert_eq!(take_post_writes(&log, &env.store()), Vec::new());
+    }
+
+    /// `pick` sets the task in progress, then a blocking `pre-launch` hook
+    /// fails: the command fails, and the write it made is still sent.
+    #[test]
+    fn a_command_that_fails_after_a_write_still_sends_it() {
+        let env = TestEnv::fixture();
+        let Some(log) = echo(&env) else { return };
+        env.fake_tool("claude", "exit 0");
+        env.write_project_config(
+            "[plugins]\nenabled = [\"echo\"]\n\n[hooks]\npre-launch = [\"/bin/sh -c 'exit 5'\"]\n",
+        );
+        let out = env
+            .tasq()
+            .env("TASQ_ECHO_LOG", &log)
+            .env("TASQ_DEFAULT_PROJECT", &env.home)
+            .args(["pick", "3"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+        assert!(
+            stderr(&out).contains("pre-launch hook \"/bin/sh -c 'exit 5'\" failed"),
+            "{}",
+            stderr(&out)
+        );
+        assert_eq!(
+            take_post_writes(&log, &env.store()),
+            vec![post_write("pick", &[update(&env, 3)])]
+        );
+    }
+
+    #[test]
+    fn a_failing_plugin_is_a_warning_and_the_write_stands() {
+        let env = TestEnv::fixture();
+        env.fake_tool(
+            "tasq-bad",
+            &format!("{PROBE}\n[ \"$TASQ_EVENT\" = post-write ] || exit 0\necho nope >&2\nexit 3"),
+        );
+        env.write_project_config("[plugins]\nenabled = [\"bad\"]\n");
+        env.tasq()
+            .args(["log", "3", "a note"])
+            .assert()
+            .success()
+            .stdout("[3] logged: a note\n")
+            .stderr("tasq: warning: plugin bad: post-write event failed: exit status 3: nope\n");
+        assert!(env.read_task(3).contains("a note"));
     }
 }

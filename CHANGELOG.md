@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Enabled plugins are told what a command wrote: one `post-write` event per command, after its
+  last write, with `"command"` (the subcommand, `ui` in the TUI) and `"writes": [{"id",
+  "file", "kind": "create" | "update"}]`, each task once, in the order first written. Every
+  command that writes through the store sends it (`create`, `set`, `log`, `done`, `reopen`,
+  `apply`, `sync`, `move`, `mr`, `session`, `project`, `worktree`, `rename`, `tag`, `due`,
+  `desc`, `next`/`pick` setting a task in progress, before the launcher takes over), and so
+  does every TUI action that wrote. A command that wrote nothing (a read, an edit that changed
+  nothing, `--dry-run`, a failure before the first write) sends none; one that fails after a
+  write still sends what it wrote.
 - Enabled plugins are told when a command or `tasq ui` opens the store: tasq runs
   `tasq-<name> hook` with `{"schema": 1, "event": "store-open", "store": {"name",
   "location"}, "config": {...}}` on stdin (`config` is the plugin's `[plugin.<name>]` table),

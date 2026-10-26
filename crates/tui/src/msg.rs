@@ -260,6 +260,11 @@ pub trait Host {
     /// again; the CLI tells its plugins `store-open` here. `Err` is a
     /// warning for the status bar.
     fn store_open(&mut self) -> Result<(), String>;
+
+    /// Called after every action, before the tasks are read again; the CLI
+    /// tells its plugins `post-write` here when the action wrote through
+    /// the store. `Err` is a warning, added to the action's outcome.
+    fn post_write(&mut self) -> Result<(), String>;
 }
 
 /// A [`Host`] that refuses everything, for front ends that only browse.
@@ -306,6 +311,10 @@ impl Host for NoHost {
     fn store_open(&mut self) -> Result<(), String> {
         Ok(())
     }
+
+    fn post_write(&mut self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// A [`Host`] that records what it was asked and answers with canned
@@ -324,6 +333,11 @@ pub struct RecordingHost {
     pub worktree: Option<Worktree>,
     /// What `fingerprint` answers.
     pub fingerprint: Option<u64>,
+    /// How many times `post_write` was called (not in `calls`: it follows
+    /// every action).
+    pub post_writes: usize,
+    /// The warning `post_write` answers with; `Ok` when `None`.
+    pub post_write: Option<String>,
 }
 
 impl RecordingHost {
@@ -381,6 +395,11 @@ impl Host for RecordingHost {
 
     fn store_open(&mut self) -> Result<(), String> {
         self.reply("store_open".to_owned()).map(|_| ())
+    }
+
+    fn post_write(&mut self) -> Result<(), String> {
+        self.post_writes += 1;
+        self.post_write.clone().map_or(Ok(()), Err)
     }
 }
 

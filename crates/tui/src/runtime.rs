@@ -38,8 +38,9 @@ use crate::msg::{Cmd, Host, Msg};
 use crate::update::update;
 use crate::view::view;
 
-/// Runs `cmd` and returns what the model should hear: the outcome, then a
-/// fresh task list (every command but `Load` reloads, so the screen never
+/// Runs `cmd` and returns what the model should hear: the outcome (with
+/// the warning of the host's [`Host::post_write`], which follows every
+/// action), then a fresh task list (every command but `Load` reloads, so the screen never
 /// shows stale data after an edit, an editor or a sync, successful or not),
 /// then, after a create, the new task's id to select.
 pub fn dispatch(
@@ -82,9 +83,10 @@ pub fn dispatch(
         Cmd::Launch(id, target) => host.launch(id, *target),
         Cmd::Sync(sources) => host.sync(sources),
     };
-    let first = match outcome {
-        Ok(text) => Msg::Info(text),
-        Err(text) => Msg::Failed(text),
+    let first = match (outcome, host.post_write()) {
+        (Ok(text), Ok(())) => Msg::Info(text),
+        (Err(text), Ok(())) => Msg::Failed(text),
+        (Ok(text) | Err(text), Err(warning)) => Msg::Failed(format!("{text} ({warning})")),
     };
     let mut msgs = vec![first, reload(store)];
     msgs.extend(created.map(Msg::Select));
@@ -590,6 +592,67 @@ mod tests {
             Msg::Failed("plugin git timed out on store-open".into())
         );
         assert_eq!(loaded_ids(&msgs), ["1", "2"], "and the tasks still load");
+    }
+
+    /// Every action is followed by the host's `post_write`, before the
+    /// reload; loading, the manual reload and the tick are not actions.
+    #[test]
+    fn the_host_hears_post_write_after_each_action() {
+        let mut store = store();
+        let mut host = RecordingHost {
+            fingerprint: Some(7),
+            ..RecordingHost::default()
+        };
+        let id = TaskId::from(1);
+        for cmd in [Cmd::Load, Cmd::Refresh] {
+            dispatch(&cmd, &mut store, &clock(), &mut host);
+        }
+        tick(&normal(), &mut Watch::default(), &store, &mut host);
+        assert_eq!(host.post_writes, 0);
+        let msgs = dispatch(
+            &Cmd::Log(id.clone(), "found it".into()),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(host.post_writes, 1);
+        assert_eq!(msgs[0], Msg::Info("[1] logged: found it".into()));
+        dispatch(
+            &Cmd::View(id.clone(), false),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(host.post_writes, 2, "the host decides whether it wrote");
+
+        // A plugin's warning joins the outcome, as a failure.
+        host.post_write = Some("plugin git: post-write event failed: exit status 1".into());
+        let msgs = dispatch(
+            &Cmd::Log(id.clone(), "again".into()),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(
+            msgs[0],
+            Msg::Failed(
+                "[1] logged: again (plugin git: post-write event failed: exit status 1)".into()
+            )
+        );
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
+        let msgs = dispatch(
+            &Cmd::Log(TaskId::from(9), "lost".into()),
+            &mut store,
+            &clock(),
+            &mut host,
+        );
+        assert_eq!(
+            msgs[0],
+            Msg::Failed(
+                "no task with id 9 (plugin git: post-write event failed: exit status 1)".into()
+            )
+        );
+        assert_eq!(host.post_writes, 4);
     }
 
     #[test]

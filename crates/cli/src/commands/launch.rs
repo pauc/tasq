@@ -312,6 +312,9 @@ fn launch_or_describe(
         ctx.workdir.display(),
         if ctx.focus { "" } else { " (no focus)" }
     ));
+    // A launcher may replace this process: the status written above is
+    // reported now.
+    app.post_write();
     match launcher.launch(ctx) {
         Ok(LaunchOutcome::Opened(detail)) => {
             trace.note(&format!("opened: {detail}"));

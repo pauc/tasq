@@ -18,6 +18,7 @@ use crate::commands;
 use crate::error::{CliError, Result};
 use crate::output::Output;
 use crate::plugins::{Enabled, HookEvent};
+use crate::writes::{Recording, Written};
 
 /// Environment variable fixing "now" (`YYYY-MM-DD HH:MM`) for every
 /// timestamp `tasq` writes; for tests and reproducible demos.
@@ -55,18 +56,27 @@ pub struct App {
     pub loaded: Loaded,
     /// Where output goes.
     pub out: Output,
+    /// The tasks written through [`App::open_store`]'s stores.
+    pub written: Written,
+    /// The running command's name, the `command` of `post-write`.
+    pub command: String,
 }
 
 /// Runs the parsed command line.
 pub fn run(cli: Cli) -> Result<()> {
-    let Cli { global, command } = cli;
+    let Cli {
+        global,
+        command,
+        name,
+    } = cli;
     let opts = load_options(&global)?;
     match command {
         Some(Command::Completions { shell }) => commands::completions::run(shell, &global),
         Some(Command::Doctor) => commands::doctor::run(global, opts),
         other => {
-            let app = App::load(global, opts)?;
-            match other {
+            let mut app = App::load(global, opts)?;
+            app.command = name.unwrap_or_default();
+            let result = match other {
                 None => commands::list::run(&app, &ListArgs::default()),
                 Some(Command::List(args)) => commands::list::run(&app, &args),
                 Some(Command::Create(args)) => commands::create::run(&app, &args),
@@ -114,7 +124,11 @@ pub fn run(cli: Cli) -> Result<()> {
                 Some(Command::Doctor | Command::Completions { .. }) => {
                     unreachable!("handled before loading the config")
                 }
-            }
+            };
+            // After the command's output, and after a failure too: what was
+            // written before it is on disk.
+            app.post_write();
+            result
         }
     }
 }
@@ -203,6 +217,8 @@ impl App {
             opts,
             loaded,
             out,
+            written: Written::default(),
+            command: String::new(),
         }
     }
 
@@ -333,9 +349,11 @@ impl App {
     /// one place that knows which implementation backs the commands (the
     /// tasq store at [`App::store_dir`], ADR-0026). Warnings raised while
     /// opening go to stderr, then one per enabled plugin that is not on
-    /// `PATH`; then the installed plugins are told `store-open`.
+    /// `PATH`; then the installed plugins are told `store-open`. When a
+    /// plugin listens, the store notes what it writes in [`App::written`],
+    /// for [`App::post_write`].
     pub fn open_store(&self) -> Result<Box<dyn Store>> {
-        let store = self.open_store_quietly()?;
+        let mut store = self.open_store_quietly()?;
         let plugins = self.plugins();
         for missing in plugins.iter().filter_map(Enabled::missing) {
             self.out.warn(&missing);
@@ -344,7 +362,38 @@ impl App {
             HookEvent::Output(text) => self.out.verbose(&text),
             HookEvent::Warning(text) => self.out.warn(&text),
         })?;
+        // Only a plugin hears of the writes: without one, nothing is read
+        // twice.
+        if crate::plugins::listening(self, &plugins) {
+            store = Box::new(Recording::new(store, self.written.clone()));
+        }
         Ok(store)
+    }
+
+    /// Tells the installed enabled plugins `post-write` with the tasks
+    /// written since the last call, by [`App::command`]; nothing when none
+    /// was. Their warnings go to stderr, their output to `-v`.
+    pub fn post_write(&self) {
+        // Fails only without a store directory, and the store that wrote
+        // was opened from one.
+        let _ = self.post_write_with(&self.command, &mut |event| match event {
+            HookEvent::Output(text) => self.out.verbose(&text),
+            HookEvent::Warning(text) => self.out.warn(&text),
+        });
+    }
+
+    /// [`App::post_write`] as written by `command`, with the reporting left
+    /// to `report` (the TUI keeps the warnings for its status bar).
+    pub fn post_write_with(&self, command: &str, report: &mut dyn FnMut(HookEvent)) -> Result<()> {
+        let writes = self.written.take();
+        if writes.is_empty() {
+            return Ok(());
+        }
+        let event = Event::PostWrite {
+            command,
+            writes: &writes,
+        };
+        crate::plugins::fire(self, &self.plugins(), event, report)
     }
 
     /// [`App::open_store`] without the missing-plugin warnings, for
