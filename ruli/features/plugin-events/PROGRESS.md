@@ -13,6 +13,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 | PE-005 | `tasq store lock -- <cmd>` | done | e9fe2c7. Mutants on the diff with `--no-config`: 0 missed (14 mutants: 9 caught, 2 unviable, 3 timeouts that make `acquire_within` loop forever; `run_locked` skipped as process I/O). |
 | PE-006 | The TUI reloads when the store changes | done | ad4d481. Mutants on the diff with `--no-config`: 0 missed (40 mutants: 37 caught, 3 unviable; `run` stays skipped as terminal I/O). |
 | PE-007 | The docs describe plugins and events | done | a054f06. Docs only, no mutation run: the diff has no Rust, so 0 mutants and 0 missed. `cargo doc` (no new warnings) and the full suite pass. |
+| PE-008 | Fix the branch review findings | done | SHA. Mutants on the diff with `--no-config`: 0 missed (19 mutants: 17 caught, 2 unviable; `exited_by` and `kill_group` stay skipped as process I/O). Finding 5 (Ctrl-C) not fixed: needs a new dependency (Deviations). |
 
 ## Learnings
 
@@ -88,6 +89,21 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
   `StoreInfo::name`). Same key, different values; the docs spell out each.
 - 2026-10-26 (PE-007): PE-004, PE-005 and PE-006 added no CHANGELOG entry (PE-001 to PE-003
   did). The docs ticket added them; a ticket that changes behaviour should carry its own.
+
+- 2026-10-26 (PE-008): `waitid(EXITED | NOHANG | NOWAIT)` (rustix, already a dependency)
+  sees a child exit without reaping it. The plugin runner now reaps only after it has read the
+  output or killed the group, so the group id (the leader's pid) is still reserved by the
+  zombie when `kill_group` runs. A Linux unit test pins it through `/proc/<pid>`.
+- 2026-10-26 (PE-008): stamping only the refresh with the injected clock is not enough: a lock
+  is created with wall mtime, so a waiter on a clock far ahead breaks it during the first 30 s.
+  `acquire` stamps it too. Stamping with the clock alone broke the other direction (review
+  finding): a holder on a frozen past `TASQ_NOW`, or in the repeated hour of a daylight saving
+  fold (`instant` reads it an hour early), stamped a lock a wall-clock waiter breaks at once.
+  The stamp is the later of the clock and the wall time (`lock::stamp`): `is_stale` takes a
+  lock from the future for live, so neither waiter breaks it.
+- 2026-10-26 (PE-008): `unsafe_code = "forbid"` rules out `pre_exec` (`setsid`,
+  `PR_SET_PDEATHSIG`), and neither std nor rustix installs a signal handler safely, so ending
+  a plugin on a Ctrl-C of tasq takes a new crate or a helper process (Deviations).
 
 ## Blockers
 
@@ -237,3 +253,26 @@ None.
   process group outlives a Ctrl-C of `tasq` and is stopped if it reads the terminal. Already
   recorded above and documented as built: a tasq write under `tasq store lock` waits on that
   lock, the extra `file_of` scan per write, the TUI's extra reload after its own write.
+- PE-008: finding 5 is not fixed. Plugin stdin was already the payload pipe only (never the
+  terminal), so nothing changed there. Making a Ctrl-C of `tasq` end the running plugin needs
+  a signal handler (`signal-hook` or `ctrlc`, a new direct dependency of the CLI; `signal-hook`
+  is already in `Cargo.lock` through crossterm) because `unsafe_code` is forbidden, so per the
+  ticket it stopped there. A dependency-free option exists but was not taken: a guard `sh` in
+  tasq's own process group that, on SIGINT, sends SIGINT to the plugin's group. The plugin
+  still outlives the Ctrl-C, and one that opens `/dev/tty` is stopped until the timeout;
+  `docs/plugins.md` says both.
+- PE-008: `doctor` drops every built-in name from the plugins it checks (no `tasq-list`
+  check, no event sent to it) and fails each as its own `plugins` check
+  (`plugins::drop_builtin_names`, which keeps `builtin_names` private to `plugins`).
+- PE-008: `wait_until` became `exited_by` (no reap) and stays under `#[mutants::skip]` (it
+  polls a process); it now has a unit test too. `run_command` waits for the output before it
+  reaps the child, so a hook (no timeout) is read to the end first, then waited for; same
+  outcome as before.
+- PE-008: also added a CHANGELOG `Fixed` entry per finding fixed.
+- PE-008: review findings fixed: the lock stamp under a clock behind the wall and in a DST
+  fold (Learnings); a `waitid` error now kills the plugin's group and reaps it like a
+  timeout; `doctor` reports every built-in name, not the first; the `exited_by` test `exec`s
+  its `sleep` so no grandchild outlives it. Left as is: `exited_by` calls rustix without
+  `#[cfg(unix)]`, as `commands/view.rs` already does, so the CLI builds on unix only either
+  way; a stamp ahead of the wall (`TASQ_NOW` in the future) makes a dead holder's lock live
+  to a wall-clock waiter until the wall reaches it (a test-only clock).

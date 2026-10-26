@@ -318,3 +318,26 @@ Doctor checks, The store lock), `docs/config.md` (`[plugins]`, `[plugin.<name>]`
 
 - [x] A plugin can be written from `docs/plugins.md` alone: every payload has an example.
 - [x] Docs only; no mutation run.
+
+### PE-008: fix the branch review findings
+
+**What to build:** the code findings of the whole-branch review (PROGRESS.md, PE-007
+deviations): `plugins.enabled` rejects `.` and `..`; the store lock is stamped (taken and
+refreshed) by the same clock that judges it stale; a plugin's process group is never signalled
+through a pid already reaped; `doctor` reports a built-in name in `plugins.enabled` as a `Fail`
+check and still runs the store and plugin checks; plugins get the payload as their only stdin
+and end with a Ctrl-C of `tasq` (or the reason they cannot without a new dependency is
+recorded); the refresh-interval decision of `tasq store lock` leaves `#[mutants::skip]`.
+
+**Blocked by:** PE-001, PE-002, PE-003, PE-004, PE-005, PE-006, PE-007.
+
+**Status:** done
+
+- [x] `.` and `..` in `plugins.enabled` fail with the other plugin name errors.
+- [x] A lock taken and refreshed under a clock far ahead of wall time is live to a waiter on that clock.
+- [x] The timeout kills a plugin's leftovers only while its leader is unreaped (the group id cannot be reused).
+- [x] `doctor` with a built-in name in `plugins.enabled`: a `Fail` check for it, and the store and plugin checks still run.
+- [x] Plugin stdin is the payload only; Ctrl-C of `tasq` ends the running plugin, or PROGRESS says why not.
+- [x] The refresh decision of `store lock` is a tested function; only process I/O stays skipped.
+- [x] `docs/plugins.md` and `docs/config.md` updated where behaviour changed.
+- [x] `cargo mutants --in-diff`: zero missed.

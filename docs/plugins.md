@@ -125,9 +125,11 @@ remote = "origin"
 ```
 
 - `[plugins]` is tasq's: an unknown key there is an error with file, line and column, like
-  any other key. A name in `enabled` must not be empty, contain `/` or whitespace, start with
-  `-`, be a built-in command or alias (`help` included) or be listed twice; such a name fails
-  every command, `tasq config show` included, with the file that set it.
+  any other key. A name in `enabled` must not be empty, contain `/` or whitespace, be `.` or
+  `..`, start with `-`, be a built-in command or alias (`help` included) or be listed twice;
+  such a name fails every command, `tasq config show` included, with the file that set it.
+  `tasq doctor` reports each built-in name as a `FAIL` check named `plugins` and runs its
+  other checks without them.
 - `[plugin.<name>]` is the plugin's: tasq checks nothing under it and hands the whole table to
   the plugin in every payload (`config`). It is layered like the rest of the configuration:
   the global file, `.tasq.toml`, a profile, `TASQ_SET` and `--set plugin.git.interval=30`
@@ -176,7 +178,8 @@ plugin is not woken by the files its own background job changed.
 | Arguments | `hook`, nothing else. A plugin that also serves `tasq <name> ...` must tell the two apart by this first argument. |
 | Working directory | `tasq`'s own. |
 | Environment | the environment `tasq` was started with, plus `TASQ_BIN` (the running `tasq`), `TASQ_PROFILE`, `TASQ_CONFIG` and `TASQ_SET` when in effect (as for dispatch, above), and `TASQ_EVENT` (the event name). |
-| Process group | its own; on a timeout the whole group is killed. |
+| Process group | its own; on a timeout the whole group is killed. The plugin is reaped only after that, so its group id cannot have been reused. A Ctrl-C of `tasq` does not reach the group: the plugin and its jobs keep running. |
+| stdin | the payload, then end of file. The plugin's group is not the terminal's foreground group, so a plugin that opens `/dev/tty` is stopped until the timeout kills it. |
 | stdout | shown at `-v` as `tasq: plugin <name>: <event>: <output>`; for `doctor`, the answer. |
 | stderr | shown only in the warning when the plugin fails. |
 | Exit code | `0` is success. Anything else is a warning; the command's own exit code never changes. |
@@ -348,7 +351,10 @@ OK    git          git found at /usr/bin/git
 ## The store lock
 
 Every tasq write takes `<store>/.tasq/lock` for its duration (an exclusive create; a lock not
-touched for two minutes is taken for a dead holder and removed). A plugin that rewrites task
+touched for two minutes is taken for a dead holder and removed). When it is taken and when it
+is refreshed, the lock's mtime is set to tasq's clock (`TASQ_NOW` when set), the clock its age
+is judged by, or to the wall time when that is later: a lock is never stamped older than it
+is, and one stamped ahead of a waiter's clock is live to it. A plugin that rewrites task
 files itself (a `git pull`, a rebase, a restore from backup) runs that work under the same lock,
 so that it never races a write:
 

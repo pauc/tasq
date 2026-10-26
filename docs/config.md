@@ -170,7 +170,7 @@ timeout = 2                  # seconds a plugin may take over one event
 | `hooks.post-create` | array of strings | `[]` | Command lines run after `tasq create`. |
 | `hooks.post-done` | array of strings | `[]` | Command lines run after `tasq done`. |
 | `hooks.pre-launch` | array of strings | `[]` | Command lines run before `tasq next`/`tasq pick` start a session. |
-| `plugins.enabled` | array of strings | `[]` | Plugins told about events, each run as `tasq-<name>` from `PATH`, in this order. Not empty, no `/`, no whitespace, no leading `-`, not a built-in command, not listed twice. See "Plugins". |
+| `plugins.enabled` | array of strings | `[]` | Plugins told about events, each run as `tasq-<name>` from `PATH`, in this order. Not empty, no `/`, no whitespace, not `.` or `..`, no leading `-`, not a built-in command, not listed twice. See "Plugins". |
 | `plugins.timeout` | integer (seconds) | `2` | How long one plugin may take over one event before its process group is killed and a warning reported. `0` kills every plugin at once. |
 | `plugin.<name>.*` | any TOML | empty table | The plugin's own settings, not checked by tasq, sent to it as `config` in every event payload. See "Plugins". |
 | `profile.<name>.*` | table | none | A partial configuration (any key above) applied when the profile is selected. Profiles do not nest. |

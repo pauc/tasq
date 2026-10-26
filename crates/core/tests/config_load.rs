@@ -562,6 +562,8 @@ fn plugin_names_are_command_names() {
         ("-v", "a plugin name must not start with '-'"),
         ("a b", "a plugin name must not contain whitespace"),
         ("a\tb", "a plugin name must not contain whitespace"),
+        (".", "a plugin name must not be '.' or '..'"),
+        ("..", "a plugin name must not be '.' or '..'"),
         ("ok", "a plugin name must not be listed twice"),
     ] {
         let sb = Sandbox::new();

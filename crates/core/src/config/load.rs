@@ -223,7 +223,7 @@ pub struct Loaded {
 impl Loaded {
     /// Checks that every `plugins.enabled` entry can name a `tasq-<name>`
     /// command reached as `tasq <name>` (ADR-0006): not empty, no `/`, no
-    /// whitespace, no leading `-`, not one of `reserved` (the CLI's
+    /// whitespace, not `.` or `..`, no leading `-`, not one of `reserved` (the CLI's
     /// built-in commands), and listed once. [`Config::load`] checks all but
     /// `reserved`, which only the CLI knows.
     pub fn check_plugin_names(&self, reserved: &[String]) -> Result<(), ConfigError> {
@@ -235,6 +235,9 @@ impl Loaded {
                 "a plugin name must not contain '/'"
             } else if name.contains(char::is_whitespace) {
                 "a plugin name must not contain whitespace"
+            } else if name == "." || name == ".." {
+                // Its warnings file would be outside `.tasq/plugins/`.
+                "a plugin name must not be '.' or '..'"
             } else if name.starts_with('-') {
                 "a plugin name must not start with '-'"
             } else if reserved.contains(name) {

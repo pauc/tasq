@@ -28,14 +28,14 @@
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use clap::CommandFactory;
 use serde::Serialize;
 use serde_json::Value;
-use tasq_core::config::{ENV_CONFIG, ENV_PROFILE, ENV_SET, Loaded, expand_tilde};
+use tasq_core::config::{ConfigError, ENV_CONFIG, ENV_PROFILE, ENV_SET, Loaded, expand_tilde};
 use tasq_core::doctor::Check;
 use tasq_core::launch::ENV_TASK_ID;
 use tasq_core::model::Task;
@@ -253,6 +253,23 @@ pub fn enabled(names: &[String], path: Option<&OsStr>) -> Vec<Enabled> {
             path: find(name, path),
         })
         .collect()
+}
+
+/// For `doctor`: removes every built-in command name from
+/// `plugins.enabled` (each of its copies) and returns why each was wrong,
+/// as [`check_names`] words it. The other name rules hold already:
+/// [`tasq_core::config::Config::load`] checks them.
+pub fn drop_builtin_names(loaded: &mut Loaded) -> Vec<String> {
+    let builtins = builtin_names();
+    let mut messages = Vec::new();
+    while let Err(e) = loaded.check_plugin_names(&builtins) {
+        messages.push(e.to_string());
+        let ConfigError::BadPluginName { name, .. } = e else {
+            break;
+        };
+        loaded.config.plugins.enabled.retain(|n| *n != name);
+    }
+    messages
 }
 
 /// Checks the `plugins.enabled` names, built-in command names included
@@ -701,21 +718,26 @@ fn run_command(
         // still hold the pipes open.
         format!("timed out after {}s", timeout.unwrap_or_default().as_secs())
     };
-    let status = match deadline {
-        None => child.wait().map_err(|e| e.to_string())?,
-        Some(deadline) => {
-            let Some(status) = wait_until(&mut child, deadline).map_err(|e| e.to_string())? else {
-                return Err(timed_out(&mut child));
-            };
-            status
+    if let Some(deadline) = deadline {
+        match exited_by(&child, deadline) {
+            Ok(true) => {}
+            Ok(false) => return Err(timed_out(&mut child)),
+            Err(e) => {
+                // Not left running past the event.
+                timed_out(&mut child);
+                return Err(e.to_string());
+            }
         }
-    };
+    }
     // A background job that inherited the pipes keeps them open after the
     // child exits; the event is not over until they close.
     let (Some(stdout), Some(stderr)) = (receive(&stdout, deadline), receive(&stderr, deadline))
     else {
         return Err(timed_out(&mut child));
     };
+    // Reaped only now: until then the child's pid, its group's id, cannot
+    // be reused, so `timed_out` never signals another process group.
+    let status = child.wait().map_err(|e| e.to_string())?;
     if status.success() {
         return Ok(stdout);
     }
@@ -760,17 +782,20 @@ fn receive(text: &Receiver<String>, deadline: Option<Instant>) -> Option<String>
     }
 }
 
-/// Waits for `child` to exit until `deadline`; `None` when it is still
-/// running then.
+/// Waits for `child` to exit until `deadline`, without reaping it (it
+/// stays a zombie until [`Child::wait`]); `false` when it is still running
+/// then.
 // Reason: polls a live process; a mutant that stops waiting hangs the tests.
 #[mutants::skip]
-fn wait_until(child: &mut Child, deadline: Instant) -> std::io::Result<Option<ExitStatus>> {
+fn exited_by(child: &Child, deadline: Instant) -> std::io::Result<bool> {
+    use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+    let options = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
     loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(Some(status));
+        if waitid(WaitId::Pid(Pid::from_child(child)), options)?.is_some() {
+            return Ok(true);
         }
         if Instant::now() >= deadline {
-            return Ok(None);
+            return Ok(false);
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -972,5 +997,33 @@ mod tests {
                 .to_string()
                 .starts_with("hook command \"unterminated 'quote\":")
         );
+    }
+
+    /// A plugin that exited is seen without being reaped: until it is, its
+    /// pid (the id of its process group) cannot be reused, so killing the
+    /// group's leftovers at the timeout cannot reach another group.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_plugin_that_exited_stays_unreaped_until_waited_for() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "exit 3"])
+            .spawn()
+            .unwrap();
+        let entry = PathBuf::from(format!("/proc/{}", child.id()));
+        let soon = Instant::now() + Duration::from_secs(5);
+        assert!(exited_by(&child, soon).unwrap());
+        assert!(entry.exists(), "not reaped");
+        assert_eq!(child.wait().unwrap().code(), Some(3));
+        assert!(!entry.exists(), "reaped");
+
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "exec sleep 5"])
+            .spawn()
+            .unwrap();
+        let started = Instant::now();
+        assert!(!exited_by(&child, started + Duration::from_millis(100)).unwrap());
+        assert!(started.elapsed() >= Duration::from_millis(100), "waited");
+        child.kill().unwrap();
+        child.wait().unwrap();
     }
 }

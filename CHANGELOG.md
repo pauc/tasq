@@ -199,6 +199,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `plugins.enabled` rejects `.` and `..`: their lasting warnings file resolved outside
+  `.tasq/plugins/<name>`.
+- The store lock is stamped by tasq's clock (`TASQ_NOW` when set), or the wall time when that
+  is later, when taken and when `tasq store lock` refreshes it; a waiter on a clock far ahead
+  of the wall no longer breaks a live lock.
+- A plugin that exited with its output held open by a background job is reaped only after its
+  process group is killed at the timeout, so the kill can never reach a group that reused its
+  pid.
+- `tasq doctor` with built-in command names in `plugins.enabled` reports each as a `FAIL`
+  check `plugins` and still runs the store and plugin checks.
 - The herdr launcher no longer races the new pane's shell: `herdr agent start` was sent a
   few milliseconds after `workspace create`, before zsh (rc files, direnv, gitstatus) reached
   its prompt, and herdr answered `agent_pane_busy`; the name-collision retry 100 ms later

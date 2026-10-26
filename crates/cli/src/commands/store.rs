@@ -4,6 +4,7 @@ use std::process::{Command, ExitStatus};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use tasq_core::clock::Clock;
 use tasq_core::store::StoreInfo;
 use tasq_store::lock::{StoreLock, lock_path};
 
@@ -57,7 +58,7 @@ fn lock(app: &App, timeout: Option<u64>, argv: &[String]) -> Result<()> {
     vars.extend(app_passthrough_env(app));
     vars.push((ENV_STORE_DIR.to_owned(), dir.display().to_string()));
     vars.push((ENV_LOCKED.to_owned(), "1".to_owned()));
-    let status = run_locked(argv, &vars, &held);
+    let status = run_locked(argv, &vars, &held, clock.as_ref());
     drop(held);
     exit_with(status?)
 }
@@ -66,12 +67,22 @@ fn lock(app: &App, timeout: Option<u64>, argv: &[String]) -> Result<()> {
 /// [`tasq_store::lock::STALE_AFTER`], so that a command that runs longer keeps it.
 const REFRESH_EVERY: Duration = Duration::from_secs(30);
 
+/// Whether [`run_locked`] refreshes the lock, `since` its last refresh.
+fn refresh_due(since: Duration) -> bool {
+    since >= REFRESH_EVERY
+}
+
 /// Runs `argv` with the terminal's stdin, stdout and stderr and `vars` as
-/// its whole environment, and waits for it, refreshing `held` every
-/// [`REFRESH_EVERY`] meanwhile.
+/// its whole environment, and waits for it, refreshing `held` by `clock`
+/// whenever [`refresh_due`] meanwhile.
 // Reason: spawns and polls a process; the CLI tests cover it.
 #[mutants::skip]
-fn run_locked(argv: &[String], vars: &[(String, String)], held: &StoreLock) -> Result<ExitStatus> {
+fn run_locked(
+    argv: &[String],
+    vars: &[(String, String)],
+    held: &StoreLock,
+    clock: &dyn Clock,
+) -> Result<ExitStatus> {
     let (program, rest) = argv.split_first().expect("clap requires CMD");
     let mut child = Command::new(program)
         .args(rest)
@@ -87,10 +98,10 @@ fn run_locked(argv: &[String], vars: &[(String, String)], held: &StoreLock) -> R
         {
             return Ok(status);
         }
-        if refreshed.elapsed() >= REFRESH_EVERY {
+        if refresh_due(refreshed.elapsed()) {
             // A lock that cannot be touched only risks being taken for
             // stale; the command is already running.
-            let _ = held.refresh();
+            let _ = held.refresh(clock);
             refreshed = Instant::now();
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -181,8 +192,12 @@ mod tests {
 
     #[test]
     fn the_lock_is_refreshed_well_before_it_goes_stale() {
+        assert_eq!(REFRESH_EVERY, Duration::from_secs(30));
         assert!(REFRESH_EVERY * 2 <= tasq_store::lock::STALE_AFTER);
-        assert!(REFRESH_EVERY >= Duration::from_secs(1), "not a busy loop");
+        assert!(!refresh_due(Duration::ZERO));
+        assert!(!refresh_due(Duration::from_millis(29_999)));
+        assert!(refresh_due(Duration::from_secs(30)), "exactly the interval");
+        assert!(refresh_due(Duration::from_secs(31)));
     }
 
     #[cfg(unix)]

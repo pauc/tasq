@@ -54,12 +54,18 @@ pub const TOOLS: &[(&str, &str)] = &[
 pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
     let mut checks = Vec::new();
     let env = env_vec(&opts.env);
-    let loaded = match Config::load(&opts)
-        .map_err(CliError::from)
-        .and_then(|loaded| crate::plugins::check_names(&loaded).map(|()| loaded))
-    {
-        Ok(loaded) => {
+    let loaded = match Config::load(&opts) {
+        Ok(mut loaded) => {
             checks.push(Check::ok("config", describe_layers(&loaded)));
+            // A built-in name fails every other command; here each is one
+            // check, and the rest run without them.
+            for message in crate::plugins::drop_builtin_names(&mut loaded) {
+                checks.push(Check::fail(
+                    "plugins",
+                    message,
+                    "remove it from [plugins] enabled; a built-in command is never a plugin",
+                ));
+            }
             Some(loaded)
         }
         Err(e) => {

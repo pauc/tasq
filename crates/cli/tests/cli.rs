@@ -5279,6 +5279,53 @@ mod plugins {
         );
     }
 
+    /// `doctor` names the bad entry as a failed check and still checks
+    /// the store and the other plugins.
+    #[test]
+    fn doctor_fails_a_builtin_plugin_name_and_checks_the_rest() {
+        let env = TestEnv::fixture();
+        env.fake_tool("tasq-echo", &format!("{PROBE}\nexit 0"));
+        env.write_project_config("[plugins]\nenabled = [\"echo\", \"list\", \"ls\"]\n");
+        let out = env.tasq().args(["--json", "doctor"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        let doc: serde_json::Value = serde_json::from_str(&env.normalize(&stdout(&out))).unwrap();
+        let checks = doc["checks"].as_array().unwrap();
+        let names: Vec<&str> = checks.iter().map(|c| c["name"].as_str().unwrap()).collect();
+        assert_eq!(
+            names[..9],
+            [
+                "config",
+                "plugins",
+                "plugins",
+                "location",
+                "store",
+                "task-files",
+                "ids",
+                "lock",
+                "tasq-echo"
+            ],
+            "{names:?}"
+        );
+        assert!(!names.contains(&"tasq-list"), "{names:?}");
+        assert!(!names.contains(&"tasq-ls"), "{names:?}");
+        assert_eq!(checks[0]["status"], "ok");
+        assert_eq!(
+            checks[1],
+            serde_json::json!({
+                "name": "plugins",
+                "status": "fail",
+                "detail": "plugins.enabled: \"list\" (set by [ROOT]/home/.tasq.toml): a plugin name must not be a built-in command",
+                "fix": "remove it from [plugins] enabled; a built-in command is never a plugin",
+            })
+        );
+        assert_eq!(
+            checks[2]["detail"],
+            "plugins.enabled: \"ls\" (set by [ROOT]/home/.tasq.toml): a plugin name must not be a built-in command"
+        );
+        assert_eq!(checks[4]["status"], "ok", "{:?}", checks[4]);
+        assert_eq!(checks[8]["status"], "ok", "{:?}", checks[8]);
+    }
+
     #[test]
     fn hooks_get_the_document_on_stdin_and_the_event_in_the_environment() {
         let env = TestEnv::fixture();

@@ -39,7 +39,8 @@ impl StoreLock {
     /// creates the store), removes a lock that is stale by `clock`, and
     /// waits as long as a live one is held. The clock is read on every
     /// poll, so a holder that dies while a waiter is polling is broken
-    /// once its lock reaches [`STALE_AFTER`].
+    /// once its lock reaches [`STALE_AFTER`]. The lock taken is stamped
+    /// by `clock`, the clock its staleness is judged by ([`stamp`]).
     pub fn acquire(dir: &Path, clock: &dyn Clock) -> std::io::Result<Self> {
         Self::acquire_within(dir, clock, None).map(|lock| lock.expect("no limit to pass"))
     }
@@ -58,7 +59,12 @@ impl StoreLock {
         std::fs::create_dir_all(dir.join(STATE_DIR))?;
         loop {
             match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(_) => return Ok(Some(Self { path })),
+                Ok(file) => {
+                    // Dropped (and the file removed) when stamping fails.
+                    let lock = Self { path };
+                    file.set_modified(stamp(clock))?;
+                    return Ok(Some(lock));
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     // A stale lock that cannot be removed is waited on
                     // like a live one, up to the limit.
@@ -75,13 +81,14 @@ impl StoreLock {
         }
     }
 
-    /// Marks the lock as touched now, so that a holder that keeps it longer
-    /// than [`STALE_AFTER`] (`tasq store lock`) is not taken for dead.
-    pub fn refresh(&self) -> std::io::Result<()> {
+    /// Marks the lock as touched now by `clock` ([`stamp`]), so that a holder that
+    /// keeps it longer than [`STALE_AFTER`] (`tasq store lock`) is not taken
+    /// for dead.
+    pub fn refresh(&self, clock: &dyn Clock) -> std::io::Result<()> {
         OpenOptions::new()
             .write(true)
             .open(&self.path)?
-            .set_modified(SystemTime::now())
+            .set_modified(stamp(clock))
     }
 
     /// The lock file.
@@ -94,6 +101,15 @@ impl Drop for StoreLock {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
     }
+}
+
+/// The time a lock is stamped with when taken or refreshed: `clock`'s,
+/// or the wall time when that is later. A waiter on `clock` then never
+/// sees it older than it is, nor does one on the wall clock (a frozen
+/// `TASQ_NOW`, a daylight saving fold that [`instant`] reads an hour
+/// early); a stamp ahead of a waiter is live to it.
+fn stamp(clock: &dyn Clock) -> SystemTime {
+    instant(clock).max(SystemTime::now())
 }
 
 /// Whether the lock file at `path` was last touched [`STALE_AFTER`] or more
@@ -333,13 +349,59 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().to_owned();
         let lock = StoreLock::acquire(&dir, &clock()).unwrap();
-        let wall = SystemTime::now();
-        touch(lock.path(), wall - STALE_AFTER);
-        assert!(is_stale(lock.path(), wall));
-        lock.refresh().unwrap();
-        assert!(!is_stale(lock.path(), wall));
+        touch(lock.path(), now() - STALE_AFTER);
+        assert!(is_stale(lock.path(), now()));
+        lock.refresh(&clock()).unwrap();
+        assert!(!is_stale(lock.path(), now()));
         std::fs::remove_file(lock.path()).unwrap();
-        assert!(lock.refresh().is_err(), "a lock that is gone");
+        assert!(lock.refresh(&clock()).is_err(), "a lock that is gone");
+    }
+
+    /// A holder on a clock behind the wall (a frozen `TASQ_NOW`, or the
+    /// earlier reading of a daylight saving fold) stamps wall time, so a
+    /// waiter on the wall clock does not take it for dead.
+    #[test]
+    fn a_lock_is_never_stamped_before_the_wall_time() {
+        let behind = FixedClock::at("2020-01-01 00:00");
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().to_owned();
+        let before = SystemTime::now();
+        let lock = StoreLock::acquire(&dir, &behind).unwrap();
+        let stamped = || std::fs::metadata(lock.path()).unwrap().modified().unwrap();
+        assert!(stamped() >= before, "taken");
+        touch(lock.path(), before - STALE_AFTER);
+        lock.refresh(&behind).unwrap();
+        assert!(stamped() >= before, "refreshed");
+        assert!(!is_stale(lock.path(), SystemTime::now()));
+    }
+
+    /// Holder and waiter share a clock far ahead of the wall (`TASQ_NOW`):
+    /// the lock is stamped by that clock when taken and when refreshed, so
+    /// the waiter never takes the live holder for dead.
+    #[test]
+    fn the_lock_is_stamped_by_the_clock_that_judges_it() {
+        let ahead = FixedClock::at("2099-01-01 00:00");
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().to_owned();
+        let lock = StoreLock::acquire(&dir, &ahead).unwrap();
+        assert!(!is_stale(lock.path(), instant(&ahead)), "taken");
+        assert_eq!(
+            std::fs::metadata(lock.path()).unwrap().modified().unwrap(),
+            instant(&ahead)
+        );
+        touch(lock.path(), SystemTime::now());
+        lock.refresh(&ahead).unwrap();
+        assert_eq!(
+            std::fs::metadata(lock.path()).unwrap().modified().unwrap(),
+            instant(&ahead),
+            "refreshed"
+        );
+        assert!(
+            StoreLock::acquire_within(&dir, &ahead, Some(Duration::ZERO))
+                .unwrap()
+                .is_none(),
+            "the waiter waits"
+        );
     }
 
     #[cfg(unix)]
