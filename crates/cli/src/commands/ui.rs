@@ -247,6 +247,11 @@ impl Host for CliHost<'_> {
     fn post_write(&mut self) -> std::result::Result<(), String> {
         warnings(|report| self.app.post_write_with("ui", report))
     }
+
+    /// The enabled plugins' lasting warnings, as every command prints them.
+    fn warnings(&mut self) -> Vec<String> {
+        self.app.plugin_warnings()
+    }
 }
 
 impl CliHost<'_> {
@@ -827,6 +832,24 @@ post-create = [
             .env
             .insert("PATH".to_owned(), bin.display().to_string());
         app
+    }
+
+    /// The status bar's warnings are the ones every command prints.
+    #[test]
+    fn the_host_reads_the_plugins_lasting_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = with_plugins(dir.path(), &[("one", "exit 0"), ("two", "exit 0")]);
+        assert_eq!(host(&app).warnings(), Vec::<String>::new());
+        let store = app.store_dir().unwrap();
+        for (name, text) in [("two", "rebase stopped\n"), ("one", "a\n\nb\n")] {
+            let file = tasq_core::plugin::warnings_file(&store, name);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, text).unwrap();
+        }
+        assert_eq!(
+            host(&app).warnings(),
+            ["one: a", "one: b", "two: rebase stopped"]
+        );
     }
 
     #[test]

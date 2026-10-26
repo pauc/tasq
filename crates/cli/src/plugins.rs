@@ -16,6 +16,10 @@
 //! - **Events.** Each installed enabled plugin runs as `tasq-<name> hook`
 //!   with the event payload on stdin ([`fire`]); a failure or a timeout is
 //!   a warning.
+//! - **Lasting warnings.** A plugin keeps the problems it wants shown in
+//!   `<store>/.tasq/plugins/<name>/warnings` ([`lasting_warnings`]); every
+//!   command that opens the store prints them, the TUI shows them in its
+//!   status bar and `doctor` lists them, until the plugin clears the file.
 //!
 //! Plugins and hooks call back into `tasq` through [`ENV_BIN`] and see the
 //! same configuration because [`passthrough_env`] forwards `--profile`,
@@ -35,7 +39,7 @@ use tasq_core::config::{ENV_CONFIG, ENV_PROFILE, ENV_SET, Loaded, expand_tilde};
 use tasq_core::doctor::Check;
 use tasq_core::launch::ENV_TASK_ID;
 use tasq_core::model::Task;
-use tasq_core::plugin::{Event, Payload, StoreRef};
+use tasq_core::plugin::{Event, Payload, StoreRef, doctor_checks, warnings, warnings_file};
 
 use crate::app::App;
 use crate::cli::Cli;
@@ -500,6 +504,25 @@ pub fn fire(
     event: Event,
     report: &mut dyn FnMut(HookEvent),
 ) -> Result<()> {
+    fire_each(app, plugins, event, &mut |name, outcome| match outcome {
+        Ok(output) if output.trim().is_empty() => {}
+        Ok(output) => report(HookEvent::Output(format!(
+            "plugin {name}: {}: {}",
+            event.name(),
+            output.trim()
+        ))),
+        Err(message) => report(HookEvent::Warning(failed(name, event, &message))),
+    })
+}
+
+/// [`fire`] with each installed plugin's outcome left to `each`, by name:
+/// its stdout, or why it failed.
+fn fire_each(
+    app: &App,
+    plugins: &[Enabled],
+    event: Event,
+    each: &mut dyn FnMut(&str, std::result::Result<String, String>),
+) -> Result<()> {
     if !listening(app, plugins) {
         return Ok(());
     }
@@ -524,27 +547,88 @@ pub fn fire(
                 let argv = [path.display().to_string(), HOOK_ARG.to_owned()];
                 run_command(&argv, &document, &vars, Some(timeout))
             });
-        match outcome {
-            Ok(output) if output.trim().is_empty() => {}
-            Ok(output) => report(HookEvent::Output(format!(
-                "plugin {name}: {}: {}",
-                event.name(),
-                output.trim()
-            ))),
-            Err(message) => report(HookEvent::Warning(format!(
-                "plugin {name}: {} event failed: {message}",
-                event.name()
-            ))),
-        }
+        each(name, outcome);
     }
     Ok(())
+}
+
+/// What a plugin that failed on `event` is reported as.
+fn failed(name: &str, event: Event, message: &str) -> String {
+    format!("plugin {name}: {} event failed: {message}", event.name())
+}
+
+/// The `doctor` checks of `plugins`, in their order, after the store's:
+/// for each, whether it is installed ([`Enabled::check`]), the checks it
+/// answers the `doctor` event with ([`tasq_core::plugin::doctor_checks`];
+/// a failed event is one `Fail` check, `<name>/doctor`), and one `Warn`
+/// check per lasting warning (`<name>/warning`). Every check a plugin owns
+/// is `<name>/...`, so `git`'s never reads as the `git` tool's.
+pub fn doctor(app: &App, plugins: &[Enabled]) -> Vec<Check> {
+    let mut answers: Vec<(String, Vec<Check>)> = Vec::new();
+    // Fails only without a store directory, which `doctor` reports as the
+    // `store` check.
+    let _ = fire_each(app, plugins, Event::Doctor, &mut |name, outcome| {
+        let checks = match outcome {
+            Ok(answer) => doctor_checks(name, &answer),
+            Err(message) => vec![Check::fail(
+                &format!("{name}/doctor"),
+                failed(name, Event::Doctor, &message),
+                format!("{PREFIX}{name} hook must answer doctor and exit 0"),
+            )],
+        };
+        answers.push((name.to_owned(), checks));
+    });
+    let store = app.store_dir().ok();
+    let mut checks = Vec::new();
+    for plugin in plugins {
+        checks.push(plugin.check());
+        if let Some((_, answer)) = answers.iter_mut().find(|(n, _)| *n == plugin.name) {
+            checks.append(answer);
+        }
+        let Some(store) = &store else { continue };
+        let file = warnings_file(store, &plugin.name);
+        checks.extend(
+            lasting_warnings(store, &plugin.name)
+                .into_iter()
+                .map(|line| {
+                    Check::warn(
+                        &format!("{}/warning", plugin.name),
+                        line,
+                        format!(
+                            "shown until {PREFIX}{} removes it from {}",
+                            plugin.name,
+                            file.display()
+                        ),
+                    )
+                }),
+        );
+    }
+    checks
+}
+
+/// The lasting warnings of the plugin `name` in the store at `store`
+/// ([`tasq_core::plugin::warnings`]). A file that cannot be read, missing
+/// or not, is none: tasq never writes or reports on it.
+pub fn lasting_warnings(store: &Path, name: &str) -> Vec<String> {
+    let Ok(bytes) = std::fs::read(warnings_file(store, name)) else {
+        return Vec::new();
+    };
+    warnings(&String::from_utf8_lossy(&bytes))
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Whether [`fire`] would tell any of `plugins` about an event: one is
 /// installed, and this `tasq` was not run by a plugin during an event.
 pub fn listening(app: &App, plugins: &[Enabled]) -> bool {
-    app.opts.env.get(ENV_EVENT).is_none_or(String::is_empty)
-        && plugins.iter().any(|p| p.path.is_some())
+    !during_event(app) && plugins.iter().any(|p| p.path.is_some())
+}
+
+/// Whether this `tasq` was run by a plugin during an event: a non-empty
+/// [`ENV_EVENT`].
+pub fn during_event(app: &App) -> bool {
+    app.opts.env.get(ENV_EVENT).is_some_and(|e| !e.is_empty())
 }
 
 /// Splits a hook command line into argv (no shell) and expands `~` in the

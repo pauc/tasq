@@ -79,7 +79,6 @@ mod store_open {
             &["config", "show"],
             &["plugins", "list"],
             &["completions", "bash"],
-            &["doctor"],
             &["echo", "hook"],
         ];
         for args in not_opening {
@@ -93,6 +92,13 @@ mod store_open {
             let events = take_events(&log);
             assert!(events.iter().all(String::is_empty), "{args:?}: {events:?}");
         }
+        // `doctor` opens the store quietly and sends its own event.
+        env.tasq()
+            .env("TASQ_ECHO_LOG", &log)
+            .arg("doctor")
+            .output()
+            .unwrap();
+        assert_eq!(take_events(&log), ["doctor"]);
     }
 }
 
@@ -659,5 +665,195 @@ mod post_write {
             .stdout("[3] logged: a note\n")
             .stderr("tasq: warning: plugin bad: post-write event failed: exit status 3: nope\n");
         assert!(env.read_task(3).contains("a note"));
+    }
+}
+
+/// Writes `text` as `plugin`'s lasting warnings in `env`'s store.
+fn write_warnings(env: &TestEnv, plugin: &str, text: &str) -> PathBuf {
+    let file = env
+        .store()
+        .join(".tasq")
+        .join("plugins")
+        .join(plugin)
+        .join("warnings");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, text).unwrap();
+    file
+}
+
+mod lasting_warnings {
+    use super::*;
+
+    /// Every command that opens the store prints them, after the
+    /// missing-plugin warnings and the `store-open` ones, until the plugin
+    /// removes them; even a plugin that is not installed has them read.
+    #[test]
+    fn every_command_prints_them_until_the_plugin_clears_them() {
+        let env = TestEnv::fixture();
+        env.fake_tool(
+            "tasq-bad",
+            &format!("{PROBE}\n[ \"$TASQ_EVENT\" = store-open ] || exit 0\nexit 3"),
+        );
+        env.fake_tool("tasq-quiet", &format!("{PROBE}\nexit 0"));
+        env.write_project_config("[plugins]\nenabled = [\"gone\", \"bad\", \"quiet\"]\n");
+        let quiet = write_warnings(
+            &env,
+            "quiet",
+            "push failed: no network\n\n  \nrebase stopped\n",
+        );
+        write_warnings(&env, "gone", "left behind\n");
+        write_warnings(&env, "other", "not enabled\n");
+        let expected = "tasq: warning: plugin gone is enabled but tasq-gone is not on PATH\n\
+                        tasq: warning: plugin bad: store-open event failed: exit status 3\n\
+                        tasq: warning: gone: left behind\n\
+                        tasq: warning: quiet: push failed: no network\n\
+                        tasq: warning: quiet: rebase stopped\n";
+        for args in [&["list"][..], &["log", "3", "a note"], &["store", "info"]] {
+            let out = env.tasq().args(args).output().unwrap();
+            assert_eq!(out.status.code(), Some(0), "{args:?}");
+            assert_eq!(stderr(&out), expected, "{args:?}");
+        }
+        // A failing command keeps its exit code and still warns.
+        let out = env.tasq().args(["view", "99"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert!(stderr(&out).starts_with(expected), "{}", stderr(&out));
+        // Commands that never open the store say nothing.
+        let out = env.tasq().args(["config", "show"]).output().unwrap();
+        assert_eq!(stderr(&out), "");
+
+        std::fs::remove_file(&quiet).unwrap();
+        std::fs::remove_dir_all(env.store().join(".tasq/plugins/gone")).unwrap();
+        let out = env.tasq().arg("list").output().unwrap();
+        assert_eq!(
+            stderr(&out),
+            "tasq: warning: plugin gone is enabled but tasq-gone is not on PATH\n\
+             tasq: warning: plugin bad: store-open event failed: exit status 3\n"
+        );
+    }
+
+    /// A `tasq` a plugin runs during an event (`TASQ_EVENT` set) keeps
+    /// them to itself: they would only clutter the plugin's stderr.
+    #[test]
+    fn are_not_printed_by_a_tasq_run_during_an_event() {
+        let env = TestEnv::fixture();
+        env.fake_tool("tasq-quiet", &format!("{PROBE}\nexit 0"));
+        env.write_project_config("[plugins]\nenabled = [\"quiet\"]\n");
+        write_warnings(&env, "quiet", "push failed\n");
+        env.tasq()
+            .env("TASQ_EVENT", "post-write")
+            .arg("list")
+            .assert()
+            .success()
+            .stderr("");
+        env.tasq()
+            .env("TASQ_EVENT", "")
+            .arg("list")
+            .assert()
+            .success()
+            .stderr("tasq: warning: quiet: push failed\n");
+    }
+
+    /// A plugin that leaves a warning while it handles `store-open` (its
+    /// background job failed last time) is heard on that same command.
+    #[test]
+    fn are_read_after_store_open() {
+        let env = TestEnv::fixture();
+        let file = write_warnings(&env, "mirror", "");
+        env.fake_tool(
+            "tasq-mirror",
+            &format!("{PROBE}\necho 'fetch failed' > '{}'", file.display()),
+        );
+        env.write_project_config("[plugins]\nenabled = [\"mirror\"]\n");
+        env.tasq()
+            .arg("list")
+            .assert()
+            .success()
+            .stderr("tasq: warning: mirror: fetch failed\n");
+    }
+}
+
+mod doctor {
+    use super::*;
+
+    /// A plugin answering `doctor` with checks, one whose answer does not
+    /// parse, one that fails, one with nothing to say, and lasting
+    /// warnings: each plugin's checks follow its `tasq-<name>` check,
+    /// after the store's and before the tools'.
+    fn plugins(env: &TestEnv) {
+        let answer = r#"[{"name": "remote", "status": "ok", "message": "origin reachable"},
+            {"name": "push", "status": "warn", "message": "3 commits not pushed", "fix": "tasq git push"}]"#;
+        let only_doctor = "[ \"$TASQ_EVENT\" = doctor ] || exit 0";
+        env.fake_tool(
+            "tasq-git",
+            &format!("{PROBE}\n{only_doctor}\nread -r payload\necho '{answer}'"),
+        );
+        env.fake_tool(
+            "tasq-broken",
+            &format!("{PROBE}\n{only_doctor}\necho 'all good'"),
+        );
+        env.fake_tool(
+            "tasq-bad",
+            &format!("{PROBE}\n{only_doctor}\necho nope >&2\nexit 3"),
+        );
+        env.fake_tool("tasq-quiet", &format!("{PROBE}\nexit 0"));
+        env.write_project_config(
+            "[plugins]\nenabled = [\"git\", \"broken\", \"bad\", \"quiet\"]\n",
+        );
+        write_warnings(env, "git", "push failed: no network\n");
+        write_warnings(env, "quiet", "one\ntwo\n");
+    }
+
+    #[test]
+    fn lists_the_plugins_checks_and_lasting_warnings() {
+        let env = TestEnv::fixture();
+        plugins(&env);
+        let out = env.tasq().arg("doctor").output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "an unparseable answer fails");
+        assert_eq!(stderr(&out), "", "doctor reports them as checks only");
+        insta::assert_snapshot!(env.normalize(&stdout(&out)));
+    }
+
+    #[test]
+    fn json() {
+        let env = TestEnv::fixture();
+        plugins(&env);
+        let out = env.tasq().args(["--json", "doctor"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let checks: Vec<&serde_json::Value> = doc["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| {
+                let name = c["name"].as_str().unwrap();
+                ["git", "broken", "bad", "quiet"]
+                    .iter()
+                    .any(|p| name.starts_with(&format!("{p}/")))
+            })
+            .collect();
+        insta::assert_snapshot!(env.normalize(&serde_json::to_string_pretty(&checks).unwrap()));
+    }
+
+    /// The plugin gets the `doctor` payload, like any other event.
+    #[test]
+    fn the_plugin_is_told_doctor() {
+        let env = TestEnv::fixture();
+        let Some(log) = echo(&env) else { return };
+        let out = env
+            .tasq()
+            .env("TASQ_ECHO_LOG", &log)
+            .arg("doctor")
+            .output()
+            .unwrap();
+        assert!(stdout(&out).contains("OK    tasq-echo"), "{}", stdout(&out));
+        let line = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            env.normalize(&line).starts_with(
+                "doctor {\"schema\":1,\"event\":\"doctor\",\"store\":{\"name\":\"default\",\
+                 \"location\":\"[ROOT]/home/.local/share/tasq/stores/default\"},\"config\":{}}"
+            ),
+            "{line}"
+        );
+        assert_eq!(take_events(&log), ["doctor"], "and no store-open");
     }
 }

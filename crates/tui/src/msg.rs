@@ -126,6 +126,8 @@ pub enum Msg {
     Info(String),
     /// A command failed.
     Failed(String),
+    /// The plugins' lasting warnings, as the host reads them now.
+    Warnings(Vec<String>),
 }
 
 /// What the runtime does for the model, against the store, the clock and
@@ -265,6 +267,11 @@ pub trait Host {
     /// tells its plugins `post-write` here when the action wrote through
     /// the store. `Err` is a warning, added to the action's outcome.
     fn post_write(&mut self) -> Result<(), String>;
+
+    /// The plugins' lasting warnings, each `<plugin>: <line>`; asked at
+    /// start and on every tick, and shown in the status bar until they
+    /// are gone.
+    fn warnings(&mut self) -> Vec<String>;
 }
 
 /// A [`Host`] that refuses everything, for front ends that only browse.
@@ -315,6 +322,10 @@ impl Host for NoHost {
     fn post_write(&mut self) -> Result<(), String> {
         Ok(())
     }
+
+    fn warnings(&mut self) -> Vec<String> {
+        vec![]
+    }
 }
 
 /// A [`Host`] that records what it was asked and answers with canned
@@ -338,6 +349,8 @@ pub struct RecordingHost {
     pub post_writes: usize,
     /// The warning `post_write` answers with; `Ok` when `None`.
     pub post_write: Option<String>,
+    /// What `warnings` answers (a look, not recorded).
+    pub warnings: Vec<String>,
 }
 
 impl RecordingHost {
@@ -400,6 +413,10 @@ impl Host for RecordingHost {
     fn post_write(&mut self) -> Result<(), String> {
         self.post_writes += 1;
         self.post_write.clone().map_or(Ok(()), Err)
+    }
+
+    fn warnings(&mut self) -> Vec<String> {
+        self.warnings.clone()
     }
 }
 
@@ -464,6 +481,7 @@ mod tests {
         // Nothing watches or follows the store for a host that only browses.
         assert_eq!(none.fingerprint(), None);
         assert_eq!(none.store_open(), Ok(()));
+        assert_eq!(none.warnings(), Vec::<String>::new());
         // Nothing follows a close or a create for a host that only browses.
         assert_eq!(none.after_done(&Task::new(id.clone(), "T")), Ok(()));
         assert_eq!(none.after_create(&Task::new(id.clone(), "T")), Ok(()));

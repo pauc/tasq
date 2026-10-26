@@ -1,0 +1,40 @@
+---
+source: crates/cli/tests/events.rs
+expression: env.normalize(&stdout(&out))
+---
+OK    config       loaded from defaults, [ROOT]/home/.tasq.toml
+OK    location     [ROOT]/home/.local/share/tasq/stores/default (data_dir from defaults, store.name from defaults)
+OK    store        store at [ROOT]/home/.local/share/tasq/stores/default, 5 task file(s)
+OK    task-files   every .md file is a task file
+OK    ids          ids are stable and no id is claimed twice
+OK    lock         no write in progress
+OK    tasq-git     plugin git is [ROOT]/bin/tasq-git
+OK    git/remote   origin reachable
+WARN  git/push     3 commits not pushed
+                   fix: tasq git push
+WARN  git/warning  push failed: no network
+                   fix: shown until tasq-git removes it from [ROOT]/home/.local/share/tasq/stores/default/.tasq/plugins/git/warnings
+OK    tasq-broken  plugin broken is [ROOT]/bin/tasq-broken
+FAIL  broken/doctor the doctor answer is not a list of checks: expected value at line 1 column 1
+                   fix: tasq-broken must print a JSON array of {name, status, message, fix} on doctor
+OK    tasq-bad     plugin bad is [ROOT]/bin/tasq-bad
+FAIL  bad/doctor   plugin bad: doctor event failed: exit status 3: nope
+                   fix: tasq-bad hook must answer doctor and exit 0
+OK    tasq-quiet   plugin quiet is [ROOT]/bin/tasq-quiet
+WARN  quiet/warning one
+                   fix: shown until tasq-quiet removes it from [ROOT]/home/.local/share/tasq/stores/default/.tasq/plugins/quiet/warnings
+WARN  quiet/warning two
+                   fix: shown until tasq-quiet removes it from [ROOT]/home/.local/share/tasq/stores/default/.tasq/plugins/quiet/warnings
+OK    git          git found at [ROOT]/bin/git
+WARN  glow         glow is not on PATH
+                   fix: install glow (https://github.com/charmbracelet/glow) for rendered `tasq view`
+WARN  claude       claude is not on PATH
+                   fix: install Claude Code for the claude launcher and the llm summarizer
+WARN  direnv       direnv is not on PATH
+                   fix: install direnv (https://direnv.net), or set launch.env = "inherit"
+WARN  herdr        herdr is not on PATH
+                   fix: install herdr to open sessions in herdr workspaces
+WARN  glab         glab is not on PATH
+                   fix: install glab (https://gitlab.com/gitlab-org/cli) to resolve GitLab merge request titles
+WARN  gh           gh is not on PATH
+                   fix: install gh (https://cli.github.com) to resolve GitHub pull request titles

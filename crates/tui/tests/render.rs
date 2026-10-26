@@ -693,6 +693,53 @@ fn messages_and_empty_states() {
     assert_snapshot!("no_tasks", screen(&mut model, 100, 12));
 }
 
+/// The last line of the screen.
+fn status_line(model: &mut Model, width: u16) -> String {
+    let screen = screen(model, width, 12);
+    let line = screen.lines().last().unwrap_or_default();
+    line.trim_matches('"').trim_end().to_owned()
+}
+
+#[test]
+fn lasting_warnings_in_the_status_bar() {
+    let mut model = fixture(false);
+    let hints = status_line(&mut model, 100);
+    update(
+        &mut model,
+        Msg::Warnings(vec!["git: push failed: no network".into()]),
+    );
+    assert_eq!(
+        status_line(&mut model, 100),
+        "warning: git: push failed: no network"
+    );
+    update(
+        &mut model,
+        Msg::Warnings(vec![
+            "git: push failed: no network".into(),
+            "git: rebase stopped".into(),
+            "echo: odd".into(),
+        ]),
+    );
+    assert_eq!(
+        status_line(&mut model, 100),
+        "3 warnings: git: push failed: no network"
+    );
+    // A message goes first; the warnings come back with the next key.
+    update(&mut model, Msg::Info("[1] -> ready".into()));
+    assert_eq!(status_line(&mut model, 100), "[1] -> ready");
+    update(&mut model, Msg::Down);
+    assert_eq!(
+        status_line(&mut model, 100),
+        "3 warnings: git: push failed: no network"
+    );
+    // A prompt goes first too.
+    update(&mut model, Msg::BeginFilter);
+    assert_eq!(status_line(&mut model, 100), "/");
+    update(&mut model, Msg::Escape);
+    update(&mut model, Msg::Warnings(Vec::new()));
+    assert_eq!(status_line(&mut model, 100), hints);
+}
+
 /// `Ctrl+K` on the second ready task, run through `dispatch` against an
 /// in-memory store: the task is listed first afterwards, the status bar
 /// says so, and its rank appears nowhere, not in the row, not in the

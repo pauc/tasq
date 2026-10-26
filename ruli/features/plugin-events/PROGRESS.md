@@ -9,7 +9,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 | PE-001 | Plugins are enabled by name | done | f90c7da. Mutants on the diff with `--no-config`: 0 missed (30 mutants plus a re-run of `config/load.rs` after the `Float` arm fix). |
 | PE-002 | The `store-open` event | done | 6a720a5. Mutants on the diff with `--no-config`: 0 missed (27 mutants; `wait_until` and `kill_group` skipped as process I/O). |
 | PE-003 | The `post-write` event | done | ec3c370. Mutants on the diff with `--no-config`: 0 missed (44 mutants: 33 caught, 11 unviable; a first run missed 3 forwardings of `Recording`, now unit-tested). |
-| PE-004 | Lasting plugin warnings and the `doctor` event | ready | |
+| PE-004 | Lasting plugin warnings and the `doctor` event | done | SHA. Mutants on the diff with `--no-config`: 0 missed (58 mutants: 51 caught, 7 unviable; a first run missed 3 on `NoHost::warnings`, now pinned and written `vec![]`). |
 | PE-005 | `tasq store lock -- <cmd>` | done | e9fe2c7. Mutants on the diff with `--no-config`: 0 missed (14 mutants: 9 caught, 2 unviable, 3 timeouts that make `acquire_within` loop forever; `run_locked` skipped as process I/O). |
 | PE-006 | The TUI reloads when the store changes | done | ad4d481. Mutants on the diff with `--no-config`: 0 missed (40 mutants: 37 caught, 3 unviable; `run` stays skipped as terminal I/O). |
 | PE-007 | The docs describe plugins and events | ready | |
@@ -72,6 +72,17 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
   the end-of-command call sends nothing twice.
 - 2026-10-26 (PE-003): a plugin's environment is cleared to tasq's own, so a fake plugin in a
   unit test (`PATH` = its own bin directory) has no `cat`; read stdin with `read -r`.
+- 2026-10-26 (PE-004): a plugin named `git` collides with the `git` tool check in `doctor`
+  (PE-001 met the same thing with `tasq-git`). Every check a plugin owns is therefore
+  `<name>/...`: its own answers, `<name>/doctor` for a failed or unparseable answer and
+  `<name>/warning` for each lasting warning. `render` padded names to 13 with no gap, so such a
+  name ran into its detail; it now always keeps one space.
+- 2026-10-26 (PE-004): `cargo mutants` turns a body of `Vec::new()` into `vec![]`, an
+  equivalent mutant no test can kill. Writing the body as `vec![]` makes that mutant identical
+  to the code, and cargo-mutants drops it.
+- 2026-10-26 (PE-004): the TUI asks for the lasting warnings on every 2 s tick, so
+  `App::plugin_warnings` reads the files by the configured names; going through
+  `App::plugins()` searched `PATH` for each plugin on every tick (review finding).
 
 ## Blockers
 
@@ -163,6 +174,36 @@ None.
   warnings are; `App::post_write` drops `fire`'s error, which only a missing store directory
   raises after the store opened; a bare `tasq` has an empty `App::command`, and writes
   nothing; `CliHost` names its command `ui` itself, as the payload contract says.
+- PE-004: a blank answer to `doctor` is no checks, not an unparseable one: a plugin with
+  nothing to report (`tasq-echo`, a plugin written before the event) prints nothing and
+  `doctor` stays clean. Non-JSON output or a non-zero exit is one `Fail` check, as planned.
+- PE-004: check names are `<plugin>/<name>`, `<plugin>/doctor` and `<plugin>/warning`, not
+  "named after the plugin" (Learnings). In `doctor` each plugin's checks follow its
+  `tasq-<name>` check: installed or not, then its answer, then its lasting warnings (read
+  after the event, so a plugin can refresh them in its `doctor` handler).
+- PE-004: the core side is `plugin::doctor_checks`, `plugin::warnings_file` and
+  `plugin::warnings` (pure); core now depends on `serde_json` (it was a dev-dependency) to
+  parse the answer. The CLI's `fire` is split into `fire_each` (each plugin's outcome) so
+  `plugins::doctor` can read each answer.
+- PE-004: lasting warnings are read for every enabled plugin, installed or not, and printed
+  after `store-open` (and after the missing-plugin warnings), unless `TASQ_EVENT` is set: a
+  `tasq` a plugin runs during an event prints none (review finding). A file that cannot be
+  read is no warnings.
+- PE-004: TUI: `Host::warnings()` and `Msg::Warnings`. The runtime asks at start and on every
+  tick, in any mode (they move no selection), and sends them only when they differ from the
+  model's; `r` picks them up on the next tick. The status bar shows `warning: <plugin>: <line>`,
+  or `<n> warnings: <first>`, when no message or prompt is up, in place of the key hints.
+- PE-004: `update::normal` crossed clippy's 100 lines with the new arm; the `t` picker moved
+  to `begin_status`, like `begin_note` and `begin_create`.
+- PE-004: review findings left as is: a plugin that prints text on every event, or exits
+  non-zero on one it does not know, fails `doctor` (the plan's contract; plugins answer
+  `doctor` or stay silent); `tasq ui` prints the lasting warnings on stderr before the
+  alternate screen, as it does the missing-plugin and `store-open` warnings, and the status
+  bar shows them again; `doctor` run by a plugin during an event has no plugin checks,
+  silently, as `fire` sends nothing then; the fix text of an unparseable answer spells
+  `tasq-<name>` in core, where the CLI's `PREFIX` is not visible; several lasting warnings of
+  one plugin share the check name `<plugin>/warning`; a check name over 12 characters shifts
+  its detail but not its `fix:` line.
 - PE-005: review findings left as is: `Drop` removes the lock file without checking it is
   still ours (pre-existing; with the refresh only a holder that stopped refreshing loses it);
   Ctrl-C kills `tasq` and leaves the lock until it goes stale (no signal handling without a

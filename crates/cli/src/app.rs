@@ -349,8 +349,10 @@ impl App {
     /// one place that knows which implementation backs the commands (the
     /// tasq store at [`App::store_dir`], ADR-0026). Warnings raised while
     /// opening go to stderr, then one per enabled plugin that is not on
-    /// `PATH`; then the installed plugins are told `store-open`. When a
-    /// plugin listens, the store notes what it writes in [`App::written`],
+    /// `PATH`; then the installed plugins are told `store-open`, and the
+    /// lasting warnings ([`App::plugin_warnings`]) follow, unless a plugin
+    /// ran this `tasq` during an event. When a plugin
+    /// listens, the store notes what it writes in [`App::written`],
     /// for [`App::post_write`].
     pub fn open_store(&self) -> Result<Box<dyn Store>> {
         let mut store = self.open_store_quietly()?;
@@ -362,12 +364,38 @@ impl App {
             HookEvent::Output(text) => self.out.verbose(&text),
             HookEvent::Warning(text) => self.out.warn(&text),
         })?;
+        // A plugin's own `tasq` calls would only fill its stderr.
+        if !crate::plugins::during_event(self) {
+            for warning in self.plugin_warnings() {
+                self.out.warn(&warning);
+            }
+        }
         // Only a plugin hears of the writes: without one, nothing is read
         // twice.
         if crate::plugins::listening(self, &plugins) {
             store = Box::new(Recording::new(store, self.written.clone()));
         }
         Ok(store)
+    }
+
+    /// The lasting warnings of the enabled plugins, installed or not, in
+    /// their order, each as `<name>: <line>`; none without a store
+    /// directory. Reads the files only (no `PATH` search): the TUI asks on
+    /// every tick.
+    pub fn plugin_warnings(&self) -> Vec<String> {
+        let Ok(store) = self.store_dir() else {
+            return Vec::new();
+        };
+        self.config()
+            .plugins
+            .enabled
+            .iter()
+            .flat_map(|name| {
+                crate::plugins::lasting_warnings(&store, name)
+                    .into_iter()
+                    .map(move |line| format!("{name}: {line}"))
+            })
+            .collect()
     }
 
     /// Tells the installed enabled plugins `post-write` with the tasks

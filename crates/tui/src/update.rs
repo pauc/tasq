@@ -48,6 +48,10 @@ fn apply(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             model.message = Some(Message::error(text));
             Vec::new()
         }
+        Msg::Warnings(warnings) => {
+            model.warnings = warnings;
+            Vec::new()
+        }
         key => {
             model.message = None;
             match model.mode.clone() {
@@ -70,6 +74,25 @@ fn apply(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             }
         }
     }
+}
+
+/// `t`: the status picker on the selected task, at its status.
+fn begin_status(model: &mut Model) -> Vec<Cmd> {
+    let Some(task) = model.selected_task() else {
+        return refuse(model, NO_SELECTION);
+    };
+    // A done task has no status: the picker reopens it, starting at the
+    // status new tasks get.
+    let current = if task.done {
+        Some(&model.default_status)
+    } else {
+        task.status.as_ref()
+    };
+    let cursor = current
+        .and_then(|s| model.workflow.position(s))
+        .unwrap_or(0);
+    model.mode = Mode::Status { cursor };
+    Vec::new()
 }
 
 fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
@@ -99,23 +122,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::Reload => return vec![Cmd::Refresh],
         Msg::BeginFilter => begin_filter(model),
         Msg::BeginPriority | Msg::BeginDone | Msg::Edit if refuse_done(model) => {}
-        Msg::BeginStatus => {
-            if let Some(task) = model.selected_task() {
-                // A done task has no status: the picker reopens it, starting
-                // at the status new tasks get.
-                let current = if task.done {
-                    Some(&model.default_status)
-                } else {
-                    task.status.as_ref()
-                };
-                let cursor = current
-                    .and_then(|s| model.workflow.position(s))
-                    .unwrap_or(0);
-                model.mode = Mode::Status { cursor };
-            } else {
-                return refuse(model, NO_SELECTION);
-            }
-        }
+        Msg::BeginStatus => return begin_status(model),
         Msg::BeginPriority => {
             if let Some(task) = model.selected_task() {
                 let cursor = Model::priority_choices()
@@ -170,7 +177,12 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         | Msg::PrevField
         | Msg::Save
         | Msg::Today => {}
-        Msg::Resize(..) | Msg::Loaded(_) | Msg::Select(_) | Msg::Info(_) | Msg::Failed(_) => {
+        Msg::Resize(..)
+        | Msg::Loaded(_)
+        | Msg::Select(_)
+        | Msg::Info(_)
+        | Msg::Failed(_)
+        | Msg::Warnings(_) => {
             unreachable!("handled before the mode dispatch")
         }
     }
@@ -951,6 +963,20 @@ mod tests {
         update(&mut m, Msg::BeginStatus);
         assert!(matches!(m.mode, Mode::Status { .. }));
         assert_eq!(m.message, None);
+    }
+
+    #[test]
+    fn lasting_warnings_stay_until_the_host_clears_them() {
+        let mut m = model();
+        update(&mut m, Msg::Info("done".into()));
+        let warnings = vec!["git: push failed".to_owned()];
+        assert_eq!(update(&mut m, Msg::Warnings(warnings.clone())), Vec::new());
+        assert_eq!(m.warnings, warnings);
+        assert_eq!(m.message, Some(Message::info("done")), "the message stays");
+        update(&mut m, Msg::Down);
+        assert_eq!(m.warnings, warnings, "a key does not clear them");
+        update(&mut m, Msg::Warnings(Vec::new()));
+        assert_eq!(m.warnings, Vec::<String>::new());
     }
 
     #[test]

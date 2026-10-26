@@ -3,14 +3,16 @@
 //!
 //! For every [`Event`] the CLI runs `tasq-<name> hook` with a [`Payload`]
 //! serialised as JSON. Payloads carry [`SCHEMA`]; within a version fields
-//! are only ever added. Building them is pure; running the plugin is the
-//! CLI's job.
+//! are only ever added. Building them, reading a plugin's answer to
+//! `doctor` ([`doctor_checks`]) and its lasting warnings ([`warnings`]) is
+//! pure; running the plugin and reading its files is the CLI's job.
 
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
 use serde::ser::{SerializeMap, SerializeSeq, Serializer};
+use serde::{Deserialize, Serialize};
 
+use crate::doctor::{Check, CheckStatus};
 use crate::model::TaskId;
 
 /// The payload schema version.
@@ -29,6 +31,9 @@ pub enum Event<'a> {
         /// Every task written, once each, in the order first written.
         writes: &'a [Write],
     },
+    /// `tasq doctor` ran; the plugin answers with checks on stdout
+    /// ([`doctor_checks`]).
+    Doctor,
 }
 
 impl Event<'_> {
@@ -37,6 +42,7 @@ impl Event<'_> {
         match self {
             Self::StoreOpen => "store-open",
             Self::PostWrite { .. } => "post-write",
+            Self::Doctor => "doctor",
         }
     }
 }
@@ -91,7 +97,7 @@ impl<'a> Payload<'a> {
     /// The payload of `event` for `store`, with the plugin's `config`.
     pub fn new(event: Event<'a>, store: StoreRef<'a>, config: Option<&'a toml::Table>) -> Self {
         let (command, writes) = match event {
-            Event::StoreOpen => (None, None),
+            Event::StoreOpen | Event::Doctor => (None, None),
             Event::PostWrite { command, writes } => (Some(command), Some(writes)),
         };
         Self {
@@ -140,4 +146,62 @@ impl Serialize for Value<'_> {
             toml::Value::Table(table) => Table(Some(table)).serialize(serializer),
         }
     }
+}
+
+/// One check of a plugin's answer to `doctor`.
+#[derive(Deserialize)]
+struct Answer {
+    name: String,
+    status: CheckStatus,
+    message: String,
+    fix: Option<String>,
+}
+
+/// The checks in `plugin`'s answer to `doctor` (its stdout): a JSON array
+/// of `{"name", "status": "ok" | "warn" | "fail", "message", "fix"?}`,
+/// unknown fields ignored, each named `<plugin>/<name>`. No answer (blank
+/// output) is no checks; one that does not parse is a single `Fail` check
+/// named `<plugin>/doctor`, with the parse error.
+pub fn doctor_checks(plugin: &str, answer: &str) -> Vec<Check> {
+    if answer.trim().is_empty() {
+        return Vec::new();
+    }
+    match serde_json::from_str::<Vec<Answer>>(answer) {
+        Ok(answers) => answers
+            .into_iter()
+            .map(|a| Check {
+                name: format!("{plugin}/{}", a.name),
+                status: a.status,
+                detail: a.message,
+                fix: a.fix,
+            })
+            .collect(),
+        Err(e) => vec![Check::fail(
+            &format!("{plugin}/doctor"),
+            format!("the doctor answer is not a list of checks: {e}"),
+            format!(
+                "tasq-{plugin} must print a JSON array of {{name, status, message, fix}} on doctor"
+            ),
+        )],
+    }
+}
+
+/// Where `plugin` keeps its lasting warnings for the store at `store`:
+/// `<store>/.tasq/plugins/<plugin>/warnings`. The plugin owns the file;
+/// tasq only reads it.
+pub fn warnings_file(store: &Path, plugin: &str) -> PathBuf {
+    store
+        .join(".tasq")
+        .join("plugins")
+        .join(plugin)
+        .join("warnings")
+}
+
+/// The lasting warnings in the text of a [`warnings_file`]: one per
+/// non-blank line, trimmed.
+pub fn warnings(text: &str) -> Vec<&str> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect()
 }

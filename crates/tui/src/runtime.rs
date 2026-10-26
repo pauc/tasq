@@ -230,19 +230,24 @@ impl Watch {
     }
 }
 
-/// One tick of [`run`]: the tasks again when the store's files changed
-/// since the last look, nothing otherwise. The model keeps the selected
-/// task by id. Only in normal mode: a picker, an input or the form acts
-/// on the selection (or the fields) it opened with, so the change waits,
-/// unseen, until the user is back. No plugin is told (unlike `r`,
-/// [`Cmd::Refresh`]): a plugin's own job changing the files must not
-/// wake it again.
+/// One tick of [`run`]: the plugins' lasting warnings when they differ
+/// from the model's, then the tasks again when the store's files changed
+/// since the last look; nothing otherwise. The model keeps the selected
+/// task by id. The reload waits for normal mode: a picker, an input or the
+/// form acts on the selection (or the fields) it opened with, so the
+/// change waits, unseen, until the user is back. No plugin is told
+/// (unlike `r`, [`Cmd::Refresh`]): a plugin's own job changing the files
+/// must not wake it again.
 pub fn tick(model: &Model, watch: &mut Watch, store: &dyn Store, host: &mut dyn Host) -> Vec<Msg> {
-    if model.mode == Mode::Normal && watch.changed(host) {
-        vec![reload(store)]
-    } else {
-        Vec::new()
+    let mut msgs = Vec::new();
+    let warnings = host.warnings();
+    if warnings != model.warnings {
+        msgs.push(Msg::Warnings(warnings));
     }
+    if model.mode == Mode::Normal && watch.changed(host) {
+        msgs.push(reload(store));
+    }
+    msgs
 }
 
 /// Runs the UI until the user quits. Returns the terminal to its previous
@@ -267,6 +272,7 @@ pub fn run(
     for msg in dispatch(&Cmd::Load, store, clock, host) {
         update(&mut model, msg);
     }
+    update(&mut model, Msg::Warnings(host.warnings()));
     let mut next_tick = Instant::now() + TICK;
     while !model.quit {
         terminal.draw(|frame| view(&model, frame))?;
@@ -524,6 +530,46 @@ mod tests {
             "seen now"
         );
         // The automatic reload tells no plugin: their own jobs change files.
+        assert_eq!(host.calls, Vec::<String>::new());
+    }
+
+    /// A plugin's lasting warnings come on the tick whenever they differ
+    /// from the ones shown, in any mode (they move no selection), with
+    /// the store's files unchanged.
+    #[test]
+    fn the_tick_brings_the_lasting_warnings_when_they_change() {
+        let mut store = store();
+        let mut host = RecordingHost {
+            fingerprint: Some(7),
+            ..RecordingHost::default()
+        };
+        let mut watch = Watch::default();
+        let mut model = on_task_two(&mut store, &mut host);
+        assert_eq!(tick(&model, &mut watch, &store, &mut host), Vec::new());
+        update(&mut model, Msg::BeginStatus);
+        host.warnings = vec!["git: push failed".into(), "git: rebase stopped".into()];
+        let msgs = tick(&model, &mut watch, &store, &mut host);
+        assert_eq!(
+            msgs,
+            vec![Msg::Warnings(vec![
+                "git: push failed".into(),
+                "git: rebase stopped".into()
+            ])]
+        );
+        for msg in msgs {
+            update(&mut model, msg);
+        }
+        assert_eq!(
+            tick(&model, &mut watch, &store, &mut host),
+            Vec::new(),
+            "shown"
+        );
+        update(&mut model, Msg::Escape);
+        host.warnings = Vec::new();
+        host.fingerprint = Some(8);
+        let msgs = tick(&model, &mut watch, &store, &mut host);
+        assert_eq!(msgs[0], Msg::Warnings(Vec::new()), "cleared");
+        assert_eq!(loaded_ids(&msgs), ["1", "2"], "then the reload");
         assert_eq!(host.calls, Vec::<String>::new());
     }
 

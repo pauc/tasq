@@ -1,9 +1,9 @@
 //! `tasq doctor`: configuration, store and optional-tool diagnostics.
 //!
 //! The store checks come from [`Store::doctor`]; this module adds the
-//! `config` check (the layers that loaded, or why loading failed) and one
-//! check per enabled plugin (installed or not) and one check per optional
-//! tool. Any `FAIL` makes the exit code 1.
+//! `config` check (the layers that loaded, or why loading failed), the
+//! checks of each enabled plugin (installed or not, its answer to the
+//! `doctor` event, its lasting warnings) and one check per optional tool. Any `FAIL` makes the exit code 1.
 //!
 //! [`Store::doctor`]: tasq_core::store::Store::doctor
 
@@ -19,7 +19,6 @@ use crate::cli::GlobalArgs;
 use crate::error::{CliError, Result};
 use crate::json;
 use crate::output::{Color, Output, Style};
-use crate::plugins::Enabled;
 
 /// Optional tools and what each one is for.
 pub const TOOLS: &[(&str, &str)] = &[
@@ -91,7 +90,7 @@ pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
                 "check data_dir and store.name (tasq config show)",
             )),
         }
-        checks.extend(app.plugins().iter().map(Enabled::check));
+        checks.extend(crate::plugins::doctor(&app, &app.plugins()));
     }
     for (tool, fix) in TOOLS {
         checks.push(tool_check(tool, &env, fix));
@@ -140,7 +139,8 @@ pub fn render(checks: &[Check], style: Style) -> String {
             CheckStatus::Warn => style.color(Color::Yellow, "WARN"),
             CheckStatus::Fail => style.bold_color(Color::Red, "FAIL"),
         };
-        let _ = writeln!(out, "{verdict}  {:<13}{}", check.name, check.detail);
+        // A name of 13 characters or more still gets its space.
+        let _ = writeln!(out, "{verdict}  {:<12} {}", check.name, check.detail);
         if let Some(fix) = &check.fix {
             let _ = writeln!(out, "{:<19}{}", "", style.dim(&format!("fix: {fix}")));
         }

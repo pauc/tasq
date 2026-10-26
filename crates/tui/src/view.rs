@@ -875,7 +875,7 @@ fn link_cells(page: &mut Buffer, rows: Range<u16>, label: &str, url: &str) {
 }
 
 /// The bottom line: the input being typed, else the last message, else
-/// the key hints.
+/// the first lasting warning with their count, else the key hints.
 pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
     if let Some(prompt) = prompt(model, width) {
         return Paragraph::new(Line::from(vec![
@@ -894,7 +894,14 @@ pub fn status_bar(model: &Model, width: u16) -> Paragraph<'_> {
                 role(model, Role::Error).add_modifier(Modifier::BOLD),
             ),
             Some(message) => Line::raw(message.text.as_str()),
-            None => Line::styled(hints(&model.keys, width), dim(model)),
+            None => match model.warnings.as_slice() {
+                [] => Line::styled(hints(&model.keys, width), dim(model)),
+                [only] => Line::styled(format!("warning: {only}"), role(model, Role::Error)),
+                [first, ..] => Line::styled(
+                    format!("{} warnings: {first}", model.warnings.len()),
+                    role(model, Role::Error),
+                ),
+            },
         },
     };
     Paragraph::new(line)

@@ -272,12 +272,12 @@ from the `doctor` event.
 
 **Blocked by:** PE-002.
 
-**Status:** ready
+**Status:** done
 
-- [ ] Warnings printed on every command while the file has lines, nothing once it is gone.
-- [ ] `doctor` text and JSON snapshots with lasting warnings and plugin checks; unparseable output is one `Fail`.
-- [ ] TUI status bar shows the first warning and the count.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] Warnings printed on every command while the file has lines, nothing once it is gone.
+- [x] `doctor` text and JSON snapshots with lasting warnings and plugin checks; unparseable output is one `Fail`.
+- [x] TUI status bar shows the first warning and the count.
+- [x] `mutants-in` the diff: zero missed.
 
 ### PE-005: `tasq store lock -- <cmd>`
 

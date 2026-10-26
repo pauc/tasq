@@ -259,6 +259,9 @@ pub struct Model {
     pub history: Histories,
     /// Result of the last action.
     pub message: Option<Message>,
+    /// The plugins' lasting warnings (`<plugin>: <line>`), shown in the
+    /// status bar while there is no message, until the host clears them.
+    pub warnings: Vec<String>,
     /// Terminal width.
     pub width: u16,
     /// Terminal height.
@@ -304,6 +307,7 @@ impl Model {
             mode: Mode::Normal,
             history: Histories::default(),
             message: None,
+            warnings: Vec::new(),
             width: 0,
             height: 0,
             show_detail: false,

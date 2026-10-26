@@ -1,0 +1,48 @@
+---
+source: crates/cli/tests/events.rs
+expression: "env.normalize(&serde_json::to_string_pretty(&checks).unwrap())"
+---
+[
+  {
+    "detail": "origin reachable",
+    "fix": null,
+    "name": "git/remote",
+    "status": "ok"
+  },
+  {
+    "detail": "3 commits not pushed",
+    "fix": "tasq git push",
+    "name": "git/push",
+    "status": "warn"
+  },
+  {
+    "detail": "push failed: no network",
+    "fix": "shown until tasq-git removes it from [ROOT]/home/.local/share/tasq/stores/default/.tasq/plugins/git/warnings",
+    "name": "git/warning",
+    "status": "warn"
+  },
+  {
+    "detail": "the doctor answer is not a list of checks: expected value at line 1 column 1",
+    "fix": "tasq-broken must print a JSON array of {name, status, message, fix} on doctor",
+    "name": "broken/doctor",
+    "status": "fail"
+  },
+  {
+    "detail": "plugin bad: doctor event failed: exit status 3: nope",
+    "fix": "tasq-bad hook must answer doctor and exit 0",
+    "name": "bad/doctor",
+    "status": "fail"
+  },
+  {
+    "detail": "one",
+    "fix": "shown until tasq-quiet removes it from [ROOT]/home/.local/share/tasq/stores/default/.tasq/plugins/quiet/warnings",
+    "name": "quiet/warning",
+    "status": "warn"
+  },
+  {
+    "detail": "two",
+    "fix": "shown until tasq-quiet removes it from [ROOT]/home/.local/share/tasq/stores/default/.tasq/plugins/quiet/warnings",
+    "name": "quiet/warning",
+    "status": "warn"
+  }
+]
