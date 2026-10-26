@@ -37,7 +37,7 @@ Commands:
   summary      Standup summary of what you worked on during a day, from the progress notes
   dates        Resolve a day or a date range to `FROM TO`, for scripts and plugins
   ui           Browse and edit the open tasks in a full-screen terminal UI
-  store        The store behind the tasks: where it is
+  store        The store behind the tasks: where it is, and its lock
   doctor       Check the configuration, the store and optional tools
   config       Show the effective configuration
   plugins      Plugins: `tasq-<name>` executables on PATH and the configured hooks

@@ -78,7 +78,13 @@ impl TestEnv {
     /// on a fixed day (`TASQ_NOW`, overridable) so relative due dates do
     /// not move, in UTC so minted file names do not depend on the zone.
     pub fn tasq(&self) -> assert_cmd::Command {
-        let mut cmd = assert_cmd::Command::new(env!("CARGO_BIN_EXE_tasq"));
+        assert_cmd::Command::from_std(self.tasq_std())
+    }
+
+    /// [`Self::tasq`] as a `std::process::Command`, for a test that runs
+    /// the binary in the background (`spawn`).
+    pub fn tasq_std(&self) -> std::process::Command {
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_tasq"));
         cmd.env_clear()
             .env("TASQ_NOW", "2026-10-06 09:00")
             .env("TZ", "UTC")

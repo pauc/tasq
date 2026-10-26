@@ -10,7 +10,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 | PE-002 | The `store-open` event | done | 6a720a5. Mutants on the diff with `--no-config`: 0 missed (27 mutants; `wait_until` and `kill_group` skipped as process I/O). |
 | PE-003 | The `post-write` event | ready | |
 | PE-004 | Lasting plugin warnings and the `doctor` event | ready | |
-| PE-005 | `tasq store lock -- <cmd>` | ready | |
+| PE-005 | `tasq store lock -- <cmd>` | done | SHA. Mutants on the diff with `--no-config`: 0 missed (14 mutants: 9 caught, 2 unviable, 3 timeouts that make `acquire_within` loop forever; `run_locked` skipped as process I/O). |
 | PE-006 | The TUI reloads when the store changes | ready | |
 | PE-007 | The docs describe plugins and events | ready | |
 
@@ -43,6 +43,13 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
   blocked past the timeout, and `kill` on the plugin left its children running. Plugins now
   run in their own process group (`process_group(0)`), the output is read on threads up to the
   same deadline, and the whole group is killed.
+- 2026-10-26 (PE-005): a lock held by `tasq store lock` lives as long as its command, so the
+  mtime stale rule broke a live holder after two minutes (a slow `git rebase`). The holder now
+  refreshes the lock's mtime every 30 s (`StoreLock::refresh`); only a dead `tasq` lets it go
+  stale. The refresh loop is not covered by a test (it would take 30 s); `refresh` is.
+- 2026-10-26 (PE-005): `acquire` spun at full CPU on a stale lock it could not remove (the
+  `remove_file` error was ignored and the loop retried at once). A stale lock that cannot be
+  removed is now waited on like a live one, so `--timeout` holds there too.
 
 ## Blockers
 
@@ -83,3 +90,15 @@ None.
 - PE-002: review findings left as is: an env or `--set` value for a `plugin.<name>` key whose
   file value is a datetime or a non-string array becomes a string (PE-001 coercion); a hook
   that never reads its stdin leaves the writer thread blocked (before, it blocked tasq itself).
+- PE-005: `store lock` does not open the store: no `store-open` (the command is plumbing a
+  plugin's job runs) and no missing-plugin warning. The store directory is created if absent.
+- PE-005: a command that cannot start is exit 1 (`tasq: could not run <cmd>: ...`); one ended
+  by a signal exits 128 plus the signal. The command's environment is tasq's own plus the
+  passthrough variables, `TASQ_STORE_DIR` and `TASQ_LOCKED` (cleared first, as for events).
+- PE-005: `StoreLock::acquire_within(dir, clock, Option<Duration>)` is the timed form; the
+  limit is wall time, staleness still follows the configured clock.
+- PE-005: review findings left as is: `Drop` removes the lock file without checking it is
+  still ours (pre-existing; with the refresh only a holder that stopped refreshing loses it);
+  Ctrl-C kills `tasq` and leaves the lock until it goes stale (no signal handling without a
+  new dependency); a `tasq` write run by the locked command waits on that lock (documented in
+  `--help`, `TASQ_LOCKED` is informational); the test files are unix-only like the others.

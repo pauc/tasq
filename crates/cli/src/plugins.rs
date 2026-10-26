@@ -50,6 +50,11 @@ pub const ENV_HOOK: &str = "TASQ_HOOK";
 /// Environment variable naming the event a plugin is told about
 /// (`store-open`, ...).
 pub const ENV_EVENT: &str = "TASQ_EVENT";
+/// Environment variable holding the store directory, for the command
+/// `tasq store lock` runs.
+pub const ENV_STORE_DIR: &str = "TASQ_STORE_DIR";
+/// Environment variable set to `1` for the command `tasq store lock` runs.
+pub const ENV_LOCKED: &str = "TASQ_LOCKED";
 /// The argument a plugin is run with for an event: `tasq-<name> hook`.
 pub const HOOK_ARG: &str = "hook";
 /// Prefix of plugin executables.
@@ -463,7 +468,7 @@ pub fn run_hooks_with(
 }
 
 /// [`passthrough_env`] for `app`'s flags and environment.
-fn app_passthrough_env(app: &App) -> Vec<(String, String)> {
+pub fn app_passthrough_env(app: &App) -> Vec<(String, String)> {
     passthrough_env(
         current_bin().as_deref(),
         app.loaded.profile.as_deref(),

@@ -1,18 +1,23 @@
-//! `tasq store info`.
+//! `tasq store info` and `tasq store lock`.
+
+use std::process::{Command, ExitStatus};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tasq_core::store::StoreInfo;
+use tasq_store::lock::{StoreLock, lock_path};
 
 use crate::app::{App, Provenance};
 use crate::cli::StoreCommand;
-use crate::error::Result;
+use crate::error::{CliError, Result};
 use crate::json;
+use crate::plugins::{ENV_LOCKED, ENV_STORE_DIR, app_passthrough_env};
 
 /// Runs a `store` subcommand.
 pub fn run(app: &App, command: StoreCommand) -> Result<()> {
-    let store = app.open_store()?;
     match command {
         StoreCommand::Info => {
+            let store = app.open_store()?;
             let info = store.describe();
             let provenance = app.store_provenance()?;
             let plugins = &app.config().plugins.enabled;
@@ -21,7 +26,94 @@ pub fn run(app: &App, command: StoreCommand) -> Result<()> {
             }
             app.out.print(&render_info(&info, &provenance, plugins))
         }
+        StoreCommand::Lock { timeout, command } => lock(app, timeout, &command),
     }
+}
+
+/// `tasq store lock`: takes the store lock (waiting at most `timeout`
+/// seconds for a live one), runs `argv` holding it and exits with its
+/// code. It does not open the store: no plugin is told `store-open` (a
+/// plugin's own job runs it) and the store need not exist yet.
+fn lock(app: &App, timeout: Option<u64>, argv: &[String]) -> Result<()> {
+    let dir = app.store_dir()?;
+    let clock = app.clock()?;
+    let path = lock_path(&dir);
+    let held = StoreLock::acquire_within(&dir, clock.as_ref(), timeout.map(Duration::from_secs))
+        .map_err(|e| {
+            CliError::user(format!(
+                "could not take the store lock {}: {e}",
+                path.display()
+            ))
+        })?;
+    let Some(held) = held else {
+        return Err(CliError::user(format!(
+            "the store lock {} is still held after {}s; {} was not run",
+            path.display(),
+            timeout.unwrap_or_default(),
+            shell_words::join(argv)
+        )));
+    };
+    let mut vars = app.env_vec();
+    vars.extend(app_passthrough_env(app));
+    vars.push((ENV_STORE_DIR.to_owned(), dir.display().to_string()));
+    vars.push((ENV_LOCKED.to_owned(), "1".to_owned()));
+    let status = run_locked(argv, &vars, &held);
+    drop(held);
+    exit_with(status?)
+}
+
+/// How often [`run_locked`] refreshes the lock: well inside
+/// [`tasq_store::lock::STALE_AFTER`], so that a command that runs longer keeps it.
+const REFRESH_EVERY: Duration = Duration::from_secs(30);
+
+/// Runs `argv` with the terminal's stdin, stdout and stderr and `vars` as
+/// its whole environment, and waits for it, refreshing `held` every
+/// [`REFRESH_EVERY`] meanwhile.
+// Reason: spawns and polls a process; the CLI tests cover it.
+#[mutants::skip]
+fn run_locked(argv: &[String], vars: &[(String, String)], held: &StoreLock) -> Result<ExitStatus> {
+    let (program, rest) = argv.split_first().expect("clap requires CMD");
+    let mut child = Command::new(program)
+        .args(rest)
+        .env_clear()
+        .envs(vars.iter().map(|(k, v)| (k, v)))
+        .spawn()
+        .map_err(|e| CliError::user(format!("could not run {program}: {e}")))?;
+    let mut refreshed = Instant::now();
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| CliError::Internal(anyhow::anyhow!("waiting for {program}: {e}")))?
+        {
+            return Ok(status);
+        }
+        if refreshed.elapsed() >= REFRESH_EVERY {
+            // A lock that cannot be touched only risks being taken for
+            // stale; the command is already running.
+            let _ = held.refresh();
+            refreshed = Instant::now();
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// `Ok` for a command that succeeded, else its exit code: the code it
+/// exited with, or 128 plus the signal that ended it, as a shell reports
+/// it.
+fn exit_with(status: ExitStatus) -> Result<()> {
+    if status.success() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    let signal = std::os::unix::process::ExitStatusExt::signal(&status);
+    #[cfg(not(unix))]
+    let signal: Option<i32> = None;
+    let code = status
+        .code()
+        .or_else(|| signal.map(|signal| 128 + signal))
+        .and_then(|code| u8::try_from(code).ok())
+        .unwrap_or(1);
+    Err(CliError::Silent(code))
 }
 
 /// The `store info` document: `"store"` holds the info, `"plugins"` the
@@ -85,6 +177,27 @@ mod tests {
             name: "work".into(),
             name_from: "--set".into(),
         }
+    }
+
+    #[test]
+    fn the_lock_is_refreshed_well_before_it_goes_stale() {
+        assert!(REFRESH_EVERY * 2 <= tasq_store::lock::STALE_AFTER);
+        assert!(REFRESH_EVERY >= Duration::from_secs(1), "not a busy loop");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_with_passes_the_code_through() {
+        use std::os::unix::process::ExitStatusExt;
+        let code = |raw| match exit_with(ExitStatus::from_raw(raw)) {
+            Ok(()) => 0,
+            Err(e) => e.exit_code(),
+        };
+        assert_eq!(code(0), 0);
+        assert_eq!(code(3 << 8), 3);
+        assert_eq!(code(255 << 8), 255);
+        assert_eq!(code(15), 128 + 15, "SIGTERM");
+        assert_eq!(code(9), 128 + 9, "SIGKILL");
     }
 
     #[test]

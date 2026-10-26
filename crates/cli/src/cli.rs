@@ -305,7 +305,7 @@ pub enum Command {
     #[command(after_help = UI_HELP)]
     Ui,
 
-    /// The store behind the tasks: where it is.
+    /// The store behind the tasks: where it is, and its lock.
     #[command(subcommand)]
     Store(StoreCommand),
 
@@ -912,10 +912,34 @@ pub struct ListArgs {
 }
 
 /// `tasq store ...`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum StoreCommand {
     /// Print the store directory, task count and how ids behave.
     Info,
+
+    /// Run a command holding the store lock.
+    ///
+    /// Takes the lock every write takes (`<store>/.tasq/lock`, waiting
+    /// while another holds it, breaking one two minutes old), runs CMD with
+    /// TASQ_STORE_DIR set to the store directory and TASQ_LOCKED=1, releases
+    /// the lock and exits with CMD's exit code (128 plus the signal when a
+    /// signal ended it). When the lock cannot be taken, or is still held
+    /// after --timeout, CMD is not run and the exit code is 1.
+    ///
+    /// The lock is refreshed while CMD runs, so a long CMD is not taken for
+    /// a dead holder. CMD must not write through tasq: that write would
+    /// wait for the very lock CMD runs under.
+    #[command(after_help = "Example:\n  tasq store lock -- git rebase origin/main")]
+    Lock {
+        /// Give up when the lock is still held after SECS seconds (default:
+        /// wait for as long as it is held).
+        #[arg(long, value_name = "SECS")]
+        timeout: Option<u64>,
+
+        /// The command and its arguments, after `--`.
+        #[arg(last = true, required = true, value_name = "CMD")]
+        command: Vec<String>,
+    },
 }
 
 /// `tasq config ...`.

@@ -287,11 +287,11 @@ cannot be taken or `--timeout` passes.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready
+**Status:** done
 
-- [ ] A write started while the locked command runs waits for it.
-- [ ] Exit code passed through; `--timeout` and I/O failure are exit 1 without running the command.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] A write started while the locked command runs waits for it.
+- [x] Exit code passed through; `--timeout` and I/O failure are exit 1 without running the command.
+- [x] `mutants-in` the diff: zero missed.
 
 ### PE-006: the TUI reloads when the store changes
 

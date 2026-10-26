@@ -8,7 +8,7 @@
 
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{Local, NaiveDateTime, TimeZone};
 use tasq_core::clock::Clock;
@@ -41,21 +41,47 @@ impl StoreLock {
     /// poll, so a holder that dies while a waiter is polling is broken
     /// once its lock reaches [`STALE_AFTER`].
     pub fn acquire(dir: &Path, clock: &dyn Clock) -> std::io::Result<Self> {
+        Self::acquire_within(dir, clock, None).map(|lock| lock.expect("no limit to pass"))
+    }
+
+    /// [`StoreLock::acquire`], giving up once a lock is still held `limit`
+    /// after the call (`tasq store lock --timeout`): `None` then. The limit
+    /// is wall time; staleness is still judged by `clock`. No limit, or one
+    /// too large for the clock, waits as long as the lock is held.
+    pub fn acquire_within(
+        dir: &Path,
+        clock: &dyn Clock,
+        limit: Option<Duration>,
+    ) -> std::io::Result<Option<Self>> {
+        let deadline = limit.and_then(|limit| Instant::now().checked_add(limit));
         let path = lock_path(dir);
         std::fs::create_dir_all(dir.join(STATE_DIR))?;
         loop {
             match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(_) => return Ok(Self { path }),
+                Ok(_) => return Ok(Some(Self { path })),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if is_stale(&path, instant(clock)) {
-                        let _ = std::fs::remove_file(&path);
-                    } else {
-                        std::thread::sleep(POLL);
+                    // A stale lock that cannot be removed is waited on
+                    // like a live one, up to the limit.
+                    if is_stale(&path, instant(clock)) && std::fs::remove_file(&path).is_ok() {
+                        continue;
                     }
+                    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                        return Ok(None);
+                    }
+                    std::thread::sleep(POLL);
                 }
                 Err(e) => return Err(e),
             }
         }
+    }
+
+    /// Marks the lock as touched now, so that a holder that keeps it longer
+    /// than [`STALE_AFTER`] (`tasq store lock`) is not taken for dead.
+    pub fn refresh(&self) -> std::io::Result<()> {
+        OpenOptions::new()
+            .write(true)
+            .open(&self.path)?
+            .set_modified(SystemTime::now())
     }
 
     /// The lock file.
@@ -239,6 +265,103 @@ mod tests {
         });
         let lock = rx.recv_timeout(Duration::from_secs(2)).unwrap().unwrap();
         assert_eq!(lock.path(), path);
+    }
+
+    #[test]
+    fn acquire_within_gives_up_on_a_live_lock_at_the_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().to_owned();
+        let held = StoreLock::acquire(&dir, &clock()).unwrap();
+        touch(held.path(), now());
+        assert!(
+            StoreLock::acquire_within(&dir, &clock(), Some(Duration::ZERO))
+                .unwrap()
+                .is_none(),
+            "no wait at all"
+        );
+        let started = std::time::Instant::now();
+        assert!(
+            StoreLock::acquire_within(&dir, &clock(), Some(Duration::from_millis(200)))
+                .unwrap()
+                .is_none()
+        );
+        assert!(started.elapsed() >= Duration::from_millis(200), "waited");
+        assert!(held.path().is_file(), "the holder keeps its lock");
+        drop(held);
+        let lock = StoreLock::acquire_within(&dir, &clock(), Some(Duration::ZERO))
+            .unwrap()
+            .unwrap();
+        assert_eq!(lock.path(), lock_path(&dir));
+    }
+
+    #[test]
+    fn acquire_within_breaks_a_stale_lock_and_has_no_limit_past_the_clock() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().to_owned();
+        let path = lock_path(&dir);
+        std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
+        std::fs::write(&path, "").unwrap();
+        touch(&path, now() - STALE_AFTER);
+        let lock = StoreLock::acquire_within(&dir, &clock(), Some(Duration::ZERO))
+            .unwrap()
+            .unwrap();
+        assert_eq!(lock.path(), path);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waiter = dir.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(StoreLock::acquire_within(
+                &waiter,
+                &clock(),
+                Some(Duration::MAX),
+            ));
+        });
+        assert!(
+            rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "a limit past the clock waits"
+        );
+        drop(lock);
+        assert!(
+            rx.recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_refreshed_lock_is_not_stale() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().to_owned();
+        let lock = StoreLock::acquire(&dir, &clock()).unwrap();
+        let wall = SystemTime::now();
+        touch(lock.path(), wall - STALE_AFTER);
+        assert!(is_stale(lock.path(), wall));
+        lock.refresh().unwrap();
+        assert!(!is_stale(lock.path(), wall));
+        std::fs::remove_file(lock.path()).unwrap();
+        assert!(lock.refresh().is_err(), "a lock that is gone");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stale_lock_that_cannot_be_removed_is_waited_on_up_to_the_limit() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().to_owned();
+        let path = lock_path(&dir);
+        let state = dir.join(STATE_DIR);
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(&path, "").unwrap();
+        touch(&path, now() - STALE_AFTER);
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let writable = std::fs::write(state.join("probe"), "").is_ok();
+        let taken = StoreLock::acquire_within(&dir, &clock(), Some(Duration::from_millis(50)));
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if writable {
+            return; // root ignores the mode
+        }
+        assert!(taken.unwrap().is_none());
+        assert!(path.is_file());
     }
 
     #[test]
