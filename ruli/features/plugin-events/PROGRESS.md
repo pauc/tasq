@@ -7,7 +7,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 | Id | Title | Status | Notes |
 |---|---|---|---|
 | PE-001 | Plugins are enabled by name | done | f90c7da. Mutants on the diff with `--no-config`: 0 missed (30 mutants plus a re-run of `config/load.rs` after the `Float` arm fix). |
-| PE-002 | The `store-open` event | done | SHA. Mutants on the diff with `--no-config`: 0 missed (27 mutants; `wait_until` and `kill_group` skipped as process I/O). |
+| PE-002 | The `store-open` event | done | 6a720a5. Mutants on the diff with `--no-config`: 0 missed (27 mutants; `wait_until` and `kill_group` skipped as process I/O). |
 | PE-003 | The `post-write` event | ready | |
 | PE-004 | Lasting plugin warnings and the `doctor` event | ready | |
 | PE-005 | `tasq store lock -- <cmd>` | ready | |
