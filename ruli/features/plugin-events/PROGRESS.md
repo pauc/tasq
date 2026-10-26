@@ -13,7 +13,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 | PE-005 | `tasq store lock -- <cmd>` | done | e9fe2c7. Mutants on the diff with `--no-config`: 0 missed (14 mutants: 9 caught, 2 unviable, 3 timeouts that make `acquire_within` loop forever; `run_locked` skipped as process I/O). |
 | PE-006 | The TUI reloads when the store changes | done | ad4d481. Mutants on the diff with `--no-config`: 0 missed (40 mutants: 37 caught, 3 unviable; `run` stays skipped as terminal I/O). |
 | PE-007 | The docs describe plugins and events | done | a054f06. Docs only, no mutation run: the diff has no Rust, so 0 mutants and 0 missed. `cargo doc` (no new warnings) and the full suite pass. |
-| PE-008 | Fix the branch review findings | done | SHA. Mutants on the diff with `--no-config`: 0 missed (19 mutants: 17 caught, 2 unviable; `exited_by` and `kill_group` stay skipped as process I/O). Finding 5 (Ctrl-C) not fixed: needs a new dependency (Deviations). |
+| PE-008 | Fix the branch review findings | done | 1f1c106. Mutants on the diff with `--no-config`: 0 missed (19 mutants: 17 caught, 2 unviable; `exited_by` and `kill_group` stay skipped as process I/O). Finding 5 (Ctrl-C) not fixed: needs a new dependency (Deviations). |
 
 ## Learnings
 
