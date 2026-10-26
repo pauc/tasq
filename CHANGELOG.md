@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/plugins.md` describes the plugin extension points normatively (ADR 0030): enabling a
+  plugin, the events and every payload with an example, the plugin's process (arguments,
+  environment, timeout, exit codes), lasting warnings, doctor checks, `tasq store lock` and
+  the TUI. `docs/config.md` documents `[plugins]` and `[plugin.<name>]`, `docs/json.md` the
+  event payloads.
+- `tasq ui` reloads by itself when the store's files change on disk (another terminal, a hand
+  edit, a plugin's job): every 2 s it compares the names, lengths and mtimes of the `.md`
+  files and reloads when they differ, keeping the selected task and the scroll. It does so
+  only while no picker or prompt is open. `r` now also sends enabled plugins `store-open`;
+  the automatic reload does not.
+- `tasq store lock [--timeout SECS] -- <cmd> [args...]` runs a command holding the store lock
+  every write takes, with `TASQ_STORE_DIR` and `TASQ_LOCKED=1` in its environment, and exits
+  with its exit code (128 plus the signal when a signal ended it). The lock is refreshed every
+  30 s while the command runs, so a long one is not taken for stale. A lock that cannot be
+  taken, one still held after `--timeout`, or a command that cannot start is exit 1, without
+  running anything. It is how a plugin rewrites task files without racing a write.
+- Lasting plugin warnings: an enabled plugin keeps the problems it wants shown in
+  `<store>/.tasq/plugins/<name>/warnings`, one per line, and tasq shows them until the plugin
+  clears the file: every command that opens the store prints them on stderr
+  (`tasq: warning: <name>: <line>`), `tasq ui` shows the first with the count in its status
+  bar, and `tasq doctor` lists each as a `WARN` check `<name>/warning`. tasq never writes the
+  file.
+- Plugin doctor checks: `tasq doctor` sends enabled plugins the `doctor` event and lists the
+  checks they answer on stdout (`[{"name", "status": "ok" | "warn" | "fail", "message",
+  "fix"?}]`) as `<name>/<check>`, after the plugin's `tasq-<name>` check. Blank output is no
+  checks; output that does not parse, a non-zero exit or a timeout is one `FAIL` check
+  `<name>/doctor`. `doctor` sends no `store-open`.
 - Enabled plugins are told what a command wrote: one `post-write` event per command, after its
   last write, with `"command"` (the subcommand, `ui` in the TUI) and `"writes": [{"id",
   "file", "kind": "create" | "update"}]`, each task once, in the order first written. Every

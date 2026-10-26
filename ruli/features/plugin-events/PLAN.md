@@ -314,7 +314,7 @@ Doctor checks, The store lock), `docs/config.md` (`[plugins]`, `[plugin.<name>]`
 
 **Blocked by:** PE-001, PE-002, PE-003, PE-004, PE-005, PE-006.
 
-**Status:** ready
+**Status:** done
 
-- [ ] A plugin can be written from `docs/plugins.md` alone: every payload has an example.
-- [ ] Docs only; no mutation run.
+- [x] A plugin can be written from `docs/plugins.md` alone: every payload has an example.
+- [x] Docs only; no mutation run.

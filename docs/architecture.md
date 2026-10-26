@@ -115,6 +115,7 @@ flowchart LR
 | `theme` | `Color` and `Theme`: colour decisions shared by CLI and TUI; rendering is the front ends' job. |
 | `store` | `Store` trait (`list`, `get`, `create`, `update`, `set_done`, `describe`, `take_warnings`, `doctor`, `file_of`), `StoreError`, `StoreInfo`, `impl Store for Box<S>`, and `MemoryStore` for tests. |
 | `doctor` | `Check` and `CheckStatus`, the diagnostics a `Store::doctor` reports and `tasq doctor` prints; `any_failed`. |
+| `plugin` | The plugin events of ADR 0030, pure: `Event` (`store-open`, `post-write`, `doctor`), `Payload` and its JSON, `Write`/`WriteKind` (what `post-write` lists), `doctor_checks` (a plugin's answer to `doctor` as `Check`s), `warnings_file` and `warnings` (lasting warnings). Running the plugin is the CLI's job. Reference: [`docs/plugins.md`](plugins.md). |
 
 ### Two ideas that shape everything else
 
@@ -199,7 +200,8 @@ sequenceDiagram
 | Module | What it holds |
 |---|---|
 | `store` | `TasqStore`: `list`, `get`, `file_of`, `describe` (`tasq`, the directory, the task count), `doctor` (`store`, `task-files`, `ids`, `lock` checks), warnings, `create`, `update`, `set_done`; the remembered revisions; the injected `Clock` and random source (`with_clock`, `with_random`). |
-| `lock` | `StoreLock`: `.tasq/lock`, taken with an exclusive create, stale after `STALE_AFTER`, released on drop. |
+| `lock` | `StoreLock`: `.tasq/lock`, taken with an exclusive create, stale after `STALE_AFTER`, released on drop; `acquire_within` waits at most a given time (`tasq store lock --timeout`), `refresh` touches its mtime so a long holder is not taken for stale. |
+| `fingerprint` | `fingerprint(dir)`: a hash of the names, lengths and mtimes of the store's `.md` files, which the TUI polls to notice outside changes. |
 | `draft` | `check_draft` (a merge request needs a title) and `materialize` (the default note, the done-draft rules). |
 | `ulid` | `Ulid`: the file name; parse, render, and the millisecond timestamp that is the task's creation time. |
 | `revision` | `Revision`: mtime, length and a content hash, captured on read and compared on write; a mismatch is `StoreError::Conflict`. |
@@ -273,7 +275,7 @@ flowchart LR
     update -->|returns| cmds["Cmd[]"]
     cmds --> dispatch["dispatch(cmd)"]
     dispatch -->|"edit::set / log / done,<br/>Store::create"| store["Store<br/>(injected)"]
-    dispatch -->|"edit / launch / sync,<br/>after_done / after_create"| host["Host<br/>(injected)"]
+    dispatch -->|"edit / launch / sync,<br/>after_done / after_create,<br/>store_open / post_write,<br/>fingerprint / warnings"| host["Host<br/>(injected)"]
     dispatch -->|Msg| update
     model --> view["view(model)"]
     view --> term
@@ -302,6 +304,14 @@ and shows the result in the status bar (ADR-0012). The `d` and `c` keys also rea
 `post-done` and `post-create` hooks through `Host::after_done` and `Host::after_create`
 (ADR-0010, ADR-0011).
 
+The plugin events reach the UI through the `Host` as well (ADR 0030): `Host::store_open` on
+`r` (the CLI already sent `store-open` when it opened the store for `tasq ui`),
+`Host::post_write` after every action, which the CLI turns into one `post-write` when the
+action wrote, and `Host::warnings`, the lasting warnings shown in the status bar. Every
+`runtime::TICK` (2 s) `run` asks `Host::fingerprint` and, in normal mode, reloads through
+`Cmd::Load` when it changed, keeping the selection by id; the UI itself never touches the
+store directory.
+
 ## tasq (the CLI)
 
 The binary and the composition root. It is deliberately thin: every command is a core function
@@ -324,6 +334,7 @@ flowchart TB
     core -->|"through the Store trait"| open
     cmd --> out["output.rs / json.rs<br/>human or --json, pager, colour"]
     cmd --> hooks["hooks: post-create,<br/>post-done, pre-launch"]
+    open -->|"store-open, then post-write<br/>after the command"| events["enabled plugins:<br/>tasq-&lt;name&gt; hook"]
 ```
 
 | Module | What it holds |
@@ -334,7 +345,8 @@ flowchart TB
 | `output` | Colour decision (`NO_COLOR`, `--color`), ANSI styling, pager (`ui.pager`, default `less -RFX`), JSON emission. |
 | `json` | The `--json` envelope: `{"schema": 1, …}`. Tasks serialise exactly as `tasq_core::model::Task`, which `tasq apply` reads back. Reference: [`docs/json.md`](json.md). |
 | `error` | CLI error type and exit codes: `0` ok, `1` user error, `2` usage or internal error. |
-| `plugins` | Out-of-process plugins: dispatch to `tasq-<name>`, the three hooks, `tasq plugins list`. Reference: [`docs/plugins.md`](plugins.md). |
+| `plugins` | Out-of-process plugins: dispatch to `tasq-<name>`, the three hooks, `tasq plugins list`, the enabled plugins and their events (`fire`: `tasq-<name> hook` with the payload on stdin, own process group, `plugins.timeout`), lasting warnings and the plugins' `doctor` checks. Reference: [`docs/plugins.md`](plugins.md). |
+| `writes` | `Recording`, the `Store` decorator `App::open_store` puts around the store while a plugin listens: it notes each task whose file a write changed, for the `post-write` sent after the command (`App::post_write`). |
 
 The CLI is the only crate that knows all the others exist. It builds the concrete `TasqStore` (`App::open_store`),
 `Box<dyn Source>`s, `Box<dyn Launcher>`s and the TUI's `Host`, and hands them to code that only
@@ -345,7 +357,7 @@ sees the traits.
 | Path | What it is |
 |---|---|
 | `plugins/claude/` | The Claude Code plugin: `/tasq:wrapup` and `/tasq:sync` skills plus a status line script. Everything goes through the `tasq` CLI with `--json`. The repository doubles as a one-plugin marketplace. |
-| `examples/` | Example configs, a reference plugin (`tasq-tlogs`), a hook, and an LLM-bridge source setup. |
+| `examples/` | Example configs, a reference plugin (`tasq-tlogs`), the event-logging plugin the event tests use (`tasq-echo`), a hook, and an LLM-bridge source setup. |
 | `homebrew/` | The Homebrew formula template used by the release workflow. |
 | `scripts/guard`, `scripts/test-runner` | Memory-capped wrappers every cargo invocation goes through (see `CONTRIBUTING.md`). |
 | `original/tasks` | The bash script this project rewrites. Never modified. |
@@ -364,6 +376,7 @@ sequenceDiagram
     participant E as tasq_core::edit::done
     participant S as Store (TasqStore)
     participant H as hooks (post-done)
+    participant P as enabled plugins
 
     U->>FE: close task 12
     FE->>E: done(store, clock, id, note)
@@ -374,9 +387,13 @@ sequenceDiagram
     E-->>FE: Task as stored
     FE->>H: run post-done hooks with the Task as JSON
     FE-->>U: rendered task, or --json
+    FE->>P: post-write {"command": "done", "writes": [task 12]}
 ```
 
 The front end never touches a file or a tag; it calls one core function and renders the result.
+The store it calls is wrapped by the CLI's `Recording` while a plugin listens, which is how
+the `post-write` at the end knows what was written without core or the store knowing about
+plugins.
 
 ## Testing shape
 

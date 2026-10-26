@@ -105,3 +105,28 @@ launch). The hook's environment carries `TASQ_HOOK`, `TASQ_TASK_ID` and `TASQ_BI
 that needs more can run `$TASQ_BIN view --json $TASQ_TASK_ID` or `$TASQ_BIN apply`. Hook stdout
 is not parsed; a `post-*` hook that exits non-zero is a warning, a `pre-launch` one aborts the
 launch.
+
+## Plugin event payloads
+
+Plugins enabled under `[plugins]` (ADR 0030) are run as `tasq-<name> hook` with one JSON
+object on stdin per event, with the same `schema`:
+
+| Event | Payload |
+|---|---|
+| `store-open` | `{"schema": 1, "event": "store-open", "store": {name, location}, "config": {...}}` |
+| `post-write` | the same plus `"command": string`, `"writes": [{id, file, kind: "create" \| "update"}]` |
+| `doctor` | `{"schema": 1, "event": "doctor", "store": {name, location}, "config": {...}}` |
+
+`store.name` is the configured `store.name`, `store.location` the store directory (absolute);
+`config` is the plugin's `[plugin.<name>]` table, `{}` without one. `command` is the
+subcommand that wrote (`ui` in the terminal UI), `writes` every task it wrote, once each, in
+the order first written: `id` a string as in `Task`, `file` the task file's absolute path.
+
+```json
+{"schema":1,"event":"post-write","store":{"name":"default","location":"/home/me/.local/share/tasq/stores/default"},"config":{"interval":60},"command":"done","writes":[{"id":"3","file":"/home/me/.local/share/tasq/stores/default/01K6Q8ZT3D0000000000000003.md","kind":"update"}]}
+```
+
+The plugin answers `doctor` on stdout with `[{"name", "status": "ok" | "warn" | "fail",
+"message", "fix"?}]` (nothing at all for no checks); `tasq doctor --json` lists each as a
+check named `<plugin>/<name>`, `message` as its `detail`. When each event is sent, the
+environment, timeouts, lasting warnings and `tasq store lock`: `docs/plugins.md`.

@@ -2,9 +2,15 @@
 
 `tasq` is extended from outside the binary (ADR-0006): a plugin is an executable named
 `tasq-<name>` on `PATH`, written in any language, that talks to `tasq` through its `--json`
-output and its editing commands. Hooks are command lines in the configuration that `tasq` runs
-around three events. Nothing is linked into the binary; the versioned JSON documents in
-`docs/json.md` are the whole API.
+output and its editing commands. A plugin enabled in the configuration is also told about
+events (ADR 0030): the store being opened, a command having written tasks, `tasq doctor`
+running. Hooks are command lines in the configuration that `tasq` runs around three other
+moments. Nothing is linked into the binary; the versioned JSON documents in `docs/json.md` and
+the event payloads below are the whole API.
+
+This page is normative: a plugin can be written from it alone.
+`examples/plugins/tasq-echo` (bash builtins only) is the smallest plugin that follows it: it
+appends every event it is told about to a log file.
 
 ## Running a plugin
 
@@ -57,6 +63,8 @@ Read with `--json`, write through the commands:
 | the effective configuration | `tasq config show --json` |
 | create / edit / close | `tasq create ... --json`, `tasq set`, `tasq log`, `tasq done`, `tasq reopen`, `tasq mr`, `tasq session`, `tasq worktree`, `tasq project` |
 | arbitrary edit of a task | `tasq view <id> --json`, change the `task`, `tasq apply` (refuses what the store cannot express) |
+| rewrite task files directly | `tasq store lock -- <cmd>` (see "The store lock") |
+| follow the store | enable the plugin and handle its events (see "Enabling a plugin") |
 
 Every document carries `"schema": 1`; check it and refuse anything else. Exit codes: `0`,
 `1` for an error you can fix (message on stderr), `2` for a usage error.
@@ -101,9 +109,298 @@ The CLI integration test `plugins::example_tlogs_plugin_runs_through_dispatch` r
 script through the dispatcher against the fixture store: `--propose` in both formats,
 `--dry-run` with `--set work.default_project=...`, and the error without a directory.
 
+## Enabling a plugin
+
+A plugin on `PATH` can always be run as `tasq <name>`. To be told about events it must also be
+enabled, by name, in any configuration layer:
+
+```toml
+[plugins]
+enabled = ["git"]     # tasq-git, told about every event; in this order
+timeout = 2           # seconds a plugin may take over one event (default 2)
+
+[plugin.git]          # the plugin's own settings, passed to it as is
+interval = 60
+remote = "origin"
+```
+
+- `[plugins]` is tasq's: an unknown key there is an error with file, line and column, like
+  any other key. A name in `enabled` must not be empty, contain `/` or whitespace, start with
+  `-`, be a built-in command or alias (`help` included) or be listed twice; such a name fails
+  every command, `tasq config show` included, with the file that set it.
+- `[plugin.<name>]` is the plugin's: tasq checks nothing under it and hands the whole table to
+  the plugin in every payload (`config`). It is layered like the rest of the configuration:
+  the global file, `.tasq.toml`, a profile, `TASQ_SET` and `--set plugin.git.interval=30`
+  apply key by key. A value from `TASQ_SET` or `--set` takes the type the key has in the
+  layers below it (`interval = 60` makes `--set plugin.git.interval=30` an integer, `soon`
+  an error), and is a string when no layer set the key.
+- `--set plugins.enabled=git,echo` replaces the list; `--set plugins.timeout=5` the timeout.
+  There is no `TASQ_PLUGINS_*` variable.
+
+An enabled plugin that is not on `PATH` never fails a command. Every command that opens the
+store warns on stderr:
+
+```
+tasq: warning: plugin git is enabled but tasq-git is not on PATH
+```
+
+`tasq doctor` reports it as a `FAIL` check named `tasq-git`, fixed by "install tasq-git or
+remove it from [plugins] enabled", and no event is sent to it. `tasq plugins list` and
+`tasq store info` list the enabled plugins (see below and `docs/json.md`).
+
+## Events
+
+For every event, tasq runs each installed enabled plugin, one at a time in `enabled` order, as
+
+```
+tasq-<name> hook
+```
+
+with the event's payload on stdin (one JSON document, no trailing newline), and waits for it.
+
+| Event | Sent | Payload adds |
+|---|---|---|
+| `store-open` | once per command that opens the store, after the store's own warnings; once when `tasq ui` starts and again on each `r` | nothing |
+| `post-write` | once per command that wrote at least one task, after its last write and its output; in `tasq ui`, once per action that wrote | `command`, `writes` |
+| `doctor` | once per `tasq doctor`; the plugin answers with checks on stdout (see "Doctor checks") | nothing |
+
+Commands that never open the store send nothing: `config`, `completions`, `dates`,
+`plugins list`, `store lock`, plugin dispatch (`tasq <name>`). `doctor` sends `doctor`, not
+`store-open`. The automatic reload of `tasq ui` (see "The terminal UI") sends nothing, so a
+plugin is not woken by the files its own background job changed.
+
+### The process
+
+| | |
+|---|---|
+| Arguments | `hook`, nothing else. A plugin that also serves `tasq <name> ...` must tell the two apart by this first argument. |
+| Working directory | `tasq`'s own. |
+| Environment | the environment `tasq` was started with, plus `TASQ_BIN` (the running `tasq`), `TASQ_PROFILE`, `TASQ_CONFIG` and `TASQ_SET` when in effect (as for dispatch, above), and `TASQ_EVENT` (the event name). |
+| Process group | its own; on a timeout the whole group is killed. |
+| stdout | shown at `-v` as `tasq: plugin <name>: <event>: <output>`; for `doctor`, the answer. |
+| stderr | shown only in the warning when the plugin fails. |
+| Exit code | `0` is success. Anything else is a warning; the command's own exit code never changes. |
+| Timeout | `plugins.timeout` seconds (default 2), counted until the plugin has exited **and** closed its stdout and stderr. A background job that inherited them keeps the event open: detach it with its output redirected (`job </dev/null >/dev/null 2>&1 &`). `0` kills every plugin at once. |
+
+A failure is one warning naming the plugin and the event, on stderr (in the TUI, in the
+status bar), and the remaining plugins still run:
+
+```
+tasq: warning: plugin git: store-open event failed: exit status 3: rebase in progress
+tasq: warning: plugin git: post-write event failed: timed out after 2s
+```
+
+The message after `exit status <n>:` is the plugin's stderr, else its stdout, trimmed; it is
+left out when both are empty. A plugin that cannot be started reads `could not run <path>:
+<OS error>`, one killed by a signal `killed by a signal`.
+
+**Calling back into tasq.** A plugin reads the store through `"$TASQ_BIN" list --json`,
+`view --json`, and so on, and sees the same store, profile and overrides. A `tasq` started
+with `TASQ_EVENT` set (by a plugin, during an event) tells no plugin about anything and prints
+no lasting warnings, so such a call cannot wake the plugin again. A job the plugin detaches
+inherits `TASQ_EVENT` too: the writes it makes through `$TASQ_BIN` send no `post-write`.
+Unset it in the job if those writes should be seen by other plugins. A plugin that writes task
+files itself, rather than through tasq, takes the store lock first (see "The store lock").
+
+### Payloads
+
+Every payload is one JSON object with these fields, in this order:
+
+| Field | Value |
+|---|---|
+| `schema` | `1`. Fields are only ever added within a version; refuse a schema you do not know. |
+| `event` | `"store-open"`, `"post-write"` or `"doctor"`, the same as `TASQ_EVENT`. |
+| `store` | `{"name", "location"}`: `store.name` from the configuration and the store directory, absolute (`<data_dir>/<store.name>`). The directory may not exist yet: an empty store is created by its first write. |
+| `config` | the plugin's `[plugin.<name>]` table as JSON, `{}` when there is none. TOML datetimes become their TOML text (`"2026-10-26"`). |
+| `command` | `post-write` only: the subcommand that wrote, as clap names it (an alias reports the command: `ls` is `list`; `worktree set` is `worktree`). `ui` in the terminal UI. |
+| `writes` | `post-write` only: `[{"id", "file", "kind"}]`, every task the command wrote, each once, in the order first written. `id` is the task id as a string (as in `docs/json.md`), `file` the absolute path of its task file, `kind` `"create"` for a new file or `"update"` for a rewritten one. A task created and then updated by the same command (`create --worktree`) is one `create`. |
+
+No payload carries task contents: a plugin that wants them asks `"$TASQ_BIN" view <id> --json`.
+
+`store-open`, with `[plugin.git] interval = 60`:
+
+```json
+{"schema":1,"event":"store-open","store":{"name":"default","location":"/home/me/.local/share/tasq/stores/default"},"config":{"interval":60}}
+```
+
+`post-write`, after `tasq move 10 --after 3` ranked task 3 as well:
+
+```json
+{"schema":1,"event":"post-write","store":{"name":"default","location":"/home/me/.local/share/tasq/stores/default"},"config":{"interval":60},"command":"move","writes":[{"id":"3","file":"/home/me/.local/share/tasq/stores/default/01K6Q8ZT3D0000000000000003.md","kind":"update"},{"id":"10","file":"/home/me/.local/share/tasq/stores/default/01K6Q8ZT3D000000000000000A.md","kind":"update"}]}
+```
+
+`post-write`, after `tasq create "Fresh"`:
+
+```json
+{"schema":1,"event":"post-write","store":{"name":"default","location":"/home/me/.local/share/tasq/stores/default"},"config":{},"command":"create","writes":[{"id":"8","file":"/home/me/.local/share/tasq/stores/default/01K8G0RZ5M7Q2W9V3XKJ4T6B1C.md","kind":"create"}]}
+```
+
+`doctor`:
+
+```json
+{"schema":1,"event":"doctor","store":{"name":"default","location":"/home/me/.local/share/tasq/stores/default"},"config":{}}
+```
+
+### Which writes `post-write` reports
+
+A write is a task file whose bytes changed. Every command that writes through the store sends
+`post-write`: `create`, `set`, `log`, `done`, `reopen`, `rename`, `tag`, `due`, `desc`,
+`apply`, `sync`, `move`, `mr`, `session`, `project`, `worktree`, and `next`/`pick` when they
+set the task in progress (sent just before the launcher runs, since a launcher may replace the
+`tasq` process). In `tasq ui`, every action that wrote sends one with `"command": "ui"`, `e`
+(`$EDITOR` on the task file) included when the file changed; `Enter` and `S` run `tasq pick`
+and `tasq sync` as child processes, which send their own.
+
+None is sent when nothing was written: a read, an edit to the value the task already has (`set
+3 A` on an `A` task, `move` to where the task already is, `apply` of an unchanged document), a
+`--dry-run`, a command that fails before its first write. A command that fails after a write
+still sends the writes that happened, then exits with its error.
+
+`post-write` comes after the command's output and after its `[hooks]`: `post-create` and
+`post-done` hooks run first, `pre-launch` hooks too (a `pre-launch` hook that aborts the
+launch is followed by the `post-write` of the status already written).
+
+The writes are found by reading each task's file before and after the store writes it, outside
+the store lock: a file another process changed in between is reported too (it did change).
+
+## Lasting warnings
+
+An event happens once; a problem may last (a push that keeps failing, a rebase that stopped).
+A plugin keeps the problems it wants shown in
+
+```
+<store>/.tasq/plugins/<name>/warnings
+```
+
+UTF-8 text, one warning per line; lines are trimmed and blank ones skipped. The plugin owns the
+file: tasq only reads it, never creates, changes or deletes it. A missing file or directory, or
+one that cannot be read, is no warnings. Write it atomically (a temp file in the same directory,
+then `mv`) so tasq never reads half a line, and remove it, or empty it, when the problem is gone.
+
+While it has lines, they are shown:
+
+- **Every command that opens the store** prints each on stderr, after the `store-open` event
+  (so a plugin can refresh the file there) and after the missing-plugin warnings:
+
+  ```
+  tasq: warning: git: push failed: no network
+  ```
+
+  A `tasq` run with `TASQ_EVENT` set prints none.
+- **`tasq ui`** shows them in the status bar in place of the key hints, checked at start and
+  every 2 s: `warning: git: push failed: no network`, or `3 warnings: git: push failed: no
+  network` for several (the first one, and the count). A message or a prompt takes the line
+  first; the warnings come back with the next key.
+- **`tasq doctor`** lists each as a `WARN` check named `<name>/warning`, with the fix
+  `shown until tasq-<name> removes it from <file>`. They are read after the `doctor` event, so
+  a plugin can refresh them while answering it.
+
+The warnings of every enabled plugin are read, installed or not.
+
+## Doctor checks
+
+`tasq doctor` sends each installed enabled plugin the `doctor` event and reads its stdout as a
+JSON array of checks:
+
+```json
+[
+  {"name": "remote", "status": "ok", "message": "origin reachable"},
+  {"name": "push", "status": "warn", "message": "3 commits not pushed", "fix": "tasq git push"}
+]
+```
+
+| Field | |
+|---|---|
+| `name` | the check's name; listed as `<plugin>/<name>` |
+| `status` | `"ok"`, `"warn"` or `"fail"` |
+| `message` | one line, shown next to the name (`detail` in `tasq doctor --json`) |
+| `fix` | optional; what to do, shown under it |
+
+Unknown fields are ignored. Blank output is no checks: a plugin with nothing to say (or one
+written before this event) prints nothing and exits `0`. Anything else is one `FAIL` check
+named `<plugin>/doctor`:
+
+| Answer | Check |
+|---|---|
+| not a JSON array of checks (text, an unknown `status`, a missing field) | `the doctor answer is not a list of checks: <parse error>`, fix `tasq-<name> must print a JSON array of {name, status, message, fix} on doctor` |
+| a non-zero exit, a timeout, a plugin that cannot start | `plugin <name>: doctor event failed: <reason>`, fix `tasq-<name> hook must answer doctor and exit 0` |
+
+So a plugin must print nothing on stdout for the `doctor` event unless it is the answer, and
+exit `0` on an event it does not know.
+
+The plugins' checks come after the store's and before the tool checks, each plugin in
+`enabled` order: its `tasq-<name>` check (`OK` with its path, or `FAIL` when it is not on
+`PATH`), its answer, its lasting warnings. Every check a plugin owns starts with `<name>/`, so
+a plugin named `git` never reads as the `git` tool check. Any `FAIL`, a plugin's included,
+makes `tasq doctor` exit 1.
+
+```
+OK    lock         no write in progress
+OK    tasq-git     plugin git is /home/me/bin/tasq-git
+OK    git/remote   origin reachable
+WARN  git/push     3 commits not pushed
+                   fix: tasq git push
+WARN  git/warning  push failed: no network
+                   fix: shown until tasq-git removes it from /home/me/.local/share/tasq/stores/default/.tasq/plugins/git/warnings
+OK    git          git found at /usr/bin/git
+```
+
+## The store lock
+
+Every tasq write takes `<store>/.tasq/lock` for its duration (an exclusive create; a lock not
+touched for two minutes is taken for a dead holder and removed). A plugin that rewrites task
+files itself (a `git pull`, a rebase, a restore from backup) runs that work under the same lock,
+so that it never races a write:
+
+```sh
+tasq store lock [--timeout SECS] -- <cmd> [args...]
+```
+
+- Takes the lock, waiting while another holds it (with no limit by default; the stale rule
+  already bounds a dead holder), then runs `<cmd>` with the terminal's stdin, stdout and
+  stderr, releases the lock and exits with `<cmd>`'s exit code (128 plus the signal when a
+  signal ended it).
+- `<cmd>`'s environment is the environment `tasq` was started with, plus `TASQ_BIN`,
+  `TASQ_PROFILE`, `TASQ_CONFIG` and `TASQ_SET` when in effect, `TASQ_STORE_DIR` (the store
+  directory, absolute) and `TASQ_LOCKED=1`.
+- While `<cmd>` runs, the lock's mtime is refreshed every 30 s, so a command that runs longer
+  than two minutes is not taken for dead. A `tasq` killed meanwhile (Ctrl-C included) leaves
+  the lock behind until it goes stale.
+- Exit 1 without running `<cmd>`: the lock cannot be taken (`could not take the store lock
+  <path>: <error>`), it is still held after `--timeout` seconds (`the store lock <path> is
+  still held after <n>s; <cmd> was not run`), or `<cmd>` cannot be started (`could not run
+  <cmd>: <error>`).
+- It does not open the store: no `store-open`, no missing-plugin or lasting warnings. The store
+  directory is created if it does not exist.
+- `<cmd>` must not write through tasq: that write waits for the very lock `<cmd>` runs under.
+  Reads (`$TASQ_BIN list --json`) take no lock and are fine. `TASQ_LOCKED` is informational.
+
+```sh
+tasq store lock -- git -C "$store" pull --rebase
+tasq store lock --timeout 10 -- sh -c 'cd "$TASQ_STORE_DIR" && git rebase origin/main'
+```
+
+## The terminal UI
+
+`tasq ui` sends `store-open` when it starts and again on each `r`, and `post-write` after each
+action that wrote (above). A plugin's failure or timeout shows in the status bar after the
+action's own message; the UI waits for the plugin, so a slow one freezes it for up to
+`plugins.timeout` seconds.
+
+Every 2 s, while no picker or prompt is open, the UI compares the names, lengths and
+modification times of the store's `.md` files with what it last saw and reloads when they
+differ, keeping the selected task (by id) and the scroll. Files changed by another terminal, a
+hand edit or a plugin's job therefore show without `r`, and an edit made after the reload
+starts from the new contents. A rewrite that keeps both the length and the mtime of a file is
+not noticed until `r`.
+
 ## Hooks
 
-Hooks are command lines under `[hooks]`:
+Hooks are command lines under `[hooks]`, wired per moment and given the task. They predate
+enabled plugins and are unchanged by them: a plugin that should follow every write is enabled
+under `[plugins]`; a hook is the lighter tool for one command around one moment.
+
+Hooks are configured like this:
 
 ```toml
 [hooks]
@@ -158,10 +455,17 @@ is not shown in the UI, `-v` or not.
   UI's `d` key fire `post-done`.
 - `tasq create --status done`: `post-create` fires (a task was created), `post-done` does not.
 
+An enabled plugin sees all of these through `post-write`, which every writing command sends.
+
 ## `tasq plugins list`
 
 ```
+Enabled plugins ([plugins] in the config):
+  git   not on PATH
+  echo  /home/me/bin/tasq-echo
+
 Plugins on PATH (tasq-<name>):
+  echo   /home/me/bin/tasq-echo
   tlogs  /home/me/bin/tasq-tlogs
 
 Hooks ([hooks] in the config):
@@ -169,9 +473,15 @@ Hooks ([hooks] in the config):
   pre-launch   check-vpn --quiet
 ```
 
-With `--json`: `{"schema": 1, "plugins": [{"name", "path"}], "hooks": {"post-create": [...],
-"post-done": [...], "pre-launch": [...]}}`. Only the first executable per name is listed, as
-only that one would run. Non-executable files and directories named `tasq-*` are ignored.
+With `--json`: `{"schema": 1, "enabled": [{"name", "path"}], "plugins": [{"name", "path"}],
+"hooks": {"post-create": [...], "post-done": [...], "pre-launch": [...]}}`; `enabled` is in
+`[plugins] enabled` order, with `path` `null` for a plugin that is not on `PATH`. Only the
+first executable per name is listed, as only that one would run. Non-executable files and
+directories named `tasq-*` are ignored. `plugins list` does not open the store and sends no
+event.
+
+`tasq store info` ends with `plugins:     git, echo` (`(none)` when none is enabled); with
+`--json`, `"plugins": ["git", "echo"]`.
 
 ## In-process extension
 

@@ -107,6 +107,13 @@ command = "claude -p"        # reads the prompt (instructions + notes) on stdin
 post-create = []             # command lines, see "Hooks"
 post-done = []
 pre-launch = []
+
+[plugins]
+enabled = []                 # tasq-<name> plugins told about events, see "Plugins"
+timeout = 2                  # seconds a plugin may take over one event
+
+# [plugin.git]               # one table per plugin, passed to it as is
+# interval = 60
 ```
 
 ## Every key
@@ -163,6 +170,9 @@ pre-launch = []
 | `hooks.post-create` | array of strings | `[]` | Command lines run after `tasq create`. |
 | `hooks.post-done` | array of strings | `[]` | Command lines run after `tasq done`. |
 | `hooks.pre-launch` | array of strings | `[]` | Command lines run before `tasq next`/`tasq pick` start a session. |
+| `plugins.enabled` | array of strings | `[]` | Plugins told about events, each run as `tasq-<name>` from `PATH`, in this order. Not empty, no `/`, no whitespace, no leading `-`, not a built-in command, not listed twice. See "Plugins". |
+| `plugins.timeout` | integer (seconds) | `2` | How long one plugin may take over one event before its process group is killed and a warning reported. `0` kills every plugin at once. |
+| `plugin.<name>.*` | any TOML | empty table | The plugin's own settings, not checked by tasq, sent to it as `config` in every event payload. See "Plugins". |
 | `profile.<name>.*` | table | none | A partial configuration (any key above) applied when the profile is selected. Profiles do not nest. |
 
 Source of truth: `crates/core/src/config/mod.rs`.
@@ -208,7 +218,10 @@ Variables that are not configuration: `NO_COLOR` turns colour off; `TASQ_NOW="YY
 HH:MM"` fixes the clock (see `docs/testing.md`); `TASQ_TASK_ID`, `TASQ_DATA_DIR`,
 `TASQ_STORE_NAME` and `TASQ_PROFILE` are set in launched sessions (the first two double as the
 overrides above, so the session's `tasq` opens the same store); `TASQ_BIN`, `TASQ_HOOK` and
-`TASQ_TASK_ID` are set for plugins and hooks (see `docs/plugins.md`).
+`TASQ_TASK_ID` are set for plugins and hooks, `TASQ_EVENT` for a plugin told about an event
+(a `tasq` started with it set tells no plugin and prints no lasting warnings), and
+`TASQ_STORE_DIR` and `TASQ_LOCKED=1` for the command `tasq store lock` runs (see
+`docs/plugins.md`).
 
 ## Validation
 
@@ -472,15 +485,42 @@ reads a JSON document on stdin:
 `task` is the `Task` object of `docs/json.md`. The environment carries `TASQ_HOOK` (the hook
 name), `TASQ_TASK_ID`, `TASQ_BIN` (the `tasq` binary to call back) and, when in effect,
 `TASQ_PROFILE`, `TASQ_CONFIG` and `TASQ_SET`, so a hook that runs `$TASQ_BIN` sees the same
-configuration. `--dry-run` skips hooks. Hooks run from the CLI only: the terminal UI's `d` key
-edits through the core and fires no hook, while its `Enter` runs `tasq pick`, so `pre-launch`
-fires. Plugins and a worked example: `docs/plugins.md`.
+configuration. `--dry-run` skips hooks. The terminal UI's `c` and `d` keys run the
+`post-create` and `post-done` hooks as `tasq create` and `tasq done` do, and its `Enter` runs
+`tasq pick`, so `pre-launch` fires. Plugins and a worked example: `docs/plugins.md`.
 
 ```toml
 [hooks]
 post-done = ["~/bin/tasq-tlogs"]
 pre-launch = ["~/bin/check-vpn --quiet"]
 ```
+
+## Plugins
+
+`[plugins] enabled` lists the plugins tasq tells about events (ADR 0030): `store-open` when a
+command or `tasq ui` opens the store, `post-write` after a command that wrote tasks, `doctor`
+during `tasq doctor`. Each is run as `tasq-<name> hook` with a JSON payload on stdin; one that
+fails or outlasts `plugins.timeout` is a warning, never a failed command. An enabled plugin
+missing from `PATH` is a warning on every command that opens the store and a `FAIL` check in
+`tasq doctor`.
+
+```toml
+[plugins]
+enabled = ["git"]
+timeout = 5
+
+[plugin.git]
+interval = 60
+remote = "origin"
+```
+
+`[plugins]` is checked like every other table (an unknown key is an error with file, line and
+column). `[plugin.<name>]` is not: tasq hands it to the plugin as the payload's `config`,
+merged across layers key by key, so a `.tasq.toml` or a profile can change one setting of a
+plugin configured globally. `--set` and `TASQ_SET` reach it too (`--set
+plugin.git.interval=30`); such a value takes the type the key has in the layers below, and is
+a string when no layer set it. The rest (payloads, environment, lasting warnings, doctor
+checks, `tasq store lock`): `docs/plugins.md`.
 
 ## Colours
 

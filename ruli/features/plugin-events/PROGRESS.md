@@ -12,7 +12,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 | PE-004 | Lasting plugin warnings and the `doctor` event | done | 48d5086. Mutants on the diff with `--no-config`: 0 missed (58 mutants: 51 caught, 7 unviable; a first run missed 3 on `NoHost::warnings`, now pinned and written `vec![]`). |
 | PE-005 | `tasq store lock -- <cmd>` | done | e9fe2c7. Mutants on the diff with `--no-config`: 0 missed (14 mutants: 9 caught, 2 unviable, 3 timeouts that make `acquire_within` loop forever; `run_locked` skipped as process I/O). |
 | PE-006 | The TUI reloads when the store changes | done | ad4d481. Mutants on the diff with `--no-config`: 0 missed (40 mutants: 37 caught, 3 unviable; `run` stays skipped as terminal I/O). |
-| PE-007 | The docs describe plugins and events | ready | |
+| PE-007 | The docs describe plugins and events | done | SHA_TBD. Docs only, no mutation run: the diff has no Rust, so 0 mutants and 0 missed. `cargo doc` (no new warnings) and the full suite pass. |
 
 ## Learnings
 
@@ -83,6 +83,11 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 - 2026-10-26 (PE-004): the TUI asks for the lasting warnings on every 2 s tick, so
   `App::plugin_warnings` reads the files by the configured names; going through
   `App::plugins()` searched `PATH` for each plugin on every tick (review finding).
+- 2026-10-26 (PE-007): the payload's `store.name` is the configured `store.name`
+  (`default`), while `tasq store info --json` has `store.name` `tasq` (the store kind,
+  `StoreInfo::name`). Same key, different values; the docs spell out each.
+- 2026-10-26 (PE-007): PE-004, PE-005 and PE-006 added no CHANGELOG entry (PE-001 to PE-003
+  did). The docs ticket added them; a ticket that changes behaviour should carry its own.
 
 ## Blockers
 
@@ -209,3 +214,26 @@ None.
   Ctrl-C kills `tasq` and leaves the lock until it goes stale (no signal handling without a
   new dependency); a `tasq` write run by the locked command waits on that lock (documented in
   `--help`, `TASQ_LOCKED` is informational); the test files are unix-only like the others.
+- PE-007: `post-write` runs after the command's `[hooks]` (`post-create`, `post-done`, and
+  `pre-launch` in `next`/`pick`), not before them as Implementation Decisions say ("the
+  plugins run before the `[hooks]` of the same moment"): it is sent at the end of the
+  command (PE-003). Documented as built; `store-open` and `doctor` have no hook to order
+  against.
+- PE-007: `docs/plugins.md` also gained "The process" (arguments, environment, timeout, exit
+  codes, calling back into tasq) and "The terminal UI", which the plan did not list, so that
+  a plugin can be written from the page alone. README (plugins paragraph, `store lock`
+  in the command table) and the CHANGELOG were updated too.
+- PE-007: `docs/config.md`'s Hooks section said the TUI's `d` key fires no hook; it has run
+  `post-done` (and `c` `post-create`) since ADR-0010/0011. Corrected while documenting
+  `[plugins]` next to it.
+- PE-007: the review ran over the whole branch and found nothing in the docs. Its code
+  findings are left for a follow-up, since this ticket is docs only: `plugins.enabled`
+  accepts `.` and `..` (the warnings file then resolves outside `.tasq/plugins/<name>`);
+  `StoreLock::refresh` stamps wall time while staleness follows the injected clock, so a
+  waiter with `TASQ_NOW` far ahead could break a live lock; `run_locked` carries the
+  refresh-interval decision under `#[mutants::skip]`; after a plugin exits with its pipes
+  held open, the timeout kills its process group by a pid already reaped; `doctor` with a
+  built-in name in `plugins.enabled` skips the store and plugin checks; a plugin in its own
+  process group outlives a Ctrl-C of `tasq` and is stopped if it reads the terminal. Already
+  recorded above and documented as built: a tasq write under `tasq store lock` waits on that
+  lock, the extra `file_of` scan per write, the TUI's extra reload after its own write.

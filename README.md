@@ -217,8 +217,11 @@ environment.
 `TASQ_BIN` (plus `TASQ_PROFILE`, `TASQ_CONFIG`, `TASQ_SET` when in effect) so the plugin can
 call back into `tasq --json` and `tasq apply` with the same configuration. Built-ins and
 their aliases always win. `[hooks]` runs command lines after `create`
-and `done` and before a session starts, with the task as JSON on stdin. `tasq plugins list`
-shows what was found. [`docs/plugins.md`](docs/plugins.md); reference plugin under
+and `done` and before a session starts, with the task as JSON on stdin. A plugin enabled
+under `[plugins]` is also told when a command opens the store, after it wrote tasks (which
+ones) and during `tasq doctor`, can keep warnings that every command shows until it clears
+them, and can rewrite task files under the store lock with `tasq store lock -- <cmd>`.
+`tasq plugins list` shows what was found and what is enabled. [`docs/plugins.md`](docs/plugins.md); reference plugin under
 [`examples/plugins/`](examples/plugins/).
 
 **Claude Code plugin.** `plugins/claude` ships two skills for sessions started by `tasq next`:
@@ -255,10 +258,11 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq summary [DAY] [--raw]` | Standup summary of a day's progress notes |
 | `tasq dates [SPEC]...` | Resolve `today`, `last week`, `last 7 days`, ... to `FROM TO` |
 | `tasq ui` | Full-screen terminal UI |
-| `tasq store info` | Store directory, task count, how ids behave |
+| `tasq store info` | Store directory, task count, how ids behave, enabled plugins |
+| `tasq store lock -- CMD` | Run CMD holding the store lock, exit with its code |
 | `tasq doctor` | Check config, the store and optional tools |
 | `tasq config show` | Effective configuration with the layer that set each key |
-| `tasq plugins list` | Discovered `tasq-*` plugins and configured hooks |
+| `tasq plugins list` | Enabled plugins, discovered `tasq-*` plugins and configured hooks |
 | `tasq completions SHELL` | Completion script for bash, zsh, fish and others |
 | `tasq NAME [ARGS]...` | Run the plugin `tasq-NAME` from `PATH` |
 
