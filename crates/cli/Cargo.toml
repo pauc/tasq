@@ -46,6 +46,9 @@ mutants = "0.0.4"
 toml = "0.9"
 # The terminal size of stdout (TIOCGWINSZ) without unsafe code.
 rustix = { version = "1", features = ["process", "termios"] }
+# Ctrl-C while a plugin runs, passed on to its process group, without
+# unsafe code. Already in the lock through crossterm.
+signal-hook = "0.3.18"
 # Column widths of titles and chips when `list` wraps rows to the terminal.
 unicode-width = "0.2"
 # The file `desc --edit` hands to the editor.

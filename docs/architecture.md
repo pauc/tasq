@@ -346,6 +346,7 @@ flowchart TB
 | `json` | The `--json` envelope: `{"schema": 1, …}`. Tasks serialise exactly as `tasq_core::model::Task`, which `tasq apply` reads back. Reference: [`docs/json.md`](json.md). |
 | `error` | CLI error type and exit codes: `0` ok, `1` user error, `2` usage or internal error. |
 | `plugins` | Out-of-process plugins: dispatch to `tasq-<name>`, the three hooks, `tasq plugins list`, the enabled plugins and their events (`fire`: `tasq-<name> hook` with the payload on stdin, own process group, `plugins.timeout`), lasting warnings and the plugins' `doctor` checks. Reference: [`docs/plugins.md`](plugins.md). |
+| `interrupt` | `Watch`: while a plugin handles an event, SIGINT sets a flag (`signal-hook`) that the runner checks to pass the Ctrl-C on to the plugin's process group; otherwise SIGINT does its default. |
 | `writes` | `Recording`, the `Store` decorator `App::open_store` puts around the store while a plugin listens: it notes each task whose file a write changed, for the `post-write` sent after the command (`App::post_write`). |
 
 The CLI is the only crate that knows all the others exist. It builds the concrete `TasqStore` (`App::open_store`),

@@ -178,8 +178,8 @@ plugin is not woken by the files its own background job changed.
 | Arguments | `hook`, nothing else. A plugin that also serves `tasq <name> ...` must tell the two apart by this first argument. |
 | Working directory | `tasq`'s own. |
 | Environment | the environment `tasq` was started with, plus `TASQ_BIN` (the running `tasq`), `TASQ_PROFILE`, `TASQ_CONFIG` and `TASQ_SET` when in effect (as for dispatch, above), and `TASQ_EVENT` (the event name). |
-| Process group | its own; on a timeout the whole group is killed. The plugin is reaped only after that, so its group id cannot have been reused. A Ctrl-C of `tasq` does not reach the group: the plugin and its jobs keep running. |
-| stdin | the payload, then end of file. The plugin's group is not the terminal's foreground group, so a plugin that opens `/dev/tty` is stopped until the timeout kills it. |
+| Process group | its own; on a timeout the whole group is killed. The plugin is reaped only after that, so its group id cannot have been reused. A Ctrl-C at the terminal reaches `tasq`'s group, not the plugin's, so `tasq` passes it on: the plugin's group gets SIGINT, has until the timeout to be over (then, or on a second Ctrl-C, it is killed like a timeout), is reaped, and `tasq` exits 130 without running anything more (no further plugin, and for `store-open` not the command). Outside an event Ctrl-C ends `tasq` as usual. |
+| stdin | the payload, then end of file. The plugin's group is not the terminal's foreground group, so a plugin that opens `/dev/tty` is stopped until the timeout kills it; a Ctrl-C meanwhile cannot reach a stopped plugin, so it too waits for the timeout. |
 | stdout | shown at `-v` as `tasq: plugin <name>: <event>: <output>`; for `doctor`, the answer. |
 | stderr | shown only in the warning when the plugin fails. |
 | Exit code | `0` is success. Anything else is a warning; the command's own exit code never changes. |

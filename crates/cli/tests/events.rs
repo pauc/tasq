@@ -857,3 +857,171 @@ mod doctor {
         assert_eq!(take_events(&log), ["doctor"], "and no store-open");
     }
 }
+
+/// Ctrl-C of `tasq` (SIGINT to its process group, which the plugin's group
+/// is not part of). Linux: the plugin's group is read from `/proc`.
+#[cfg(target_os = "linux")]
+mod interrupt {
+    use std::os::unix::process::ExitStatusExt;
+    use std::time::{Duration, Instant};
+
+    use rustix::process::{Pid, Signal, kill_process};
+
+    use super::*;
+
+    /// A background `tasq`, killed if the test ends before it does.
+    struct Running(std::process::Child);
+
+    impl Drop for Running {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    impl Running {
+        /// Sends SIGINT to `tasq` alone, as the terminal does to its group.
+        fn interrupt(&self) {
+            let pid = Pid::from_raw(self.0.id().try_into().unwrap()).unwrap();
+            kill_process(pid, Signal::INT).unwrap();
+        }
+
+        /// Waits up to ten seconds for `tasq` to exit.
+        fn exit_status(&mut self) -> std::process::ExitStatus {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(status) = self.0.try_wait().unwrap() {
+                    return status;
+                }
+                assert!(Instant::now() < deadline, "tasq never exited");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    /// Waits up to five seconds for `path` to exist.
+    fn wait_for(path: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !path.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "{} never appeared",
+                path.display()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// The processes still in the process group `group`, from `/proc`.
+    fn group_members(group: &str) -> Vec<String> {
+        std::fs::read_dir("/proc")
+            .unwrap()
+            .filter_map(|entry| std::fs::read_to_string(entry.ok()?.path().join("stat")).ok())
+            .filter(|stat| {
+                // `pid (comm) state ppid pgrp ...`; comm may hold spaces.
+                let rest = stat.rsplit_once(") ").map_or("", |(_, rest)| rest);
+                rest.split(' ').nth(2) == Some(group)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn ends_the_running_plugin_and_exits_130() {
+        let env = TestEnv::fixture();
+        let started = env.home.join("plugin.pid");
+        let got = env.home.join("got-int");
+        // The trap runs once the foreground `sleep`, in the same group,
+        // has died of the same SIGINT.
+        env.fake_tool(
+            "tasq-slow",
+            &format!(
+                "{PROBE}\ntrap 'echo int > \"{got}\"; exit 0' INT\necho $$ > \"{started}.tmp\"\n\
+                 /bin/mv \"{started}.tmp\" \"{started}\"\n/bin/sleep 30",
+                got = got.display(),
+                started = started.display()
+            ),
+        );
+        env.write_project_config("[plugins]\nenabled = [\"slow\"]\ntimeout = 30\n");
+        let mut tasq = Running(env.tasq_std().arg("list").spawn().unwrap());
+        wait_for(&started);
+        let group = std::fs::read_to_string(&started).unwrap().trim().to_owned();
+        let interrupted = Instant::now();
+        tasq.interrupt();
+        let status = tasq.exit_status();
+        assert_eq!(status.code(), Some(130), "{status:?}");
+        assert!(interrupted.elapsed() < Duration::from_secs(5));
+        assert_eq!(std::fs::read_to_string(&got).unwrap(), "int\n");
+        assert_eq!(group_members(&group), Vec::<String>::new());
+    }
+
+    /// A plugin that shrugs off the passed-on SIGINT is killed, with its
+    /// group, on the second Ctrl-C, long before its timeout.
+    #[test]
+    fn a_second_ctrl_c_kills_a_plugin_that_keeps_running() {
+        let env = TestEnv::fixture();
+        let started = env.home.join("plugin.pid");
+        let got = env.home.join("got-int");
+        env.fake_tool(
+            "tasq-stubborn",
+            &format!(
+                "{PROBE}\ntrap 'echo int >> \"{got}\"' INT\necho $$ > \"{started}.tmp\"\n\
+                 /bin/mv \"{started}.tmp\" \"{started}\"\nwhile :; do /bin/sleep 1; done",
+                got = got.display(),
+                started = started.display()
+            ),
+        );
+        env.write_project_config("[plugins]\nenabled = [\"stubborn\"]\ntimeout = 30\n");
+        let mut tasq = Running(env.tasq_std().arg("list").spawn().unwrap());
+        wait_for(&started);
+        let group = std::fs::read_to_string(&started).unwrap().trim().to_owned();
+        let interrupted = Instant::now();
+        tasq.interrupt();
+        wait_for(&got);
+        assert_eq!(
+            tasq.0.try_wait().unwrap(),
+            None,
+            "still waiting on the plugin"
+        );
+        tasq.interrupt();
+        let status = tasq.exit_status();
+        assert_eq!(status.code(), Some(130), "{status:?}");
+        assert!(interrupted.elapsed() < Duration::from_secs(5));
+        assert_eq!(std::fs::read_to_string(&got).unwrap(), "int\n");
+        assert_eq!(group_members(&group), Vec::<String>::new());
+    }
+
+    /// The handler is in place only while a plugin runs: a Ctrl-C later in
+    /// the command (here a write waiting on a held lock) kills `tasq` the
+    /// default way.
+    #[test]
+    fn after_an_event_kills_tasq_the_default_way() {
+        let env = TestEnv::fixture();
+        let opened = env.home.join("opened");
+        env.fake_tool(
+            "tasq-quick",
+            &format!(
+                "{PROBE}\necho $$ > \"{opened}.tmp\"\n/bin/mv \"{opened}.tmp\" \"{opened}\"",
+                opened = opened.display()
+            ),
+        );
+        env.write_project_config("[plugins]\nenabled = [\"quick\"]\n");
+        let lock = env.store().join(".tasq").join("lock");
+        std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        // Wall time, ahead of `TASQ_NOW`: never stale to this `tasq`.
+        std::fs::write(&lock, "").unwrap();
+        let mut tasq = Running(env.tasq_std().args(["log", "3", "a note"]).spawn().unwrap());
+        wait_for(&opened);
+        // The event is over once tasq has reaped the plugin; the watch ends
+        // right after, well within the margin.
+        let plugin = Path::new("/proc").join(std::fs::read_to_string(&opened).unwrap().trim());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while plugin.exists() {
+            assert!(Instant::now() < deadline, "the plugin was never reaped");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        tasq.interrupt();
+        let status = tasq.exit_status();
+        assert_eq!(status.signal(), Some(2), "{status:?}");
+    }
+}

@@ -14,6 +14,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 | PE-006 | The TUI reloads when the store changes | done | ad4d481. Mutants on the diff with `--no-config`: 0 missed (40 mutants: 37 caught, 3 unviable; `run` stays skipped as terminal I/O). |
 | PE-007 | The docs describe plugins and events | done | a054f06. Docs only, no mutation run: the diff has no Rust, so 0 mutants and 0 missed. `cargo doc` (no new warnings) and the full suite pass. |
 | PE-008 | Fix the branch review findings | done | 1f1c106. Mutants on the diff with `--no-config`: 0 missed (19 mutants: 17 caught, 2 unviable; `exited_by` and `kill_group` stay skipped as process I/O). Finding 5 (Ctrl-C) not fixed: needs a new dependency (Deviations). |
+| PE-009 | Ctrl-C ends a running plugin | done | SHA. Mutants on the diff with `--no-config`: 0 missed (16 mutants: 13 caught, 3 unviable; `watch`, `stop`, `exited_by` and `kill_group` skipped as process and signal I/O). |
 
 ## Learnings
 
@@ -104,6 +105,15 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 - 2026-10-26 (PE-008): `unsafe_code = "forbid"` rules out `pre_exec` (`setsid`,
   `PR_SET_PDEATHSIG`), and neither std nor rustix installs a signal handler safely, so ending
   a plugin on a Ctrl-C of tasq takes a new crate or a helper process (Deviations).
+- 2026-10-26 (PE-009): `signal_hook::low_level::unregister` does not give a signal its default
+  disposition back: signal-hook's OS-level handler stays installed, and with no action left it
+  does nothing, so SIGINT is ignored from then on (signal-hook-registry docs, `unregister`).
+  Unregistering after each event would have made every later Ctrl-C (a lock wait, a launcher)
+  a no-op. The handler is installed once instead, with `register_conditional_default` first
+  (the default, while an `idle` flag is set) and `flag::register` second.
+- 2026-10-26 (PE-009): in a non-interactive `sh`, a background job (`sleep 30 &`) starts with
+  SIGINT ignored, so a fake plugin that must die of a forwarded SIGINT runs its child in the
+  foreground; the trap runs once that child has died of the same signal.
 
 ## Blockers
 
@@ -253,7 +263,7 @@ None.
   process group outlives a Ctrl-C of `tasq` and is stopped if it reads the terminal. Already
   recorded above and documented as built: a tasq write under `tasq store lock` waits on that
   lock, the extra `file_of` scan per write, the TUI's extra reload after its own write.
-- PE-008: finding 5 is not fixed. Plugin stdin was already the payload pipe only (never the
+- PE-008: finding 5 is not fixed (fixed by PE-009). Plugin stdin was already the payload pipe only (never the
   terminal), so nothing changed there. Making a Ctrl-C of `tasq` end the running plugin needs
   a signal handler (`signal-hook` or `ctrlc`, a new direct dependency of the CLI; `signal-hook`
   is already in `Cargo.lock` through crossterm) because `unsafe_code` is forbidden, so per the
@@ -276,3 +286,35 @@ None.
   `#[cfg(unix)]`, as `commands/view.rs` already does, so the CLI builds on unix only either
   way; a stamp ahead of the wall (`TASQ_NOW` in the future) makes a dead holder's lock live
   to a wall-clock waiter until the wall reaches it (a test-only clock).
+- PE-009: the handler is not unregistered after each event as the ticket said: that leaves
+  SIGINT ignored (Learnings). `interrupt::Watch` installs it once, on the first event, and
+  flips an `idle` flag around each plugin run instead; outside a run SIGINT does its default
+  (killed by signal 2, as before), which `events::interrupt` pins after an event.
+- PE-009: after the forwarded SIGINT the plugin has until its event's deadline to be over
+  (exited, output closed); then, or on a second Ctrl-C (review finding: the first cut
+  swallowed it until the deadline), its group is killed as at a timeout. With no deadline (a
+  timeout too large for the clock) only the second Ctrl-C ends the wait. A Ctrl-C that lands after the plugin's last look but before the
+  watch ends still exits 130 once the plugin is reaped. `tasq` exits 130 with
+  `std::process::exit`, so the rest of the command (further plugins, and for `store-open`
+  the command itself) does not run.
+- PE-009: a plugin stopped on `/dev/tty` cannot act on the SIGINT until it is continued, so
+  it is still ended only by the timeout (`docs/plugins.md` says so).
+- PE-009: the wait on a plugin is now one 10 ms polling loop (`watch`) over the exit, both
+  pipes (`take`) and the Ctrl-C flag, with the decision in `next`; `receive` and its
+  `recv_timeout` went. `stop` reuses `watch` after the SIGINT (`Watch::pass_on` re-arms the
+  flag for the second Ctrl-C). `watch` and `stop` are `#[mutants::skip]` (polling and signalling a
+  process); `next` and `take` are unit-tested. `Look` carries four bools under an
+  `#[allow(clippy::struct_excessive_bools)]`.
+- PE-009: `Watch` has no `Drop`: `run_command` always calls `end`, so a `Drop` that also
+  released the flag was a mutant no test could kill. `start` is `#[must_use]` instead.
+- PE-009: review findings fixed: the second Ctrl-C (above); the new unit tests had landed
+  between the `#[cfg(target_os = "linux")]` gate and the `exited_by` test; the outside-event
+  test slept 300 ms to be past the event and now waits for tasq to reap the plugin; the
+  `events::interrupt` module reads `/proc` and is gated to Linux. Left as is: an outside
+  SIGINT (raw mode turns Ctrl-C into a key) during a TUI event exits 130 without restoring
+  the terminal, as the default SIGINT already did; only SIGINT is handled, so SIGTERM or
+  SIGHUP (terminal closed) still leave the plugin running (out of this Ctrl-C ticket); a
+  Ctrl-C right after the plugin finished still exits 130, as the default would have killed
+  tasq there; `exited_by` and `watch` both poll every 10 ms, and `watch` calls `exited_by`
+  as a one-shot look rather than splitting out a probe (no added latency: the exit was
+  already polled at 10 ms).

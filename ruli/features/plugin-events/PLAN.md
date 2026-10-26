@@ -341,3 +341,26 @@ recorded); the refresh-interval decision of `tasq store lock` leaves `#[mutants:
 - [x] The refresh decision of `store lock` is a tested function; only process I/O stays skipped.
 - [x] `docs/plugins.md` and `docs/config.md` updated where behaviour changed.
 - [x] `cargo mutants --in-diff`: zero missed.
+
+### PE-009: Ctrl-C ends a running plugin
+
+**What to build:** finding 5 of the branch review, left open by PE-008 (PROGRESS.md, PE-008
+deviations). A plugin runs in its own process group, so a Ctrl-C of `tasq` reaches only tasq's
+group: tasq dies and the plugin keeps running, orphaned and with no timeout. `signal-hook`
+becomes a direct dependency of the CLI (already in `Cargo.lock` through crossterm, same
+version, no new crate in the lock). While a plugin event runs, a SIGINT sets a flag instead of
+killing tasq; the loop that waits on the plugin checks it, forwards SIGINT to the plugin's
+process group, reaps it and exits 130. Outside an event Ctrl-C keeps its default behaviour
+(lock waits, launchers, the TUI). The decision (exited, timed out, interrupted) is a tested
+function; only the signal and process I/O may be `#[mutants::skip]`. No unsafe code.
+
+**Blocked by:** PE-008.
+
+**Status:** done
+
+- [x] SIGINT to `tasq` during an event: the plugin's process group gets SIGINT and ends, and `tasq` exits 130.
+- [x] SIGINT to `tasq` outside an event, after one ran, still kills it the default way.
+- [x] `signal-hook` is a direct dependency of `crates/cli` at the version already in `Cargo.lock`; no new crate in the lock.
+- [x] The wait decision is a tested function; only signal and process I/O are skipped.
+- [x] `docs/plugins.md` describes the new behaviour; the CHANGELOG has a `Fixed` entry; the PE-008 deviation points here.
+- [x] `cargo mutants --in-diff`: zero missed.

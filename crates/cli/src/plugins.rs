@@ -29,7 +29,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use clap::CommandFactory;
@@ -44,6 +44,7 @@ use tasq_core::plugin::{Event, Payload, StoreRef, doctor_checks, warnings, warni
 use crate::app::App;
 use crate::cli::Cli;
 use crate::error::{CliError, Result};
+use crate::interrupt;
 use crate::json;
 
 /// Environment variable holding the path of the running `tasq` binary, so
@@ -670,12 +671,33 @@ pub fn hook_argv(line: &str, home: Option<&Path>) -> Result<Vec<String>> {
 /// stdout; `Err` carries stderr (else stdout) trimmed, the OS error when
 /// the program could not start, or the timeout.
 ///
-/// Not unit-tested: nothing to assert without a process.
+/// A Ctrl-C of tasq while a plugin runs reaches only tasq's process group:
+/// it is passed on to the plugin's ([`stop`]), and tasq exits 130 once the
+/// plugin is reaped, as a shell reports a command ended by SIGINT.
 fn run_command(
     argv: &[String],
     input: &str,
     vars: &[(String, String)],
     timeout: Option<Duration>,
+) -> std::result::Result<String, String> {
+    // Before the spawn: a Ctrl-C never leaves the plugin behind.
+    let ctrl_c = timeout.map(|_| interrupt::Watch::start());
+    let result = run_child(argv, input, vars, timeout, ctrl_c.as_ref());
+    if ctrl_c.is_some_and(interrupt::Watch::end) {
+        std::process::exit(130);
+    }
+    result
+}
+
+/// [`run_command`] up to the exit on a Ctrl-C.
+///
+/// Not unit-tested: nothing to assert without a process.
+fn run_child(
+    argv: &[String],
+    input: &str,
+    vars: &[(String, String)],
+    timeout: Option<Duration>,
+    ctrl_c: Option<&interrupt::Watch>,
 ) -> std::result::Result<String, String> {
     let (program, rest) = argv.split_first().ok_or("empty command")?;
     let mut command = Command::new(program);
@@ -707,33 +729,37 @@ fn run_command(
             let _ = stdin.write_all(input.as_bytes());
         });
     }
-    let stdout = drain(child.stdout.take());
-    let stderr = drain(child.stderr.take());
-    // A timeout too large for the clock is no deadline.
-    let deadline = timeout.and_then(|limit| Instant::now().checked_add(limit));
-    let timed_out = |child: &mut Child| {
-        kill_group(child);
-        let _ = child.wait();
-        // The readers are left behind: something outside the group may
-        // still hold the pipes open.
-        format!("timed out after {}s", timeout.unwrap_or_default().as_secs())
-    };
-    if let Some(deadline) = deadline {
-        match exited_by(&child, deadline) {
-            Ok(true) => {}
-            Ok(false) => return Err(timed_out(&mut child)),
-            Err(e) => {
-                // Not left running past the event.
-                timed_out(&mut child);
-                return Err(e.to_string());
+    let output = [drain(child.stdout.take()), drain(child.stderr.take())];
+    let (stdout, stderr) = match timeout {
+        None => {
+            let [stdout, stderr] = output.map(|text| text.recv().unwrap_or_default());
+            (stdout, stderr)
+        }
+        Some(limit) => {
+            // A timeout too large for the clock is no deadline.
+            let deadline = Instant::now().checked_add(limit);
+            let timed_out = |child: &mut Child| {
+                kill_group(child);
+                let _ = child.wait();
+                // The readers are left behind: something outside the group
+                // may still hold the pipes open.
+                format!("timed out after {}s", limit.as_secs())
+            };
+            let interrupted = || ctrl_c.is_some_and(interrupt::Watch::hit);
+            match watch(&child, &output, deadline, &interrupted) {
+                Ok((Step::Done, [Some(stdout), Some(stderr)])) => (stdout, stderr),
+                Ok((Step::Interrupted, _)) => {
+                    stop(&mut child, &output, deadline, ctrl_c);
+                    return Err("interrupted".to_owned());
+                }
+                Ok(_) => return Err(timed_out(&mut child)),
+                Err(e) => {
+                    // Not left running past the event.
+                    timed_out(&mut child);
+                    return Err(e.to_string());
+                }
             }
         }
-    }
-    // A background job that inherited the pipes keeps them open after the
-    // child exits; the event is not over until they close.
-    let (Some(stdout), Some(stderr)) = (receive(&stdout, deadline), receive(&stderr, deadline))
-    else {
-        return Err(timed_out(&mut child));
     };
     // Reaped only now: until then the child's pid, its group's id, cannot
     // be reused, so `timed_out` never signals another process group.
@@ -767,19 +793,116 @@ fn drain<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> Receiver<String>
     receive
 }
 
-/// What [`drain`] read, waiting until `deadline` at most; `None` when the
-/// pipe is still open then.
-fn receive(text: &Receiver<String>, deadline: Option<Instant>) -> Option<String> {
-    match deadline {
-        None => Some(text.recv().unwrap_or_default()),
-        Some(deadline) => {
-            match text.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-                Ok(text) => Some(text),
-                Err(RecvTimeoutError::Disconnected) => Some(String::new()),
-                Err(RecvTimeoutError::Timeout) => None,
-            }
+/// Fills `slot` with what [`drain`] read once the pipe has closed; a slot
+/// already filled stays as it is.
+fn take(text: &Receiver<String>, slot: &mut Option<String>) {
+    if slot.is_none() {
+        match text.try_recv() {
+            Ok(text) => *slot = Some(text),
+            Err(TryRecvError::Disconnected) => *slot = Some(String::new()),
+            Err(TryRecvError::Empty) => {}
         }
     }
+}
+
+/// One look at a running plugin.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "four separate observations; folding any moves the decision out of `next`"
+)]
+#[derive(Debug, Clone, Copy)]
+struct Look {
+    /// The plugin has exited (not yet reaped).
+    exited: bool,
+    /// Its stdout and stderr have both closed.
+    closed: bool,
+    /// tasq got a Ctrl-C.
+    interrupted: bool,
+    /// The deadline has passed.
+    late: bool,
+}
+
+/// What the wait on a plugin does after a [`Look`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// Look again.
+    Wait,
+    /// The plugin is over: exited, with its output closed.
+    Done,
+    /// The deadline passed first.
+    TimedOut,
+    /// A Ctrl-C of tasq, whatever the plugin is doing: it is passed on.
+    Interrupted,
+}
+
+/// The decision of the wait on a plugin. A Ctrl-C comes first (the user
+/// wants tasq gone); an event is over only once the plugin has exited and
+/// its output has closed (a background job may hold it).
+fn next(look: Look) -> Step {
+    if look.interrupted {
+        Step::Interrupted
+    } else if look.exited && look.closed {
+        Step::Done
+    } else if look.late {
+        Step::TimedOut
+    } else {
+        Step::Wait
+    }
+}
+
+/// Looks at `child` and its `output` every 10 ms until [`next`] says
+/// something other than [`Step::Wait`]; the output read so far comes with
+/// it ([`take`]).
+// Reason: polls a live process; a mutant that stops waiting hangs the tests.
+#[mutants::skip]
+fn watch(
+    child: &Child,
+    output: &[Receiver<String>; 2],
+    deadline: Option<Instant>,
+    interrupted: &dyn Fn() -> bool,
+) -> std::io::Result<(Step, [Option<String>; 2])> {
+    let mut text = [None, None];
+    loop {
+        take(&output[0], &mut text[0]);
+        take(&output[1], &mut text[1]);
+        let step = next(Look {
+            exited: exited_by(child, Instant::now())?,
+            closed: text.iter().all(Option::is_some),
+            interrupted: interrupted(),
+            late: deadline.is_some_and(|deadline| Instant::now() >= deadline),
+        });
+        if step != Step::Wait {
+            return Ok((step, text));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Passes a Ctrl-C on to `child`'s process group and gives it until
+/// `deadline` (none: as long as it takes) to be over, as an event is
+/// ([`watch`]); the group is killed at the deadline or on a second Ctrl-C,
+/// then the child is reaped.
+// Reason: signals and waits on a live process group.
+#[mutants::skip]
+fn stop(
+    child: &mut Child,
+    output: &[Receiver<String>; 2],
+    deadline: Option<Instant>,
+    ctrl_c: Option<&interrupt::Watch>,
+) {
+    #[cfg(unix)]
+    {
+        use rustix::process::{Pid, Signal, kill_process_group};
+        let _ = kill_process_group(Pid::from_child(child), Signal::INT);
+    }
+    if let Some(ctrl_c) = ctrl_c {
+        ctrl_c.pass_on();
+    }
+    let again = || ctrl_c.is_some_and(interrupt::Watch::hit);
+    if !matches!(watch(child, output, deadline, &again), Ok((Step::Done, _))) {
+        kill_group(child);
+    }
+    let _ = child.wait();
 }
 
 /// Waits for `child` to exit until `deadline`, without reaping it (it
@@ -997,6 +1120,56 @@ mod tests {
                 .to_string()
                 .starts_with("hook command \"unterminated 'quote\":")
         );
+    }
+
+    #[test]
+    fn the_wait_on_a_plugin_ends_on_ctrl_c_first_then_when_over_then_at_the_deadline() {
+        use Step::{Done, Interrupted, TimedOut, Wait};
+        // (exited, closed, interrupted, late) -> step
+        let table = [
+            ((false, false, false, false), Wait),
+            ((true, false, false, false), Wait),
+            ((false, true, false, false), Wait),
+            ((true, true, false, false), Done),
+            ((false, false, false, true), TimedOut),
+            ((true, false, false, true), TimedOut),
+            ((false, true, false, true), TimedOut),
+            ((true, true, false, true), Done),
+            ((false, false, true, false), Interrupted),
+            ((true, true, true, false), Interrupted),
+            ((false, false, true, true), Interrupted),
+            ((true, true, true, true), Interrupted),
+        ];
+        for ((exited, closed, interrupted, late), step) in table {
+            let look = Look {
+                exited,
+                closed,
+                interrupted,
+                late,
+            };
+            assert_eq!(next(look), step, "{look:?}");
+        }
+    }
+
+    #[test]
+    fn take_keeps_the_text_once_the_pipe_closed() {
+        let (send, text) = std::sync::mpsc::channel();
+        let mut slot = None;
+        take(&text, &mut slot);
+        assert_eq!(slot, None, "still open");
+        send.send("out".to_owned()).unwrap();
+        drop(send);
+        take(&text, &mut slot);
+        assert_eq!(slot.as_deref(), Some("out"));
+        // Disconnected now; the text read stays.
+        take(&text, &mut slot);
+        assert_eq!(slot.as_deref(), Some("out"));
+        // Closed without a word: empty.
+        let (send, text) = std::sync::mpsc::channel::<String>();
+        drop(send);
+        let mut slot = None;
+        take(&text, &mut slot);
+        assert_eq!(slot.as_deref(), Some(""));
     }
 
     /// A plugin that exited is seen without being reaped: until it is, its

@@ -209,6 +209,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pid.
 - `tasq doctor` with built-in command names in `plugins.enabled` reports each as a `FAIL`
   check `plugins` and still runs the store and plugin checks.
+- A Ctrl-C of `tasq` while a plugin handles an event ends the plugin too. The plugin runs in
+  its own process group, which the terminal's SIGINT does not reach, so `tasq` died and left it
+  running with no timeout. `tasq` now passes SIGINT on to the plugin's group, gives it until
+  the timeout to exit (a second Ctrl-C kills it at once), reaps it and exits 130. Outside an event Ctrl-C works as before.
 - The herdr launcher no longer races the new pane's shell: `herdr agent start` was sent a
   few milliseconds after `workspace create`, before zsh (rc files, direnv, gitstatus) reached
   its prompt, and herdr answered `agent_pane_busy`; the name-collision retry 100 ms later

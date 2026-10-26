@@ -22,6 +22,7 @@ pub mod cli;
 pub mod commands;
 pub mod editor;
 pub mod error;
+pub mod interrupt;
 pub mod json;
 pub mod output;
 pub mod plugins;
