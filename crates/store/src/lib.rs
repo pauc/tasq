@@ -12,6 +12,8 @@
 //!   the done ops and no revision check.
 //! - [`lock`]: the store lock, `.tasq/lock`, held across a write; a stale
 //!   one is broken, a live one waited on.
+//! - [`fingerprint()`]: the names, lengths and mtimes of the task files
+//!   as one number, which the TUI compares to notice outside changes.
 //! - [`ulid`]: the file name, whose timestamp is the task's creation time.
 //! - [`draft`]: the check and the defaults a draft gets before it is
 //!   written.
@@ -26,10 +28,12 @@
 
 pub mod diff;
 pub mod draft;
+pub mod fingerprint;
 pub mod lock;
 pub mod revision;
 pub mod store;
 pub mod ulid;
 
+pub use self::fingerprint::fingerprint;
 pub use self::revision::Revision;
 pub use self::store::TasqStore;

@@ -316,10 +316,7 @@ impl TasqStore {
         for entry in listing {
             let entry = entry.map_err(|e| io_error(&self.dir, e))?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            let is_markdown = Path::new(&name)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
-            if !name.starts_with('.') && is_markdown {
+            if is_task_file_name(&name) {
                 names.push(name);
             }
         }
@@ -357,6 +354,15 @@ impl TasqStore {
         }
         Ok(scan)
     }
+}
+
+/// Whether the store reads a directory entry named `name`: a `.md`
+/// extension (ignoring case) and no leading dot (editor locks).
+pub(crate) fn is_task_file_name(name: &str) -> bool {
+    let is_markdown = Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
+    !name.starts_with('.') && is_markdown
 }
 
 /// What to do about a `.md` file that did not parse as a task file.

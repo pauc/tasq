@@ -13,7 +13,9 @@
 //! what those commands do. A session in a new window (`Ctrl+Enter`,
 //! `Shift+Enter`) is `tasq pick <id> --window [--no-focus]` with its
 //! output captured, so the UI keeps the screen and shows the last line
-//! (ADR-0012).
+//! (ADR-0012). The UI reloads by itself when the host's fingerprint of
+//! the store directory changes, and `r` tells the plugins `store-open`
+//! (ADR 0030).
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -21,6 +23,7 @@ use std::process::Command;
 
 use tasq_core::config::Config;
 use tasq_core::model::{Task, TaskId, Worktree};
+use tasq_core::plugin::Event;
 use tasq_core::theme::Theme;
 use tasq_tui::{Host, HostResult, KeyMap, LaunchTarget, Model, SourceChoice};
 
@@ -217,26 +220,45 @@ impl Host for CliHost<'_> {
     fn after_create(&mut self, task: &Task) -> std::result::Result<(), String> {
         self.hooks(Hook::PostCreate, task)
     }
+
+    /// [`tasq_store::fingerprint()`] of the store directory; `None` when
+    /// it cannot be listed.
+    fn fingerprint(&mut self) -> Option<u64> {
+        tasq_store::fingerprint(&self.app.store_dir().ok()?).ok()
+    }
+
+    /// `store-open` to the enabled plugins, as at start.
+    fn store_open(&mut self) -> std::result::Result<(), String> {
+        warnings(|report| plugins::fire(self.app, &self.app.plugins(), Event::StoreOpen, report))
+    }
 }
 
 impl CliHost<'_> {
     /// Runs the `hook` command lines on `task`; what the CLI would print
-    /// as warnings comes back as the `Err`, one per failed command, joined
-    /// with `; `. A hook's stdout (`-v` material on the CLI) has nowhere
-    /// to go in the UI and is dropped.
+    /// as warnings comes back as the `Err`, one per failed command
+    /// ([`warnings`]).
     fn hooks(&self, hook: Hook, task: &Task) -> std::result::Result<(), String> {
-        let mut warnings = Vec::new();
-        plugins::run_hooks_with(self.app, hook, task, &[], &mut |event| {
-            if let HookEvent::Warning(text) = event {
-                warnings.push(text);
-            }
-        })
-        .map_err(|e| e.to_string())?;
-        if warnings.is_empty() {
-            Ok(())
-        } else {
-            Err(warnings.join("; "))
+        warnings(|report| plugins::run_hooks_with(self.app, hook, task, &[], report))
+    }
+}
+
+/// Runs `run` with a reporter that keeps the warnings and drops the
+/// output (`-v` material on the CLI, nowhere to go in the UI); they come
+/// back as the `Err`, joined with `; `, after an error of `run` itself.
+fn warnings(
+    run: impl FnOnce(&mut dyn FnMut(HookEvent)) -> Result<()>,
+) -> std::result::Result<(), String> {
+    let mut warnings = Vec::new();
+    run(&mut |event| {
+        if let HookEvent::Warning(text) = event {
+            warnings.push(text);
         }
+    })
+    .map_err(|e| e.to_string())?;
+    if warnings.is_empty() {
+        Ok(())
+    } else {
+        Err(warnings.join("; "))
     }
 }
 
@@ -765,5 +787,114 @@ post-create = [
             host.edit(&TaskId::from(1), Path::new("/f")).unwrap(),
             "[1] edited with /bin/sh"
         );
+    }
+
+    /// An app over `dir` with `[plugins] enabled = <names>` and each
+    /// `(name, script)` installed as `<dir>/bin/tasq-<name>`, the only
+    /// directory on its `PATH`.
+    fn with_plugins(dir: &Path, plugins: &[(&str, &str)]) -> App {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let mut names = Vec::new();
+        for (name, script) in plugins {
+            let exe = bin.join(format!("tasq-{name}"));
+            std::fs::write(&exe, format!("#!/bin/sh\n{script}\n")).unwrap();
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+            names.push(format!("\"{name}\""));
+        }
+        let mut app = app_in(
+            dir,
+            &format!("[plugins]\nenabled = [{}]\n", names.join(", ")),
+        );
+        app.opts
+            .env
+            .insert("PATH".to_owned(), bin.display().to_string());
+        app
+    }
+
+    #[test]
+    fn a_manual_reload_tells_the_plugins_store_open_and_returns_their_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("events.log");
+        let echo = format!("echo \"$TASQ_EVENT\" >> '{}'", log.display());
+        let app = with_plugins(dir.path(), &[("echo", &echo)]);
+        assert_eq!(host(&app).store_open(), Ok(()));
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "store-open\n");
+
+        let app = with_plugins(
+            dir.path(),
+            &[("echo", &echo), ("bad", "echo nope >&2; exit 3")],
+        );
+        assert_eq!(
+            host(&app).store_open(),
+            Err("plugin bad: store-open event failed: exit status 3: nope".to_owned())
+        );
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "store-open\nstore-open\n"
+        );
+    }
+
+    #[test]
+    fn the_fingerprint_follows_the_task_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app_in(dir.path(), "");
+        let mut host = host(&app);
+        let empty = host.fingerprint().expect("an absent store has one");
+        let mut store = app.open_store().unwrap();
+        store
+            .create(tasq_core::model::TaskDraft::new("One"))
+            .unwrap();
+        let one = host.fingerprint().unwrap();
+        assert_ne!(one, empty);
+        assert_eq!(host.fingerprint(), Some(one));
+        let store_dir = app.store_dir().unwrap();
+        std::fs::remove_dir_all(&store_dir).unwrap();
+        std::fs::write(&store_dir, "not a directory").unwrap();
+        assert_eq!(host.fingerprint(), None);
+    }
+
+    #[test]
+    fn an_edit_after_an_automatic_reload_keeps_the_outside_change() {
+        use tasq_core::clock::{Clock, FixedClock};
+        use tasq_tui::{Cmd, Msg, Watch, dispatch, tick};
+        let dir = tempfile::tempdir().unwrap();
+        let app = app_in(dir.path(), "");
+        let mut host = host(&app);
+        let mut store = app.open_store().unwrap();
+        let id = store
+            .create(tasq_core::model::TaskDraft::new("One"))
+            .unwrap()
+            .id;
+        let clock = FixedClock::at("2026-10-26 09:00");
+        let normal = model(&app, KeyMap::default(), clock.today());
+        let mut watch = Watch::default();
+        assert_eq!(
+            tick(&normal, &mut watch, store.as_ref(), &mut host),
+            Vec::new()
+        );
+        dispatch(&Cmd::Load, store.as_mut(), &clock, &mut host);
+
+        // A hand edit in another terminal.
+        let file = store.file_of(&id).unwrap().unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        std::fs::write(&file, text.replace("# One", "# One, renamed")).unwrap();
+        let msgs = tick(&normal, &mut watch, store.as_ref(), &mut host);
+        let [Msg::Loaded(tasks)] = msgs.as_slice() else {
+            panic!("expected one Loaded, got {msgs:?}")
+        };
+        assert_eq!(tasks[0].title, "One, renamed");
+
+        let msgs = dispatch(
+            &Cmd::Log(id.clone(), "noted".into()),
+            store.as_mut(),
+            &clock,
+            &mut host,
+        );
+        assert_eq!(msgs[0], Msg::Info(format!("[{id}] logged: noted")));
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("# One, renamed\n"), "{text}");
+        assert!(text.contains("noted"), "{text}");
     }
 }

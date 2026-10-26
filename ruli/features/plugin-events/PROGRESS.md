@@ -11,7 +11,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 | PE-003 | The `post-write` event | ready | |
 | PE-004 | Lasting plugin warnings and the `doctor` event | ready | |
 | PE-005 | `tasq store lock -- <cmd>` | done | e9fe2c7. Mutants on the diff with `--no-config`: 0 missed (14 mutants: 9 caught, 2 unviable, 3 timeouts that make `acquire_within` loop forever; `run_locked` skipped as process I/O). |
-| PE-006 | The TUI reloads when the store changes | ready | |
+| PE-006 | The TUI reloads when the store changes | done | SHA. Mutants on the diff with `--no-config`: 0 missed (40 mutants: 37 caught, 3 unviable; `run` stays skipped as terminal I/O). |
 | PE-007 | The docs describe plugins and events | ready | |
 
 ## Learnings
@@ -50,6 +50,16 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 - 2026-10-26 (PE-005): `acquire` spun at full CPU on a stale lock it could not remove (the
   `remove_file` error was ignored and the loop retried at once). A stale lock that cannot be
   removed is now waited on like a live one, so `--timeout` holds there too.
+- 2026-10-26 (PE-006): the first mutants run left the "file vanished" guard of
+  `tasq_store::fingerprint` alive: a race no test can stage. Following symlinks
+  (`fs::metadata(path)`, as `scan` does with `fs::read`) made the same guard reachable:
+  a dangling `x.md` symlink is the vanished file, a symlink loop the other error.
+- 2026-10-26 (PE-006): an automatic reload can move the selection under an open picker or
+  input (the task closed elsewhere and left the list), and pickers act on the selection when
+  they commit, not when they opened. The tick therefore reloads only in normal mode; the
+  `Watch` is not consulted meanwhile, so the change is seen on the first tick back.
+- 2026-10-26 (PE-006): a tick that runs only when `event::poll` times out is starved by a
+  held key. `run` checks the deadline before waiting for a key.
 
 ## Blockers
 
@@ -97,6 +107,24 @@ None.
   passthrough variables, `TASQ_STORE_DIR` and `TASQ_LOCKED` (cleared first, as for events).
 - PE-005: `StoreLock::acquire_within(dir, clock, Option<Duration>)` is the timed form; the
   limit is wall time, staleness still follows the configured clock.
+- PE-006: the fingerprint is `tasq_store::fingerprint(dir) -> io::Result<u64>`: names,
+  lengths and mtimes of the `.md` regular files the store reads, hashed with std's
+  `DefaultHasher` (in-process only). `Host` gained `fingerprint() -> Option<u64>` (`None`: no
+  reload) and `store_open() -> Result<(), String>`; `r` is now `Cmd::Refresh` (host
+  `store_open`, then load), the tick and the start stay `Cmd::Load`. `NoHost` never reloads.
+- PE-006: the plan's "keeps the scroll" needed no code: the list scroll follows the
+  selection, and the detail scroll resets only when the selection changes. A test pins both.
+- PE-006: "an edit after the reload does not conflict" is tested in `commands/ui.rs` with the
+  real store and the CLI host (a hand edit, the tick, then `l`), not in `crates/tui`, which
+  has no `TasqStore`. Every core edit reads the task before it writes, so the conflict the
+  plan feared needed no fix; the test pins that the outside change survives the edit.
+- PE-006: review findings left as is: the TUI's own write is seen as a change by the next
+  tick, so each edit costs one extra scan (re-baselining after a dispatch could miss an
+  outside change made between its reload and the look); a same-length rewrite within one
+  mtime tick (or a sync tool that keeps mtimes) is not noticed, as the plan's fingerprint
+  defines; a slow plugin freezes the UI on `r` up to `plugins.timeout`, as at start; when
+  the reload after `r` also fails, its error replaces the plugin warning in the status bar;
+  `with_plugins` in the `ui.rs` tests is one more fake-executable helper.
 - PE-005: review findings left as is: `Drop` removes the lock file without checking it is
   still ours (pre-existing; with the refresh only a holder that stopped refreshing loses it);
   Ctrl-C kills `tasq` and leaves the lock until it goes stale (no signal handling without a

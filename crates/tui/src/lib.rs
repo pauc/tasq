@@ -33,6 +33,6 @@ pub use model::{
     Cursor, GroupKey, ListGroup, Mode, Model, Neighbours, NoteTarget, SourceChoice, Toggles,
 };
 pub use msg::{Cmd, Host, HostResult, LaunchTarget, Msg, NoHost, RecordingHost};
-pub use runtime::{dispatch, run};
+pub use runtime::{TICK, Watch, dispatch, run, tick};
 pub use update::update;
 pub use view::view;

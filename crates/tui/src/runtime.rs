@@ -6,7 +6,9 @@
 //! owns the terminal: raw mode, the alternate screen, bracketed paste and,
 //! where the terminal supports it, the kitty keyboard protocol (so
 //! `Ctrl+Enter` and `Shift+Enter` are not plain `Enter`), released while
-//! an editor, a session or `sync` has the screen.
+//! an editor, a session or `sync` has the screen. Every [`TICK`] without
+//! a key it asks the host for the store's fingerprint ([`tick`]) and
+//! reloads when another program changed the files.
 
 use std::io::{self, BufRead, Write};
 
@@ -31,7 +33,7 @@ use tasq_core::query::Filter;
 use tasq_core::store::Store;
 
 use crate::keys::translate;
-use crate::model::Model;
+use crate::model::{Mode, Model};
 use crate::msg::{Cmd, Host, Msg};
 use crate::update::update;
 use crate::view::view;
@@ -49,6 +51,16 @@ pub fn dispatch(
     let mut created = None;
     let outcome: Result<String, String> = match cmd {
         Cmd::Load => return vec![reload(store)],
+        Cmd::Refresh => {
+            let mut msgs: Vec<Msg> = host
+                .store_open()
+                .err()
+                .map(Msg::Failed)
+                .into_iter()
+                .collect();
+            msgs.push(reload(store));
+            return msgs;
+        }
         Cmd::SetStatus(id, status) => set(store, id, &Value::Status(status.clone()), clock),
         Cmd::Reopen(id, status) => edit::reopen(store, id, status, None, clock)
             .map(|_| format!("[{id}] reopened -> {status}"))
@@ -193,6 +205,44 @@ fn reload(store: &dyn Store) -> Msg {
     }
 }
 
+/// How long [`run`] waits for a key before it looks at the store again.
+pub const TICK: Duration = Duration::from_secs(2);
+
+/// The store's fingerprint as last seen through the host.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Watch {
+    seen: Option<u64>,
+}
+
+impl Watch {
+    /// Takes the host's fingerprint and says whether it differs from the
+    /// one seen before. The first look only remembers it; a look that
+    /// fails (`None`) is no change and forgets nothing.
+    pub fn changed(&mut self, host: &mut dyn Host) -> bool {
+        let Some(now) = host.fingerprint() else {
+            return false;
+        };
+        let changed = self.seen.is_some_and(|seen| seen != now);
+        self.seen = Some(now);
+        changed
+    }
+}
+
+/// One tick of [`run`]: the tasks again when the store's files changed
+/// since the last look, nothing otherwise. The model keeps the selected
+/// task by id. Only in normal mode: a picker, an input or the form acts
+/// on the selection (or the fields) it opened with, so the change waits,
+/// unseen, until the user is back. No plugin is told (unlike `r`,
+/// [`Cmd::Refresh`]): a plugin's own job changing the files must not
+/// wake it again.
+pub fn tick(model: &Model, watch: &mut Watch, store: &dyn Store, host: &mut dyn Host) -> Vec<Msg> {
+    if model.mode == Mode::Normal && watch.changed(host) {
+        vec![reload(store)]
+    } else {
+        Vec::new()
+    }
+}
+
 /// Runs the UI until the user quits. Returns the terminal to its previous
 /// state on every exit path, panics included.
 ///
@@ -209,11 +259,26 @@ pub fn run(
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let size = terminal.size()?;
     update(&mut model, Msg::Resize(size.width, size.height));
+    // The first look before the first read, so a change in between counts.
+    let mut watch = Watch::default();
+    watch.changed(host);
     for msg in dispatch(&Cmd::Load, store, clock, host) {
         update(&mut model, msg);
     }
+    let mut next_tick = Instant::now() + TICK;
     while !model.quit {
         terminal.draw(|frame| view(&model, frame))?;
+        // Checked before waiting, so a held key cannot starve the tick.
+        if Instant::now() >= next_tick {
+            next_tick = Instant::now() + TICK;
+            for msg in tick(&model, &mut watch, store, host) {
+                update(&mut model, msg);
+            }
+            continue;
+        }
+        if !event::poll(next_tick.saturating_duration_since(Instant::now()))? {
+            continue;
+        }
         let msg = match event::read()? {
             Event::Key(key) => translate(&model.keys, &model.mode, &key),
             Event::Paste(text) => Some(Msg::Paste(text)),
@@ -393,6 +458,138 @@ mod tests {
         let msgs = dispatch(&Cmd::Load, &mut store, &clock(), &mut host);
         assert_eq!(loaded_ids(&msgs), ["1", "2"], "the model hides done tasks");
         assert_eq!(host.calls, Vec::<String>::new());
+    }
+
+    /// A model in normal mode, nothing loaded.
+    fn normal() -> Model {
+        Model::new(
+            tasq_core::model::Workflow::default(),
+            tasq_core::theme::Theme::default(),
+            true,
+        )
+    }
+
+    /// The model a user is looking at, task 2 selected.
+    fn on_task_two(store: &mut MemoryStore, host: &mut RecordingHost) -> Model {
+        let mut model = normal();
+        for msg in dispatch(&Cmd::Load, store, &clock(), host) {
+            update(&mut model, msg);
+        }
+        model.select_task(TaskId::from(2));
+        model
+    }
+
+    #[test]
+    fn a_changed_store_reloads_on_the_tick_and_keeps_the_selection() {
+        let mut store = store();
+        let mut host = RecordingHost {
+            fingerprint: Some(7),
+            ..RecordingHost::default()
+        };
+        let mut watch = Watch::default();
+        assert_eq!(
+            tick(&normal(), &mut watch, &store, &mut host),
+            Vec::new(),
+            "the first look"
+        );
+        let mut model = on_task_two(&mut store, &mut host);
+        assert_eq!(
+            tick(&model, &mut watch, &store, &mut host),
+            Vec::new(),
+            "unchanged"
+        );
+
+        // Another terminal renames task 2 and creates a task.
+        let mut two = store.get(&TaskId::from(2)).unwrap();
+        two.title = "B, renamed".into();
+        store.update(&two).unwrap();
+        store.create(TaskDraft::new("C")).unwrap();
+        host.fingerprint = Some(8);
+        let msgs = tick(&normal(), &mut watch, &store, &mut host);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(loaded_ids(&msgs), ["1", "2", "3"]);
+        for msg in msgs {
+            update(&mut model, msg);
+        }
+        assert_eq!(
+            model.selected,
+            Some(crate::model::Cursor::Task(TaskId::from(2)))
+        );
+        assert_eq!(model.tasks[1].title, "B, renamed");
+        assert_eq!(
+            tick(&normal(), &mut watch, &store, &mut host),
+            Vec::new(),
+            "seen now"
+        );
+        // The automatic reload tells no plugin: their own jobs change files.
+        assert_eq!(host.calls, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_host_that_cannot_take_the_fingerprint_never_reloads() {
+        let store = store();
+        let mut host = RecordingHost {
+            fingerprint: Some(7),
+            ..RecordingHost::default()
+        };
+        let mut watch = Watch::default();
+        assert_eq!(tick(&normal(), &mut watch, &store, &mut host), Vec::new());
+        host.fingerprint = None;
+        assert_eq!(tick(&normal(), &mut watch, &store, &mut host), Vec::new());
+        host.fingerprint = Some(7);
+        assert_eq!(
+            tick(&normal(), &mut watch, &store, &mut host),
+            Vec::new(),
+            "a failed look does not forget the last one"
+        );
+        let mut never = Watch::default();
+        host.fingerprint = None;
+        assert_eq!(tick(&normal(), &mut never, &store, &mut host), Vec::new());
+        host.fingerprint = Some(1);
+        assert_eq!(
+            tick(&normal(), &mut never, &store, &mut host),
+            Vec::new(),
+            "the first look"
+        );
+    }
+
+    #[test]
+    fn a_change_waits_while_a_picker_an_input_or_the_form_is_open() {
+        let mut store = store();
+        let mut host = RecordingHost {
+            fingerprint: Some(7),
+            ..RecordingHost::default()
+        };
+        let mut watch = Watch::default();
+        let mut model = on_task_two(&mut store, &mut host);
+        assert_eq!(tick(&model, &mut watch, &store, &mut host), Vec::new());
+        // The picker acts on the selection when it commits: a reload that
+        // moved it would send the status to another task.
+        update(&mut model, Msg::BeginStatus);
+        store.set_done(&TaskId::from(2), true).unwrap();
+        host.fingerprint = Some(8);
+        assert_eq!(tick(&model, &mut watch, &store, &mut host), Vec::new());
+        update(&mut model, Msg::Escape);
+        assert_eq!(model.mode, crate::model::Mode::Normal);
+        let msgs = tick(&model, &mut watch, &store, &mut host);
+        assert_eq!(loaded_ids(&msgs), ["1", "2"], "the change waited");
+    }
+
+    #[test]
+    fn a_manual_reload_tells_the_host_the_store_was_opened() {
+        let mut store = store();
+        let mut host = RecordingHost::default();
+        let msgs = dispatch(&Cmd::Refresh, &mut store, &clock(), &mut host);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(loaded_ids(&msgs), ["1", "2"]);
+        assert_eq!(host.calls, vec!["store_open"]);
+        host.answer = Some(Err("plugin git timed out on store-open".into()));
+        let msgs = dispatch(&Cmd::Refresh, &mut store, &clock(), &mut host);
+        assert_eq!(
+            msgs[0],
+            Msg::Failed("plugin git timed out on store-open".into())
+        );
+        assert_eq!(loaded_ids(&msgs), ["1", "2"], "and the tasks still load");
     }
 
     #[test]

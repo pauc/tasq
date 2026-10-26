@@ -96,7 +96,7 @@ fn normal(model: &mut Model, msg: &Msg) -> Vec<Cmd> {
         Msg::ShowDetail => model.show_detail = true,
         Msg::HideDetail => model.show_detail = false,
         Msg::Help => model.mode = Mode::Help,
-        Msg::Reload => return vec![Cmd::Load],
+        Msg::Reload => return vec![Cmd::Refresh],
         Msg::BeginFilter => begin_filter(model),
         Msg::BeginPriority | Msg::BeginDone | Msg::Edit if refuse_done(model) => {}
         Msg::BeginStatus => {
@@ -988,7 +988,7 @@ mod tests {
         assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(3))));
         update(&mut m, Msg::PageUp);
         assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
-        assert_eq!(update(&mut m, Msg::Reload), vec![Cmd::Load]);
+        assert_eq!(update(&mut m, Msg::Reload), vec![Cmd::Refresh]);
         assert!(!m.quit);
         update(&mut m, Msg::Quit);
         assert!(m.quit);
@@ -1014,6 +1014,16 @@ mod tests {
             ],
         );
         m
+    }
+
+    #[test]
+    fn a_reload_keeps_the_selection_and_the_detail_scroll() {
+        let mut m = long_detail();
+        feed(&mut m, [Msg::DetailDown, Msg::DetailDown, Msg::DetailDown]);
+        let tasks = m.tasks.clone();
+        update(&mut m, Msg::Loaded(tasks));
+        assert_eq!(m.selected, Some(Cursor::Task(TaskId::from(1))));
+        assert_eq!(m.detail_scroll, 3);
     }
 
     #[test]

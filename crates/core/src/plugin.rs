@@ -17,7 +17,7 @@ pub const SCHEMA: u32 = 1;
 /// What a plugin is told about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
-    /// A command (or the TUI, at start) opened the store.
+    /// A command (or the TUI, at start and on `r`) opened the store.
     StoreOpen,
 }
 

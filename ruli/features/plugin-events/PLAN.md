@@ -300,11 +300,11 @@ reloads when it changed, keeping the selected task and scroll; `store-open` fire
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready
+**Status:** done
 
-- [ ] A changed fingerprint reloads and keeps the selection by id; an unchanged one does nothing.
-- [ ] An edit made after the reload does not conflict.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] A changed fingerprint reloads and keeps the selection by id; an unchanged one does nothing.
+- [x] An edit made after the reload does not conflict.
+- [x] `mutants-in` the diff: zero missed.
 
 ### PE-007: the docs describe plugins and events
 

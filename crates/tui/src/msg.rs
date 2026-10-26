@@ -94,7 +94,7 @@ pub enum Msg {
     Sync,
     /// `S`: open the source picker.
     BeginSources,
-    /// `r`: reload from the store.
+    /// `r`: reload from the store, telling the host it was opened again.
     Reload,
     /// `?`: toggle the help overlay.
     Help,
@@ -134,6 +134,9 @@ pub enum Msg {
 pub enum Cmd {
     /// Read the open tasks again.
     Load,
+    /// `r`: the host's [`Host::store_open`] (the CLI's `store-open`
+    /// event), then [`Cmd::Load`].
+    Refresh,
     /// `tasq set <id> <status>`.
     SetStatus(TaskId, Status),
     /// `tasq reopen <id> <status>`: the status picker on a done task.
@@ -206,8 +209,9 @@ impl Cmd {
 pub type HostResult = Result<String, String>;
 
 /// The part of the outside world the TUI cannot reach through the
-/// [`tasq_core::store::Store`]: an editor, the launchers, `sync` and the
-/// `[hooks]` that follow a create or a close. The CLI implements it by
+/// [`tasq_core::store::Store`]: an editor, the launchers, `sync`, the
+/// `[hooks]` that follow a create or a close, the plugins told about a
+/// manual reload and a look at the store's files. The CLI implements it by
 /// running itself (and its hooks in-process); tests record the calls.
 pub trait Host {
     /// Opens `file` (the task's file) in the user's editor and waits.
@@ -246,6 +250,16 @@ pub trait Host {
     /// here. Like [`Host::after_done`], `Err` is a warning: the task
     /// exists either way.
     fn after_create(&mut self, task: &Task) -> Result<(), String>;
+
+    /// A fingerprint of the store's files: equal while nothing changed
+    /// them, so the runtime reloads when it differs (another terminal, a
+    /// hand edit, a plugin). `None` when it cannot be taken: no reload.
+    fn fingerprint(&mut self) -> Option<u64>;
+
+    /// Called on a manual reload (the `r` key), before the tasks are read
+    /// again; the CLI tells its plugins `store-open` here. `Err` is a
+    /// warning for the status bar.
+    fn store_open(&mut self) -> Result<(), String>;
 }
 
 /// A [`Host`] that refuses everything, for front ends that only browse.
@@ -284,6 +298,14 @@ impl Host for NoHost {
     fn after_create(&mut self, _task: &Task) -> Result<(), String> {
         Ok(())
     }
+
+    fn fingerprint(&mut self) -> Option<u64> {
+        None
+    }
+
+    fn store_open(&mut self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// A [`Host`] that records what it was asked and answers with canned
@@ -293,12 +315,15 @@ pub struct RecordingHost {
     /// Every call, as `edit <id> <file>`, `launch <id>`, `launch <id>
     /// window` / `launch <id> window no-focus`, `view <id>`, `sync` /
     /// `sync <name>...`,
-    /// `worktree <id> [branch]`, `after_done <id>` or `after_create <id>`.
+    /// `worktree <id> [branch]`, `after_done <id>`, `after_create <id>`
+    /// or `store_open` (`fingerprint` is a look, not recorded).
     pub calls: Vec<String>,
     /// The answer to every call (`Ok` by default: `"ok"`).
     pub answer: Option<HostResult>,
     /// What `worktree` declares (it ignores `answer`).
     pub worktree: Option<Worktree>,
+    /// What `fingerprint` answers.
+    pub fingerprint: Option<u64>,
 }
 
 impl RecordingHost {
@@ -349,6 +374,14 @@ impl Host for RecordingHost {
     fn after_create(&mut self, task: &Task) -> Result<(), String> {
         self.reply(format!("after_create {}", task.id)).map(|_| ())
     }
+
+    fn fingerprint(&mut self) -> Option<u64> {
+        self.fingerprint
+    }
+
+    fn store_open(&mut self) -> Result<(), String> {
+        self.reply("store_open".to_owned()).map(|_| ())
+    }
 }
 
 #[cfg(test)]
@@ -373,6 +406,8 @@ mod tests {
             assert!(!window.pauses_after(), "{window:?}");
         }
         assert!(!Cmd::Load.releases_terminal());
+        assert!(!Cmd::Refresh.releases_terminal());
+        assert!(!Cmd::Refresh.pauses_after());
         let before = tasq_core::edit::Target::Before(TaskId::from(2));
         assert!(!Cmd::Move(id.clone(), before.clone()).releases_terminal());
         assert!(!Cmd::Move(id.clone(), before).pauses_after());
@@ -407,6 +442,9 @@ mod tests {
         );
         assert_eq!(none.sync(&[]).unwrap_err(), "sync is not available here");
         assert_eq!(none.view(&id).unwrap_err(), "viewing is not available here");
+        // Nothing watches or follows the store for a host that only browses.
+        assert_eq!(none.fingerprint(), None);
+        assert_eq!(none.store_open(), Ok(()));
         // Nothing follows a close or a create for a host that only browses.
         assert_eq!(none.after_done(&Task::new(id.clone(), "T")), Ok(()));
         assert_eq!(none.after_create(&Task::new(id.clone(), "T")), Ok(()));
@@ -417,6 +455,10 @@ mod tests {
         assert_eq!(rec.view(&id).unwrap(), "ok");
         assert_eq!(rec.after_done(&Task::new(id.clone(), "T")), Ok(()));
         assert_eq!(rec.after_create(&Task::new(id.clone(), "T")), Ok(()));
+        assert_eq!(rec.fingerprint(), None);
+        rec.fingerprint = Some(3);
+        assert_eq!(rec.fingerprint(), Some(3));
+        assert_eq!(rec.store_open(), Ok(()));
         rec.answer = Some(Err("boom".into()));
         assert_eq!(rec.sync(&[]).unwrap_err(), "boom");
         assert_eq!(
@@ -427,6 +469,7 @@ mod tests {
             rec.after_create(&Task::new(id.clone(), "T")).unwrap_err(),
             "boom"
         );
+        assert_eq!(rec.store_open().unwrap_err(), "boom");
         assert_eq!(
             rec.calls,
             vec![
@@ -435,9 +478,11 @@ mod tests {
                 "view 4",
                 "after_done 4",
                 "after_create 4",
+                "store_open",
                 "sync",
                 "after_done 4",
-                "after_create 4"
+                "after_create 4",
+                "store_open"
             ]
         );
     }
