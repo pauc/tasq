@@ -5215,7 +5215,7 @@ mod plugins {
     #[test]
     fn an_enabled_plugin_missing_from_path_warns_and_fails_doctor() {
         let env = TestEnv::fixture();
-        env.fake_tool("tasq-echo", PROBE);
+        env.fake_tool("tasq-echo", &format!("{PROBE}\nexit 0"));
         env.write_project_config("[plugins]\nenabled = [\"git\", \"echo\"]\n");
         let warning = "tasq: warning: plugin git is enabled but tasq-git is not on PATH\n";
         for args in [&["list"][..], &["log", "1", "a note"], &["store", "info"]] {

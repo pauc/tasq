@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Enabled plugins are told when a command or `tasq ui` opens the store: tasq runs
+  `tasq-<name> hook` with `{"schema": 1, "event": "store-open", "store": {"name",
+  "location"}, "config": {...}}` on stdin (`config` is the plugin's `[plugin.<name>]` table),
+  `TASQ_EVENT=store-open` and the `TASQ_BIN`, `TASQ_PROFILE`, `TASQ_CONFIG` and `TASQ_SET`
+  hooks get. Plugins run one at a time in `enabled` order, with tasq's environment only and in
+  their own process group; one that exits non-zero, or is still running or holding its output
+  open after `plugins.timeout` seconds (default 2, then its process group is killed), is a
+  warning naming the plugin and the event, and the command's exit code is unchanged. What a
+  plugin prints shows at `-v`. A `tasq` run by a plugin during an event (`TASQ_EVENT` set)
+  tells no plugin, so a plugin can read the store through `$TASQ_BIN`.
+  `examples/plugins/tasq-echo` logs every event it gets.
 - Plugins are enabled by name: `[plugins] enabled = ["git"]` lists the `tasq-<name>`
   executables tasq will tell about events (ADR 0030), and `[plugin.<name>]` holds each
   plugin's own settings, loaded from every config layer (`--set plugin.git.interval=30`

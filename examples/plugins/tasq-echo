@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# tasq-echo: a tasq plugin that logs every event it is told about.
+#
+# The fake plugin of the event tests, and the smallest plugin that follows the
+# contract in docs/plugins.md. Put it on PATH and enable it:
+#
+#   [plugins]
+#   enabled = ["echo"]
+#
+# On every event tasq runs `tasq-echo hook` with the event payload on stdin
+# ({"schema": 1, "event": ..., "store": {...}, "config": {...}}) and TASQ_EVENT in
+# the environment. This plugin appends one line per event to TASQ_ECHO_LOG
+# (default ~/tasq-echo.log): the event name, a space, the payload as received.
+# Bash builtins only, so it runs with any PATH.
+set -euo pipefail
+
+if [[ ${1:-} != hook ]]; then
+	echo "usage: tasq-echo hook (run by tasq on events, payload on stdin)" >&2
+	exit 2
+fi
+log=${TASQ_ECHO_LOG:-$HOME/tasq-echo.log}
+payload=
+IFS= read -r -d '' payload || true
+printf '%s %s\n' "${TASQ_EVENT:-}" "$payload" >>"$log"

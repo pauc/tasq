@@ -13,6 +13,9 @@
 //! - **Enabled plugins.** `[plugins] enabled` names the plugins told about
 //!   events (ADR 0030); one that is not on `PATH` is a warning on every
 //!   command that opens the store and a `doctor` failure ([`enabled`]).
+//! - **Events.** Each installed enabled plugin runs as `tasq-<name> hook`
+//!   with the event payload on stdin ([`fire`]); a failure or a timeout is
+//!   a warning.
 //!
 //! Plugins and hooks call back into `tasq` through [`ENV_BIN`] and see the
 //! same configuration because [`passthrough_env`] forwards `--profile`,
@@ -21,7 +24,9 @@
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::time::{Duration, Instant};
 
 use clap::CommandFactory;
 use serde::Serialize;
@@ -30,6 +35,7 @@ use tasq_core::config::{ENV_CONFIG, ENV_PROFILE, ENV_SET, Loaded, expand_tilde};
 use tasq_core::doctor::Check;
 use tasq_core::launch::ENV_TASK_ID;
 use tasq_core::model::Task;
+use tasq_core::plugin::{Event, Payload, StoreRef};
 
 use crate::app::App;
 use crate::cli::Cli;
@@ -41,6 +47,11 @@ use crate::json;
 pub const ENV_BIN: &str = "TASQ_BIN";
 /// Environment variable naming the hook being run (`post-create`, ...).
 pub const ENV_HOOK: &str = "TASQ_HOOK";
+/// Environment variable naming the event a plugin is told about
+/// (`store-open`, ...).
+pub const ENV_EVENT: &str = "TASQ_EVENT";
+/// The argument a plugin is run with for an event: `tasq-<name> hook`.
+pub const HOOK_ARG: &str = "hook";
 /// Prefix of plugin executables.
 pub const PREFIX: &str = "tasq-";
 
@@ -421,22 +432,12 @@ pub fn run_hooks_with(
     }
     let document = serde_json::to_string(&hook_document(hook, task, app.worktrees(), extra))
         .map_err(|e| CliError::Internal(anyhow::anyhow!("serialising hook document: {e}")))?;
-    let mut vars = passthrough_env(
-        current_bin().as_deref(),
-        app.loaded.profile.as_deref(),
-        app.global.config.as_deref(),
-        &app.global
-            .set
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>(),
-        &|name| app.opts.env.get(name).cloned(),
-    );
+    let mut vars = app_passthrough_env(app);
     vars.push((ENV_HOOK.to_owned(), hook.name().to_owned()));
     vars.push((ENV_TASK_ID.to_owned(), task.id.to_string()));
     for line in commands {
         let argv = hook_argv(line, app.opts.home.as_deref())?;
-        match run_hook_command(&argv, &document, &vars) {
+        match run_command(&argv, &document, &vars, None) {
             Ok(output) => {
                 if !output.trim().is_empty() {
                     report(HookEvent::Output(format!(
@@ -461,6 +462,82 @@ pub fn run_hooks_with(
     Ok(())
 }
 
+/// [`passthrough_env`] for `app`'s flags and environment.
+fn app_passthrough_env(app: &App) -> Vec<(String, String)> {
+    passthrough_env(
+        current_bin().as_deref(),
+        app.loaded.profile.as_deref(),
+        app.global.config.as_deref(),
+        &app.global
+            .set
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>(),
+        &|name| app.opts.env.get(name).cloned(),
+    )
+}
+
+/// Tells every installed enabled plugin in `plugins` about `event`, one
+/// at a time in that order: `tasq-<name> hook` with the payload on stdin,
+/// `app`'s environment (and nothing else) plus [`passthrough_env`] and
+/// [`ENV_EVENT`], cut off with its process group once `plugins.timeout`
+/// seconds have passed and its output is still open. What a plugin prints
+/// is `report`ed as output; a plugin that fails, cannot start or times out
+/// is a warning naming it and the event, never an error. A plugin missing
+/// from `PATH` is skipped (its warning is [`Enabled::missing`]'s).
+///
+/// A `tasq` run while [`ENV_EVENT`] is set (by a plugin, during an event)
+/// tells no plugin: one that reads the store through `$TASQ_BIN` would
+/// otherwise wake itself without end.
+pub fn fire(
+    app: &App,
+    plugins: &[Enabled],
+    event: Event,
+    report: &mut dyn FnMut(HookEvent),
+) -> Result<()> {
+    if app.opts.env.get(ENV_EVENT).is_some_and(|v| !v.is_empty()) {
+        return Ok(());
+    }
+    let installed: Vec<(&str, &Path)> = plugins
+        .iter()
+        .filter_map(|p| Some((p.name.as_str(), p.path.as_deref()?)))
+        .collect();
+    if installed.is_empty() {
+        return Ok(());
+    }
+    let location = app.store_dir()?;
+    let store = StoreRef {
+        name: &app.config().store.name,
+        location: &location,
+    };
+    let mut vars = app.env_vec();
+    vars.extend(app_passthrough_env(app));
+    vars.push((ENV_EVENT.to_owned(), event.name().to_owned()));
+    let timeout = Duration::from_secs(app.config().plugins.timeout);
+    for (name, path) in installed {
+        let payload = Payload::new(event, store, app.config().plugin.get(name));
+        let outcome = serde_json::to_string(&payload)
+            .map_err(|e| format!("could not write the payload: {e}"))
+            .and_then(|document| {
+                let argv = [path.display().to_string(), HOOK_ARG.to_owned()];
+                run_command(&argv, &document, &vars, Some(timeout))
+            });
+        match outcome {
+            Ok(output) if output.trim().is_empty() => {}
+            Ok(output) => report(HookEvent::Output(format!(
+                "plugin {name}: {}: {}",
+                event.name(),
+                output.trim()
+            ))),
+            Err(message) => report(HookEvent::Warning(format!(
+                "plugin {name}: {} event failed: {message}",
+                event.name()
+            ))),
+        }
+    }
+    Ok(())
+}
+
 /// Splits a hook command line into argv (no shell) and expands `~` in the
 /// program.
 pub fn hook_argv(line: &str, home: Option<&Path>) -> Result<Vec<String>> {
@@ -475,15 +552,20 @@ pub fn hook_argv(line: &str, home: Option<&Path>) -> Result<Vec<String>> {
     }
 }
 
-/// Runs `argv` with `input` on stdin and `vars` added to the inherited
-/// environment. `Ok` carries stdout; `Err` carries stderr (else stdout)
-/// trimmed, or the OS error when the program could not start.
+/// Runs `argv` with `input` on stdin. Without a `timeout` (hooks), the
+/// child inherits the environment plus `vars` and is waited for. With one
+/// (plugin events), its environment is `vars` alone, it leads its own
+/// process group, and the group is killed if the child is still running,
+/// or its output still open, once `timeout` has passed. `Ok` carries
+/// stdout; `Err` carries stderr (else stdout) trimmed, the OS error when
+/// the program could not start, or the timeout.
 ///
 /// Not unit-tested: nothing to assert without a process.
-fn run_hook_command(
+fn run_command(
     argv: &[String],
     input: &str,
     vars: &[(String, String)],
+    timeout: Option<Duration>,
 ) -> std::result::Result<String, String> {
     let (program, rest) = argv.split_first().ok_or("empty command")?;
     let mut command = Command::new(program);
@@ -492,33 +574,125 @@ fn run_hook_command(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if timeout.is_some() {
+        command.env_clear();
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+    }
     for (k, v) in vars {
         command.env(k, v);
     }
     let mut child = command
         .spawn()
         .map_err(|e| format!("could not run {program}: {e}"))?;
+    // Threads, so that a child that neither reads its stdin nor drains its
+    // output cannot block us past the timeout.
     if let Some(mut stdin) = child.stdin.take() {
-        // The hook may exit without reading; that is its business.
-        let _ = stdin.write_all(input.as_bytes());
+        let input = input.to_owned();
+        // The child may exit without reading; that is its business.
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(input.as_bytes());
+        });
     }
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    if output.status.success() {
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    // A timeout too large for the clock is no deadline.
+    let deadline = timeout.and_then(|limit| Instant::now().checked_add(limit));
+    let timed_out = |child: &mut Child| {
+        kill_group(child);
+        let _ = child.wait();
+        // The readers are left behind: something outside the group may
+        // still hold the pipes open.
+        format!("timed out after {}s", timeout.unwrap_or_default().as_secs())
+    };
+    let status = match deadline {
+        None => child.wait().map_err(|e| e.to_string())?,
+        Some(deadline) => {
+            let Some(status) = wait_until(&mut child, deadline).map_err(|e| e.to_string())? else {
+                return Err(timed_out(&mut child));
+            };
+            status
+        }
+    };
+    // A background job that inherited the pipes keeps them open after the
+    // child exits; the event is not over until they close.
+    let (Some(stdout), Some(stderr)) = (receive(&stdout, deadline), receive(&stderr, deadline))
+    else {
+        return Err(timed_out(&mut child));
+    };
+    if status.success() {
         return Ok(stdout);
     }
-    let stderr = String::from_utf8_lossy(&output.stderr);
     let message = if stderr.trim().is_empty() {
         stdout.trim().to_owned()
     } else {
         stderr.trim().to_owned()
     };
-    Err(match output.status.code() {
+    Err(match status.code() {
         Some(code) if message.is_empty() => format!("exit status {code}"),
         Some(code) => format!("exit status {code}: {message}"),
         None if message.is_empty() => "killed by a signal".to_owned(),
         None => format!("killed by a signal: {message}"),
     })
+}
+
+/// Reads `pipe` to the end on a thread; the text arrives on the channel.
+fn drain<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> Receiver<String> {
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        let _ = send.send(String::from_utf8_lossy(&bytes).into_owned());
+    });
+    receive
+}
+
+/// What [`drain`] read, waiting until `deadline` at most; `None` when the
+/// pipe is still open then.
+fn receive(text: &Receiver<String>, deadline: Option<Instant>) -> Option<String> {
+    match deadline {
+        None => Some(text.recv().unwrap_or_default()),
+        Some(deadline) => {
+            match text.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(text) => Some(text),
+                Err(RecvTimeoutError::Disconnected) => Some(String::new()),
+                Err(RecvTimeoutError::Timeout) => None,
+            }
+        }
+    }
+}
+
+/// Waits for `child` to exit until `deadline`; `None` when it is still
+/// running then.
+// Reason: polls a live process; a mutant that stops waiting hangs the tests.
+#[mutants::skip]
+fn wait_until(child: &mut Child, deadline: Instant) -> std::io::Result<Option<ExitStatus>> {
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Kills `child` and the rest of the process group it leads.
+// Reason: wraps kill(2); a mutant that kills nothing hangs the tests.
+#[mutants::skip]
+fn kill_group(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        use rustix::process::{Pid, Signal, kill_process_group};
+        let _ = kill_process_group(Pid::from_child(child), Signal::KILL);
+    }
+    let _ = child.kill();
 }
 
 #[cfg(test)]

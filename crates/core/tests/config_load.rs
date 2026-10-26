@@ -218,6 +218,7 @@ pre-launch = []
 
 [plugins]
 enabled = []
+timeout = 2
 
 [plugin]
 
@@ -472,6 +473,7 @@ fn plugins_are_enabled_by_name_and_their_tables_load_unchecked() {
     let mut opts = sb.opts();
     let c = Config::load(&opts).unwrap().config;
     assert_eq!(c.plugins.enabled, vec!["git".to_owned()]);
+    assert_eq!(c.plugins.timeout, 2, "the default");
     let git = &c.plugin["git"];
     assert_eq!(
         git["interval"].as_integer(),
@@ -493,12 +495,14 @@ fn plugins_are_enabled_by_name_and_their_tables_load_unchecked() {
     )]);
     opts.overrides = vec![
         ("plugins.enabled".to_owned(), "git, echo".to_owned()),
+        ("plugins.timeout".to_owned(), "7".to_owned()),
         ("plugin.git.interval".to_owned(), "5".to_owned()),
         ("plugin.git.name".to_owned(), "a b".to_owned()),
         ("plugin.git.ratio".to_owned(), "2".to_owned()),
     ];
     let c = Config::load(&opts).unwrap().config;
     assert_eq!(c.plugins.enabled, vec!["git".to_owned(), "echo".to_owned()]);
+    assert_eq!(c.plugins.timeout, 7);
     assert_eq!(c.plugin["git"]["interval"].as_integer(), Some(5));
     assert_eq!(c.plugin["git"]["name"].as_str(), Some("a b"));
     assert_eq!(c.plugin["git"]["ratio"].as_float(), Some(2.0));

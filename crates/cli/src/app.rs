@@ -8,6 +8,7 @@ use tasq_core::clock::{Clock, FixedClock, SystemClock, When, parse_timestamp};
 use tasq_core::config::{Config, LoadOptions, Loaded};
 use tasq_core::launch::{ENV_DATA_DIR, ENV_STORE_NAME};
 use tasq_core::model::{TaskId, Workflow};
+use tasq_core::plugin::Event;
 use tasq_core::store::Store;
 use tasq_store::TasqStore;
 use tasq_worktree::Git;
@@ -16,7 +17,7 @@ use crate::cli::{Cli, Command, EditCommand, GlobalArgs, ListArgs};
 use crate::commands;
 use crate::error::{CliError, Result};
 use crate::output::Output;
-use crate::plugins::Enabled;
+use crate::plugins::{Enabled, HookEvent};
 
 /// Environment variable fixing "now" (`YYYY-MM-DD HH:MM`) for every
 /// timestamp `tasq` writes; for tests and reproducible demos.
@@ -332,12 +333,17 @@ impl App {
     /// one place that knows which implementation backs the commands (the
     /// tasq store at [`App::store_dir`], ADR-0026). Warnings raised while
     /// opening go to stderr, then one per enabled plugin that is not on
-    /// `PATH`.
+    /// `PATH`; then the installed plugins are told `store-open`.
     pub fn open_store(&self) -> Result<Box<dyn Store>> {
         let store = self.open_store_quietly()?;
-        for missing in self.plugins().iter().filter_map(Enabled::missing) {
+        let plugins = self.plugins();
+        for missing in plugins.iter().filter_map(Enabled::missing) {
             self.out.warn(&missing);
         }
+        crate::plugins::fire(self, &plugins, Event::StoreOpen, &mut |event| match event {
+            HookEvent::Output(text) => self.out.verbose(&text),
+            HookEvent::Warning(text) => self.out.warn(&text),
+        })?;
         Ok(store)
     }
 

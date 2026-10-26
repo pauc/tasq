@@ -45,7 +45,7 @@ mutants = "0.0.4"
 # `config show` walks the effective config as a TOML table to annotate each key.
 toml = "0.9"
 # The terminal size of stdout (TIOCGWINSZ) without unsafe code.
-rustix = { version = "1", features = ["termios"] }
+rustix = { version = "1", features = ["process", "termios"] }
 # Column widths of titles and chips when `list` wraps rows to the terminal.
 unicode-width = "0.2"
 # The file `desc --edit` hands to the editor.

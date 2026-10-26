@@ -241,12 +241,12 @@ at TUI start, with `examples/plugins/tasq-echo` as the fake plugin.
 
 **Blocked by:** PE-001.
 
-**Status:** ready
+**Status:** done
 
-- [ ] One `store-open` per command that opens the store, none for commands that do not.
-- [ ] Payload snapshot: schema, event, store name and location, config.
-- [ ] Timeout and non-zero exit are warnings naming the plugin and event; the command's exit code is unchanged.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] One `store-open` per command that opens the store, none for commands that do not.
+- [x] Payload snapshot: schema, event, store name and location, config.
+- [x] Timeout and non-zero exit are warnings naming the plugin and event; the command's exit code is unchanged.
+- [x] `mutants-in` the diff: zero missed.
 
 ### PE-003: the `post-write` event
 

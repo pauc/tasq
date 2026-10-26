@@ -59,6 +59,7 @@ pre-launch = []                              # defaults
 
 [plugins]
 enabled = []                                 # defaults
+timeout = 2                                  # defaults
 
 [worktree]
 base = "origin/HEAD"                         # defaults

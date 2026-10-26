@@ -88,6 +88,7 @@
 //!
 //! [plugins]
 //! enabled = []
+//! timeout = 2
 //!
 //! [plugin]
 //!
@@ -876,12 +877,24 @@ impl HooksConfig {
 }
 
 /// `[plugins]`: the plugins tasq runs on events (ADR 0030).
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PluginsConfig {
     /// Plugin names, each run as `tasq-<name>` from `PATH`, in this order.
     /// A name is a command name: not empty, no `/`. Default: none.
     pub enabled: Vec<String>,
+    /// Seconds a plugin may take over one event before it is killed and
+    /// reported as a warning. Default: 2.
+    pub timeout: u64,
+}
+
+impl Default for PluginsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: Vec::new(),
+            timeout: 2,
+        }
+    }
 }
 
 /// Summary strategies.

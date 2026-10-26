@@ -1,0 +1,5 @@
+---
+source: crates/cli/tests/events.rs
+expression: "env.normalize(&std::fs::read_to_string(&log).unwrap())"
+---
+store-open {"schema":1,"event":"store-open","store":{"name":"work","location":"[ROOT]/home/.local/share/tasq/stores/work"},"config":{"deep":{"list":[1,"two"]},"interval":5,"since":"2026-10-26"}}

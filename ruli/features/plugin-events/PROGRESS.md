@@ -7,7 +7,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
 | Id | Title | Status | Notes |
 |---|---|---|---|
 | PE-001 | Plugins are enabled by name | done | f90c7da. Mutants on the diff with `--no-config`: 0 missed (30 mutants plus a re-run of `config/load.rs` after the `Float` arm fix). |
-| PE-002 | The `store-open` event | ready | |
+| PE-002 | The `store-open` event | done | SHA. Mutants on the diff with `--no-config`: 0 missed (27 mutants; `wait_until` and `kill_group` skipped as process I/O). |
 | PE-003 | The `post-write` event | ready | |
 | PE-004 | Lasting plugin warnings and the `doctor` event | ready | |
 | PE-005 | `tasq store lock -- <cmd>` | ready | |
@@ -29,6 +29,20 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 59. ADR: 0030.
   the template, so `coerce` types it from the layers merged so far, and as a string when no
   layer set it. Parsing it as TOML first (the first cut) turned `1.0` or `2026-10-26` into a
   float or a datetime behind the plugin's back.
+- 2026-10-26 (PE-002): `--in-diff <(git diff HEAD)` sees only tracked files, so a new module
+  or test file is silently left out. `git add -N` the new files first.
+- 2026-10-26 (PE-002): an emptied kill or wait function shows as `TIMEOUT`, not `MISSED`: the
+  plugin it should have stopped keeps the test waiting. That is what earns those two their
+  `#[mutants::skip]`.
+- 2026-10-26 (PE-002): a plugin that calls `$TASQ_BIN list` during `store-open` makes that
+  `tasq` fire `store-open` again, without end (each level killed at the timeout, its children
+  left running). A `tasq` started with `TASQ_EVENT` set now fires no event. A plugin's detached
+  job inherits the variable too, so its own writes will not wake it either (PE-003).
+- 2026-10-26 (PE-002): killing the plugin is not enough at the timeout. A background job
+  (`git fetch &`) keeps the stdout pipe open after the plugin exits, so reading the output
+  blocked past the timeout, and `kill` on the plugin left its children running. Plugins now
+  run in their own process group (`process_group(0)`), the output is read on threads up to the
+  same deadline, and the whole group is killed.
 
 ## Blockers
 
@@ -51,3 +65,21 @@ None.
 - PE-001: a built-in name in `plugins.enabled` fails every command, `tasq config show`
   included, like a bad `store.name` does; the error names the file, so it is fixed by hand.
   Left as is (review finding, not changed).
+- PE-002: the event tests are in `crates/cli/tests/events.rs`.
+- PE-002: `doctor` fires no `store-open`. It opens the store through `open_store_quietly`;
+  PE-004 gives it its own `doctor` event.
+- PE-002: `plugins.timeout` is whole seconds (`u64`, default 2). There is no
+  `TASQ_PLUGINS_TIMEOUT`: the env map is an explicit list, and `--set plugins.timeout=` covers
+  it. A value too large for the clock waits without limit; `0` kills every plugin at once.
+- PE-002: plugins differ from `[hooks]` in how they run (hooks unchanged): environment cleared
+  to tasq's own plus the passthrough variables and `TASQ_EVENT`; own process group, killed as a
+  group; the event lasts until the plugin's output closes, so a background job holding it is a
+  timeout. A payload that cannot be serialised (a non-UTF-8 store path) is a warning for that
+  plugin, not an error.
+- PE-002: `store-open` at TUI start goes through `App::open_store` like every command, but no
+  test covers it: `tasq ui` refuses to start without a terminal, before it opens the store.
+- PE-002: two `#[mutants::skip]`s where the plan expected at most one: `wait_until` (polls the
+  child) and `kill_group` (`kill(2)`). The spawn function itself needs none.
+- PE-002: review findings left as is: an env or `--set` value for a `plugin.<name>` key whose
+  file value is a datetime or a non-string array becomes a string (PE-001 coercion); a hook
+  that never reads its stdin leaves the writer thread blocked (before, it blocked tasq itself).

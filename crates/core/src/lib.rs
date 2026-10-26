@@ -35,6 +35,7 @@ pub mod edit;
 pub mod format;
 pub mod launch;
 pub mod model;
+pub mod plugin;
 pub mod query;
 pub mod report;
 pub mod source;
