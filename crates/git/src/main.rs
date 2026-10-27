@@ -1,14 +1,17 @@
 //! `tasq-git` binary: the plugin tasq runs as `tasq-git hook` for every
 //! event, and `tasq git ...` runs for its commands.
 
+use std::ffi::OsStr;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::SystemTime;
 
 use clap::{Args, Parser, Subcommand};
 use tasq_git::git::Git;
 use tasq_git::init::{self, Identity, InitError, Options};
-use tasq_git::process::without_git_vars;
+use tasq_git::job;
+use tasq_git::process::{background_env, spawn_detached, without_git_vars};
 use tasq_git::tasq::{self, Tasq};
 
 /// Store sync for tasq: commits, pushes and pulls a store's task files.
@@ -25,6 +28,13 @@ enum Command {
     Hook,
     /// Make the store a git repository, and push it to <URL> if given.
     Init(InitArgs),
+    /// Commit the store's writes (detached by `hook`).
+    #[command(hide = true)]
+    Job {
+        /// The store directory.
+        #[arg(long)]
+        store: PathBuf,
+    },
 }
 
 #[derive(Args)]
@@ -53,6 +63,7 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Hook => hook(),
         Command::Init(args) => report(run_init(args)),
+        Command::Job { store } => report(run_job(&store)),
     }
 }
 
@@ -71,14 +82,30 @@ fn report(result: Result<String, String>) -> ExitCode {
     }
 }
 
-fn run_init(args: InitArgs) -> Result<String, String> {
+/// `tasq` as the command that ran the plugin resolves it: `TASQ_BIN`, this
+/// environment and working directory.
+fn tasq_here() -> Result<Tasq, String> {
     let cwd = std::env::current_dir()
         .map_err(|err| format!("could not read the working directory: {err}"))?;
-    let tasq = Tasq {
+    Ok(Tasq {
         bin: tasq::bin(std::env::var_os("TASQ_BIN").map(PathBuf::from).as_deref()),
         env: std::env::vars_os().collect(),
         cwd,
+    })
+}
+
+fn run_job(store: &Path) -> Result<String, String> {
+    let tasq = tasq_here()?;
+    let git = Git {
+        env: background_env(std::env::vars_os()),
     };
+    job::run(&git, &tasq, store)
+        .map(|()| String::new())
+        .map_err(|err| err.to_string())
+}
+
+fn run_init(args: InitArgs) -> Result<String, String> {
+    let tasq = tasq_here()?;
     let git = Git {
         env: without_git_vars(std::env::vars_os()),
     };
@@ -107,7 +134,9 @@ fn hook() -> ExitCode {
     let result = std::io::stdin()
         .read_to_string(&mut stdin)
         .map_err(|err| format!("could not read the event payload: {err}"))
-        .and_then(|_| tasq_git::hook::run(&stdin).map_err(|err| err.to_string()));
+        .and_then(|_| {
+            tasq_git::hook::run(&stdin, SystemTime::now(), spawn_job).map_err(|err| err.to_string())
+        });
     match result {
         Ok(out) => {
             // tasq reads stdout until it closes; nothing to do if it went away.
@@ -119,4 +148,13 @@ fn hook() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Detaches `tasq-git job --store <store>`, this very binary.
+fn spawn_job(store: &Path) -> std::io::Result<()> {
+    let exe = std::env::current_exe()?;
+    spawn_detached(
+        &exe,
+        &[OsStr::new("job"), OsStr::new("--store"), store.as_os_str()],
+    )
 }

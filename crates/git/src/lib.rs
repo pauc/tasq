@@ -5,6 +5,9 @@
 //! `docs/plugins.md` on stdin. A store that is not a repository is left
 //! alone: its events do nothing and `doctor` answers that sync is off.
 //!
+//! For a store that is, `post-write` detaches `tasq-git job`, which
+//! commits the task files in the background (`job`, `state`).
+//!
 //! `tasq git init` (run by tasq's dispatch as `tasq-git init`) makes the
 //! store a repository and, given a URL, pushes it to a branch named after
 //! the store.
@@ -17,8 +20,10 @@
 pub mod git;
 pub mod hook;
 pub mod init;
+pub mod job;
 pub mod payload;
 pub mod process;
+pub mod state;
 pub mod tasq;
 
 pub use self::payload::{Payload, PayloadError};

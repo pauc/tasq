@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL, it pushes the branch there (an empty remote, or one without that branch) and refuses a
   branch that already has history, before touching the store. A failure after `git init`
   removes the new `.git`.
+- With `tasq-git` enabled, every command that writes to a store that is a git repository is
+  committed in the background: `post-write` records the writes and detaches `tasq-git job`,
+  which commits the task files only (never `.tasq/` or other files) with the subject
+  `<command> <ids>: <title of the first id>` (for example `log 57: Git sync as an opt-in
+  feature for tasq stores`) and, when several writes are batched, one body line each. One job
+  runs per store (`.tasq/plugins/git/job.lock`, taken over after two minutes); a write made
+  while it runs is committed before it exits. The job ignores exported `GIT_*` variables and
+  cannot prompt. A failed commit is the lasting warning `commit failed: <git's message>`,
+  cleared by the next commit.
 - `docs/plugins.md` describes the plugin extension points normatively (ADR 0030): enabling a
   plugin, the events and every payload with an example, the plugin's process (arguments,
   environment, timeout, exit codes), lasting warnings, doctor checks, `tasq store lock` and

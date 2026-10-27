@@ -1,6 +1,6 @@
-//! What the plugin asks `tasq`: the store (`tasq store info --json`) and
-//! its own `[plugin.git]` table (`tasq config show --json`), both as
-//! `docs/json.md` describes them.
+//! What the plugin asks `tasq`: the store (`tasq store info --json`), its
+//! own `[plugin.git]` table (`tasq config show --json`) and a task's title
+//! (`tasq view <id> --json`), as `docs/json.md` describes them.
 
 use std::path::{Path, PathBuf};
 
@@ -67,6 +67,16 @@ struct Value {
 }
 
 #[derive(Deserialize)]
+struct View {
+    task: Title,
+}
+
+#[derive(Deserialize)]
+struct Title {
+    title: String,
+}
+
+#[derive(Deserialize)]
 struct ConfigShow {
     config: Config,
 }
@@ -94,6 +104,12 @@ impl Tasq {
             Some(serde_json::Value::Object(table)) => table.clone(),
             _ => serde_json::Map::new(),
         })
+    }
+
+    /// The title of task `id`.
+    pub fn title(&self, id: &str) -> Result<String, TasqError> {
+        let view: View = self.ask(&["view", id, "--json"])?;
+        Ok(view.task.title)
     }
 
     fn ask<T: serde::de::DeserializeOwned>(&self, args: &[&str]) -> Result<T, TasqError> {

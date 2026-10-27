@@ -107,3 +107,37 @@ fn git_init_makes_the_fixture_store_a_repository() {
         "ssh -i '/keys/me' -o IdentitiesOnly=yes\n"
     );
 }
+
+#[test]
+fn a_write_is_committed_in_the_background() {
+    let env = TestEnv::fixture();
+    if !enable_tasq_git(&env) {
+        return;
+    }
+    let out = env.tasq().args(["git", "init"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let out = env.tasq().args(["log", "3", "a note"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stderr(&out), "");
+
+    let store = env.store();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let subject = env.git(&store, &["log", "-1", "--format=%s"]);
+        if subject == "log 3: Answer the support ticket\n" {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no commit for the write; last subject: {subject}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(
+        env.git(&store, &["show", "--name-only", "--format=", "HEAD"]),
+        format!(
+            "{}\n",
+            env.file_of(3).file_name().unwrap().to_string_lossy()
+        )
+    );
+}

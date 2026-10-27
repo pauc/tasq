@@ -16,6 +16,19 @@ pub struct Payload {
     pub event: String,
     /// The store the event is about.
     pub store: Store,
+    /// `post-write` only: the command that wrote.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// `post-write` only: the tasks it wrote.
+    #[serde(default)]
+    pub writes: Option<Vec<Write>>,
+}
+
+/// One entry of a `post-write` payload's `writes`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Write {
+    /// The task id, as a string.
+    pub id: String,
 }
 
 /// The `store` object of a payload.

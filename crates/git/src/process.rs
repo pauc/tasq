@@ -1,6 +1,6 @@
 //! Running a program with an injected environment.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Command;
 
@@ -71,9 +71,77 @@ pub fn without_git_vars(env: impl IntoIterator<Item = (OsString, OsString)>) -> 
         .collect()
 }
 
+/// What the background job runs `git` with: only `PATH`, `HOME` and
+/// `SSH_AUTH_SOCK` of `env`, and the settings that make any prompt fail
+/// instead of waiting for a terminal nobody watches. No `GIT_SSH_COMMAND`,
+/// so the repository's `core.sshCommand` applies.
+pub fn background_env(env: impl IntoIterator<Item = (OsString, OsString)>) -> Env {
+    let mut out: Env = env
+        .into_iter()
+        .filter(|(key, _)| ["PATH", "HOME", "SSH_AUTH_SOCK"].contains(&key.to_str().unwrap_or("")))
+        .collect();
+    for (key, value) in [
+        ("GIT_TERMINAL_PROMPT", "0"),
+        ("SSH_ASKPASS_REQUIRE", "never"),
+        ("LANG", "C"),
+    ] {
+        out.push((key.into(), value.into()));
+    }
+    out
+}
+
+/// Starts `program` with `args`, detached: its own process group, so that
+/// tasq ending the plugin's group (a timeout, a Ctrl-C) leaves it running,
+/// and every stream on `/dev/null`, so that tasq does not wait for it.
+/// The environment and working directory are this process's.
+
+// Reason: wraps `std::process::Command::spawn`; the detach is tested
+// through the hook (`tests/job.rs`).
+#[mutants::skip]
+pub fn spawn_detached(program: &Path, args: &[&OsStr]) -> std::io::Result<()> {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map(drop)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_background_env_keeps_three_variables_and_forbids_prompts() {
+        let parent = [
+            ("PATH", "/bin"),
+            ("HOME", "/home/me"),
+            ("SSH_AUTH_SOCK", "/run/agent"),
+            ("GIT_AUTHOR_NAME", "Work"),
+            ("GIT_SSH_COMMAND", "ssh -i work"),
+            ("LANG", "nl_BE.UTF-8"),
+            ("TASQ_BIN", "/bin/tasq"),
+        ]
+        .map(|(k, v)| (OsString::from(k), OsString::from(v)));
+        let env: Vec<(String, String)> = background_env(parent)
+            .into_iter()
+            .map(|(k, v)| (k.into_string().unwrap(), v.into_string().unwrap()))
+            .collect();
+        let expected = [
+            ("PATH", "/bin"),
+            ("HOME", "/home/me"),
+            ("SSH_AUTH_SOCK", "/run/agent"),
+            ("GIT_TERMINAL_PROMPT", "0"),
+            ("SSH_ASKPASS_REQUIRE", "never"),
+            ("LANG", "C"),
+        ]
+        .map(|(k, v)| (k.to_owned(), v.to_owned()));
+        assert_eq!(env, expected);
+    }
 
     #[test]
     fn the_message_prefers_stderr() {
