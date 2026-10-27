@@ -70,3 +70,40 @@ fn commands_on_a_plain_store_are_unchanged() {
         "the plugin kept state for a plain store"
     );
 }
+
+#[test]
+fn git_init_makes_the_fixture_store_a_repository() {
+    let env = TestEnv::fixture();
+    if !enable_tasq_git(&env) {
+        return;
+    }
+    env.write_global_config("[plugin.git]\nname = \"Me Personal\"\nssh_key = \"/keys/me\"\n");
+    let out = env
+        .tasq()
+        .args(["git", "init", "--email", "me@example.invalid"])
+        .output()
+        .unwrap();
+    assert_eq!(stderr(&out), "");
+    assert!(out.status.success());
+    assert_eq!(
+        env.normalize(&stdout(&out)),
+        "initialized [ROOT]/home/.local/share/tasq/stores/default as a git repository on \
+         branch default: 5 task files committed\n"
+    );
+    let store = env.store();
+    let files = env.git(&store, &["ls-tree", "-r", "--name-only", "HEAD"]);
+    let expected: Vec<String> = env
+        .task_files()
+        .iter()
+        .map(|f| f.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(files.lines().collect::<Vec<_>>(), expected);
+    assert_eq!(
+        env.git(&store, &["log", "--format=%an <%ae>"]),
+        "Me Personal <me@example.invalid>\n"
+    );
+    assert_eq!(
+        env.git(&store, &["config", "--local", "core.sshCommand"]),
+        "ssh -i '/keys/me' -o IdentitiesOnly=yes\n"
+    );
+}

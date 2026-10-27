@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   git repository alone (`store-open` and `post-write` do nothing) and answers `tasq doctor`
   with `OK git/sync store sync off: <store> is not a git repository`. A payload with a schema
   other than 1 is a warning naming it.
+- `tasq git init [<url>] [--branch <b>] [--name <n>] [--email <e>] [--ssh-key <path>]` makes
+  the store a git repository whose first commit holds exactly its task files (`.tasq/`, dot
+  files and anything else in the directory stay out), on a branch named after the store. The
+  identity is written into the repository's own config (`user.name`, `user.email`,
+  `core.sshCommand = ssh -i '<key>' -o IdentitiesOnly=yes`), each flag defaulting from
+  `[plugin.git] name`, `email`, `ssh_key`; exported `GIT_*` variables are ignored. Given a
+  URL, it pushes the branch there (an empty remote, or one without that branch) and refuses a
+  branch that already has history, before touching the store. A failure after `git init`
+  removes the new `.git`.
 - `docs/plugins.md` describes the plugin extension points normatively (ADR 0030): enabling a
   plugin, the events and every payload with an example, the plugin's process (arguments,
   environment, timeout, exit codes), lasting warnings, doctor checks, `tasq store lock` and
