@@ -11,7 +11,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
 | GS-002 | `tasq git init` with identity | done | 2c07c38. Mutants with `--no-config` on `crates/git/src`: 0 missed (50: 43 caught, 7 unviable); `--in-diff` on the whole diff: 0 missed (37: 31 caught, 6 unviable). |
 | GS-003 | Writes are committed in the background | done | df8198e. Mutants with `--no-config` on `crates/git/src`: 0 missed (121: 103 caught, 15 unviable, 3 timeouts); `--in-diff` on the whole diff: 0 missed (77: 66 caught, 8 unviable, 3 timeouts). The timeouts are mutants that make the job loop forever (`pending` never cleared or always there). |
 | GS-004 | Push, fetch and rebase in the background | done | b61d272. Mutants with `--no-config` on `crates/git/src`: 0 missed (158: 139 caught, 16 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the whole diff: 0 missed (52: 50 caught, 2 unviable). A first run left 2 missed (the "still behind" guard before the push); the late-write test now has a commit of its own on B. |
-| GS-005 | Conflicts are aborted and reported | blocked | |
+| GS-005 | Conflicts are aborted and reported | done | d6671fc. Mutants with `--no-config` on `crates/git/src`: 0 missed (174: 154 caught, 17 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the ticket's diff: 0 missed (27: 26 caught, 1 unviable). |
 | GS-006 | Duplicate ids are explained | blocked | |
 | GS-007 | `tasq git sync`, `tasq git clone` and the doctor checks | blocked | |
 | GS-008 | The docs describe store sync | blocked | |
@@ -90,6 +90,20 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
   warning; a conflict leaves the rebase in progress, which `@{upstream}` and the commit round
   do not expect. The skip on uncommitted changes is not a failure and must not be aborted. For
   GS-007: `last-fetch` is the last look at the remote, failed or not (Deviations).
+- 2026-10-27 (GS-005): the abort must happen inside `tasq-git rebase`, under the store lock,
+  and the conflicting files must be read before it: `git diff --name-only --diff-filter=U`
+  lists them only while the rebase is stopped. Their ids are then read from the working tree,
+  which the abort has put back to the local version (no markers in the frontmatter).
+- 2026-10-27 (GS-005): "the job does not push while that warning stands" needs no check of
+  the warnings file: after an abort the branch is still behind its upstream, and the job never
+  pushes while behind. Each later round rebases again and either conflicts again (the warning
+  is set anew) or, once resolved, is not behind and pushes (the warning is cleared).
+- 2026-10-27 (GS-005): the user's own `git pull --rebase` leaves a rebase in progress with
+  conflict markers in the working tree. A job round then would `git add -A` and commit the
+  markers, and `tasq-git rebase` would abort the user's rebase on its failed `git rebase`. Both
+  now check `rebase-merge`/`rebase-apply` (`git rev-parse --git-path`) first.
+- 2026-10-27 (GS-005): `git rebase --continue` after a conflict opens the editor for the
+  message; the test passes `-c core.editor=true`.
 
 ## Blockers
 
@@ -210,3 +224,21 @@ None. tasq 59 is merged.
   (`another_machines_write_is_pulled_when_the_store_opens`: `tasq git init <url>`, a push from
   a clone, `tasq list`, the commit arrives through the real `tasq store lock`).
 - GS-004: a failed rebase is not aborted; that and the conflict warning are GS-005's.
+- GS-005: the warning is `rebase conflict on task <id>: local commits kept, nothing pushed
+  until it is resolved: cd <store> && git pull --rebase, fix the files, git add them, git
+  rebase --continue` (`tasks 3, 7` for several; a file with no `id:` is named by its file
+  name). The store path is not shell-quoted. `rebase conflict` and `rebase failed` share the
+  warning kind `rebase `, so either replaces the other. `tasq-git rebase` prints the conflict
+  text on stderr; the job tells it from a plain failure by its `conflict on ` start.
+- GS-005: beyond the plan: while a rebase is in progress in the store (the user resolving
+  one), the job does nothing at all: no commit (the writes wait in `writes`), no sync, no
+  `last-fetch`, warnings as they were. `tasq-git rebase` refuses one in progress with `a rebase
+  is in progress: finish it with git rebase --continue or --abort` instead of touching it. A
+  stopped rebase with no unmerged file is aborted too and reported as `rebase failed: <git's
+  message>`.
+- GS-005: a round whose rebase was left for the next round (an uncommitted write, GS-004) now
+  clears only the fetch warning; before, it cleared the rebase and push warnings too, which
+  would have dropped a standing conflict warning until the next round set it again.
+- GS-005: tests in `crates/git/tests/sync.rs` (`mod conflict`: the abort, a later write, a
+  deferred rebase, the manual resolution end to end) and unit tests for `task_id` and the
+  warning text. No CLI test: the CLI path is GS-004's, unchanged. CHANGELOG entry added.

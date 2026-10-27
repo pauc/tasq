@@ -282,11 +282,11 @@ the conflicting task ids and the commands, and pushing stops until it is resolve
 
 **Blocked by:** GS-004.
 
-**Status:** blocked
+**Status:** done
 
-- [ ] Both machines edit one task: the second sync leaves the store files as before the rebase and the warning names the id.
-- [ ] After a manual resolution the next job clears the warning and pushes.
-- [ ] `mutants-in`: zero missed.
+- [x] Both machines edit one task: the second sync leaves the store files as before the rebase and the warning names the id.
+- [x] After a manual resolution the next job clears the warning and pushes.
+- [x] `mutants-in`: zero missed.
 
 ### GS-006: duplicate ids are explained
 
