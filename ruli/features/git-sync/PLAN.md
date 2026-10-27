@@ -329,3 +329,18 @@ duplicate ids), links from README and `docs/plugins.md`, CLAUDE.md's architectur
 
 - [x] Setting up a second machine works from the doc alone.
 - [x] Docs only; no mutation run.
+
+### GS-009: fix the branch review findings
+
+**What to build:** verify the ten findings of the branch review (main...this branch) against the
+code, fix the real ones test-first, and record the false positives and disproportionate fixes
+under Deviations. Store commits must not be signed or run the user's global hooks
+(`commit.gpgsign=true` in the user's global config), and `tasq git sync` behaves the same.
+
+**Blocked by:** GS-008.
+
+**Status:** done
+
+- [x] Each finding verified; a failing test for each real one before its fix.
+- [x] The job and `tasq git sync` commit, rebase and push without signing or hooks.
+- [x] `mutants-in crates/git/src` and the store diff: zero missed.

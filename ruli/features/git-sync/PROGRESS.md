@@ -15,6 +15,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
 | GS-006 | Duplicate ids are explained | done | f3689d5. Mutants with `--no-config` on `crates/git/src`: 0 missed (191: 170 caught, 18 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the ticket's diff (store and plugin): 0 missed (36: 29 caught, 7 unviable). |
 | GS-007 | `tasq git sync`, `tasq git clone` and the doctor checks | done | a4d298d. Mutants with `--no-config` on `crates/git/src`: 0 missed (241: 209 caught, 29 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the ticket's diff: 0 missed (87: 71 caught, 15 unviable, 1 timeout, the same). |
 | GS-008 | The docs describe store sync | done | cd2324b. Docs only, no mutation run: the diff has no Rust, so 0 mutants and 0 missed. fmt, clippy and the full suite (1412 tests) pass. The doc's steps were run with the built `tasq` and `tasq-git` against a bare `file://` remote and two isolated `HOME`s (Learnings). |
+| GS-009 | Fix the branch review findings | done | adcf56d. All ten findings verified, a failing test for each real one first (1-7); 8 and 9 fixed as conventions, 10 by restoring `main`'s `ambiguous`; none left as a false positive (Deviations). Mutants with `--no-config` on `crates/git/src`: 0 missed (235: 194 caught, 38 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the ticket's diff: 0 missed (58: 42 caught, 16 unviable); `--in-diff` on the branch's store diff: 0 missed (15: 10 caught, 5 unviable). fmt, clippy and the full suite (1420 tests) pass. |
 
 ## Learnings
 
@@ -141,6 +142,27 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
   shortened. No SSH was exercised.
 - 2026-10-27 (GS-008): `tasq list` shows both files of a duplicate id (with a warning); only
   `get` refuses the id. A first draft said otherwise.
+
+- 2026-10-27 (GS-009): `GIT_CONFIG_COUNT` with `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` is
+  config at command-line scope: it beats the global and the repository config, reaches every
+  git child (the rebase under `tasq store lock` included), and git drops it (`local_repo_env`)
+  for the `receive-pack`/`upload-pack` of a local transport, so a bare remote's own hooks still
+  run. `core.hooksPath=/dev/null` turns every hook off.
+- 2026-10-27 (GS-009): with hooks off, a hook is no longer a failure seam. The tests use a `git`
+  first on `PATH` that runs a snippet for a matching `case " $* "` line and execs the real git
+  (std's `Command` looks the program up in the child's `PATH` when one is set), and, for a push
+  that `tasq git init` must see refused, a `pre-receive` hook in the bare remote.
+- 2026-10-27 (GS-009): an OS file lock (`File::try_lock`, std since 1.89) is what the job lock
+  needed: the OS drops it when the job exits however it exits, so there is no stale rule to get
+  wrong (a hung fetch let a second job in) and no break-then-create race (two jobs breaking a
+  stale lock). std opens files `O_CLOEXEC`, so git children never inherit it. The hook's probe
+  (`try_lock_shared`) can make a job starting at that instant exit; harmless, as the hook then
+  starts its own.
+- 2026-10-27 (GS-009): a git killed while it waits on ssh leaves the ssh child holding git's
+  stdout and stderr; `process::run_within` does not join its reader threads after a kill, or a
+  timed-out fetch would wait for ssh after all.
+- 2026-10-27 (GS-009): `std::env::current_dir` fails (`ENOENT`) in a directory that was
+  removed, and so does `Command::current_dir` with that path; the job then ran nothing at all.
 
 ## Blockers
 
@@ -354,3 +376,38 @@ None. tasq 59 is merged.
 - GS-008: adding a remote to a store initialized without one has no command; the doc gives
   `git -C <store> remote add origin <url> && git -C <store> push -u origin <branch>`, which
   the job then follows (it syncs whatever upstream the branch has).
+- GS-009: findings 1 (a fetch or push hanging past the two-minute stale rule let a second job
+  run) and 6 (two jobs breaking one stale lock could both run) are fixed together: `job.lock`
+  is an OS file lock (`State::lock_job`, `wait_job`, `job_running`), so story 28's "after two
+  minutes" is now "at once". The lock file stays after the job. On top, every git of the
+  background job is killed after two minutes (`Git::timeout`, `process::run_within`, hidden `job
+  --timeout <secs>` for the tests); the foreground (`tasq git sync`, init, clone, the hook's
+  doctor, the rebase) has no timeout.
+- GS-009: finding 2: the job's `tasq` (`Tasq::for_store`) runs in the job's working directory
+  or, when that is gone, in the store, and always with `TASQ_DATA_DIR` and `TASQ_STORE_NAME`
+  pinned to the store it was given, so a `.tasq.toml` of either directory cannot send its
+  title lookups, doctor or `store lock` to another store.
+- GS-009: finding 3: a bad `[plugin.git] interval` is still the event's error, but after the
+  work, with the default interval: `post-write` records and starts the job, `store-open` fetches
+  when due.
+- GS-009: finding 4: the background allowlist grows (`XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR`,
+  `DBUS_SESSION_BUS_ADDRESS`, the proxy variables git reads) rather than becoming "everything
+  but `GIT_*`", which would let a terminal-only variable decide whether the job prompts.
+  `GNUPGHOME` stays out: nothing signs (finding 5).
+- GS-009: finding 5: commit signing and hooks are turned off by `GIT_CONFIG_COUNT` variables in
+  both environments (`process::background_env`, `foreground_env`), so every git the plugin
+  runs (job, rebase, `tasq git sync`, init, clone, doctor) is unsigned and unhooked, existing
+  store repositories included. Not written into the store's config: a commit made by hand in the
+  store stays the user's (signed, hooked). The tests that made commits, pushes and rebases fail
+  through global or repository hooks use the `git` wrapper or a remote `pre-receive` instead
+  (Learnings); their messages changed where git's own lines no longer follow (`push failed:
+  nope`).
+- GS-009: finding 7: the stopped rebase is aborted before the error of listing its conflicting
+  files is returned; that error becomes `rebase failed: <message>`.
+- GS-009: findings 8 and 9, conventions rather than bugs, are fixed because the fix is small:
+  `spawn_detached` takes its environment (main passes its own, unchanged behaviour), and the
+  job takes its clock as `Settings::now`. The job lock no longer reads the time at all.
+- GS-009: finding 10: `Scan::ambiguous` is back to its `main` form (one `single` per id) rather
+  than built from `duplicates()`: mapping `duplicates()` straight to `AmbiguousId` would list a
+  hand-named file's paths in creation order instead of name order.
+- GS-009: no finding was left as a false positive.
