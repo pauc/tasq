@@ -12,7 +12,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
 | GS-003 | Writes are committed in the background | done | df8198e. Mutants with `--no-config` on `crates/git/src`: 0 missed (121: 103 caught, 15 unviable, 3 timeouts); `--in-diff` on the whole diff: 0 missed (77: 66 caught, 8 unviable, 3 timeouts). The timeouts are mutants that make the job loop forever (`pending` never cleared or always there). |
 | GS-004 | Push, fetch and rebase in the background | done | b61d272. Mutants with `--no-config` on `crates/git/src`: 0 missed (158: 139 caught, 16 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the whole diff: 0 missed (52: 50 caught, 2 unviable). A first run left 2 missed (the "still behind" guard before the push); the late-write test now has a commit of its own on B. |
 | GS-005 | Conflicts are aborted and reported | done | d6671fc. Mutants with `--no-config` on `crates/git/src`: 0 missed (174: 154 caught, 17 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the ticket's diff: 0 missed (27: 26 caught, 1 unviable). |
-| GS-006 | Duplicate ids are explained | blocked | |
+| GS-006 | Duplicate ids are explained | done | f3689d5. Mutants with `--no-config` on `crates/git/src`: 0 missed (191: 170 caught, 18 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the ticket's diff (store and plugin): 0 missed (36: 29 caught, 7 unviable). |
 | GS-007 | `tasq git sync`, `tasq git clone` and the doctor checks | blocked | |
 | GS-008 | The docs describe store sync | blocked | |
 
@@ -104,6 +104,16 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
   now check `rebase-merge`/`rebase-apply` (`git rev-parse --git-path`) first.
 - 2026-10-27 (GS-005): `git rebase --continue` after a conflict opens the editor for the
   message; the test passes `-c core.editor=true`.
+- 2026-10-27 (GS-006): `tasq doctor` exits 1 whenever a check fails, so the plugin reads
+  `doctor --json` from stdout whatever the exit status; a duplicate id is exactly the case it
+  asks about. The job's `tasq doctor` fires no plugin event (it inherits `TASQ_EVENT`), so it
+  cannot recurse into the plugin's own `doctor` answer.
+- 2026-10-27 (GS-006): ULID names sort in creation order, so "the newer file" is the name
+  order for files tasq created; only a hand-named file (no creation time) needs the explicit
+  ordering, and it counts as newer than any dated file.
+- 2026-10-27 (GS-006): the fixture store's task 3 is a 2026-09 ULID; a test file standing
+  for "another machine's later task" needs a later ULID or doctor marks the fixture's file
+  as the newer.
 
 ## Blockers
 
@@ -242,3 +252,26 @@ None. tasq 59 is merged.
 - GS-005: tests in `crates/git/tests/sync.rs` (`mod conflict`: the abort, a later write, a
   deferred rebase, the manual resolution end to end) and unit tests for `task_id` and the
   warning text. No CLI test: the CLI path is GS-004's, unchanged. CHANGELOG entry added.
+- GS-006: the store's `ids` failure is `id <n> is claimed by more than one file: <file>
+  (created <YYYY-MM-DD HH:MM>, "<title>"), <file> (created ..., "<title>", newer)`, files
+  oldest first (creation time, then name; a file without a ULID name is `creation time
+  unknown` and sorts after the dated ones). The fix is `give the newer file the next free id:
+  write 'id: <n>' in <file> (or remove it if it is a copy)`, or the plural form listing each
+  newer file; free ids are handed out from the highest plus one across every duplicate, so
+  two failures never offer the same id. `list`'s warning and `get`'s `AmbiguousId` are
+  unchanged.
+- GS-006: "after a rebase that changed task files" is "after a sync that moved `HEAD`": only
+  task files are committed, so a rebase that moves the branch brought task files; no extra
+  `git diff`. The job also asks doctor in any round while a `duplicate id: ` warning stands,
+  which is what clears it after a hand fix on either machine. A hand fix with no tasq write
+  is picked up by the next job: the next write, or the next `store-open` once the fetch is due.
+- GS-006: the warning is `duplicate id: <doctor's detail>; fix: <doctor's fix>`, one line per
+  `ids` failure (`State::set_warnings`, of which `set_warning` is now the one-line case). A
+  `tasq doctor` that gives no JSON leaves the warnings as they were and is not an error.
+- GS-006: tests: `crates/store/tests/read.rs` (the doctor text: two dated files, three files
+  with a hand-named one, consecutive free ids), `crates/git/tests/sync.rs` (`mod duplicate`,
+  with a fake `doctor --json` answering from the store in `FAKE_STORE` and logging each call,
+  so the test also pins when doctor is not asked), and one CLI test
+  (`an_id_pulled_in_twice_is_a_lasting_warning_until_fixed_by_hand`: real `tasq`, a pushed
+  duplicate from a clone, the warning, the hand fix, a `tasq log` whose job clears it).
+  CHANGELOG entry added.

@@ -296,11 +296,11 @@ warning.
 
 **Blocked by:** GS-004.
 
-**Status:** blocked
+**Status:** done
 
-- [ ] Store doctor snapshot with a duplicate id.
-- [ ] Two machines creating offline with one id: warning after the pull; gone after a hand fix.
-- [ ] `mutants-in` the store diff and `crates/git/src`: zero missed.
+- [x] Store doctor snapshot with a duplicate id.
+- [x] Two machines creating offline with one id: warning after the pull; gone after a hand fix.
+- [x] `mutants-in` the store diff and `crates/git/src`: zero missed.
 
 ### GS-007: `tasq git sync`, `tasq git clone` and the doctor checks
 
