@@ -236,12 +236,12 @@ branch with history).
 
 **Blocked by:** GS-001.
 
-**Status:** blocked
+**Status:** done
 
-- [ ] The first commit holds exactly the task files.
-- [ ] Identity flags and `[plugin.git]` defaults land in the repository config.
-- [ ] Empty remote and missing branch are pushed; a branch with history is refused with the fix text.
-- [ ] `mutants-in`: zero missed.
+- [x] The first commit holds exactly the task files.
+- [x] Identity flags and `[plugin.git]` defaults land in the repository config.
+- [x] Empty remote and missing branch are pushed; a branch with history is refused with the fix text.
+- [x] `mutants-in`: zero missed.
 
 ### GS-003: writes are committed in the background
 

@@ -8,7 +8,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
 | Id | Title | Status | Notes |
 |---|---|---|---|
 | GS-001 | The `tasq-git` crate answers events and does nothing for a plain store | done | e71fd21. Mutants with `--no-config` on `crates/git/src`, and `--in-diff` on the whole diff: 0 missed (14 mutants: 13 caught, 1 unviable). |
-| GS-002 | `tasq git init` with identity | blocked | |
+| GS-002 | `tasq git init` with identity | done | 2c07c38. Mutants with `--no-config` on `crates/git/src`: 0 missed (50: 43 caught, 7 unviable); `--in-diff` on the whole diff: 0 missed (37: 31 caught, 6 unviable). |
 | GS-003 | Writes are committed in the background | blocked | |
 | GS-004 | Push, fetch and rebase in the background | blocked | |
 | GS-005 | Conflicts are aborted and reported | blocked | |
@@ -35,6 +35,16 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
 - 2026-10-27 (GS-001): the plugin never needs a `print!` allowance: `main` writes through
   `std::io::Write` on stdout and stderr, which the `print_stdout`/`print_stderr` lints do not
   cover, and ignores a write error (tasq stopped reading).
+- 2026-10-27 (GS-002): a task file is what tasq's store reads (`is_task_file_name`): `.md` in
+  any case, no leading dot, top level. The pathspecs are `:(glob,icase)*.md` and
+  `:(exclude,glob).*` (`git::TASK_FILES`, for GS-003's job too): `:(glob)` keeps `*` from
+  crossing `/`, so `sub/` and `.tasq/` stay out, and the exclude drops editor locks (`.#x.md`).
+  `git add` with a pathspec that matches nothing fails, so an empty store skips it.
+- 2026-10-27 (GS-002): `git init --initial-branch '<bad>'` creates `.git` before it rejects the
+  name, so the undo must cover a failed `git init`; and when git cannot run at all there is no
+  `.git`, where an unconditional `remove_dir_all` replaced git's error with `NotFound`.
+- 2026-10-27 (GS-002): a global `core.hooksPath` with a failing `pre-commit` or `pre-push` is
+  how the tests make a commit or a push fail on demand, with no fake git.
 
 ## Blockers
 
@@ -64,3 +74,30 @@ None. tasq 59 is merged.
   schema is named, not reported as a missing field) and `hook` (`run`, `answer`,
   `is_repository`). The tests drive the binary only (`crates/git/tests/hook.rs`), plus the
   two CLI tests through a real `tasq doctor`, `list` and `log`.
+- GS-002: the plugin learns the store from `$TASQ_BIN store info --json` (`store.location`,
+  and `store_name.value` for the branch, not `store.name`, which is `tasq`) and the defaults
+  from `$TASQ_BIN config show --json` (`config.plugin.git`); `tasq` on `PATH` when `TASQ_BIN`
+  is unset. Both run with the plugin's own environment and working directory, so the profile,
+  `TASQ_SET` and `.tasq.toml` resolve as for the command. git runs with that environment minus
+  every `GIT_*` variable (`process::without_git_vars`), stdin `/dev/null`.
+- GS-002: beyond the plan: a store that is already a repository is refused (`<dir> is already a
+  git repository`), and the remote is asked before anything is written, so every refusal
+  (branch with history, unreachable remote) leaves the store as it was. A failure after `git
+  init` (commit, push, ...) removes the new `.git`, so init can be run again; an absent store
+  directory is created and stays (empty, it is an empty store). An empty store gets an empty
+  first commit (`--allow-empty`), so the branch exists and can be pushed.
+- GS-002: "an empty one is pushed" reads as an empty remote (no refs): a branch always has a
+  commit, so any existing branch is "with history" and refused. The refusal is `branch <b> of
+  <url> already has history; tasq git init never merges two task histories` and `fix: tasq git
+  clone <url> --branch <b> into an empty store, or tasq git init <url> --branch <another> to
+  push to a new branch`.
+- GS-002: output is `initialized <dir> as a git repository on branch <b>: <n> task file(s)
+  committed`, plus `pushed branch <b> to <url>`; errors are `tasq-git: <message>`, exit 1. The
+  first commit's subject is `tasq git init`. `--branch` without a URL names the local branch.
+  The key path in `core.sshCommand` is single-quoted for git's shell (`'` as `'\''`); a
+  leading `~` is left to ssh. A `[plugin.git]` default that is not a string is refused.
+- GS-002: library modules `process` (`run`, the only `#[mutants::skip]`), `git` (`Git`,
+  `TASK_FILES`, `remote_branch`), `tasq` (the two questions) and `init`. Tests drive the binary
+  (`crates/git/tests/init.rs`, a fake `tasq` answering the two documents, real git, a bare
+  `file://` remote) plus one CLI test through the real `tasq git init` on the fixture store.
+- GS-002: added a CHANGELOG entry (PE-007's learning).
