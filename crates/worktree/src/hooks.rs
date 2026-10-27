@@ -2,8 +2,9 @@
 //! approval, the trust store on disk, and running them.
 //!
 //! Hooks from the global configuration (or `--config-dir`, `--set`, the
-//! environment) run without asking. Hooks from a repository's own
-//! `.tasq.toml`, which can arrive with a clone, run only once approved:
+//! environment) run without asking. Hooks from a repository config
+//! (`repos/*.toml`, ADR-0031) run only once approved until CC-005 removes
+//! the trust store:
 //! stored in the trust file, `--yes` for one run, or a yes to the question
 //! the caller asks. Unapproved, they are skipped with a warning. The
 //! decisions are [`tasq_core::worktree::hooks`]'s.

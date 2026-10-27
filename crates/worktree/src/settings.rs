@@ -11,9 +11,9 @@ use tasq_core::worktree::vars::Vars;
 use crate::Repo;
 
 /// The worktree settings of the repository a task works in: `[worktree]`
-/// as loaded from its main checkout, so the `.tasq.toml` next to the
-/// repository applies wherever tasq runs (plan 4.4). Loading them is the
-/// caller's, which owns the configuration layers.
+/// with the repository config of its main checkout applied, wherever tasq
+/// runs (ADR-0031). Loading them is the caller's, which owns the
+/// configuration layers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoSettings {
     /// The task's project directory, where `git` runs.
@@ -27,7 +27,7 @@ pub struct RepoSettings {
     /// Where relative template sources start: the directory of the file
     /// that set `worktree.templates`, else the main checkout.
     pub templates_dir: PathBuf,
-    /// The repository's own `.tasq.toml`, when there is one.
+    /// The repository config that applied, when one did.
     pub repo_file: Option<PathBuf>,
     /// The hook kinds that file sets: they run only once approved.
     pub untrusted: Vec<Kind>,

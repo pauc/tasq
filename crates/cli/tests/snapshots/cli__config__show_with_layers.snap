@@ -7,10 +7,9 @@ expression: env.normalize(&stdout(&out))
 # layers, later ones win:
 #   1. defaults
 #   2. [ROOT]/home/.config/tasq/config.toml
-#   3. [ROOT]/home/.tasq.toml
-#   4. profile work ([ROOT]/home/.config/tasq/profiles/work.toml)
-#   5. env
-#   6. --set
+#   3. profile work ([ROOT]/home/.config/tasq/profiles/work.toml)
+#   4. env
+#   5. --set
 
 data_dir = "[ROOT]/home/.local/share/tasq/stores" # defaults
 worktrees_enabled = false                    # defaults
@@ -23,7 +22,7 @@ default_status = "ready"                     # defaults
 statuses = ["in-progress", "ready", "waiting", "blocked", "later"] # defaults
 
 [work]
-default_project = "[ROOT]/home/code/x" # [ROOT]/home/.tasq.toml
+default_project = "[ROOT]/home/code/x" # [ROOT]/home/.config/tasq/config.toml
 
 [launch]
 default = "claude"                           # defaults

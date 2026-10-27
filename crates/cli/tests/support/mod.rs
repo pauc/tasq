@@ -161,11 +161,6 @@ impl TestEnv {
         std::fs::read_to_string(self.file_of(id)).unwrap()
     }
 
-    /// Writes `<home>/.tasq.toml`.
-    pub fn write_project_config(&self, text: &str) {
-        std::fs::write(self.home.join(".tasq.toml"), text).unwrap();
-    }
-
     /// Writes `<home>/.config/tasq/config.toml`.
     pub fn write_global_config(&self, text: &str) -> PathBuf {
         let dir = self.home.join(".config").join("tasq");
@@ -179,6 +174,16 @@ impl TestEnv {
     /// config directory, and returns its path.
     pub fn write_profile(&self, name: &str, text: &str) -> PathBuf {
         let dir = self.home.join(".config").join("tasq").join("profiles");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(format!("{name}.toml"));
+        std::fs::write(&file, text).unwrap();
+        file
+    }
+
+    /// Writes the repository config `repos/<name>.toml` in the default
+    /// config directory and returns its path.
+    pub fn write_repo_config(&self, name: &str, text: &str) -> PathBuf {
+        let dir = self.home.join(".config").join("tasq").join("repos");
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join(format!("{name}.toml"));
         std::fs::write(&file, text).unwrap();

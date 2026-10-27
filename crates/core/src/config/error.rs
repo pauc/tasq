@@ -64,6 +64,21 @@ pub enum ConfigError {
         /// config directory.
         target: PathBuf,
     },
+    /// Two repository configs name the same main checkout (ADR-0031).
+    #[error(
+        "repository configs {} and {} both have path {}",
+        first.display(),
+        second.display(),
+        path.display()
+    )]
+    DuplicateRepo {
+        /// The first file, in name order.
+        first: PathBuf,
+        /// The second file.
+        second: PathBuf,
+        /// The main checkout both name, `~` expanded.
+        path: PathBuf,
+    },
     /// A value set by the environment or `--set` could not be used.
     #[error("{origin}: {key}={value:?}: expected {expected}")]
     InvalidValue {

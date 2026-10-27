@@ -227,14 +227,13 @@ impl App {
         &self.loaded.config
     }
 
-    /// The configuration as loaded from `dir` instead of the current
-    /// directory, so the `.tasq.toml` next to a repository applies wherever
-    /// tasq runs (the worktree commands, plan 4.4). Everything else (the
-    /// global file, `--config-dir`, `--profile`, `--set`, the environment) is as
-    /// for [`App::config`].
-    pub fn config_at(&self, dir: &std::path::Path) -> Result<Loaded> {
+    /// The configuration for the worktree commands of the repository
+    /// whose main checkout is `main`: [`App::config`] plus the repository
+    /// config whose `path` is `main` (ADR-0031). The working directory
+    /// stays the real one, so a relative `--config-dir` means the same here.
+    pub fn config_for_repo(&self, main: &std::path::Path) -> Result<Loaded> {
         let mut opts = self.opts.clone();
-        opts.cwd = dir.to_path_buf();
+        opts.repo = Some(main.to_path_buf());
         Ok(Config::load(&opts)?)
     }
 

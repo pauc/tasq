@@ -60,8 +60,12 @@ impl Sandbox {
         path
     }
 
-    fn write_project(&self, text: &str) -> PathBuf {
-        let path = self.project.join(".tasq.toml");
+    /// Writes the repository config `repos/<name>.toml` in the default
+    /// config directory.
+    fn write_repo(&self, name: &str, text: &str) -> PathBuf {
+        let dir = self.home.join(".config/tasq/repos");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{name}.toml"));
         fs::write(&path, text).unwrap();
         path
     }
@@ -73,13 +77,24 @@ impl Sandbox {
             env: BTreeMap::new(),
             config_dir: None,
             profile: None,
+            repo: None,
             overrides: Vec::new(),
         }
     }
 
-    fn opts_in(&self, cwd: &Path) -> LoadOptions {
+    /// [`Self::opts`] for the worktree commands of the repository whose
+    /// main checkout is `main`.
+    fn opts_for_repo(&self, main: &Path) -> LoadOptions {
         LoadOptions {
-            cwd: cwd.to_path_buf(),
+            repo: Some(main.to_path_buf()),
+            ..self.opts()
+        }
+    }
+
+    /// [`Self::opts`] with the profile `name` selected.
+    fn opts_with_profile(&self, name: &str) -> LoadOptions {
+        LoadOptions {
+            profile: Some(name.to_owned()),
             ..self.opts()
         }
     }
@@ -263,16 +278,16 @@ fn herdr_placement_values_and_errors() {
         ("tab", Placement::Tab),
     ] {
         let sb = Sandbox::new();
-        sb.write_project(&format!("[launch.herdr]\nplacement = \"{value}\"\n"));
+        sb.write_global(&format!("[launch.herdr]\nplacement = \"{value}\"\n"));
         let c = Config::load(&sb.opts()).unwrap().config;
         assert_eq!(c.launch.herdr.placement, placement, "{value}");
     }
     let sb = Sandbox::new();
-    sb.write_project("[launch.herdr]\nplacement = \"window\"\n");
+    sb.write_global("[launch.herdr]\nplacement = \"window\"\n");
     let err = Config::load(&sb.opts()).unwrap_err().to_string();
     assert!(
         err.ends_with(
-            ".tasq.toml:2:13: unknown variant `window`, expected one of `auto`, `workspace`, `tab`"
+            "config.toml:2:13: unknown variant `window`, expected one of `auto`, `workspace`, `tab`"
         ),
         "{err}"
     );
@@ -290,7 +305,8 @@ preset = \"light\"
 focus = \"208\"
 ",
     );
-    let project = sb.write_project(
+    let project = sb.write_profile(
+        "p",
         "[ui.theme.colors]
 link = \"blue\"
 
@@ -299,6 +315,7 @@ ready = \"green\"
 ",
     );
     let mut opts = sb.opts();
+    opts.profile = Some("p".to_owned());
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
     assert_eq!(c.ui.theme.preset, Preset::Light);
@@ -338,7 +355,7 @@ ready = \"green\"
     // Every preset name parses; anything else is an error with a position.
     for preset in Preset::ALL {
         let sb = Sandbox::new();
-        sb.write_project(&format!(
+        sb.write_global(&format!(
             "[ui.theme]
 preset = \"{}\"
 ",
@@ -348,7 +365,7 @@ preset = \"{}\"
         assert_eq!(c.ui.theme.preset, preset);
     }
     let sb = Sandbox::new();
-    sb.write_project(
+    sb.write_global(
         "[ui.theme]
 preset = \"nord\"
 ",
@@ -356,12 +373,12 @@ preset = \"nord\"
     let err = Config::load(&sb.opts()).unwrap_err().to_string();
     assert!(
         err.ends_with(
-            ".tasq.toml:2:10: unknown variant `nord`, expected one of `dark`, `light`, `solarized`, `gruvbox`, `mono`"
+            "config.toml:2:10: unknown variant `nord`, expected one of `dark`, `light`, `solarized`, `gruvbox`, `mono`"
         ),
         "{err}"
     );
     let sb = Sandbox::new();
-    sb.write_project(
+    sb.write_global(
         "[ui.theme]
 colours = {}
 ",
@@ -377,15 +394,15 @@ fn detail_position_values_and_errors() {
         ("bottom", DetailPosition::Bottom),
     ] {
         let sb = Sandbox::new();
-        sb.write_project(&format!("[ui]\ndetail_position = \"{name}\"\n"));
+        sb.write_global(&format!("[ui]\ndetail_position = \"{name}\"\n"));
         let c = Config::load(&sb.opts()).unwrap().config;
         assert_eq!(c.ui.detail_position, position);
     }
     let sb = Sandbox::new();
-    sb.write_project("[ui]\ndetail_position = \"left\"\n");
+    sb.write_global("[ui]\ndetail_position = \"left\"\n");
     let err = Config::load(&sb.opts()).unwrap_err().to_string();
     assert!(
-        err.ends_with(".tasq.toml:2:19: unknown variant `left`, expected `right` or `bottom`"),
+        err.ends_with("config.toml:2:19: unknown variant `left`, expected `right` or `bottom`"),
         "{err}"
     );
 }
@@ -398,16 +415,16 @@ fn due_format_values_and_errors() {
         ("both", DueFormat::Both),
     ] {
         let sb = Sandbox::new();
-        sb.write_project(&format!("[ui]\ndue_format = \"{name}\"\n"));
+        sb.write_global(&format!("[ui]\ndue_format = \"{name}\"\n"));
         let c = Config::load(&sb.opts()).unwrap().config;
         assert_eq!(c.ui.due_format, format);
     }
     let sb = Sandbox::new();
-    sb.write_project("[ui]\ndue_format = \"ago\"\n");
+    sb.write_global("[ui]\ndue_format = \"ago\"\n");
     let err = Config::load(&sb.opts()).unwrap_err().to_string();
     assert!(
         err.ends_with(
-            ".tasq.toml:2:14: unknown variant `ago`, expected one of `relative`, `iso`, `both`"
+            "config.toml:2:14: unknown variant `ago`, expected one of `relative`, `iso`, `both`"
         ),
         "{err}"
     );
@@ -417,7 +434,7 @@ fn due_format_values_and_errors() {
 fn hooks_are_read_from_files_and_set_overrides() {
     use tasq_core::config::HooksConfig;
     let sb = Sandbox::new();
-    sb.write_project(
+    sb.write_global(
         "[hooks]\npost-create = [\"tasq-notify\", \"~/bin/log-it --quiet\"]\npre-launch = [\"check-vpn\"]\n",
     );
     let mut opts = sb.opts();
@@ -461,7 +478,7 @@ fn hooks_are_read_from_files_and_set_overrides() {
     assert_eq!(c.hooks.post_done, vec!["a".to_owned(), "b".to_owned()]);
 
     // An unknown hook name is an error naming the file.
-    let file = sb.write_project("[hooks]\npost-sync = [\"x\"]\n");
+    let file = sb.write_global("[hooks]\npost-sync = [\"x\"]\n");
     let err = Config::load(&sb.opts()).unwrap_err().to_string();
     assert!(
         err.starts_with(&format!(
@@ -478,8 +495,11 @@ fn plugins_are_enabled_by_name_and_their_tables_load_unchecked() {
     sb.write_global(
         "[plugins]\nenabled = [\"git\"]\n\n[plugin.git]\ninterval = 60\nratio = 0.5\nremote = \"origin\"\n[plugin.git.deep]\nanything = [1, \"two\"]\n",
     );
-    sb.write_project("[plugin.git]\ninterval = 30\n\n[plugin.echo]\nlog = \"/tmp/x\"\n");
-    let mut opts = sb.opts();
+    let profile = sb.write_profile(
+        "p",
+        "[plugin.git]\ninterval = 30\n\n[plugin.echo]\nlog = \"/tmp/x\"\n",
+    );
+    let mut opts = sb.opts_with_profile("p");
     let c = Config::load(&opts).unwrap().config;
     assert_eq!(c.plugins.enabled, vec!["git".to_owned()]);
     assert_eq!(c.plugins.timeout, 2, "the default");
@@ -487,7 +507,7 @@ fn plugins_are_enabled_by_name_and_their_tables_load_unchecked() {
     assert_eq!(
         git["interval"].as_integer(),
         Some(30),
-        "project file wins key by key"
+        "the profile wins key by key"
     );
     assert_eq!(git["remote"].as_str(), Some("origin"));
     assert_eq!(
@@ -540,8 +560,8 @@ fn plugins_are_enabled_by_name_and_their_tables_load_unchecked() {
         ConfigError::UnknownKey { .. }
     ));
 
-    // Profiles carry plugin settings too.
-    fs::remove_file(sb.project.join(".tasq.toml")).unwrap();
+    // Another profile carries its own plugin settings.
+    fs::remove_file(profile).unwrap();
     sb.write_profile(
         "work",
         "[plugins]\nenabled = [\"echo\"]\n[plugin.echo]\nlog = \"w\"\n",
@@ -557,7 +577,7 @@ fn plugins_are_enabled_by_name_and_their_tables_load_unchecked() {
 #[test]
 fn an_unknown_key_under_plugins_names_file_line_and_column() {
     let sb = Sandbox::new();
-    let file = sb.write_project("[plugins]\nenabled = []\nenable = [\"git\"]\n");
+    let file = sb.write_global("[plugins]\nenabled = []\nenable = [\"git\"]\n");
     let err = Config::load(&sb.opts()).unwrap_err().to_string();
     assert!(
         err.starts_with(&format!("{}:3:1: unknown field `enable`", file.display())),
@@ -578,7 +598,7 @@ fn plugin_names_are_command_names() {
         ("ok", "a plugin name must not be listed twice"),
     ] {
         let sb = Sandbox::new();
-        let file = sb.write_project(&format!("[plugins]\nenabled = [\"ok\", {name:?}]\n"));
+        let file = sb.write_global(&format!("[plugins]\nenabled = [\"ok\", {name:?}]\n"));
         assert_eq!(
             Config::load(&sb.opts()).unwrap_err().to_string(),
             format!(
@@ -615,7 +635,7 @@ fn tasq_set_env_is_a_line_separated_set() {
     );
 
     let sb = Sandbox::new();
-    sb.write_project("[store]\nname = \"file\"\n");
+    sb.write_global("[store]\nname = \"file\"\n");
     let mut opts = sb.opts();
     // TASQ_SET beats TASQ_STORE_NAME for the same key and is part of the env layer.
     opts.env = env(&[
@@ -668,8 +688,8 @@ fn empty_file_is_the_defaults() {
 fn ui_keys_take_a_string_or_a_list_and_merge_per_action() {
     let sb = Sandbox::new();
     sb.write_global("[ui.keys]\nquit = \"x\"\nsync = [\"a\", \"b\"]\nfilter = []\n");
-    let project = sb.write_project("[ui.keys]\nquit = [\"y\"]\n");
-    let mut opts = sb.opts();
+    let project = sb.write_profile("p", "[ui.keys]\nquit = [\"y\"]\n");
+    let mut opts = sb.opts_with_profile("p");
     opts.overrides = vec![(
         "ui.keys.launch-window".into(),
         "alt+enter, ctrl+enter".into(),
@@ -690,7 +710,6 @@ fn ui_keys_take_a_string_or_a_list_and_merge_per_action() {
     assert_eq!(loaded.file_for("ui.keys.quit"), Some(project.as_path()));
     assert_eq!(KeySpec::One("x".to_owned()).keys(), ["x".to_owned()]);
     assert_eq!(keys["filter"].keys(), Vec::<String>::new());
-    fs::remove_file(&project).unwrap();
     assert_eq!(
         Config::load(&sb.opts()).unwrap().config.ui.keys["quit"],
         KeySpec::One("x".to_owned()),
@@ -757,88 +776,24 @@ fn without_home_there_is_no_global_file_but_xdg_still_works() {
     assert_eq!(loaded.config.store.name, "xdg");
 }
 
+/// `.tasq.toml` is never read (ADR-0031): not in the cwd, not above it,
+/// not in the repository's main checkout.
 #[test]
-fn project_file_overrides_global_field_wise() {
+fn a_tasq_toml_has_no_effect() {
     let sb = Sandbox::new();
-    let global = sb.write_global(
-        "[store]\nname = \"global\"\n[ui]\nglow_style = \"light\"\nweek_start = \"sunday\"\n",
-    );
-    let project = sb.write_project("[store]\nname = \"project\"\n[ui]\nglow_style = \"dark\"\n");
-    let loaded = Config::load(&sb.opts()).unwrap();
-    assert_eq!(loaded.config.store.name, "project");
-    assert_eq!(loaded.config.ui.glow_style, "dark");
-    assert_eq!(loaded.config.ui.week_start, WeekStart::Sunday);
-    assert_eq!(loaded.config.ui.week_start.weekday(), chrono::Weekday::Sun);
-    assert_eq!(
-        loaded.explain("store.name"),
-        Some(&Origin::File(project.clone()))
-    );
-    assert_eq!(
-        loaded.explain("ui.week_start"),
-        Some(&Origin::File(global.clone())),
-        "sibling key survives"
-    );
-    assert_eq!(loaded.explain("store"), Some(&Origin::File(project)));
-    let origins: Vec<&Origin> = loaded.layers.iter().map(|l| &l.origin).collect();
-    assert_eq!(origins.len(), 3);
-    assert_eq!(origins[1], &Origin::File(global));
-}
-
-#[test]
-fn project_file_is_found_from_a_nested_cwd() {
-    let sb = Sandbox::new();
-    let project = sb.write_project("[store]\nname = \"nested\"\n");
-    let loaded = Config::load(&sb.opts_in(&sb.project.join("sub"))).unwrap();
-    assert_eq!(loaded.config.store.name, "nested");
-    assert_eq!(loaded.file_for("store.name"), Some(project.as_path()));
-}
-
-#[test]
-fn nearest_project_file_wins_and_only_one_is_read() {
-    let sb = Sandbox::new();
-    sb.write_project("[store]\nname = \"outer\"\n[ui]\nno_osc8 = true\n");
-    let inner = sb.project.join("sub/.tasq.toml");
-    fs::write(&inner, "[store]\nname = \"inner\"\n").unwrap();
-    let loaded = Config::load(&sb.opts_in(&sb.project.join("sub"))).unwrap();
-    assert_eq!(loaded.config.store.name, "inner");
-    assert!(!loaded.config.ui.no_osc8, "the outer file is not merged");
-    assert_eq!(loaded.layers.len(), 2);
-}
-
-#[test]
-fn walk_up_checks_home_itself_but_stops_there() {
-    let sb = Sandbox::new();
-    fs::write(sb.home.join(".tasq.toml"), "[store]\nname = \"in-home\"\n").unwrap();
-    let loaded = Config::load(&sb.opts()).unwrap();
-    assert_eq!(loaded.config.store.name, "in-home");
-
-    // A file above the home directory is never picked up.
-    fs::remove_file(sb.home.join(".tasq.toml")).unwrap();
-    let above = sb.home.parent().unwrap().join(".tasq.toml");
-    fs::write(&above, "[store]\nname = \"above-home\"\n").unwrap();
-    let loaded = Config::load(&sb.opts()).unwrap();
+    for dir in [&sb.project, &sb.project.join("sub"), &sb.home] {
+        fs::write(
+            dir.join(".tasq.toml"),
+            "[store]\nname = \"dotfile\"\n[worktree]\nbase = \"dotfile\"\n",
+        )
+        .unwrap();
+    }
+    let mut opts = sb.opts_for_repo(&sb.project);
+    opts.cwd = sb.project.join("sub");
+    let loaded = Config::load(&opts).unwrap();
     assert_eq!(loaded.config.store.name, "default");
-
-    // ... unless the cwd is outside the home directory altogether.
-    let outside = sb.home.parent().unwrap().join("outside");
-    fs::create_dir_all(&outside).unwrap();
-    let loaded = Config::load(&sb.opts_in(&outside)).unwrap();
-    assert_eq!(loaded.config.store.name, "above-home");
-    let direct = tasq_core::config::project_file(&outside, Some(&sb.home));
-    assert_eq!(direct, Some(above));
-    assert_eq!(
-        tasq_core::config::project_file(&sb.project, Some(&sb.home)),
-        None
-    );
-}
-
-#[test]
-fn a_directory_named_like_the_project_file_is_skipped() {
-    let sb = Sandbox::new();
-    fs::create_dir(sb.project.join("sub/.tasq.toml")).unwrap();
-    sb.write_project("[store]\nname = \"real\"\n");
-    let loaded = Config::load(&sb.opts_in(&sb.project.join("sub"))).unwrap();
-    assert_eq!(loaded.config.store.name, "real");
+    assert_eq!(loaded.config.worktree.base, "origin/HEAD");
+    assert_eq!(loaded.layers.len(), 1);
 }
 
 #[test]
@@ -849,9 +804,14 @@ fn config_dir_replaces_the_default_directory_and_must_exist() {
     fs::create_dir(&named).unwrap();
     let file = named.join("config.toml");
     fs::write(&file, "[store]\nname = \"named\"\n").unwrap();
-    sb.write_project("[ui]\nglow_style = \"light\"\n");
+    fs::create_dir(named.join("profiles")).unwrap();
+    fs::write(
+        named.join("profiles/p.toml"),
+        "[ui]\nglow_style = \"light\"\n",
+    )
+    .unwrap();
 
-    let mut opts = sb.opts();
+    let mut opts = sb.opts_with_profile("p");
     opts.config_dir = Some(named.clone());
     let loaded = Config::load(&opts).unwrap();
     assert_eq!(loaded.config.store.name, "named");
@@ -862,7 +822,7 @@ fn config_dir_replaces_the_default_directory_and_must_exist() {
     );
     assert_eq!(
         loaded.config.ui.glow_style, "light",
-        "project file still applies"
+        "the profile comes from the named directory"
     );
 
     // TASQ_CONFIG_DIR does the same, with `~` expanded.
@@ -872,6 +832,7 @@ fn config_dir_replaces_the_default_directory_and_must_exist() {
     assert_eq!(loaded.file_for("store.name"), Some(file.as_path()));
 
     // The flag wins over the variable, and the variable over XDG_CONFIG_HOME.
+    opts.profile = None;
     let other = sb.home.join("other");
     fs::create_dir(&other).unwrap();
     fs::write(other.join("config.toml"), "[store]\nname = \"flag\"\n").unwrap();
@@ -889,7 +850,7 @@ fn config_dir_replaces_the_default_directory_and_must_exist() {
     opts.env = env(&[("TASQ_CONFIG_DIR", "~/conf")]);
     let loaded = Config::load(&opts).unwrap();
     assert_eq!(loaded.config.store.name, "default");
-    assert_eq!(loaded.layers.len(), 2, "defaults and the project file");
+    assert_eq!(loaded.layers.len(), 1, "the defaults only");
 
     opts.env = env(&[("TASQ_CONFIG_DIR", "~/missing")]);
     let err = Config::load(&opts).unwrap_err();
@@ -957,7 +918,8 @@ fn unreadable_file_names_the_file() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let unreadable = sb.write_project("[store]\nname = \"x\"\n");
+        fs::remove_dir(&path).unwrap();
+        let unreadable = sb.write_global("[store]\nname = \"x\"\n");
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
         let result = Config::load(&sb.opts());
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
@@ -1141,12 +1103,6 @@ fn data_dir_and_store_name_come_from_every_layer() {
     );
     assert_eq!(loaded.file_for("store.name"), Some(global.as_path()));
 
-    let project = sb.write_project("[store]\nname = \"project\"\n");
-    let loaded = Config::load(&sb.opts()).unwrap();
-    assert_eq!(loaded.config.data_dir, Some(sb.home.join("tasks")));
-    assert_eq!(loaded.config.store.name, "project");
-    assert_eq!(loaded.file_for("store.name"), Some(project.as_path()));
-
     let mut opts = sb.opts();
     opts.profile = Some("work".to_owned());
     let loaded = Config::load(&opts).unwrap();
@@ -1181,7 +1137,7 @@ fn store_name_must_be_a_single_directory_name() {
         (".", "a store name must not be '.' or '..'"),
     ] {
         let sb = Sandbox::new();
-        let file = sb.write_project(&format!("[store]\nname = {name:?}\n"));
+        let file = sb.write_global(&format!("[store]\nname = {name:?}\n"));
         let err = Config::load(&sb.opts()).unwrap_err();
         match &err {
             ConfigError::BadStoreName {
@@ -1220,7 +1176,7 @@ fn store_name_must_be_a_single_directory_name() {
 #[test]
 fn syntax_error_names_file_and_line() {
     let sb = Sandbox::new();
-    let path = sb.write_project("[store]\nname = \n");
+    let path = sb.write_global("[store]\nname = \n");
     let err = Config::load(&sb.opts()).unwrap_err();
     match &err {
         ConfigError::Parse { file, line, .. } => {
@@ -1306,10 +1262,10 @@ fn default_status_must_be_in_the_workflow() {
         )
     );
 
-    // The project file shrinking the list breaks the global default.
+    // A profile shrinking the list breaks the global default.
     sb.write_global("[workflow]\ndefault_status = \"later\"\n");
-    sb.write_project("[workflow]\nstatuses = [\"todo\", \"doing\"]\n");
-    let err = Config::load(&sb.opts()).unwrap_err();
+    sb.write_profile("p", "[workflow]\nstatuses = [\"todo\", \"doing\"]\n");
+    let err = Config::load(&sb.opts_with_profile("p")).unwrap_err();
     assert!(
         matches!(&err, ConfigError::DefaultStatusNotInWorkflow { origin, .. } if origin == &Origin::File(global.clone())),
         "{err}"
@@ -1317,14 +1273,17 @@ fn default_status_must_be_in_the_workflow() {
 
     // Shrinking the list without naming a default breaks the built-in one.
     fs::remove_file(&global).unwrap();
-    let err = Config::load(&sb.opts()).unwrap_err();
+    let err = Config::load(&sb.opts_with_profile("p")).unwrap_err();
     assert!(
         matches!(&err, ConfigError::DefaultStatusNotInWorkflow { origin: Origin::Defaults, status, .. } if status == "ready"),
         "{err}"
     );
 
-    sb.write_project("[workflow]\nstatuses = [\"todo\", \"doing\"]\ndefault_status = \"todo\"\n");
-    let loaded = Config::load(&sb.opts()).unwrap();
+    sb.write_profile(
+        "p",
+        "[workflow]\nstatuses = [\"todo\", \"doing\"]\ndefault_status = \"todo\"\n",
+    );
+    let loaded = Config::load(&sb.opts_with_profile("p")).unwrap();
     assert_eq!(loaded.config.workflow.default_status, status("todo"));
     assert_eq!(
         loaded.config.workflow.workflow().statuses,
@@ -1338,8 +1297,8 @@ fn default_status_must_be_in_the_workflow() {
 fn env_overrides_files() {
     let sb = Sandbox::new();
     sb.write_global("[store]\nname = \"global\"\n");
-    sb.write_project("[store]\nname = \"project\"\n[ui]\npager = \"more\"\n");
-    let mut opts = sb.opts();
+    sb.write_profile("p", "[store]\nname = \"profile\"\n[ui]\npager = \"more\"\n");
+    let mut opts = sb.opts_with_profile("p");
     opts.env = env(&[
         ("TASQ_STORE_NAME", "env"),
         ("TASQ_DATA_DIR", "~/data"),
@@ -1577,7 +1536,7 @@ fn invalid_env_enum_value_is_reported_without_a_file() {
 #[test]
 fn overrides_win_over_everything_and_are_typed_by_key() {
     let sb = Sandbox::new();
-    sb.write_project("[ui]\nno_osc8 = true\n");
+    sb.write_global("[ui]\nno_osc8 = true\n");
     let mut opts = sb.opts();
     opts.env = env(&[("TASQ_STORE_NAME", "env")]);
     opts.overrides = vec![
@@ -1807,14 +1766,14 @@ fn an_inline_profile_names_the_file_to_move_it_to() {
     );
     fs::remove_file(&global).unwrap();
 
-    let project = sb.write_project("[profile.a]\n[profile.work]\n");
+    let global = sb.write_global("[profile.a]\n[profile.work]\n");
     let err = Config::load(&sb.opts()).unwrap_err();
     assert!(
         matches!(&err, ConfigError::InlineProfile { file, line: 1, column: 10, name, .. }
-            if file == &project && name == "a"),
+            if file == &global && name == "a"),
         "{err:?}"
     );
-    fs::remove_file(&project).unwrap();
+    fs::remove_file(&global).unwrap();
 
     // In a profile file, and with `--config-dir`, the target is in that directory.
     let other = sb.home.join("other");
@@ -1850,6 +1809,166 @@ fn an_inline_profile_names_the_file_to_move_it_to() {
             "{text}: {err}"
         );
     }
+}
+
+// --- repository configs ----------------------------------------------------
+
+/// A repository config applies when the worktree commands ask for its main
+/// checkout, whatever the cwd and the profile (ADR-0031), and never to
+/// another repository or to a load that names none.
+#[test]
+fn a_repository_config_applies_to_its_main_checkout_only() {
+    let sb = Sandbox::new();
+    sb.write_global("[worktree]\nbase = \"origin/main\"\nsymlinks = [\"global\"]\n");
+    sb.write_profile("p", "[worktree]\nsymlinks = [\"profile\"]\n");
+    let repo = sb.write_repo(
+        "project",
+        "path = \"~/code/project\"\n\n[worktree]\nsymlinks = [\"repo\"]\n",
+    );
+    sb.write_repo(
+        "other",
+        "path = \"~/code/other\"\n[worktree]\ncopies = [\"x\"]\n",
+    );
+
+    let mut opts = sb.opts_for_repo(&sb.project);
+    opts.cwd = sb.home.join("elsewhere");
+    let loaded = Config::load(&opts).unwrap();
+    let w = &loaded.config.worktree;
+    assert_eq!(w.symlinks, vec!["repo"]);
+    assert_eq!(w.base, "origin/main", "keys the file leaves alone stay");
+    assert_eq!(
+        w.copies,
+        Vec::<String>::new(),
+        "the other repository's file is not merged"
+    );
+    assert_eq!(loaded.repo.as_deref(), Some(repo.as_path()));
+    let origin = Origin::Repo(repo.clone());
+    assert_eq!(loaded.explain("worktree.symlinks"), Some(&origin));
+    assert_eq!(loaded.file_for("worktree.symlinks"), Some(repo.as_path()));
+    assert_eq!(origin.to_string(), repo.display().to_string());
+    assert_eq!(
+        loaded.layers.last().unwrap().keys,
+        vec!["worktree.symlinks"]
+    );
+
+    // It wins over the selected profile.
+    opts.profile = Some("p".to_owned());
+    let loaded = Config::load(&opts).unwrap();
+    assert_eq!(loaded.config.worktree.symlinks, vec!["repo"]);
+    let origins: Vec<&Origin> = loaded.layers.iter().map(|l| &l.origin).collect();
+    assert_eq!(origins.len(), 4);
+    assert_eq!(origins[3], &origin);
+
+    // Another repository, a subdirectory of this one, or no repository at all.
+    for repo in [
+        Some(sb.home.join("code/third")),
+        Some(sb.project.join("sub")),
+        None,
+    ] {
+        let mut opts = sb.opts();
+        opts.repo = repo;
+        let loaded = Config::load(&opts).unwrap();
+        assert_eq!(loaded.config.worktree.symlinks, vec!["global"]);
+        assert_eq!(loaded.repo, None);
+    }
+}
+
+/// A repository config holds `path` and `[worktree]`, nothing else; the
+/// switch `worktrees_enabled` is not a repository setting.
+#[test]
+fn a_repository_config_holds_path_and_worktree_only() {
+    let sb = Sandbox::new();
+    let opts = sb.opts_for_repo(&sb.project);
+    let err = |text: &str| {
+        let file = sb.write_repo("project", text);
+        let err = Config::load(&opts).unwrap_err().to_string();
+        fs::remove_file(&file).unwrap();
+        err.replace(&file.display().to_string(), "<file>")
+    };
+    assert_eq!(
+        err("path = \"~/code/project\"\n[store]\nname = \"x\"\n"),
+        "<file>:2:2: unknown field `store`, expected `path` or `worktree`"
+    );
+    assert_eq!(
+        err("path = \"~/code/project\"\nworktrees_enabled = true\n"),
+        "<file>:2:21: worktrees_enabled is not a repository setting: \
+         set it in config.toml or a profile (docs/config.md, \"Worktrees\")"
+    );
+    assert_eq!(
+        err("path = \"~/code/project\"\n[worktree]\nbase = \"main\"\nenabled = true\n"),
+        "<file>:4:11: worktrees_enabled is not a repository setting: \
+         set it in config.toml or a profile (docs/config.md, \"Worktrees\")"
+    );
+    assert_eq!(
+        err("[worktree]\nbase = \"main\"\n"),
+        "<file>:1:1: missing field `path`"
+    );
+    assert_eq!(
+        err("path = \"code/project\"\n"),
+        "<file>:1:8: path must be absolute or start with ~/, the main checkout of a repository"
+    );
+    assert_eq!(
+        err("path = \"~/code/project\"\n[worktree]\nbranch = 3\n"),
+        "<file>:3:10: invalid type: integer `3`, expected a string"
+    );
+}
+
+/// Two repository configs with one `path` fail on load, naming both, even
+/// when another repository is asked about.
+#[test]
+fn two_repository_configs_with_one_path_name_both_files() {
+    let sb = Sandbox::new();
+    let a = sb.write_repo("a", "path = \"~/code/project\"\n");
+    let b = sb.write_repo("b", &format!("path = \"{}\"\n", sb.project.display()));
+    sb.write_repo("c", "path = \"~/code/other\"\n");
+    let expected = format!(
+        "repository configs {} and {} both have path {}",
+        a.display(),
+        b.display(),
+        sb.project.display()
+    );
+    for main in [sb.project.clone(), sb.home.join("code/other")] {
+        let err = Config::load(&sb.opts_for_repo(&main)).unwrap_err();
+        assert_eq!(err.to_string(), expected);
+    }
+    assert_eq!(
+        Config::load(&sb.opts()).unwrap().repo,
+        None,
+        "not read without a repository"
+    );
+}
+
+/// Only `*.toml` files directly in `repos/` count, and a `--config-dir`
+/// has its own `repos/`.
+#[test]
+fn repository_configs_are_the_toml_files_of_the_repos_directory() {
+    let sb = Sandbox::new();
+    let repos = sb.home.join(".config/tasq/repos");
+    fs::create_dir_all(&repos).unwrap();
+    fs::write(repos.join("notes.md"), "not toml").unwrap();
+    fs::create_dir_all(repos.join("nested.toml")).unwrap();
+    assert_eq!(
+        Config::load(&sb.opts_for_repo(&sb.project)).unwrap().repo,
+        None
+    );
+
+    let other = sb.home.join("other");
+    fs::create_dir_all(other.join("repos")).unwrap();
+    let file = other.join("repos/x.toml");
+    fs::write(
+        &file,
+        "path = \"~/code/project\"\n[worktree]\nbase = \"x\"\n",
+    )
+    .unwrap();
+    sb.write_repo(
+        "default",
+        "path = \"~/code/project\"\n[worktree]\nbase = \"default\"\n",
+    );
+    let mut opts = sb.opts_for_repo(&sb.project);
+    opts.config_dir = Some(other);
+    let loaded = Config::load(&opts).unwrap();
+    assert_eq!(loaded.config.worktree.base, "x");
+    assert_eq!(loaded.file_for("worktree.base"), Some(file.as_path()));
 }
 
 // --- paths -----------------------------------------------------------------
@@ -1915,7 +2034,7 @@ impl ForkindNames {
 #[test]
 fn forge_without_kind_and_unknown_name_is_an_error() {
     let sb = Sandbox::new();
-    let path = sb.write_project("[forge.work]\nhost = \"git.example.com\"\n");
+    let path = sb.write_global("[forge.work]\nhost = \"git.example.com\"\n");
     let err = Config::load(&sb.opts()).unwrap_err();
     assert!(
         matches!(&err, ConfigError::ForgeKindRequired { name, origin } if name == "work" && origin == &Origin::File(path.clone())),
@@ -1937,7 +2056,7 @@ fn forge_without_kind_and_unknown_name_is_an_error() {
 #[test]
 fn sources_need_the_keys_their_kind_requires() {
     let sb = Sandbox::new();
-    let path = sb.write_project("[[source]]\nname = \"inbox\"\nkind = \"llm-bridge\"\n");
+    let path = sb.write_global("[[source]]\nname = \"inbox\"\nkind = \"llm-bridge\"\n");
     let err = Config::load(&sb.opts()).unwrap_err();
     assert_eq!(
         err.to_string(),
@@ -1947,14 +2066,14 @@ fn sources_need_the_keys_their_kind_requires() {
         )
     );
 
-    sb.write_project("[[source]]\nname = \"mrs\"\nkind = \"github-review-requests\"\n");
+    sb.write_global("[[source]]\nname = \"mrs\"\nkind = \"github-review-requests\"\n");
     let err = Config::load(&sb.opts()).unwrap_err();
     assert!(
         matches!(&err, ConfigError::MissingSourceField { field: "forge", kind, .. } if kind == "github-review-requests"),
         "{err}"
     );
 
-    sb.write_project("[[source]]\nname = \"mrs\"\nkind = \"gitlab-work-items\"\nforge = \"gl\"\n");
+    sb.write_global("[[source]]\nname = \"mrs\"\nkind = \"gitlab-work-items\"\nforge = \"gl\"\n");
     let err = Config::load(&sb.opts()).unwrap_err();
     assert_eq!(
         err.to_string(),
@@ -1964,7 +2083,7 @@ fn sources_need_the_keys_their_kind_requires() {
         )
     );
 
-    sb.write_project(
+    sb.write_global(
         "[forge.gh]\nkind = \"github\"\n[[source]]\nname = \"mrs\"\nkind = \"gitlab-review-requests\"\nforge = \"gh\"\n",
     );
     let err = Config::load(&sb.opts()).unwrap_err();
@@ -1974,7 +2093,7 @@ fn sources_need_the_keys_their_kind_requires() {
         "{err}"
     );
 
-    sb.write_project(
+    sb.write_global(
         "[forge.gh]\nkind = \"github\"\n[[source]]\nname = \"issues\"\nkind = \"github-work-items\"\nforge = \"gh\"\n",
     );
     let loaded = Config::load(&sb.opts()).unwrap();
@@ -2015,10 +2134,11 @@ fn source_kind_metadata() {
 fn source_list_is_replaced_not_appended_by_a_later_layer() {
     let sb = Sandbox::new();
     sb.write_global("[[source]]\nname = \"a\"\nkind = \"llm-bridge\"\ncommand = \"a\"\n");
-    sb.write_project(
+    sb.write_profile(
+        "p",
         "[[source]]\nname = \"b\"\nkind = \"llm-bridge\"\ncommand = \"b\"\nenabled = false\nauto = false\n",
     );
-    let loaded = Config::load(&sb.opts()).unwrap();
+    let loaded = Config::load(&sb.opts_with_profile("p")).unwrap();
     assert_eq!(loaded.config.source.len(), 1);
     assert_eq!(loaded.config.source[0].name, "b");
     assert!(!loaded.config.source[0].enabled);
@@ -2057,7 +2177,7 @@ fn every_example_config_loads() {
 #[test]
 fn plan_section_4_6_example_loads_as_is() {
     let sb = Sandbox::new();
-    let path = sb.write_project(&fixture("plan-4.6.toml"));
+    let path = sb.write_global(&fixture("plan-4.6.toml"));
     let loaded = Config::load(&sb.opts()).unwrap();
     let c = &loaded.config;
     assert_eq!(c.store.name, "home");
@@ -2179,7 +2299,7 @@ fn load_options_new_and_display_of_origins() {
 #[test]
 fn explain_matches_prefixes_but_not_lookalike_keys() {
     let sb = Sandbox::new();
-    let path = sb.write_project("[store]\nname = \"x\"\n");
+    let path = sb.write_global("[store]\nname = \"x\"\n");
     let loaded = Config::load(&sb.opts()).unwrap();
     let file = Origin::File(path);
     assert_eq!(loaded.explain("store.name"), Some(&file));
@@ -2218,25 +2338,28 @@ fn env_vars_named_by_the_plan_are_all_supported() {
 #[test]
 fn all_six_layers_stack_field_wise_in_documented_order() {
     let sb = Sandbox::new();
-    // Every layer sets `store.name`; each also owns one private key.
+    // Every layer sets `worktree.base`; each also owns one private key.
     let global =
-        sb.write_global("[store]\nname = \"global\"\n[hooks]\npost-done = [\"echo done\"]\n");
+        sb.write_global("[worktree]\nbase = \"global\"\n[hooks]\npost-done = [\"echo done\"]\n");
     let profile_file = sb.write_profile(
         "p",
-        "[store]\nname = \"profile\"\n[ui]\nglow_style = \"light\"\n",
+        "[worktree]\nbase = \"profile\"\n[ui]\nglow_style = \"light\"\n",
     );
-    let project = sb.write_project("[store]\nname = \"project\"\n[ui]\npager = \"more\"\n");
-    let mut opts = sb.opts();
+    let repo = sb.write_repo(
+        "project",
+        "path = \"~/code/project\"\n[worktree]\nbase = \"repo\"\nsymlinks = [\"node_modules\"]\n",
+    );
+    let mut opts = sb.opts_for_repo(&sb.project);
     opts.profile = Some("p".to_owned());
-    opts.env = env(&[("TASQ_STORE_NAME", "env"), ("TASQ_LAUNCHER", "shell")]);
+    opts.env = env(&[("TASQ_WORKTREE_BASE", "env"), ("TASQ_LAUNCHER", "shell")]);
     opts.overrides = vec![
-        ("store.name".to_owned(), "override".to_owned()),
+        ("worktree.base".to_owned(), "override".to_owned()),
         ("launch.env".to_owned(), "inherit".to_owned()),
     ];
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
-    assert_eq!(c.store.name, "override");
-    assert_eq!(c.ui.pager, "more");
+    assert_eq!(c.worktree.base, "override");
+    assert_eq!(c.worktree.symlinks, vec!["node_modules"]);
     assert_eq!(c.ui.glow_style, "light");
     assert_eq!(c.launch.default, "shell");
     assert_eq!(c.launch.env, EnvStrategy::Inherit);
@@ -2245,20 +2368,20 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
         name: "p".to_owned(),
         file: profile_file.clone(),
     };
-    assert_eq!(loaded.explain("store.name"), Some(&Origin::Overrides));
+    assert_eq!(loaded.explain("worktree.base"), Some(&Origin::Overrides));
     assert_eq!(
         loaded.explain("hooks.post-done"),
         Some(&Origin::File(global.clone()))
     );
     assert_eq!(
-        loaded.explain("ui.pager"),
-        Some(&Origin::File(project.clone()))
+        loaded.explain("worktree.symlinks"),
+        Some(&Origin::Repo(repo.clone()))
     );
     assert_eq!(loaded.explain("ui.glow_style"), Some(&profile));
     assert_eq!(loaded.explain("launch.default"), Some(&Origin::Env));
     assert_eq!(loaded.explain("launch.env"), Some(&Origin::Overrides));
     assert_eq!(loaded.explain("ui.no_osc8"), Some(&Origin::Defaults));
-    assert_eq!(loaded.file_for("store.name"), None);
+    assert_eq!(loaded.file_for("worktree.base"), None);
     assert_eq!(
         loaded.file_for("ui.glow_style"),
         Some(profile_file.as_path())
@@ -2270,21 +2393,22 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
         vec![
             &Origin::Defaults,
             &Origin::File(global),
-            &Origin::File(project),
             &profile,
+            &Origin::Repo(repo.clone()),
             &Origin::Env,
             &Origin::Overrides,
         ]
     );
     // Dropping the overrides exposes the env value, and so on down the stack.
+    let base = |opts: &LoadOptions| Config::load(opts).unwrap().config.worktree.base;
     opts.overrides.clear();
-    assert_eq!(Config::load(&opts).unwrap().config.store.name, "env");
-    opts.env.remove("TASQ_STORE_NAME");
-    assert_eq!(Config::load(&opts).unwrap().config.store.name, "profile");
+    assert_eq!(base(&opts), "env");
+    opts.env.remove("TASQ_WORKTREE_BASE");
+    assert_eq!(base(&opts), "repo");
+    fs::remove_file(&repo).unwrap();
+    assert_eq!(base(&opts), "profile");
     opts.profile = None;
-    assert_eq!(Config::load(&opts).unwrap().config.store.name, "project");
-    fs::remove_file(sb.project.join(".tasq.toml")).unwrap();
-    assert_eq!(Config::load(&opts).unwrap().config.store.name, "global");
+    assert_eq!(base(&opts), "global");
 }
 
 #[test]
@@ -2294,7 +2418,7 @@ fn removed_worktree_manager_keys_name_the_replacement() {
         "worktree_command = \"mk {branch}\"",
     ] {
         let sb = Sandbox::new();
-        let file = sb.write_project(&format!("[work]\ndefault_project = \"~\"\n{key}\n"));
+        let file = sb.write_global(&format!("[work]\ndefault_project = \"~\"\n{key}\n"));
         let err = Config::load(&sb.opts()).unwrap_err().to_string();
         let prefix = format!("{}:3:", file.display());
         assert!(err.starts_with(&prefix), "{err}");
@@ -2311,7 +2435,7 @@ fn removed_worktree_manager_keys_name_the_replacement() {
 fn copy_ignored_is_rejected_until_it_is_implemented() {
     for value in ["true", "false"] {
         let sb = Sandbox::new();
-        let file = sb.write_project(&format!(
+        let file = sb.write_global(&format!(
             "[worktree]\nbase = \"main\"\ncopy_ignored = {value}\n"
         ));
         let err = Config::load(&sb.opts()).unwrap_err().to_string();
@@ -2329,7 +2453,7 @@ fn copy_ignored_is_rejected_until_it_is_implemented() {
 #[test]
 fn worktree_table_from_a_file() {
     let sb = Sandbox::new();
-    sb.write_project(
+    sb.write_global(
         "[worktree]\nsymlinks = [\"node_modules\"]\ncopies = [\".envrc\"]\n\
          templates = [{ source = \"t/.envrc\", target = \".envrc\" }]\n\
          [worktree.variables]\ndb = \"app\"\n[worktree.ports]\nbase = 4000\nspan = 1000\nblock = 10\n\
@@ -2364,7 +2488,7 @@ fn worktree_table_from_a_file() {
 fn worktree_ports_must_hold_a_block_below_65536() {
     let load = |base: u32, span: u32, block: u32| {
         let sb = Sandbox::new();
-        sb.write_project(&format!(
+        sb.write_global(&format!(
             "[worktree.ports]\nbase = {base}\nspan = {span}\nblock = {block}\n"
         ));
         Config::load(&sb.opts())
@@ -2375,7 +2499,7 @@ fn worktree_ports_must_hold_a_block_below_65536() {
     assert_eq!(load(65526, 10, 10), Ok(()));
     assert_eq!(load(0, 65535, 1), Ok(()));
     let sb = Sandbox::new();
-    let file = sb.write_project("[worktree.ports]\nbase = 4000\nspan = 10\nblock = 0\n");
+    let file = sb.write_global("[worktree.ports]\nbase = 4000\nspan = 10\nblock = 0\n");
     assert_eq!(
         Config::load(&sb.opts()).unwrap_err().to_string(),
         format!(
@@ -2391,7 +2515,7 @@ fn worktree_ports_must_hold_a_block_below_65536() {
 #[test]
 fn an_empty_table_is_recorded_as_a_leaf_key() {
     let sb = Sandbox::new();
-    sb.write_project("[ui.colors]\n\n[forge]\n");
+    sb.write_global("[ui.colors]\n\n[forge]\n");
     let loaded = Config::load(&sb.opts()).unwrap();
     assert_eq!(loaded.layers[1].keys, vec!["forge", "ui.colors"]);
     assert!(
@@ -2405,7 +2529,7 @@ fn an_empty_table_is_recorded_as_a_leaf_key() {
 fn worktree_templates_only_name_variables_of_their_scope() {
     let load = |text: &str| {
         let sb = Sandbox::new();
-        let file = sb.write_project(text);
+        let file = sb.write_global(text);
         (
             Config::load(&sb.opts())
                 .map(|_| ())
@@ -2475,7 +2599,7 @@ fn worktree_templates_only_name_variables_of_their_scope() {
 #[test]
 fn worktree_variables_are_names_that_shadow_no_builtin() {
     let sb = Sandbox::new();
-    let file = sb.write_project("[worktree.variables]\nport = \"1\"\n");
+    let file = sb.write_global("[worktree.variables]\nport = \"1\"\n");
     assert_eq!(
         Config::load(&sb.opts()).unwrap_err().to_string(),
         format!(
@@ -2483,7 +2607,7 @@ fn worktree_variables_are_names_that_shadow_no_builtin() {
             file.display()
         )
     );
-    sb.write_project("[worktree.variables]\n\"db-name\" = \"1\"\n");
+    sb.write_global("[worktree.variables]\n\"db-name\" = \"1\"\n");
     assert_eq!(
         Config::load(&sb.opts()).unwrap_err().to_string(),
         format!(
@@ -2491,8 +2615,8 @@ fn worktree_variables_are_names_that_shadow_no_builtin() {
             file.display()
         )
     );
-    sb.write_project("[worktree.variables]\n\"\" = \"1\"\n");
+    sb.write_global("[worktree.variables]\n\"\" = \"1\"\n");
     assert!(Config::load(&sb.opts()).is_err());
-    sb.write_project("[worktree.variables]\ndb_name2 = \"1\"\n");
+    sb.write_global("[worktree.variables]\ndb_name2 = \"1\"\n");
     assert!(Config::load(&sb.opts()).is_ok());
 }

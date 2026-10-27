@@ -354,9 +354,12 @@ mod tests {
     }
     use crate::output::Output;
 
-    /// An app whose only configuration is `.tasq.toml` in `dir` with `text`.
+    /// An app whose home is `dir` and whose only configuration is its
+    /// `config.toml` with `text`.
     fn app_in(dir: &Path, text: &str) -> App {
-        std::fs::write(dir.join(".tasq.toml"), text).unwrap();
+        let config_dir = dir.join(".config").join("tasq");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("config.toml"), text).unwrap();
         let mut opts = LoadOptions::new(dir);
         opts.home = Some(dir.to_path_buf());
         let loaded = Config::load(&opts).unwrap();
@@ -517,15 +520,15 @@ mod tests {
             ))
         );
         std::fs::remove_file(wt.join("scratch")).unwrap();
-        // Hooks of the repository's own file are never asked about here.
+        // Hooks of the repository config are never asked about here.
+        let repos = dir.join(".config").join("tasq").join("repos");
+        std::fs::create_dir_all(&repos).unwrap();
         std::fs::write(
-            dir.join("proj").join(".git").join("info").join("exclude"),
-            ".tasq.toml\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.join("proj").join(".tasq.toml"),
-            "[worktree.hooks]\npre-remove = [\"/bin/false\"]\n",
+            repos.join("proj.toml"),
+            format!(
+                "path = \"{}\"\n[worktree.hooks]\npre-remove = [\"/bin/false\"]\n",
+                dir.join("proj").display()
+            ),
         )
         .unwrap();
         let warning = host(&app).after_done(&task).unwrap_err();

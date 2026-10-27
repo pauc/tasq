@@ -14,13 +14,17 @@
 //! 2. the global file, `config.toml` in the config directory: the one named
 //!    by `--config-dir` / `TASQ_CONFIG_DIR` (which must then exist), else
 //!    `$XDG_CONFIG_HOME/tasq`, else `~/.config/tasq` (see [`config_dir`]);
-//! 3. the nearest `.tasq.toml` walking up from the working directory (see
-//!    [`project_file`] for the stop rule);
-//! 4. the selected profile, `profiles/<name>.toml` in the config directory
+//! 3. the selected profile, `profiles/<name>.toml` in the config directory
 //!    (the same shape as `config.toml`), chosen with `--profile` or
 //!    `TASQ_PROFILE`; a `[profile.<name>]` table in any file is an error;
+//! 4. the repository config, for the worktree commands only: the file in
+//!    `repos/` of the config directory whose `path` is the main checkout
+//!    named by [`LoadOptions::repo`]; it holds `path` and `[worktree]`;
 //! 5. `TASQ_*` environment variables (see [`ENV_KEYS`]);
 //! 6. explicit overrides passed by the command line (`--set key=value`).
+//!
+//! Nothing is read from the working directory or from a repository
+//! (ADR-0031).
 //!
 //! Each layer is a partial TOML document. They are deep-merged as TOML
 //! tables, then the result is deserialised into [`Config`] once, so the
@@ -131,8 +135,7 @@ use crate::worktree::lifecycle::DeleteBranch;
 pub use self::error::ConfigError;
 pub use self::load::{
     ENV_CONFIG_DIR, ENV_DATA_DIR, ENV_KEYS, ENV_PROFILE, ENV_SET, ENV_STORE_NAME, GLOBAL_FILE,
-    Layer, LoadOptions, Loaded, Origin, PROJECT_FILE, config_dir, default_data_dir, parse_env_set,
-    project_file,
+    Layer, LoadOptions, Loaded, Origin, REPOS_DIR, config_dir, default_data_dir, parse_env_set,
 };
 pub use self::path::{contract_tilde, expand_tilde};
 

@@ -104,20 +104,32 @@ pub fn render(rows: &[Row]) -> String {
 /// The declared worktrees to list: of task `id` when given; else of every
 /// task working in the current directory's repository (every task with
 /// `all`, or outside a repository), leaving out those of closed tasks that
-/// do not exist.
+/// do not exist. A configuration that does not load (a broken repository
+/// config fails every repository) is an error, not default settings.
 pub fn rows(app: &App, store: &dyn Store, id: Option<&TaskId>, all: bool) -> Result<Vec<Row>> {
     let tasks = match id {
         Some(id) => vec![store.get(id)?],
         None => store.list(&Filter::new().any_done())?,
     };
     let scope = listing::scope(id.is_some(), all, &app.opts.cwd);
-    Ok(listing::rows(
+    let failed = std::cell::RefCell::new(None);
+    let rows = listing::rows(
         &app.git(),
         &tasks,
         &scope,
         |task| project_of(app, task).ok(),
-        |project| repo_settings(app, project).ok(),
-    ))
+        |project| match repo_settings(app, project) {
+            Ok(settings) => Some(settings),
+            Err(e) => {
+                failed.borrow_mut().get_or_insert(e);
+                None
+            }
+        },
+    );
+    match failed.into_inner() {
+        Some(e) => Err(e),
+        None => Ok(rows),
+    }
 }
 
 /// `tasq worktree prune [--all] [--dry-run] [--yes]`: runs `git worktree

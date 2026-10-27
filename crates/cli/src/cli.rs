@@ -156,7 +156,7 @@ pub enum Command {
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
+        /// Run the worktree hooks of the repository config without asking, this once.
         #[arg(long)]
         yes: bool,
     },
@@ -179,7 +179,7 @@ pub enum Command {
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
+        /// Run the worktree hooks of the repository config without asking, this once.
         #[arg(long)]
         yes: bool,
     },
@@ -385,7 +385,7 @@ pub enum EditCommand {
         /// The progress note, positional or `--note`.
         #[command(flatten)]
         note: NoteArg,
-        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
+        /// Run the worktree hooks of the repository config without asking, this once.
         #[arg(long)]
         yes: bool,
     },
@@ -728,7 +728,7 @@ pub enum WorktreeAction {
         /// Say what would be created; fetch and create nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
+        /// Run the hooks of the repository config without asking, this once.
         #[arg(long)]
         yes: bool,
     },
@@ -752,7 +752,7 @@ pub enum WorktreeAction {
         /// Say what would be removed and deleted; change nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
+        /// Run the hooks of the repository config without asking, this once.
         #[arg(long)]
         yes: bool,
     },
@@ -772,7 +772,7 @@ pub enum WorktreeAction {
         /// Say what would be removed, deleted and forgotten; change nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
+        /// Run the hooks of the repository config without asking, this once.
         #[arg(long)]
         yes: bool,
     },
@@ -804,7 +804,7 @@ pub enum WorktreeAction {
         /// Where to go.
         #[arg(value_name = "TARGET")]
         target: Option<String>,
-        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
+        /// Run the hooks of the repository config without asking, this once.
         #[arg(long)]
         yes: bool,
     },
@@ -823,9 +823,9 @@ pub enum WorktreeAction {
         #[arg(value_enum, value_name = "SHELL")]
         shell: InitShell,
     },
-    /// Approve the hooks of a repository's own .tasq.toml ahead of time.
+    /// Approve the hooks of a repository config ahead of time.
     ///
-    /// Hooks a repository's .tasq.toml sets run only once approved; this
+    /// Hooks a repository config sets run only once approved; this
     /// approves every hook line it sets now. Editing a line asks again.
     Trust {
         /// A directory in the repository [default: the current directory].

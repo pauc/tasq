@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::worktree_hooks::{self, Approval};
 use crate::commands::worktree_nav;
-use tasq_core::config::project_file;
 use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::store::Store;
 use tasq_core::work;
@@ -174,17 +173,18 @@ pub fn declare_in(
 }
 
 /// The worktree settings of the repository `project` is in: `[worktree]`
-/// as loaded from its main checkout, so the `.tasq.toml` next to the
-/// repository applies wherever tasq runs (plan 4.4).
+/// with the repository config of its main checkout applied, wherever tasq
+/// runs (ADR-0031). A relative template `source` starts at the directory
+/// of the file that set `worktree.templates`.
 pub fn repo_settings(app: &App, project: &Path) -> Result<RepoSettings> {
     let repo = Repo::of(project);
     let main = repo.as_ref().map_or(project, |r| &r.main).to_path_buf();
-    let loaded = app.config_at(&main)?;
+    let loaded = app.config_for_repo(&main)?;
     let templates_dir = loaded
         .file_for("worktree.templates")
         .and_then(Path::parent)
         .map_or_else(|| main.clone(), Path::to_path_buf);
-    let repo_file = project_file(&main, app.opts.home.as_deref());
+    let repo_file = loaded.repo.clone();
     let untrusted = Kind::ALL
         .into_iter()
         .filter(|kind| {
@@ -248,8 +248,8 @@ pub fn up(app: &App, id: &str, from: Option<&str>, yes: bool, dry_run: bool) -> 
     finish(app, &mut store, &id, &line)
 }
 
-/// `tasq worktree trust [DIR]`: approves the hooks of the repository's own
-/// `.tasq.toml` ahead of time.
+/// `tasq worktree trust [DIR]`: approves the hooks of the repository
+/// config ahead of time.
 pub fn trust(app: &App, dir: Option<&Path>) -> Result<()> {
     if !app.worktrees() {
         return Err(disabled());
