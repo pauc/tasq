@@ -325,7 +325,7 @@ duplicate ids), links from README and `docs/plugins.md`, CLAUDE.md's architectur
 
 **Blocked by:** GS-005, GS-006, GS-007.
 
-**Status:** blocked
+**Status:** done
 
-- [ ] Setting up a second machine works from the doc alone.
-- [ ] Docs only; no mutation run.
+- [x] Setting up a second machine works from the doc alone.
+- [x] Docs only; no mutation run.

@@ -14,7 +14,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
 | GS-005 | Conflicts are aborted and reported | done | d6671fc. Mutants with `--no-config` on `crates/git/src`: 0 missed (174: 154 caught, 17 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the ticket's diff: 0 missed (27: 26 caught, 1 unviable). |
 | GS-006 | Duplicate ids are explained | done | f3689d5. Mutants with `--no-config` on `crates/git/src`: 0 missed (191: 170 caught, 18 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the ticket's diff (store and plugin): 0 missed (36: 29 caught, 7 unviable). |
 | GS-007 | `tasq git sync`, `tasq git clone` and the doctor checks | done | a4d298d. Mutants with `--no-config` on `crates/git/src`: 0 missed (241: 209 caught, 29 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the ticket's diff: 0 missed (87: 71 caught, 15 unviable, 1 timeout, the same). |
-| GS-008 | The docs describe store sync | blocked | |
+| GS-008 | The docs describe store sync | done | cd2324b. Docs only, no mutation run: the diff has no Rust, so 0 mutants and 0 missed. fmt, clippy and the full suite (1412 tests) pass. The doc's steps were run with the built `tasq` and `tasq-git` against a bare `file://` remote and two isolated `HOME`s (Learnings). |
 
 ## Learnings
 
@@ -130,6 +130,17 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
 - 2026-10-27 (GS-007): while a rebase is stopped `HEAD` is detached, so `@{upstream}` and
   `branch --show-current` say nothing useful; doctor then reports the identity and the failed
   rebase check only.
+
+- 2026-10-27 (GS-008): the doc was checked by running it: two isolated `HOME`s with the doc's
+  `[plugin.git]` table verbatim, a bare `file://` remote, `tasq git init <url>` on A, `tasq git
+  clone <url>` on B, a `tasq log` on B pulled by `tasq git sync` on A, a conflict while the
+  remote was moved away (the warning, `git pull --rebase`, resolve, `git rebase --continue`,
+  `tasq git sync` clears it), a duplicate id created offline on both (the warning, the `id:`
+  edit, cleared on both), and `git remote add` plus `git push -u` on a local-only store (the
+  job then pushes). The example outputs in the doc are those runs' texts with the paths
+  shortened. No SSH was exercised.
+- 2026-10-27 (GS-008): `tasq list` shows both files of a duplicate id (with a warning); only
+  `get` refuses the id. A first draft said otherwise.
 
 ## Blockers
 
@@ -333,3 +344,13 @@ None. tasq 59 is merged.
   `has_task_files`, and two CLI tests (`git_sync_prints_each_step_and_doctor_explains_the_repository`,
   `git_clone_fills_another_store`) through the real `tasq`. The hook tests for a `.git` store
   now expect the repository checks. CHANGELOG entry added.
+- GS-008: beyond the ticket's list: `docs/architecture.md` gains `crates/git` in the crate
+  table and the diagram (outside the dependency graph), `docs/config.md` links the
+  `[plugin.git]` keys, and the `[plugin.git]` examples of `docs/config.md` and
+  `docs/plugins.md` drop `remote = "origin"` (no such key; the remote is the repository's
+  upstream) for `email`. The doctor example of `docs/plugins.md` fixes `tasq git push`, which
+  does not exist, to `tasq git sync`; its other illustrative lines are kept. CHANGELOG entry
+  added.
+- GS-008: adding a remote to a store initialized without one has no command; the doc gives
+  `git -C <store> remote add origin <url> && git -C <store> push -u origin <branch>`, which
+  the job then follows (it syncs whatever upstream the branch has).
