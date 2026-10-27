@@ -13,7 +13,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
 | CC-005 | Hooks run without trust | done | f561dff; mutants 48: 38 caught, 10 unviable, 0 missed |
 | CC-006 | `tasq worktree config [DIR]` | done | ffc1b8e; mutants 18: 18 caught, 0 missed |
 | CC-007 | `tasq doctor` checks repository configs | done | 7ba50f1; mutants 18: 12 caught, 6 unviable, 0 missed |
-| CC-008 | The docs describe the config directory | todo | |
+| CC-008 | The docs describe the config directory | done | 5ff45bd; no Rust beyond one doc comment: mutants 0 (none in the diff), 0 missed |
 
 ## Learnings
 
@@ -123,6 +123,24 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
   (like `check_worktree_templates`, so turning them on surfaces nothing new), and only when
   the config loads: a broken `config.toml` hides them until it is fixed (code review notes,
   not changed).
+- 2026-10-27 (CC-008): every doc item the earlier entries left to CC-008 is done: the
+  `[profile.<name>]` and `.tasq.toml` text in `docs/config.md`, `README.md`, `docs/json.md`,
+  `docs/plugins.md` and `CLAUDE.md`; `worktree.enabled` in the README, `json.md` and the
+  env table; the silent `TASQ_CONFIG` and `TASQ_WORKTREE_ENABLED` (now a migration row and a
+  CHANGELOG line, no warning); a grep over `plugins/` (part of the guard); the CHANGELOG
+  block for CC-001..CC-008.
+- 2026-10-27 (CC-008): `cargo doc` gives 13 warnings before and after; none come from this
+  diff, which has no Rust beyond one doc comment.
+- 2026-10-27 (CC-008): the code review ran over the whole branch and reported Rust issues
+  from CC-001..CC-007, all out of scope and not changed: an empty `--config-dir=` resolves to
+  the cwd and is forwarded as an empty `TASQ_CONFIG_DIR`; an unreadable `profiles/` or
+  `repos/` reads as empty; a `~/` repository `path` without `HOME` fails every worktree
+  command with a misleading message; `Repo::main` is not canonical for a `.git` file
+  (`--separate-git-dir`); `worktree config` refuses a plain directory that `repo_settings`
+  still matches; each `repo_settings` call reloads every `repos/*.toml` up to five parses;
+  `profile_names` and `repo_files` duplicate one directory scan. Worth a follow-up task. The
+  one doc finding (the stale `Loaded::profiles` comment) is fixed here, and the symlink
+  sentence in the docs was softened to match the `.git` file case.
 
 ## Blockers
 
@@ -213,3 +231,17 @@ None.
   `config`. New public items: `tasq_core::config::{RepoConfig, repo_configs}`,
   `tasq_core::worktree::repo_config::{Found, check}` and `tasq_worktree::repo::find`, which
   reads the disk (no git process, so no injected env is needed, unlike the plan's wording).
+- CC-008: the guard is a CI job (`no-old-config` in `.github/workflows/ci.yml`, like
+  `no-gwm`), not a test. It also checks `TASQ_WORKTREE_ENABLED`, `CLAUDE.md` and
+  `CONTEXT.md`, and allows the old names in `crates/core/src/config/` (the code that rejects
+  them), `crates/core/tests/config_load.rs`, the `.tasq.toml` lines of
+  `crates/cli/tests/cli.rs` (tests that they are rejected or ignored) and CONTEXT.md's
+  `_Avoid_` line. Current docs name the old switch as "`enabled` under `[worktree]`" so only
+  `docs/migration.md` spells it out.
+- CC-008: the Rust diff is one doc comment (`Loaded::profiles`, stale since CC-002, a code
+  review finding). `docs/migration.md` gets a new section, "From an earlier `tasq`: the
+  config directory", and its two old `.tasq.toml`/`[profile.x]` sentences become profile
+  files. `docs/config.md` also gains `worktrees_enabled` in the defaults document and the
+  key table, a "Profiles" section and a "Repository configs" subsection (including `tasq
+  worktree config` and the doctor check), and the env of sessions and worktree hooks lists
+  `TASQ_CONFIG_DIR`. README lists `tasq worktree config [DIR]`.

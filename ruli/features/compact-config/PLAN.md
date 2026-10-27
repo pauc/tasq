@@ -245,7 +245,7 @@ section), the `.tasq.toml` guard grep.
 
 **Blocked by:** CC-005, CC-006, CC-007.
 
-**Status:** todo
+**Status:** done
 
-- [ ] No current doc, test or example mentions `.tasq.toml`, `TASQ_CONFIG` or `worktree.enabled` outside ADRs, plans and the migration section.
-- [ ] `cargo doc` adds no warnings; the full suite passes.
+- [x] No current doc, test or example mentions `.tasq.toml`, `TASQ_CONFIG` or `worktree.enabled` outside ADRs, plans and the migration section.
+- [x] `cargo doc` adds no warnings; the full suite passes.
