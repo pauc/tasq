@@ -1,6 +1,6 @@
 # ADR-0022: Worktrees as an opt-in core feature
 
-- **Status:** Proposed
+- **Status:** Proposed; the `.tasq.toml` lookup and hook trust are superseded by ADR-0031
 - **Date:** 2026-10-07
 
 ## Context
