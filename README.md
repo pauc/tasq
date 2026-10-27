@@ -249,7 +249,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq view ID [--raw]` | Show a task (glow on a terminal, plain markdown otherwise; `--raw` is verbatim) |
 | `tasq project ID [PATH]` | Show or set the task's project directory |
 | `tasq worktree set ID [BRANCH]` / `tasq worktree set ID PATH` | Declare a worktree for the task (no git, nothing on disk), or track an existing one (with `worktree.enabled`) |
-| `tasq worktree up ID` / `ls` / `switch [TARGET]` / `path TARGET` / `release ID` / `prune` / `trust` | Create the declared worktree now, list worktrees, cd into one (after `eval "$(tasq worktree shell-init zsh)"`), release what closing does, forget missing ones, approve a repository's hooks |
+| `tasq worktree up ID` / `ls` / `switch [TARGET]` / `path TARGET` / `release ID` / `prune` | Create the declared worktree now, list worktrees, cd into one (after `eval "$(tasq worktree shell-init zsh)"`), release what closing does, forget missing ones |
 | `tasq session ID SESSION_ID [DESC] [--launcher NAME]` | Track an agent session |
 | `tasq mr ID URL [TITLE]` | Track a merge request |
 | `tasq sync [--source NAME] [--dry-run] [ID]...` | Refresh tasks from the configured sources, or re-check the given tasks |

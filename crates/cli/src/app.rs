@@ -141,8 +141,8 @@ fn edit(app: &App, command: EditCommand) -> Result<()> {
             commands::edit::set(app, &id, &value, note.into_note().as_deref())
         }
         EditCommand::Log { id, note } => commands::edit::log(app, &id, &note),
-        EditCommand::Done { id, note, yes } => {
-            commands::edit::done(app, &id, note.into_note().as_deref(), yes)
+        EditCommand::Done { id, note } => {
+            commands::edit::done(app, &id, note.into_note().as_deref())
         }
         EditCommand::Reopen { id, status, note } => {
             commands::edit::reopen(app, &id, status.as_deref(), note.into_note().as_deref())

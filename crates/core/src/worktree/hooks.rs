@@ -1,16 +1,14 @@
 //! Worktree hooks (plan 4.5, WT-204): the command lines of
 //! `[worktree.hooks]` made ready to run for one worktree, the environment
-//! they run with, and the store of the ones the user approved.
+//! they run with.
 //!
 //! A line is split into words like a shell would (quotes group, no
 //! expansion), then each word is rendered with the template variables, so
 //! a value with spaces or quotes stays one argument. No shell runs it;
 //! `sh -c '...'` is there for whoever needs one.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::config::WorktreeHooks;
@@ -121,12 +119,6 @@ pub fn env(vars: &Vars) -> Vec<(String, String)> {
     env
 }
 
-/// Where approvals are kept: `$XDG_STATE_HOME/tasq/trust.toml`, else
-/// `~/.local/state/tasq/trust.toml`; `None` when neither is known.
-pub fn trust_file(xdg_state_home: Option<&str>, home: Option<&Path>) -> Option<PathBuf> {
-    state_file(xdg_state_home, home, "trust.toml")
-}
-
 /// `name` in tasq's state directory: `$XDG_STATE_HOME/tasq`, else
 /// `~/.local/state/tasq`; `None` when neither is known.
 pub fn state_file(
@@ -139,52 +131,6 @@ pub fn state_file(
         None => home?.join(".local").join("state"),
     };
     Some(state.join("tasq").join(name))
-}
-
-/// The hook command lines the user approved, per configuration file. A
-/// line is approved as written, so editing it asks again.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TrustStore {
-    /// Approved lines, by the absolute path of the file that holds them.
-    #[serde(default)]
-    approved: BTreeMap<PathBuf, Vec<String>>,
-}
-
-impl TrustStore {
-    /// Reads a store written by [`TrustStore::to_toml`].
-    ///
-    /// # Errors
-    ///
-    /// The TOML error for a malformed file.
-    pub fn parse(text: &str) -> Result<Self, toml::de::Error> {
-        toml::from_str(text)
-    }
-
-    /// The store as TOML.
-    pub fn to_toml(&self) -> String {
-        toml::to_string(self).unwrap_or_default()
-    }
-
-    /// The lines of `lines` not approved for `file`, in order.
-    pub fn pending<'a>(&self, file: &Path, lines: &'a [String]) -> Vec<&'a str> {
-        let approved = self.approved.get(file);
-        lines
-            .iter()
-            .filter(|line| !approved.is_some_and(|a| a.contains(line)))
-            .map(String::as_str)
-            .collect()
-    }
-
-    /// Approves `lines` for `file`, keeping earlier approvals.
-    pub fn approve(&mut self, file: &Path, lines: &[String]) {
-        let approved = self.approved.entry(file.to_path_buf()).or_default();
-        for line in lines {
-            if !approved.contains(line) {
-                approved.push(line.clone());
-            }
-        }
-    }
 }
 
 /// What a hook command had to say while it ran: worktree hooks, and the
@@ -214,130 +160,43 @@ pub struct Hooks {
     pub kind: Kind,
     /// What runs.
     pub run: Vec<Command>,
-    /// Lines left out because nobody approved them.
-    pub skipped: Vec<String>,
 }
 
 impl Hooks {
-    /// The lines of `kind` in `hooks`, rendered with `vars`; a line `skip`
-    /// says yes to is left out, unrendered, as skipped.
+    /// The lines of `kind` in `hooks`, rendered with `vars`.
     ///
     /// # Errors
     ///
     /// The [`HookError`] of the first line that cannot be rendered.
-    pub fn render(
-        kind: Kind,
-        hooks: &WorktreeHooks,
-        vars: &Vars,
-        skip: impl Fn(&str) -> bool,
-    ) -> Result<Self, HookError> {
-        let mut rendered = Self {
-            kind,
-            run: Vec::new(),
-            skipped: Vec::new(),
-        };
-        for line in kind.lines(hooks) {
-            if skip(line) {
-                rendered.skipped.push(line.clone());
-            } else {
-                rendered.run.push(Command {
+    pub fn render(kind: Kind, hooks: &WorktreeHooks, vars: &Vars) -> Result<Self, HookError> {
+        let run = kind
+            .lines(hooks)
+            .iter()
+            .map(|line| {
+                Ok(Command {
                     line: line.clone(),
                     argv: argv(kind, line, vars)?,
-                });
-            }
-        }
-        Ok(rendered)
+                })
+            })
+            .collect::<Result<_, HookError>>()?;
+        Ok(Self { kind, run })
     }
 
-    /// `--dry-run` lines: what would run, and what would be skipped.
+    /// `--dry-run` lines: what would run.
     pub fn describe(&self) -> Vec<String> {
         let key = self.kind.key();
-        let run = self
-            .run
+        self.run
             .iter()
-            .map(|c| format!("run {key} hook: {}", shell_words::join(&c.argv)));
-        let skipped = self
-            .skipped
-            .iter()
-            .map(|line| format!("skip {key} hook (not approved): {line}"));
-        run.chain(skipped).collect()
+            .map(|c| format!("run {key} hook: {}", shell_words::join(&c.argv)))
+            .collect()
     }
-}
-
-/// The lines of `kinds` in `hooks` that need approval and do not have it:
-/// those of the `untrusted` kinds (set by the repository's own `file`)
-/// that `store` has not approved for `file`.
-pub fn pending(
-    store: &TrustStore,
-    file: &Path,
-    untrusted: &[Kind],
-    kinds: &[Kind],
-    hooks: &WorktreeHooks,
-) -> Vec<(Kind, String)> {
-    kinds
-        .iter()
-        .filter(|kind| untrusted.contains(kind))
-        .flat_map(|&kind| {
-            store
-                .pending(file, kind.lines(hooks))
-                .into_iter()
-                .map(move |line| (kind, line.to_owned()))
-        })
-        .collect()
-}
-
-/// What approving the pending lines takes, decided before any I/O.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Approve {
-    /// Nothing to approve: no repository file holds the lines.
-    Yes,
-    /// A dry run: never asks, never stores.
-    No,
-    /// Ask this; a yes is stored.
-    Ask(String),
-}
-
-/// What approving `pending`, from the repository's `file`, takes.
-pub fn approval(file: Option<&Path>, pending: &[(Kind, String)], dry_run: bool) -> Approve {
-    match file {
-        None => Approve::Yes,
-        Some(_) if dry_run => Approve::No,
-        Some(file) => Approve::Ask(question(file, pending)),
-    }
-}
-
-/// The approval question for the `pending` lines of `file`.
-pub fn question(file: &Path, pending: &[(Kind, String)]) -> String {
-    let mut lines = vec![format!("{} wants to run these hooks:", file.display())];
-    lines.extend(
-        pending
-            .iter()
-            .map(|(kind, line)| format!("  {}: {line}", kind.key())),
-    );
-    lines.push("Run them, now and from now on? [y/N] ".to_owned());
-    lines.join("\n")
-}
-
-/// The warning for the `pending` lines of `file` left out unapproved, for
-/// the repository whose main checkout is `main`.
-pub fn not_approved(file: &Path, pending: &[(Kind, String)], main: &Path) -> String {
-    format!(
-        "hooks from {} are not approved and were skipped: {}; approve them with \
-         tasq worktree trust {}, or pass --yes",
-        file.display(),
-        pending
-            .iter()
-            .map(|(_, line)| format!("{line:?}"))
-            .collect::<Vec<_>>()
-            .join(", "),
-        main.display()
-    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{Task, TaskId};
+    use std::collections::BTreeMap;
 
     fn vars() -> Vars {
         let extra = [("db_prefix".to_owned(), "shop".to_owned())].into();
@@ -435,167 +294,65 @@ mod tests {
     }
 
     #[test]
-    fn where_approvals_live() {
+    fn the_state_directory() {
         let home = Path::new("/home/me");
         assert_eq!(
-            trust_file(Some("/state"), Some(home)),
-            Some(PathBuf::from("/state/tasq/trust.toml"))
+            state_file(Some("/state"), Some(home), "previous-worktree"),
+            Some(PathBuf::from("/state/tasq/previous-worktree"))
         );
         assert_eq!(
-            trust_file(Some(""), Some(home)),
-            Some(PathBuf::from("/home/me/.local/state/tasq/trust.toml"))
+            state_file(Some(""), Some(home), "previous-worktree"),
+            Some(home.join(".local/state/tasq/previous-worktree"))
         );
-        assert_eq!(
-            trust_file(None, Some(home)),
-            Some(PathBuf::from("/home/me/.local/state/tasq/trust.toml"))
-        );
-        assert_eq!(trust_file(None, None), None);
         assert_eq!(
             state_file(None, Some(home), "previous-worktree"),
             Some(home.join(".local/state/tasq/previous-worktree"))
         );
+        assert_eq!(state_file(None, None, "previous-worktree"), None);
     }
 
     #[test]
-    fn approvals_are_per_file_and_per_line() {
-        let file = Path::new("/ws/.tasq.toml");
-        let lines = vec!["direnv allow .".to_owned(), "make setup".to_owned()];
-        let mut store = TrustStore::default();
-        assert_eq!(
-            store.pending(file, &lines),
-            ["direnv allow .", "make setup"]
-        );
-        store.approve(file, &lines[..1]);
-        store.approve(file, &lines[..1]);
-        assert_eq!(store.pending(file, &lines), ["make setup"]);
-        assert_eq!(
-            store.pending(Path::new("/other/.tasq.toml"), &lines).len(),
-            2,
-            "another file asks again"
-        );
-        let edited = vec!["direnv allow . && rm -rf ~".to_owned()];
-        assert_eq!(
-            store.pending(file, &edited).len(),
-            1,
-            "an edited line asks again"
-        );
-        store.approve(file, &lines);
-        assert_eq!(store.pending(file, &lines), Vec::<&str>::new());
-        let text = store.to_toml();
-        assert_eq!(
-            text,
-            "[approved]\n\"/ws/.tasq.toml\" = [\"direnv allow .\", \"make setup\"]\n"
-        );
-        assert_eq!(TrustStore::parse(&text), Ok(store));
-        assert_eq!(TrustStore::parse(""), Ok(TrustStore::default()));
-        assert!(TrustStore::parse("other = 1").is_err());
-    }
-
-    #[test]
-    fn hooks_render_their_lines_and_skip_what_they_are_told() {
+    fn hooks_render_their_lines() {
         let hooks = WorktreeHooks {
             post_create: vec!["echo '{{branch}}'".into(), "make setup".into()],
             ..WorktreeHooks::default()
         };
-        let rendered = Hooks::render(Kind::PostCreate, &hooks, &vars(), |line| {
-            line == "make setup"
-        })
-        .unwrap();
+        let rendered = Hooks::render(Kind::PostCreate, &hooks, &vars()).unwrap();
         assert_eq!(
             rendered,
             Hooks {
                 kind: Kind::PostCreate,
-                run: vec![Command {
-                    line: "echo '{{branch}}'".into(),
-                    argv: vec!["echo".into(), "feat/x".into()],
-                }],
-                skipped: vec!["make setup".into()],
+                run: vec![
+                    Command {
+                        line: "echo '{{branch}}'".into(),
+                        argv: vec!["echo".into(), "feat/x".into()],
+                    },
+                    Command {
+                        line: "make setup".into(),
+                        argv: vec!["make".into(), "setup".into()],
+                    }
+                ],
             }
         );
         assert_eq!(
             rendered.describe(),
             [
                 "run post-create hook: echo feat/x",
-                "skip post-create hook (not approved): make setup"
+                "run post-create hook: make setup"
             ]
         );
-        let other = Hooks::render(Kind::PreCreate, &hooks, &vars(), |_| false).unwrap();
+        let other = Hooks::render(Kind::PreCreate, &hooks, &vars()).unwrap();
         assert_eq!(other.run, Vec::new());
         assert_eq!(other.describe(), Vec::<String>::new());
     }
 
     #[test]
-    fn a_bad_line_fails_to_render_unless_skipped() {
+    fn a_bad_line_fails_to_render() {
         let hooks = WorktreeHooks {
             pre_remove: vec!["ok".into(), "echo {{nope}}".into()],
             ..WorktreeHooks::default()
         };
-        let failed = Hooks::render(Kind::PreRemove, &hooks, &vars(), |_| false).unwrap_err();
+        let failed = Hooks::render(Kind::PreRemove, &hooks, &vars()).unwrap_err();
         assert_eq!(failed.line, "echo {{nope}}");
-        let skipped = Hooks::render(Kind::PreRemove, &hooks, &vars(), |line| line != "ok").unwrap();
-        assert_eq!(skipped.skipped, ["echo {{nope}}"]);
-    }
-
-    #[test]
-    fn pending_lines_are_the_untrusted_kinds_not_approved() {
-        let file = Path::new("/ws/.tasq.toml");
-        let hooks = WorktreeHooks {
-            pre_create: vec!["make setup".into()],
-            post_create: vec!["direnv allow .".into(), "ok".into()],
-            pre_remove: vec!["make clean".into()],
-            ..WorktreeHooks::default()
-        };
-        let mut store = TrustStore::default();
-        store.approve(file, &["ok".to_owned()]);
-        let untrusted = [Kind::PreCreate, Kind::PostCreate];
-        assert_eq!(
-            pending(
-                &store,
-                file,
-                &untrusted,
-                &[Kind::PreCreate, Kind::PostCreate, Kind::PreRemove],
-                &hooks
-            ),
-            [
-                (Kind::PreCreate, "make setup".to_owned()),
-                (Kind::PostCreate, "direnv allow .".to_owned())
-            ]
-        );
-        assert_eq!(
-            pending(&store, file, &untrusted, &[Kind::PreRemove], &hooks),
-            Vec::new()
-        );
-    }
-
-    #[test]
-    fn approval_needs_a_repository_file_and_no_dry_run_to_ask() {
-        let file = Path::new("/ws/.tasq.toml");
-        let pending = [(Kind::PostCreate, "direnv allow .".to_owned())];
-        assert_eq!(approval(None, &pending, false), Approve::Yes);
-        assert_eq!(approval(None, &pending, true), Approve::Yes);
-        assert_eq!(approval(Some(file), &pending, true), Approve::No);
-        assert_eq!(
-            approval(Some(file), &pending, false),
-            Approve::Ask(question(file, &pending))
-        );
-    }
-
-    #[test]
-    fn the_question_and_the_warning_list_the_pending_lines() {
-        let pending = [
-            (Kind::PreCreate, "make setup".to_owned()),
-            (Kind::PostCreate, "direnv allow .".to_owned()),
-        ];
-        let file = Path::new("/ws/.tasq.toml");
-        assert_eq!(
-            question(file, &pending),
-            "/ws/.tasq.toml wants to run these hooks:\n  pre-create: make setup\n  \
-             post-create: direnv allow .\nRun them, now and from now on? [y/N] "
-        );
-        assert_eq!(
-            not_approved(file, &pending, Path::new("/ws")),
-            "hooks from /ws/.tasq.toml are not approved and were skipped: \"make setup\", \
-             \"direnv allow .\"; approve them with tasq worktree trust /ws, or pass --yes"
-        );
     }
 }

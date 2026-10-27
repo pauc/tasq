@@ -11,7 +11,7 @@ use tasq_core::worktree::lifecycle::{self, BranchState, LaunchAction};
 use tasq_core::worktree::provision::{self, Outside};
 use thiserror::Error;
 
-use crate::hooks::{Approver, HookFailure, prepare as prepare_hooks, run_all};
+use crate::hooks::{HookFailure, prepare as prepare_hooks, run_all};
 use crate::provision::{ProvisionError, apply, prepare};
 use crate::settings::RepoSettings;
 use crate::{Git, GitError, describe};
@@ -65,8 +65,7 @@ pub enum CreateError {
 /// anything. `None` when a declared worktree exists or none can be
 /// created. The `pre-create` hooks run in the main checkout before git,
 /// the `post-create` ones in the worktree after provisioning, with
-/// `git.env` plus the hook variables; `approver` approves the repository's
-/// own hooks. Notes and warnings go to `report`.
+/// `git.env` plus the hook variables. Notes and warnings go to `report`.
 ///
 /// # Errors
 ///
@@ -77,7 +76,6 @@ pub fn materialize(
     task: &Task,
     settings: Option<&RepoSettings>,
     from: Option<&str>,
-    approver: &Approver,
     dry_run: bool,
     report: &mut dyn FnMut(HookEvent),
 ) -> Result<Option<Created>, CreateError> {
@@ -126,14 +124,7 @@ pub fn materialize(
     )?;
     let vars = settings.vars(task, &branch, &path);
     let ready = prepare(&steps, &vars)?;
-    let [pre, post] = prepare_hooks(
-        settings,
-        [Kind::PreCreate, Kind::PostCreate],
-        &vars,
-        approver,
-        dry_run,
-        report,
-    )?;
+    let [pre, post] = prepare_hooks(settings, [Kind::PreCreate, Kind::PostCreate], &vars)?;
     if !dry_run {
         let mut env = git.env.clone();
         env.extend(hooks::env(&vars));

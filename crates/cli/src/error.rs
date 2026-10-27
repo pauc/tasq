@@ -103,28 +103,19 @@ impl From<ReportError> for CliError {
 
 impl From<HookFailure> for CliError {
     fn from(e: HookFailure) -> Self {
-        match e {
-            HookFailure::Ask(e) => e.into(),
-            e => Self::User(e.to_string()),
-        }
+        Self::User(e.to_string())
     }
 }
 
 impl From<CreateError> for CliError {
     fn from(e: CreateError) -> Self {
-        match e {
-            CreateError::Hooks(e) => e.into(),
-            e => Self::User(e.to_string()),
-        }
+        Self::User(e.to_string())
     }
 }
 
 impl From<ReleaseError> for CliError {
     fn from(e: ReleaseError) -> Self {
-        match e {
-            ReleaseError::Hooks(e) => e.into(),
-            e => Self::User(e.to_string()),
-        }
+        Self::User(e.to_string())
     }
 }
 

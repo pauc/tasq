@@ -14,7 +14,6 @@ refuse anything else; a future shape change bumps the number.
 | `tasq worktree prune` | `"dry_run": bool`, `"forgotten": [{repo, lines}]` (per repository, the lines `git worktree prune --verbose` printed), `"released": [{task, lines}]` (per done task, what was removed and deleted, or would be); repositories and tasks with nothing to report are left out, and what was kept goes to stderr as warnings |
 | `tasq worktree switch`, `tasq worktree path` | `"path"`: the directory (`switch` with `--json` neither prints a hint nor writes `$TASQ_CD_FILE`) |
 | `tasq worktree shell-init` | `"script"`: the shell function |
-| `tasq worktree trust` | `"file"`: the repository's `.tasq.toml` (its main checkout when it has none), `"approved": [{kind, line}]`: each hook line now approved, `kind` one of `"pre-create"`, `"post-create"`, `"pre-remove"`, `"post-remove"` (in that order, then the lines in file order); `[]` when the file sets no hooks |
 | `tasq project <id>` (show) | `"task": Task`, `"default_project": path or null` |
 | `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool` (only with worktrees enabled), `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
 | `tasq store info` | `"store": {name, location, task_count}` (`"tasq"`, the directory, the count), `"plugins": [name, ...]` (the enabled plugins, `[plugins] enabled`, ADR 0030), `"data_dir": {value, from}` (the resolved directory and the layer that set it, as `tasq config show` names it: `defaults`, a file, `env`, `--set`), `"store_name": {value, from}` |

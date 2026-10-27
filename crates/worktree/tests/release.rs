@@ -11,7 +11,6 @@ use tasq_core::config::{OnDone, WorktreeConfig};
 use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::worktree::hooks::HookEvent;
 use tasq_core::worktree::lifecycle::DeleteBranch;
-use tasq_worktree::hooks::{Approval, Approver};
 use tasq_worktree::release::{ReleaseError, Releasing, canonical, release};
 use tasq_worktree::{Git, Repo, RepoSettings};
 use tempfile::TempDir;
@@ -59,8 +58,6 @@ impl Project {
             main: main.clone(),
             config,
             templates_dir: main.clone(),
-            repo_file: None,
-            untrusted: Vec::new(),
         };
         let mut project = Self {
             _dir: dir,
@@ -130,15 +127,9 @@ impl Project {
             ..Task::new(TaskId::from(7), "T")
         };
         let mut events = Vec::new();
-        let released = release(
-            &self.git,
-            &task,
-            &self.settings,
-            cwd,
-            how,
-            &approver(),
-            &mut |e| events.push(e),
-        );
+        let released = release(&self.git, &task, &self.settings, cwd, how, &mut |e| {
+            events.push(e);
+        });
         (released, events)
     }
 
@@ -152,18 +143,6 @@ impl Project {
 
     fn log(&self) -> Option<String> {
         std::fs::read_to_string(self.root.join("log")).ok()
-    }
-}
-
-fn never(question: &str) -> std::io::Result<bool> {
-    panic!("asked {question:?}")
-}
-
-fn approver() -> Approver {
-    Approver {
-        approval: Approval::Ask,
-        trust_file: None,
-        ask: never,
     }
 }
 

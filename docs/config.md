@@ -286,14 +286,8 @@ one argument; no shell runs it, write `sh -c '...'` for one. A hook gets the use
 plus `TASQ_WORKTREE`, `TASQ_BRANCH`, `TASQ_TASK_ID` and every variable as `TASQ_VAR_<NAME>`
 (`TASQ_VAR_BRANCH_DB`, `TASQ_VAR_DB_PREFIX`, ...); its output shows with `-v`.
 
-Hooks from the global file, `--config`, `--set` or the environment run without asking. Hooks a
-repository's own `.tasq.toml` sets (it may have come with a clone) run only once approved: on a
-terminal tasq lists them and asks, and a yes is kept in `$XDG_STATE_HOME/tasq/trust.toml` (else
-`~/.local/state/tasq/trust.toml`) with each line as written, so editing a line asks again.
-`--yes` on `next`, `pick`, `done`, `tasq worktree up` and `tasq worktree release` approves them
-for one run without storing it; `tasq worktree trust [DIR]` approves them ahead of time. Without
-a terminal or approval they are skipped with a warning that says how to approve them; the
-terminal UI never asks.
+Every hook runs without asking, whichever layer set it (ADR 0031): there is no approval step, and
+nothing is read from a repository or the directory tasq runs in.
 
 Closing a task (`tasq done`, the terminal UI's `d`) releases its worktrees when `on_done =
 "release"`; `tasq worktree release <id>` does the same without closing it. Each declared worktree
@@ -312,7 +306,7 @@ pushed, nothing else. `--dry-run` lists what would go. The task is closed even w
 fails, and the `## Worktrees` entries always stay: launching the task again creates the worktree
 again, on the kept local branch, the pushed one, or a new one from `base`.
 
-`tasq worktree prune [--all] [--dry-run] [--yes]` cleans up what closes left behind: a worktree
+`tasq worktree prune [--all] [--dry-run]` cleans up what closes left behind: a worktree
 kept because it was dirty at the time, one of a task closed with `on_done = "keep"` or outside
 tasq, a directory deleted by hand. It first runs `git worktree prune` in the current directory's
 repository, so git forgets worktrees whose directory is gone (and their branches can be

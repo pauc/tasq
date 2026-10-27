@@ -6,13 +6,12 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::commands::worktree_hooks::{self, Approval};
+use crate::commands::worktree_hooks;
 use crate::commands::worktree_nav;
 use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::store::Store;
 use tasq_core::work;
 use tasq_core::worktree::declaration;
-use tasq_core::worktree::hooks::Kind;
 use tasq_core::worktree::lifecycle::Declared;
 pub use tasq_worktree::RepoSettings;
 pub use tasq_worktree::create::Created;
@@ -25,7 +24,6 @@ use crate::app::App;
 use crate::cli::{Command, WorktreeAction};
 use crate::commands::{existing_dir, finish};
 use crate::error::{CliError, Result};
-use crate::json;
 use crate::plugins::{HookEvent, app_config_env};
 
 /// `tasq worktree <subcommand>`.
@@ -37,28 +35,15 @@ pub fn dispatch(app: &App, command: &Command) -> Result<()> {
         WorktreeAction::Set { id, target, create } => {
             run(app, id, target.as_deref(), create.as_deref())
         }
-        WorktreeAction::Up {
-            id,
-            from,
-            dry_run,
-            yes,
-        } => up(app, id, from.as_deref(), *yes, *dry_run),
-        WorktreeAction::Trust { dir } => trust(app, dir.as_deref()),
+        WorktreeAction::Up { id, from, dry_run } => up(app, id, from.as_deref(), *dry_run),
         WorktreeAction::Ls { id, all } => worktree_nav::ls(app, id.as_deref(), *all),
-        WorktreeAction::Switch { target, yes } => {
-            worktree_nav::switch(app, target.as_deref(), *yes)
-        }
+        WorktreeAction::Switch { target } => worktree_nav::switch(app, target.as_deref()),
         WorktreeAction::Path { target } => worktree_nav::path(app, target),
         WorktreeAction::ShellInit { shell } => worktree_nav::shell_init(app, *shell),
-        WorktreeAction::Release {
-            id,
-            force,
-            dry_run,
-            yes,
-        } => release_command(app, id, *force, *yes, *dry_run),
-        WorktreeAction::Prune { all, dry_run, yes } => {
-            worktree_nav::prune(app, *all, *yes, *dry_run)
+        WorktreeAction::Release { id, force, dry_run } => {
+            release_command(app, id, *force, *dry_run)
         }
+        WorktreeAction::Prune { all, dry_run } => worktree_nav::prune(app, *all, *dry_run),
     }
 }
 
@@ -184,23 +169,12 @@ pub fn repo_settings(app: &App, project: &Path) -> Result<RepoSettings> {
         .file_for("worktree.templates")
         .and_then(Path::parent)
         .map_or_else(|| main.clone(), Path::to_path_buf);
-    let repo_file = loaded.repo.clone();
-    let untrusted = Kind::ALL
-        .into_iter()
-        .filter(|kind| {
-            repo_file.is_some()
-                && loaded.file_for(&format!("worktree.hooks.{}", kind.key()))
-                    == repo_file.as_deref()
-        })
-        .collect();
     Ok(RepoSettings {
         project: project.to_path_buf(),
         repo,
         main,
         config: loaded.config.worktree,
         templates_dir,
-        repo_file,
-        untrusted,
     })
 }
 
@@ -213,7 +187,7 @@ pub fn create_and_track(app: &App, store: &mut dyn Store, id: &TaskId, branch: &
         worktrees: vec![worktree.clone()],
         ..task
     };
-    let line = match materialize(app, &only, None, false, false)? {
+    let line = match materialize(app, &only, None, false)? {
         Some(created) => format!("[{id}] created worktree {}\n", created.line),
         None => format!("[{id}] worktree: {}\n", describe(&worktree)),
     };
@@ -222,14 +196,14 @@ pub fn create_and_track(app: &App, store: &mut dyn Store, id: &TaskId, branch: &
 
 /// `tasq worktree up <id> [--from REF] [--dry-run]`: creates the task's
 /// declared worktree now, as launching it would.
-pub fn up(app: &App, id: &str, from: Option<&str>, yes: bool, dry_run: bool) -> Result<()> {
+pub fn up(app: &App, id: &str, from: Option<&str>, dry_run: bool) -> Result<()> {
     if !app.worktrees() {
         return Err(disabled());
     }
     let id = App::task_id(id)?;
     let mut store = app.open_store()?;
     let task = store.get(&id)?;
-    let line = match materialize(app, &task, from, yes, dry_run)? {
+    let line = match materialize(app, &task, from, dry_run)? {
         Some(created) if dry_run => {
             let mut lines = vec![format!("[{id}] would create worktree {}", created.line)];
             lines.extend(created.steps.iter().map(|step| format!("  {step}")));
@@ -248,55 +222,12 @@ pub fn up(app: &App, id: &str, from: Option<&str>, yes: bool, dry_run: bool) -> 
     finish(app, &mut store, &id, &line)
 }
 
-/// `tasq worktree trust [DIR]`: approves the hooks of the repository
-/// config ahead of time.
-pub fn trust(app: &App, dir: Option<&Path>) -> Result<()> {
-    if !app.worktrees() {
-        return Err(disabled());
-    }
-    let dir = dir.unwrap_or(&app.opts.cwd);
-    let dir = existing_dir(dir)
-        .ok_or_else(|| CliError::user(format!("directory not found: {}", dir.display())))?;
-    let settings = repo_settings(app, &dir)?;
-    let approved = worktree_hooks::trust(app, &settings)?;
-    let file = settings.repo_file.as_deref().unwrap_or(&settings.main);
-    if app.out.json_mode() {
-        return app.out.json(&trusted_json(file, &approved));
-    }
-    let text = if approved.is_empty() {
-        format!("no hooks to approve in {}\n", file.display())
-    } else {
-        let mut lines = vec![format!("approved the hooks of {}:", file.display())];
-        lines.extend(
-            approved
-                .iter()
-                .map(|(kind, line)| format!("  {}: {line}", kind.key())),
-        );
-        lines.join("\n") + "\n"
-    };
-    app.out.print(&text)
-}
-
-/// The JSON document of `trust`: the file and the lines it approved.
-fn trusted_json(file: &Path, approved: &[(Kind, String)]) -> serde_json::Value {
-    let approved = approved
-        .iter()
-        .map(|(kind, line)| serde_json::json!({"kind": kind.key(), "line": line}))
-        .collect();
-    json::document([
-        ("file", serde_json::json!(file)),
-        ("approved", serde_json::Value::Array(approved)),
-    ])
-}
-
 /// Step 2 of the lifecycle ([`tasq_worktree::create::materialize`]) in
-/// the task's project, with `--yes` as `yes` and the hooks' output on the
-/// terminal. The caller checks that worktrees are enabled.
+/// the task's project, with the hooks' output on the terminal. The caller checks that worktrees are enabled.
 pub fn materialize(
     app: &App,
     task: &Task,
     from: Option<&str>,
-    yes: bool,
     dry_run: bool,
 ) -> Result<Option<Created>> {
     let project = project_of(app, task);
@@ -304,13 +235,11 @@ pub fn materialize(
         Ok(project) => Some(repo_settings(app, project)?),
         Err(_) => None,
     };
-    let approver = worktree_hooks::approver(app, Approval::from_yes(yes));
     create::materialize(
         &lifecycle_git(app),
         task,
         settings.as_ref(),
         from,
-        &approver,
         dry_run,
         &mut worktree_hooks::to_terminal(app),
     )
@@ -358,9 +287,9 @@ fn track(app: &App, store: &mut dyn Store, id: &TaskId, path: &Path) -> Result<(
     )
 }
 
-/// `tasq worktree release <id> [--force] [--dry-run] [--yes]`: what closing
+/// `tasq worktree release <id> [--force] [--dry-run]`: what closing
 /// the task does to its worktrees, whatever its status and `on_done`.
-pub fn release_command(app: &App, id: &str, force: bool, yes: bool, dry_run: bool) -> Result<()> {
+pub fn release_command(app: &App, id: &str, force: bool, dry_run: bool) -> Result<()> {
     if !app.worktrees() {
         return Err(disabled());
     }
@@ -368,14 +297,7 @@ pub fn release_command(app: &App, id: &str, force: bool, yes: bool, dry_run: boo
     let mut store = app.open_store()?;
     let task = store.get(&id)?;
     let how = Releasing::on_demand(force, dry_run);
-    let approval = Approval::from_yes(yes);
-    let lines = release(
-        app,
-        &task,
-        how,
-        approval,
-        &mut worktree_hooks::to_terminal(app),
-    )?;
+    let lines = release(app, &task, how, &mut worktree_hooks::to_terminal(app))?;
     let text = if lines.is_empty() {
         format!("[{id}] nothing released\n")
     } else {
@@ -401,9 +323,8 @@ pub fn prefixed(id: &TaskId, lines: &[String]) -> String {
 }
 
 /// Step 3 of the lifecycle ([`tasq_worktree::release::release`]) in the
-/// task's project, run from the current directory, with `approval` for the
-/// repository's own remove hooks. The caller checks that worktrees are
-/// enabled.
+/// task's project, run from the current directory. The caller checks that
+/// worktrees are enabled.
 ///
 /// # Errors
 ///
@@ -413,7 +334,6 @@ pub fn release(
     app: &App,
     task: &Task,
     how: Releasing,
-    approval: Approval,
     report: &mut dyn FnMut(HookEvent),
 ) -> Result<Vec<String>> {
     if task.worktrees.is_empty() {
@@ -426,7 +346,6 @@ pub fn release(
         &settings,
         &app.opts.cwd,
         how,
-        &worktree_hooks::approver(app, approval),
         report,
     )?)
 }

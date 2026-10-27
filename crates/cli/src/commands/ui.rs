@@ -31,7 +31,6 @@ use crate::app::App;
 use crate::cli::GlobalArgs;
 use crate::commands::create::{Asked, new_task_worktree};
 use crate::commands::worktree::{self, Releasing};
-use crate::commands::worktree_hooks::Approval;
 use crate::error::{CliError, Result};
 use crate::plugins::{self, Hook, HookEvent};
 
@@ -191,8 +190,9 @@ impl Host for CliHost<'_> {
     }
 
     /// The same `post-done` hooks as `tasq done`, with the same document,
-    /// then the same release of its worktrees, never asking about hooks
-    /// (the UI owns the terminal): unapproved ones are skipped.
+    /// then the same release of its worktrees, with the hooks' warnings
+    /// collected into the error rather than printed (the UI owns the
+    /// terminal).
     fn after_done(&mut self, task: &Task) -> std::result::Result<(), String> {
         let hooks = self.hooks(Hook::PostDone, task);
         if !self.app.worktrees() {
@@ -205,7 +205,7 @@ impl Host for CliHost<'_> {
             }
         };
         let how = Releasing::closing();
-        if let Err(e) = worktree::release(self.app, task, how, Approval::Skip, &mut collect) {
+        if let Err(e) = worktree::release(self.app, task, how, &mut collect) {
             warnings.push(format!("worktrees not released: {e}"));
         }
         if warnings.is_empty() {
@@ -520,22 +520,29 @@ mod tests {
             ))
         );
         std::fs::remove_file(wt.join("scratch")).unwrap();
-        // Hooks of the repository config are never asked about here.
+        // Hooks of the repository config run without asking: a failing
+        // pre-remove keeps the worktree.
         let repos = dir.join(".config").join("tasq").join("repos");
         std::fs::create_dir_all(&repos).unwrap();
+        let config = repos.join("proj.toml");
         std::fs::write(
-            repos.join("proj.toml"),
+            &config,
             format!(
                 "path = \"{}\"\n[worktree.hooks]\npre-remove = [\"/bin/false\"]\n",
                 dir.join("proj").display()
             ),
         )
         .unwrap();
-        let warning = host(&app).after_done(&task).unwrap_err();
-        assert!(
-            warning.starts_with("hooks from ") && warning.contains("were skipped"),
-            "{warning}"
+        assert_eq!(
+            host(&app).after_done(&task),
+            Err(format!(
+                "kept worktree {}: pre-remove hook \"/bin/false\" failed: exit status 1",
+                wt.display()
+            ))
         );
+        assert!(wt.exists(), "kept");
+        std::fs::remove_file(&config).unwrap();
+        assert_eq!(host(&app).after_done(&task), Ok(()));
         assert!(!wt.exists(), "removed");
         assert_eq!(host(&app).after_done(&task), Ok(()), "nothing left");
         let off = app_in(&dir, "");

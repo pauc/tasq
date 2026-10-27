@@ -156,9 +156,6 @@ pub enum Command {
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the worktree hooks of the repository config without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
 
     /// Open a work session on a specific task.
@@ -179,9 +176,6 @@ pub enum Command {
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the worktree hooks of the repository config without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
 
     /// Show a task: rendered with glow on a terminal, plain markdown otherwise.
@@ -385,9 +379,6 @@ pub enum EditCommand {
         /// The progress note, positional or `--note`.
         #[command(flatten)]
         note: NoteArg,
-        /// Run the worktree hooks of the repository config without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
 
     /// Reopen a done task (`# [ ]`), with a status, logging a note.
@@ -728,9 +719,6 @@ pub enum WorktreeAction {
         /// Say what would be created; fetch and create nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the hooks of the repository config without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
     /// Do what closing the task does to its worktrees, without closing it.
     ///
@@ -752,9 +740,6 @@ pub enum WorktreeAction {
         /// Say what would be removed and deleted; change nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the hooks of the repository config without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
     /// Forget missing worktrees, then release what closing tasks left behind.
     ///
@@ -772,9 +757,6 @@ pub enum WorktreeAction {
         /// Say what would be removed, deleted and forgotten; change nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the hooks of the repository config without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
     /// List declared worktrees: task, status, branch, state, path.
     ///
@@ -804,9 +786,6 @@ pub enum WorktreeAction {
         /// Where to go.
         #[arg(value_name = "TARGET")]
         target: Option<String>,
-        /// Run the hooks of the repository config without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
     /// Print the directory TARGET names (as for switch), creating nothing.
     Path {
@@ -822,15 +801,6 @@ pub enum WorktreeAction {
         /// The shell.
         #[arg(value_enum, value_name = "SHELL")]
         shell: InitShell,
-    },
-    /// Approve the hooks of a repository config ahead of time.
-    ///
-    /// Hooks a repository config sets run only once approved; this
-    /// approves every hook line it sets now. Editing a line asks again.
-    Trust {
-        /// A directory in the repository [default: the current directory].
-        #[arg(value_name = "DIR")]
-        dir: Option<PathBuf>,
     },
 }
 
@@ -972,10 +942,7 @@ pub fn command(worktrees: bool) -> clap::Command {
     if !worktrees {
         return command
             .mut_subcommand("worktree", |c| c.hide(true))
-            .mut_subcommand("create", |c| c.mut_arg("worktree", |a| a.hide(true)))
-            .mut_subcommand("done", |c| c.mut_arg("yes", |a| a.hide(true)))
-            .mut_subcommand("next", |c| c.mut_arg("yes", |a| a.hide(true)))
-            .mut_subcommand("pick", |c| c.mut_arg("yes", |a| a.hide(true)));
+            .mut_subcommand("create", |c| c.mut_arg("worktree", |a| a.hide(true)));
     }
     command
         .mut_subcommand("done", |c| {
@@ -1003,7 +970,7 @@ pub fn command(worktrees: bool) -> clap::Command {
 }
 
 /// The command completions are generated from: [`command`], minus the
-/// `worktree` subcommand, `create --worktree` and `done`/`next`/`pick --yes` unless worktrees are
+/// `worktree` subcommand and `create --worktree` unless worktrees are
 /// enabled. Hiding is not enough there, as the zsh generator still lists
 /// hidden subcommands and arguments.
 pub fn completion_command(worktrees: bool) -> clap::Command {
@@ -1016,12 +983,8 @@ pub fn completion_command(worktrees: bool) -> clap::Command {
         .get_subcommands()
         .filter(|s| s.get_name() != "worktree")
     {
-        let worktree_only = |a: &clap::Arg| a.get_id() != "worktree" && a.get_id() != "yes";
         let sub = match sub.get_name() {
-            "create" => rebuilt("create", sub, worktree_only),
-            "done" => rebuilt("done", sub, worktree_only),
-            "next" => rebuilt("next", sub, worktree_only),
-            "pick" => rebuilt("pick", sub, worktree_only),
+            "create" => rebuilt("create", sub, |a| a.get_id() != "worktree"),
             _ => sub.clone(),
         };
         pruned = pruned.subcommand(sub);

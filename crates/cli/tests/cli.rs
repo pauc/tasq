@@ -3165,64 +3165,9 @@ mod worktree {
     }
 
     #[test]
-    fn repository_hooks_run_only_once_approved() {
+    fn repository_hooks_run_without_asking() {
         let env = TestEnv::fixture();
         let project = hooked_project(&env, REPO_HOOKS);
-        // Not approved, no terminal: skipped with a warning; the worktree is made.
-        let out = env
-            .tasq_wt()
-            .args(["worktree", "up", "3"])
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{}", stderr(&out));
-        assert!(
-            env.normalize(&stderr(&out)).contains(
-                "tasq: warning: hooks from [ROOT]/home/.config/tasq/repos/proj.toml are not approved and were \
-                 skipped: \"hook pre\", \"hook post '{{title}}'\", \"hook after\"; approve them with tasq worktree \
-                 trust [ROOT]/home/proj, or pass --yes\n"
-            ),
-            "{}",
-            stderr(&out)
-        );
-        assert_eq!(hook_log(&env), "");
-        assert!(env.home.join("proj-b").is_dir());
-        // --yes runs them this once: pre-create in the main checkout,
-        // post-create in the worktree, both with the variables.
-        remove_b(&env, &project);
-        env.tasq_wt()
-            .args(["worktree", "up", "3", "--yes"])
-            .assert()
-            .success();
-        assert_eq!(
-            hook_log(&env),
-            "pre|3|b|[ROOT]/home/proj-b|b|[ROOT]/home/proj|\n\
-             post|3|b|[ROOT]/home/proj-b|b|[ROOT]/home/proj-b|Answer the support ticket\n\
-             after|3|b|[ROOT]/home/proj-b|b|[ROOT]/home/proj-b|\n"
-        );
-        remove_b(&env, &project);
-        env.tasq_wt()
-            .args(["worktree", "up", "3"])
-            .assert()
-            .success();
-        assert_eq!(hook_log(&env), "", "--yes stored nothing");
-        // `trust` approves ahead of time.
-        remove_b(&env, &project);
-        env.tasq_wt()
-            .current_dir(&project)
-            .args(["worktree", "trust"])
-            .assert()
-            .success()
-            .stdout(predicate::str::ends_with(
-                "/home/.config/tasq/repos/proj.toml:\n  pre-create: hook pre\n  post-create: hook post '{{title}}'\n  post-create: hook after\n",
-            ));
-        env.tasq_wt()
-            .args(["worktree", "up", "3"])
-            .assert()
-            .success();
-        assert_eq!(hook_log(&env).lines().count(), 3);
-        // An edited line asks again; the unchanged one still runs.
-        remove_b(&env, &project);
-        write_proj_config(&env, &REPO_HOOKS.replace("hook post", "hook changed"));
         let dry = env
             .tasq_wt()
             .args(["worktree", "up", "3", "--dry-run"])
@@ -3232,27 +3177,77 @@ mod worktree {
             env.normalize(&stdout(&dry)),
             "[3] would create worktree [ROOT]/home/proj-b on b (new from HEAD)\n  \
              run pre-create hook: hook pre\n  \
-             run post-create hook: hook after\n  \
-             skip post-create hook (not approved): hook changed '{{title}}'\n"
+             run post-create hook: hook post 'Answer the support ticket'\n  \
+             run post-create hook: hook after\n"
         );
-        env.tasq_wt()
+        // No terminal, no flag: pre-create in the main checkout,
+        // post-create in the worktree, both with the variables.
+        let out = env
+            .tasq_wt()
             .args(["worktree", "up", "3"])
-            .assert()
-            .success();
-        let log = hook_log(&env);
-        let ran: Vec<&str> = log.lines().map(|l| l.split('|').next().unwrap()).collect();
-        assert_eq!(ran, ["pre", "after"], "only the edited line is skipped");
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(!stderr(&out).contains("hook"), "{}", stderr(&out));
+        assert_eq!(
+            hook_log(&env),
+            "pre|3|b|[ROOT]/home/proj-b|b|[ROOT]/home/proj|\n\
+             post|3|b|[ROOT]/home/proj-b|b|[ROOT]/home/proj-b|Answer the support ticket\n\
+             after|3|b|[ROOT]/home/proj-b|b|[ROOT]/home/proj-b|\n"
+        );
+        assert!(
+            !env.home.join(".local/state/tasq/trust.toml").exists(),
+            "nothing is stored"
+        );
+        // Launching creates the worktree the same way.
+        remove_b(&env, &project);
+        env.fake_tool("fakesh", "pwd");
         env.tasq_wt()
-            .args(["worktree", "trust", env.home.join("nope").to_str().unwrap()])
+            .env("SHELL", env.bin.join("fakesh"))
+            .args(["pick", "3", "--launcher", "shell"])
             .assert()
-            .code(1)
-            .stderr(predicate::str::ends_with("/home/nope\n"));
+            .success()
+            .stderr(predicate::str::contains("hook").not());
+        assert_eq!(hook_log(&env).lines().count(), 3, "{}", hook_log(&env));
     }
 
     #[test]
-    fn hook_output_shows_with_verbose_and_a_broken_trust_file_is_an_error() {
+    fn trust_and_yes_are_gone() {
         let env = TestEnv::fixture();
-        let project = hooked_project(&env, "");
+        for args in [
+            vec!["worktree", "--help"],
+            vec!["worktree", "up", "--help"],
+            vec!["worktree", "release", "--help"],
+            vec!["worktree", "prune", "--help"],
+            vec!["worktree", "switch", "--help"],
+            vec!["next", "--help"],
+            vec!["pick", "--help"],
+            vec!["done", "--help"],
+        ] {
+            let out = env.tasq_wt().args(&args).output().unwrap();
+            assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+            let help = stdout(&out);
+            assert!(
+                !help.contains("trust") && !help.contains("--yes"),
+                "{args:?}: {help}"
+            );
+        }
+        env.tasq_wt()
+            .args(["worktree", "trust"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("unrecognized subcommand 'trust'"));
+        env.tasq_wt()
+            .args(["done", "3", "--yes"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("unexpected argument '--yes'"));
+    }
+
+    #[test]
+    fn hook_output_shows_with_verbose() {
+        let env = TestEnv::fixture();
+        hooked_project(&env, "");
         env.fake_tool("say", "echo hello");
         env.write_global_config(
             "[worktree.hooks]\npre-create = [\"hook pre\"]\npost-create = [\"say\"]\n",
@@ -3272,22 +3267,6 @@ mod worktree {
             !stderr(&out).contains("pre-create hook"),
             "a silent hook says nothing"
         );
-        remove_b(&env, &project);
-        write_proj_config(&env, REPO_HOOKS);
-        let state = env.home.join(".local/state/tasq");
-        std::fs::create_dir_all(state.join("trust.toml")).unwrap();
-        env.tasq_wt()
-            .args(["worktree", "up", "3"])
-            .assert()
-            .code(1)
-            .stderr(predicate::str::contains("/state/tasq/trust.toml: "));
-        std::fs::remove_dir(state.join("trust.toml")).unwrap();
-        std::fs::write(state.join("trust.toml"), "not toml [").unwrap();
-        env.tasq_wt()
-            .args(["worktree", "up", "3"])
-            .assert()
-            .code(1)
-            .stderr(predicate::str::contains("/state/tasq/trust.toml: "));
     }
 
     #[test]
@@ -3328,14 +3307,6 @@ mod worktree {
             !env.home.join("proj-b").exists(),
             "a pre-create failure creates nothing"
         );
-        env.tasq_wt()
-            .args(["worktree", "trust", project.to_str().unwrap()])
-            .assert()
-            .success()
-            .stdout(predicate::str::ends_with(
-                "/home/.config/tasq/repos/proj.toml\n",
-            ))
-            .stdout(predicate::str::starts_with("no hooks to approve in "));
     }
 
     /// Hooks get the profile and the config directory, absolute, so a
@@ -3371,43 +3342,6 @@ mod worktree {
             hook_log(&env),
             "pre|p|[ROOT]/home/conf\npost|p|[ROOT]/home/conf\n\
              pre-remove|p|[ROOT]/home/conf\npost-remove|p|[ROOT]/home/conf\n"
-        );
-    }
-
-    #[test]
-    fn trust_json_lists_the_approved_lines() {
-        let env = TestEnv::fixture();
-        let project = hooked_project(&env, REPO_HOOKS);
-        let out = env
-            .tasq_wt()
-            .args(["worktree", "trust", project.to_str().unwrap(), "--json"])
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{}", stderr(&out));
-        assert_eq!(
-            env.normalize(&stdout(&out)),
-            "{\n  \"approved\": [\n    {\n      \"kind\": \"pre-create\",\n      \
-             \"line\": \"hook pre\"\n    },\n    {\n      \"kind\": \"post-create\",\n      \
-             \"line\": \"hook post '{{title}}'\"\n    },\n    {\n      \
-             \"kind\": \"post-create\",\n      \"line\": \"hook after\"\n    }\n  ],\n  \
-             \"file\": \"[ROOT]/home/.config/tasq/repos/proj.toml\",\n  \"schema\": 1\n}\n"
-        );
-        env.tasq_wt()
-            .args(["worktree", "up", "3"])
-            .assert()
-            .success();
-        assert_eq!(hook_log(&env).lines().count(), 3, "--json approved them");
-        let other = env.home.join("other");
-        env.git_repo(&other);
-        let out = env
-            .tasq_wt()
-            .args(["--json", "worktree", "trust", other.to_str().unwrap()])
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{}", stderr(&out));
-        assert_eq!(
-            env.normalize(&stdout(&out)),
-            "{\n  \"approved\": [],\n  \"file\": \"[ROOT]/home/other\",\n  \"schema\": 1\n}\n"
         );
     }
 
@@ -5872,7 +5806,7 @@ mod worktree_release {
             .assert()
             .success();
         env.tasq_wt()
-            .args(["worktree", "up", "3", "--yes"])
+            .args(["worktree", "up", "3"])
             .assert()
             .success();
         let wt = env.home.join("proj-b");
@@ -6074,18 +6008,18 @@ mod worktree_release {
         let log = || {
             env.normalize(&std::fs::read_to_string(env.home.join("hooks.log")).unwrap_or_default())
         };
-        // Not approved, no terminal: skipped, the worktree still goes.
         let (out, err) = run(&env, &["worktree", "release", "3", "--dry-run"]);
         assert_eq!(
             out,
             "[3] would remove worktree [ROOT]/home/proj-b\n  \
-             skip pre-remove hook (not approved): hook pre\n  \
-             skip post-remove hook (not approved): hook post\n  \
-             skip post-remove hook (not approved): fail\n\
+             run pre-remove hook: hook pre\n  \
+             run post-remove hook: hook post\n  \
+             run post-remove hook: fail\n\
              [3] would delete branch b (same commit as main)\n"
         );
         assert_eq!(err, "");
-        let (_, err) = run(&env, &["done", "3", "--yes"]);
+        // No terminal, no flag: they run.
+        let (_, err) = run(&env, &["done", "3"]);
         assert_eq!(
             err,
             "tasq: warning: post-remove hook \"fail\" failed: exit status 3: nope\n"
@@ -6099,14 +6033,14 @@ mod worktree_release {
         // A failing pre-remove keeps the worktree and its branch.
         env.tasq_wt().args(["reopen", "3"]).assert().success();
         env.tasq_wt()
-            .args(["worktree", "up", "3", "--yes"])
+            .args(["worktree", "up", "3"])
             .assert()
             .success();
         env.write_repo_config(
             "proj",
             "path = \"~/proj\"\n[worktree.hooks]\npre-remove = [\"fail\"]\n",
         );
-        let (out, err) = run(&env, &["worktree", "release", "3", "--yes"]);
+        let (out, err) = run(&env, &["worktree", "release", "3"]);
         assert_eq!(out, "[3] nothing released\n");
         assert_eq!(
             err,
