@@ -54,7 +54,7 @@ pub const ENV_STORE_NAME: &str = "TASQ_STORE_NAME";
 /// | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
 /// | `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
 /// | `TASQ_SUMMARY_PROMPT_FILE` | `report.summary.prompt_file` |
-/// | `TASQ_WORKTREE_ENABLED` | `worktree.enabled` |
+/// | `TASQ_WORKTREES_ENABLED` | `worktrees_enabled` |
 /// | `TASQ_WORKTREE_PATH` | `worktree.path` |
 /// | `TASQ_WORKTREE_BRANCH` | `worktree.branch` |
 /// | `TASQ_WORKTREE_BASE` | `worktree.base` |
@@ -87,7 +87,7 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_SUMMARY_MODEL", "report.summary.model"),
     ("TASQ_SUMMARY_COMMAND", "report.summary.command"),
     ("TASQ_SUMMARY_PROMPT_FILE", "report.summary.prompt_file"),
-    ("TASQ_WORKTREE_ENABLED", "worktree.enabled"),
+    ("TASQ_WORKTREES_ENABLED", "worktrees_enabled"),
     ("TASQ_WORKTREE_PATH", "worktree.path"),
     ("TASQ_WORKTREE_BRANCH", "worktree.branch"),
     ("TASQ_WORKTREE_BASE", "worktree.base"),
@@ -365,6 +365,7 @@ pub fn default_data_dir(opts: &LoadOptions) -> Option<PathBuf> {
 #[serde(default, deny_unknown_fields)]
 struct FileSchema {
     data_dir: Option<PathBuf>,
+    worktrees_enabled: bool,
     store: super::StoreConfig,
     workflow: super::WorkflowConfig,
     work: super::WorkConfig,
@@ -383,6 +384,7 @@ impl Default for FileSchema {
     fn default() -> Self {
         let Config {
             data_dir,
+            worktrees_enabled,
             store,
             workflow,
             work,
@@ -398,6 +400,7 @@ impl Default for FileSchema {
         } = Config::default();
         Self {
             data_dir,
+            worktrees_enabled,
             store,
             workflow,
             work,
@@ -610,6 +613,10 @@ fn coerce(
             Some(shape) => shape,
             None => return Ok(Value::String(raw.to_owned())),
         }
+    } else if key == "worktree.enabled" {
+        return Err(ConfigError::WorktreeEnabledMoved {
+            origin: origin.clone(),
+        });
     } else {
         template_lookup(template, key).ok_or_else(|| ConfigError::UnknownKey {
             origin: origin.clone(),

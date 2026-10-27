@@ -425,7 +425,7 @@ mod post_write {
             &log,
             &[
                 "--set",
-                "worktree.enabled=true",
+                "worktrees_enabled=true",
                 "create",
                 "Again",
                 "--worktree",
@@ -540,7 +540,7 @@ mod post_write {
             &log,
             &[
                 "--set",
-                "worktree.enabled=true",
+                "worktrees_enabled=true",
                 "worktree",
                 "set",
                 "3",

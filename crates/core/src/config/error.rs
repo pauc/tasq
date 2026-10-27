@@ -76,6 +76,16 @@ pub enum ConfigError {
         /// What would have been accepted.
         expected: String,
     },
+    /// `--set` or [`super::ENV_SET`] named `worktree.enabled`, which moved
+    /// to the top-level `worktrees_enabled` (ADR 0031).
+    #[error(
+        "{origin}: worktree.enabled moved to the top level: \
+         set worktrees_enabled (docs/config.md, \"Worktrees\")"
+    )]
+    WorktreeEnabledMoved {
+        /// Where the key came from.
+        origin: Origin,
+    },
     /// `--set` or an override named a key that does not exist.
     #[error("{origin}: unknown config key {key:?}")]
     UnknownKey {

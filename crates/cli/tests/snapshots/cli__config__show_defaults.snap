@@ -7,6 +7,7 @@ expression: env.normalize(&stdout(&out))
 #   1. defaults
 
 data_dir = "[ROOT]/home/.local/share/tasq/stores" # defaults
+worktrees_enabled = false                    # defaults
 
 [store]
 name = "default"                             # defaults
@@ -66,7 +67,6 @@ base = "origin/HEAD"                         # defaults
 branch = "{{id}}-{{slug}}"                   # defaults
 copies = []                                  # defaults
 delete_branch = "safe"                       # defaults
-enabled = false                              # defaults
 on_create = "auto"                           # defaults
 on_done = "release"                          # defaults
 path = "{{project_parent}}/{{project_name}}-{{branch_safe}}" # defaults

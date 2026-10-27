@@ -132,7 +132,7 @@ fn defaults_match_the_script() {
     assert_eq!(c.workflow.default_status, Status::READY);
     assert_eq!(c.workflow.workflow(), tasq_core::model::Workflow::default());
     assert_eq!(c.work.default_project, None);
-    assert!(!c.worktree.enabled);
+    assert!(!c.worktrees_enabled);
     assert_eq!(
         c.worktree.path,
         "{{project_parent}}/{{project_name}}-{{branch_safe}}"
@@ -177,6 +177,8 @@ fn default_config_round_trips_through_toml_and_matches_the_module_docs() {
     assert_eq!(back, Config::default());
     // The reference document in the module docs is this serialisation.
     let expected = "\
+worktrees_enabled = false
+
 [store]
 name = \"default\"
 
@@ -231,7 +233,6 @@ timeout = 2
 [plugin]
 
 [worktree]
-enabled = false
 path = \"{{project_parent}}/{{project_name}}-{{branch_safe}}\"
 branch = \"{{id}}-{{slug}}\"
 base = \"origin/HEAD\"
@@ -1343,7 +1344,7 @@ fn env_overrides_files() {
         ("TASQ_STORE_NAME", "env"),
         ("TASQ_DATA_DIR", "~/data"),
         ("TASQ_DEFAULT_PROJECT", "~/code/x"),
-        ("TASQ_WORKTREE_ENABLED", "true"),
+        ("TASQ_WORKTREES_ENABLED", "true"),
         (
             "TASQ_WORKTREE_PATH",
             "{{project}}/.worktrees/{{branch_safe}}",
@@ -1376,7 +1377,7 @@ fn env_overrides_files() {
     assert_eq!(c.store.name, "env");
     assert_eq!(c.data_dir, Some(sb.home.join("data")));
     assert_eq!(c.work.default_project, Some(sb.home.join("code/x")));
-    assert!(c.worktree.enabled);
+    assert!(c.worktrees_enabled);
     assert_eq!(c.worktree.path, "{{project}}/.worktrees/{{branch_safe}}");
     assert_eq!(c.worktree.branch, "{{slug}}");
     assert_eq!(c.worktree.base, "origin/main");
@@ -1418,13 +1419,64 @@ fn env_overrides_files() {
 }
 
 #[test]
-fn worktrees_env_var_is_not_an_alias_for_worktree_enabled() {
+fn worktrees_enabled_is_a_top_level_switch() {
+    let sb = Sandbox::new();
+    let file = sb.write_global("worktrees_enabled = true\n");
+    let loaded = Config::load(&sb.opts()).unwrap();
+    assert!(loaded.config.worktrees_enabled);
+    assert_eq!(
+        loaded.explain("worktrees_enabled"),
+        Some(&Origin::File(file))
+    );
+}
+
+#[test]
+fn worktree_enabled_names_the_top_level_switch() {
+    for value in ["true", "false", "\"yes\""] {
+        let sb = Sandbox::new();
+        let file = sb.write_global(&format!("[worktree]\nbase = \"main\"\nenabled = {value}\n"));
+        let err = Config::load(&sb.opts()).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            format!(
+                "{}:3:11: worktree.enabled moved to the top level: \
+                 set worktrees_enabled above any table (docs/config.md, \"Worktrees\")",
+                file.display()
+            )
+        );
+    }
+}
+
+#[test]
+fn worktree_enabled_from_set_or_env_names_the_top_level_switch() {
     let sb = Sandbox::new();
     let mut opts = sb.opts();
-    opts.env = env(&[("TASQ_WORKTREES", "true")]);
+    opts.overrides = vec![("worktree.enabled".to_owned(), "true".to_owned())];
+    assert_eq!(
+        Config::load(&opts).unwrap_err().to_string(),
+        "--set: worktree.enabled moved to the top level: \
+         set worktrees_enabled (docs/config.md, \"Worktrees\")"
+    );
+    let mut opts = sb.opts();
+    opts.env = env(&[("TASQ_SET", "worktree.enabled=1")]);
+    assert_eq!(
+        Config::load(&opts).unwrap_err().to_string(),
+        "env: worktree.enabled moved to the top level: \
+         set worktrees_enabled (docs/config.md, \"Worktrees\")"
+    );
+}
+
+#[test]
+fn the_old_worktree_enabled_env_var_is_ignored() {
+    let sb = Sandbox::new();
+    let mut opts = sb.opts();
+    opts.env = env(&[
+        ("TASQ_WORKTREE_ENABLED", "true"),
+        ("TASQ_WORKTREES", "true"),
+    ]);
     let loaded = Config::load(&opts).unwrap();
-    assert!(!loaded.config.worktree.enabled);
-    assert_ne!(loaded.explain("worktree.enabled"), Some(&Origin::Env));
+    assert!(!loaded.config.worktrees_enabled);
+    assert_eq!(loaded.layers.last().unwrap().origin, Origin::Defaults);
 }
 
 #[test]
@@ -1439,7 +1491,7 @@ fn every_documented_env_key_is_a_real_key() {
             "worktree.on_create" | "worktree.delete_branch" => "never",
             "worktree.on_done" => "keep",
             "launch.env" => "direnv",
-            "ui.no_osc8" | "worktree.enabled" => "true",
+            "ui.no_osc8" | "worktrees_enabled" => "true",
             "report.summary.summarizer" => "raw",
             "ui.week_start" => "sunday",
             "ui.due_format" => "iso",
@@ -2260,7 +2312,7 @@ fn copy_ignored_is_rejected_until_it_is_implemented() {
     for value in ["true", "false"] {
         let sb = Sandbox::new();
         let file = sb.write_project(&format!(
-            "[worktree]\nenabled = true\ncopy_ignored = {value}\n"
+            "[worktree]\nbase = \"main\"\ncopy_ignored = {value}\n"
         ));
         let err = Config::load(&sb.opts()).unwrap_err().to_string();
         let prefix = format!("{}:3:", file.display());
@@ -2278,13 +2330,12 @@ fn copy_ignored_is_rejected_until_it_is_implemented() {
 fn worktree_table_from_a_file() {
     let sb = Sandbox::new();
     sb.write_project(
-        "[worktree]\nenabled = true\nsymlinks = [\"node_modules\"]\ncopies = [\".envrc\"]\n\
+        "[worktree]\nsymlinks = [\"node_modules\"]\ncopies = [\".envrc\"]\n\
          templates = [{ source = \"t/.envrc\", target = \".envrc\" }]\n\
          [worktree.variables]\ndb = \"app\"\n[worktree.ports]\nbase = 4000\nspan = 1000\nblock = 10\n\
          [worktree.hooks]\npost-create = [\"direnv allow .\"]\npre-remove = [\"x\"]\n",
     );
     let w = Config::load(&sb.opts()).unwrap().config.worktree;
-    assert!(w.enabled);
     assert_eq!(w.symlinks, vec!["node_modules"]);
     assert_eq!(w.copies, vec![".envrc"]);
     assert_eq!(
@@ -2418,11 +2469,7 @@ fn worktree_templates_only_name_variables_of_their_scope() {
         );
     }
     // Checked even with worktrees disabled, so enabling never surfaces it.
-    assert!(
-        load("[worktree]\nenabled = false\nbranch = \"{{bad}}\"\n")
-            .0
-            .is_err()
-    );
+    assert!(load("[worktree]\nbranch = \"{{bad}}\"\n").0.is_err());
 }
 
 #[test]

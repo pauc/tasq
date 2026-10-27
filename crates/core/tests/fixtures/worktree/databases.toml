@@ -1,7 +1,6 @@
 # `<project>-<branch>` checkouts, each with its own databases: the .envrc
 # and database.yml templates name them after the branch.
 [worktree]
-enabled = true
 path = "{{project_parent}}/{{project_name}}-{{branch_safe}}"
 symlinks = ["CLAUDE.local.md"]
 templates = [

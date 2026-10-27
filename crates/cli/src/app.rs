@@ -188,7 +188,7 @@ pub fn worktrees_enabled(global: &GlobalArgs) -> bool {
     load_options(global)
         .ok()
         .and_then(|opts| Config::load(&opts).ok())
-        .is_some_and(|loaded| loaded.config.worktree.enabled)
+        .is_some_and(|loaded| loaded.config.worktrees_enabled)
 }
 
 /// [`LoadOptions`] from the process (cwd, `$HOME`, environment) plus the
@@ -254,9 +254,9 @@ impl App {
         self.config().workflow.workflow()
     }
 
-    /// Whether worktrees are enabled (`worktree.enabled`, ADR 0022).
+    /// Whether worktrees are enabled (`worktrees_enabled`, ADR 0031).
     pub fn worktrees(&self) -> bool {
-        self.config().worktree.enabled
+        self.config().worktrees_enabled
     }
 
     /// A task as JSON, without `worktrees` when they are disabled.

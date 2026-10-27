@@ -10,6 +10,7 @@
 # `tasq create` makes the directory. Check with `tasq doctor`.
 
 data_dir = "~/.local/share/tasq/stores"   # the default: $XDG_DATA_HOME/tasq/stores
+worktrees_enabled = false                 # worktrees per task are opt-in; see docs/config.md "Worktrees"
 
 [store]
 name = "default"             # the store directory is <data_dir>/<name>
@@ -20,9 +21,6 @@ default_status = "ready"     # status of `tasq create` without --status
 
 [work]
 # default_project = "~/code/myproject"   # where sessions start for tasks without a project
-
-[worktree]
-enabled = false              # worktrees per task are opt-in; see docs/config.md "Worktrees"
 
 [launch]
 default = "shell"            # `tasq next` / `tasq pick` exec $SHELL in the task's directory

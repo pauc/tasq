@@ -98,7 +98,9 @@ pub fn run(app: &App, id: &str, target: Option<&str>, create: Option<&str>) -> R
 
 /// The error for a worktree command or flag while the feature is off.
 pub fn disabled() -> CliError {
-    CliError::user("worktrees are disabled; set worktree.enabled = true (docs/config.md#worktrees)")
+    CliError::user(
+        "worktrees are disabled; set worktrees_enabled = true (docs/config.md#worktrees)",
+    )
 }
 
 /// `path (branch)`, or the path alone when no branch is recorded.

@@ -5744,13 +5744,13 @@ mod worktrees_disabled {
         // `--set` and `--config-dir` before parsing decide too.
         let set = env
             .tasq()
-            .args(["--set", "worktree.enabled=true", "--help"])
+            .args(["--set", "worktrees_enabled=true", "--help"])
             .output()
             .unwrap();
         assert!(stdout(&set).contains("  worktree "), "{}", stdout(&set));
         let conf = env.home.join("conf");
         std::fs::create_dir(&conf).unwrap();
-        std::fs::write(conf.join("config.toml"), "[worktree]\nenabled = true\n").unwrap();
+        std::fs::write(conf.join("config.toml"), "worktrees_enabled = true\n").unwrap();
         for args in [["--config-dir", "conf"], ["--config-dir=conf", "--json"]] {
             let dir = env.tasq().args(args).arg("--help").output().unwrap();
             assert!(stdout(&dir).contains("  worktree "), "{}", stdout(&dir));
@@ -5764,7 +5764,7 @@ mod worktrees_disabled {
             .args(["worktree", "set", "3", "--create", "b"])
             .assert()
             .code(1)
-            .stderr("tasq: worktrees are disabled; set worktree.enabled = true (docs/config.md#worktrees)\n");
+            .stderr("tasq: worktrees are disabled; set worktrees_enabled = true (docs/config.md#worktrees)\n");
     }
 
     #[test]

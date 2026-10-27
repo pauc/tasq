@@ -490,7 +490,7 @@ mod tests {
             &project,
             &["worktree", "add", "-q", "-b", "b", wt.to_str().unwrap()],
         );
-        let mut app = app_in(dir, "[worktree]\nenabled = true\n");
+        let mut app = app_in(dir, "worktrees_enabled = true\n");
         for key in ["PATH", "HOME"] {
             if let Ok(value) = std::env::var(key) {
                 app.opts.env.insert(key.to_owned(), value);
@@ -609,7 +609,7 @@ post-done = [
         std::fs::create_dir_all(repo.join(".git")).unwrap();
         let plain = root.join("plain");
         std::fs::create_dir(&plain).unwrap();
-        let app = app_in(&root, "[worktree]\nenabled = true\n");
+        let app = app_in(&root, "worktrees_enabled = true\n");
         let mut task = Task::new(TaskId::from(9), "Fresh start");
         task.project = Some(repo.clone());
         let at = |name: &str| root.join(name);

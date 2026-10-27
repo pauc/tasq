@@ -35,7 +35,7 @@ pub struct LaunchContext {
     pub workdir: PathBuf,
     /// Whether `workdir` is a tracked worktree (as opposed to the project).
     pub in_worktree: bool,
-    /// Whether worktrees are enabled (`worktree.enabled`). Off, the prompt
+    /// Whether worktrees are enabled (`worktrees_enabled`). Off, the prompt
     /// says nothing about them.
     pub worktrees: bool,
     /// Variables to set in the session on top of its environment

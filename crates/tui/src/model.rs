@@ -242,7 +242,7 @@ pub struct Model {
     pub due_format: DueFormat,
     /// Where the detail goes (`ui.detail_position`).
     pub detail_position: DetailPosition,
-    /// Whether worktrees are enabled (`worktree.enabled`); off, the detail
+    /// Whether worktrees are enabled (`worktrees_enabled`); off, the detail
     /// never shows them.
     pub worktrees: bool,
     /// The applied filter text (see [`Model::filter`]).
@@ -426,7 +426,7 @@ impl Model {
         self
     }
 
-    /// Whether worktrees are enabled (`worktree.enabled`).
+    /// Whether worktrees are enabled (`worktrees_enabled`).
     #[must_use]
     pub fn with_worktrees(mut self, worktrees: bool) -> Self {
         self.worktrees = worktrees;

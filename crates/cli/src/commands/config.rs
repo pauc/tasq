@@ -235,7 +235,7 @@ mod tests {
             profiles: vec!["work".into()],
         };
         let text = render(&loaded).unwrap();
-        assert!(text.starts_with("# profile: none\n# profiles available: work\n# layers, later ones win:\n#   1. defaults\n\n[store]\n"), "{text}");
+        assert!(text.starts_with("# profile: none\n# profiles available: work\n# layers, later ones win:\n#   1. defaults\n\nworktrees_enabled = false                    # unset\n\n[store]\n"), "{text}");
         assert!(!text.contains("\n[report]\n"), "{text}");
         assert!(text.contains("\n[report.summary]\n"), "{text}");
         assert!(text.contains("\n[ui.colors]\n"), "{text}");

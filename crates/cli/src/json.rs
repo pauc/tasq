@@ -32,7 +32,7 @@ pub fn to_value<T: serde::Serialize>(value: &T) -> Value {
     serde_json::to_value(value).expect("model types serialise to JSON")
 }
 
-/// A task as JSON. With worktrees disabled (`worktree.enabled = false`,
+/// A task as JSON. With worktrees disabled (`worktrees_enabled = false`,
 /// ADR 0022) the `worktrees` key is left out.
 pub fn task(task: &Task, worktrees: bool) -> Value {
     let mut value = to_value(task);
