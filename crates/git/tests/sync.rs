@@ -7,6 +7,8 @@
 //! titles, and `store lock -- <cmd>` notes the command in `locked` and
 //! runs it (after `on-lock`, once, if present). Every fetch of machine B
 //! goes through an upload-pack wrapper that counts it in `fetches`.
+//!
+//! Conflicts (GS-005): both machines edit one task.
 
 #![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
 
@@ -205,6 +207,24 @@ impl Machine<'_> {
 
     fn git(&self, args: &[&str]) -> String {
         self.world.run_git(&self.store, args)
+    }
+
+    /// `git <args>` in the store, whatever its outcome.
+    fn try_git(&self, args: &[&str]) -> Output {
+        Command::new("git")
+            .args(args)
+            .current_dir(&self.store)
+            .env_clear()
+            .env("HOME", self.world.home())
+            .env("PATH", self.world.path())
+            .output()
+            .unwrap()
+    }
+
+    /// Whether a rebase is stopped in the store repository.
+    fn rebasing(&self) -> bool {
+        self.store.join(".git/rebase-merge").exists()
+            || self.store.join(".git/rebase-apply").exists()
     }
 
     fn head(&self) -> String {
@@ -724,5 +744,135 @@ mod failure {
             warning.starts_with("fetch failed: Permission denied (publickey).; "),
             "{warning}"
         );
+    }
+}
+
+mod conflict {
+    use super::*;
+
+    const B_ONLY: &str = "---\nid: 3\n---\n# Three\n- on b\n";
+
+    /// The warning B's job leaves for a conflict on task 3.
+    fn warning(b: &Machine) -> String {
+        format!(
+            "rebase conflict on task 3: local commits kept, nothing pushed until it is resolved: \
+             cd {} && git pull --rebase, fix the files, git add them, git rebase --continue\n",
+            b.store.display()
+        )
+    }
+
+    /// A and B both note task 3; A's job pushes first, B's conflicts.
+    fn conflicted(world: &World) -> (Machine<'_>, Machine<'_>) {
+        let a = world.first();
+        let b = world.second();
+        a.note(TASK_3, "on a");
+        assert_silent(&a.job(&[]));
+        b.note(TASK_3, "on b");
+        assert_silent(&b.job(&[]));
+        (a, b)
+    }
+
+    #[test]
+    fn the_second_sync_is_aborted_and_names_the_task() {
+        let world = World::new();
+        let a = world.first();
+        let b = world.second();
+        a.note(TASK_3, "on a");
+        assert_silent(&a.job(&[]));
+        let pushed = world.remote_head();
+        b.note(TASK_3, "on b");
+        assert_silent(&b.job(&[]));
+
+        assert!(!b.rebasing(), "the rebase was left in progress");
+        assert_eq!(b.read(TASK_3), B_ONLY);
+        assert_eq!(b.git(&["status", "--porcelain", "--", "*.md"]), "");
+        assert_eq!(b.subjects(), ["update task files", "start"]);
+        assert_eq!(world.remote_head(), pushed);
+        assert_eq!(b.warnings(), Some(warning(&b)));
+        assert_eq!(world.locked().lines().count(), 1);
+    }
+
+    #[test]
+    fn a_later_write_neither_pushes_nor_clears_the_warning() {
+        let world = World::new();
+        let (_, b) = conflicted(&world);
+        let pushed = world.remote_head();
+        b.note(TASK_4, "on b");
+        assert_silent(&b.job(&[]));
+        assert_eq!(world.remote_head(), pushed);
+        assert_eq!(b.read(TASK_3), B_ONLY);
+        assert_eq!(b.subjects().len(), 3);
+        assert_eq!(b.warnings(), Some(warning(&b)));
+    }
+
+    #[test]
+    fn a_rebase_left_for_the_next_round_keeps_the_warning() {
+        let world = World::new();
+        let (_, b) = conflicted(&world);
+        // A write lands before the store lock: the rebase is not tried.
+        std::fs::write(
+            world.base().join("on-lock"),
+            format!(
+                "printf -- '- late\\n' >> '{}'\n",
+                b.store.join(TASK_4).display()
+            ),
+        )
+        .unwrap();
+        b.note(TASK_4, "on b");
+        assert_silent(&b.job(&[]));
+        assert!(
+            world.base().join("on-lock.run").exists(),
+            "on-lock never ran"
+        );
+        assert!(b.read(TASK_4).ends_with("- on b\n- late\n"));
+        assert_eq!(b.warnings(), Some(warning(&b)));
+    }
+
+    #[test]
+    fn the_job_waits_for_a_manual_resolution_then_clears_the_warning_and_pushes() {
+        let world = World::new();
+        let (a, b) = conflicted(&world);
+        let pushed = world.remote_head();
+
+        // The commands of the warning: the pull stops on the conflict.
+        assert_eq!(b.try_git(&["pull", "--rebase"]).status.code(), Some(1));
+        assert!(b.rebasing());
+        let stopped = b.head();
+        std::fs::write(b.state("writes"), "log 4\n").unwrap();
+
+        // A job meanwhile commits nothing and leaves the rebase alone.
+        assert_silent(&b.job(&["--interval", "0"]));
+        assert!(b.rebasing());
+        assert_eq!(b.head(), stopped);
+        assert_eq!(
+            std::fs::read_to_string(b.state("writes")).unwrap(),
+            "log 4\n"
+        );
+        assert_eq!(b.warnings(), Some(warning(&b)));
+        let out = b
+            .command(&["rebase", "--store", b.store.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            stderr(&out),
+            "a rebase is in progress: finish it with git rebase --continue or --abort\n"
+        );
+        assert!(b.rebasing(), "the manual rebase was aborted");
+
+        b.write(TASK_3, "---\nid: 3\n---\n# Three\n- on a\n- on b\n");
+        b.git(&["add", TASK_3]);
+        b.git(&["-c", "core.editor=true", "rebase", "--continue"]);
+        assert_eq!(world.remote_head(), pushed);
+
+        assert_silent(&b.job(&["--interval", "0"]));
+        assert_eq!(world.remote_head(), b.head());
+        assert_eq!(b.warnings(), None);
+        assert_eq!(
+            b.subjects(),
+            ["update task files", "update task files", "start"]
+        );
+        assert_silent(&a.job(&["--interval", "0"]));
+        assert_eq!(a.read(TASK_3), b.read(TASK_3));
     }
 }

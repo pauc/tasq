@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warning `fetch failed: ...`, `rebase failed: ...` or `push failed: ...`, cleared once that
   step succeeds. The job refreshes its lock during a long round, and ssh asks `false` instead of
   the terminal (`SSH_ASKPASS_REQUIRE=force`), so a passphrase or host key prompt fails at once.
+- With `tasq-git` enabled, a rebase that conflicts (both machines edited one task) is aborted
+  under the store lock: the task files and the local commits stay as they were, no task file
+  ever holds conflict markers, and the lasting warning `rebase conflict on task <ids>: local
+  commits kept, nothing pushed until it is resolved: cd <store> && git pull --rebase, fix the
+  files, git add them, git rebase --continue` names the tasks. Nothing is pushed until it is
+  resolved; while a rebase is in progress in the store the job leaves the repository alone,
+  and the first job after `git rebase --continue` clears the warning and pushes.
 - `docs/plugins.md` describes the plugin extension points normatively (ADR 0030): enabling a
   plugin, the events and every payload with an example, the plugin's process (arguments,
   environment, timeout, exit codes), lasting warnings, doctor checks, `tasq store lock` and
