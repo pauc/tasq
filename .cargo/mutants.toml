@@ -28,6 +28,7 @@ examine_globs = [
     "crates/sources/**",
     "crates/launch/**",
     "crates/worktree/**",
+    "crates/git/**",
 ]
 
 # Skip the TUI view code and the CLI argument plumbing: both are covered by

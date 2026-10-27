@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# install — reinstall the tasq binary from an up-to-date main checkout.
+# install — reinstall the tasq and tasq-git binaries from an up-to-date main checkout.
 #
 # Usage: scripts/install
 #
 # Refuses to run unless the checkout is on main with a clean tree, fast-forwards
-# main from its upstream, then runs `cargo install --path crates/cli --locked`
-# under scripts/guard. Reshims asdf when it manages the Rust toolchain, and
-# prints the commit the binary was built from.
+# main from its upstream, then runs `cargo install --locked` for crates/cli and
+# crates/git (the store sync plugin) under scripts/guard. Reshims asdf when it
+# manages the Rust toolchain, and prints the commit the binaries were built from.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,10 +18,11 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 
 git pull --ff-only
 scripts/guard cargo install --path crates/cli --locked
+scripts/guard cargo install --path crates/git --locked
 
 if command -v asdf >/dev/null 2>&1; then
   asdf reshim rust
 fi
 
 echo "install: tasq built from $(git rev-parse --short HEAD) ($(git log -1 --format=%s))"
-command -v tasq
+command -v tasq tasq-git

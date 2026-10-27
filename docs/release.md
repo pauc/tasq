@@ -9,7 +9,7 @@ The release pipeline is a hand-written GitHub Actions workflow,
 `cargo-dist` and `release-plz` were considered and not used: both generate
 workflow code that has to be regenerated whenever the tool is upgraded, neither
 is installed on the author's machine, and the workflow needed here is small
-(four native builds, one release, six `cargo publish` calls, one formula).
+(four native builds, one release, eight `cargo publish` calls, one formula).
 Release notes come from the conventional commits through
 [git-cliff](https://git-cliff.org) and [`cliff.toml`](../cliff.toml).
 
@@ -57,9 +57,9 @@ yanked, never replaced), so look at the dry run below before the first tag.
 | Job | Runs on | Does |
 |---|---|---|
 | `check-version` | ubuntu | Reads `version` from `Cargo.toml`; on a tag, fails unless `vVERSION == tag`. Exposes `version` to the other jobs. |
-| `build` (matrix) | `ubuntu-latest`, `ubuntu-24.04-arm`, `macos-13`, `macos-latest` | Checks the runner's host triple is the matrix target (no cross-compilation), `cargo build --release --locked -p tasq`, `tasq --version`, then packs `tasq-vVERSION-TARGET.tar.gz` (`tasq`, `README.md`, `LICENSE`, `CHANGELOG.md`) plus a `.sha256`. Uploads both as an artifact. |
+| `build` (matrix) | `ubuntu-latest`, `ubuntu-24.04-arm`, `macos-13`, `macos-latest` | Checks the runner's host triple is the matrix target (no cross-compilation), `cargo build --release --locked -p tasq -p tasq-git`, `tasq --version` and `tasq-git --version`, then packs `tasq-vVERSION-TARGET.tar.gz` (`tasq`, `tasq-git` (the store sync plugin), `README.md`, `LICENSE`, `CHANGELOG.md`) plus a `.sha256`. Uploads both as an artifact. |
 | `release` | ubuntu | Downloads every artifact, renders the notes for the tag with `git cliff --latest --strip header`, creates the GitHub release (`softprops/action-gh-release@v2`) with every tarball and checksum attached. The only job with `contents: write`. A tag containing `-` (`v0.2.0-rc.1`) is marked pre-release. |
-| `publish` | ubuntu | `cargo publish --locked -p <crate>` in dependency order: `tasq-core`; `tasq-store`; `tasq-sources`, `tasq-launch`, `tasq-worktree`, `tasq-tui`; `tasq`. Each publish is skipped when that version already exists on crates.io, and is followed by a poll of the sparse index until the version is visible. Needs `CARGO_REGISTRY_TOKEN`. |
+| `publish` | ubuntu | `cargo publish --locked -p <crate>` in dependency order: `tasq-core`; `tasq-store`; `tasq-sources`, `tasq-launch`, `tasq-worktree`, `tasq-tui`; `tasq`; `tasq-git` (no tasq dependency, so last). Each publish is skipped when that version already exists on crates.io, and is followed by a poll of the sparse index until the version is visible. Needs `CARGO_REGISTRY_TOKEN`. |
 | `homebrew` | ubuntu | Only when `HOMEBREW_TAP_TOKEN` is set. Renders `homebrew/tasq.rb.template` with the four tarball URLs and checksums and pushes it to `<owner>/homebrew-tasq` as `Formula/tasq.rb`. |
 
 Targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
@@ -80,7 +80,7 @@ the binaries built and the GitHub release exists.
 ## First publish
 
 - The crate names `tasq`, `tasq-core`, `tasq-store`, `tasq-sources`, `tasq-launch`,
-  `tasq-worktree` and `tasq-tui` must be free on crates.io, or owned by the token's
+  `tasq-worktree`, `tasq-tui` and `tasq-git` must be free on crates.io, or owned by the token's
   account. Check before tagging: `https://crates.io/crates/tasq`. If `tasq` is
   taken, the binary crate has to be renamed first (the plan notes that renaming
   is a find-and-replace on crate names).
@@ -114,7 +114,7 @@ After the run:
 
 - [ ] The release page lists eight files (four tarballs, four `.sha256`).
 - [ ] `curl -LO <tarball>` and `shasum -a 256 -c <tarball>.sha256` passes.
-- [ ] `tar xzf <tarball> && ./tasq-vX.Y.Z-<target>/tasq --version` prints `tasq X.Y.Z`.
+- [ ] `tar xzf <tarball> && ./tasq-vX.Y.Z-<target>/tasq --version` prints `tasq X.Y.Z`, and `tasq-git --version` prints `tasq-git X.Y.Z`.
 - [ ] `cargo install tasq` (on a machine without the checkout) installs `X.Y.Z`
       and `tasq --version` agrees.
 - [ ] With the tap: `brew tap <owner>/tasq && brew install tasq && brew test tasq`.

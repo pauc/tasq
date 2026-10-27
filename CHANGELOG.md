@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tasq-git`, the store sync plugin (ADR 0030, task 57), is a new binary of the workspace
+  (`crates/git`), installed by `scripts/install` and shipped in the release tarballs and the
+  Homebrew formula. Enabled with `[plugins] enabled = ["git"]`, it leaves a store that is not a
+  git repository alone (`store-open` and `post-write` do nothing) and answers `tasq doctor`
+  with `OK git/sync store sync off: <store> is not a git repository`. A payload with a schema
+  other than 1 is a warning naming it.
 - `docs/plugins.md` describes the plugin extension points normatively (ADR 0030): enabling a
   plugin, the events and every payload with an example, the plugin's process (arguments,
   environment, timeout, exit codes), lasting warnings, doctor checks, `tasq store lock` and

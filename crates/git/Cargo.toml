@@ -1,0 +1,27 @@
+[package]
+name = "tasq-git"
+description = "tasq store sync: the tasq-git plugin commits, pushes and pulls a store's task files"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+authors.workspace = true
+
+# No tasq crate: the plugin talks to tasq through the event payloads,
+# `tasq ... --json` and `tasq store lock` only (ADR 0030), so it can move to
+# its own repository unchanged.
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

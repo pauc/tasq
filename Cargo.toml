@@ -8,6 +8,7 @@ members = [
     "crates/worktree",
     "crates/cli",
     "crates/tui",
+    "crates/git",
 ]
 
 [workspace.package]

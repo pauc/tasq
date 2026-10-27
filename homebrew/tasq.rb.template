@@ -38,11 +38,14 @@ class Tasq < Formula
 
   def install
     bin.install "tasq"
+    # The store sync plugin, enabled with `[plugins] enabled = ["git"]`.
+    bin.install "tasq-git"
     # Runs `tasq completions bash|zsh|fish` and installs the three scripts.
     generate_completions_from_executable(bin/"tasq", "completions")
   end
 
   test do
     assert_match version.to_s, shell_output("#{bin}/tasq --version")
+    assert_match version.to_s, shell_output("#{bin}/tasq-git --version")
   end
 end

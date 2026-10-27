@@ -88,19 +88,20 @@ jobs:
             echo "runner host triple is $host, expected $TARGET" >&2
             exit 1
           fi
-      - run: cargo build --release --locked -p tasq
+      - run: cargo build --release --locked -p tasq -p tasq-git
       - name: Smoke test
         run: |
           target/release/tasq --version
+          target/release/tasq-git --version
           target/release/tasq completions bash > /dev/null
-      # Tarball layout: tasq-v<version>-<target>/{tasq,README.md,LICENSE,CHANGELOG.md}.
+      # Tarball layout: tasq-v<version>-<target>/{tasq,tasq-git,README.md,LICENSE,CHANGELOG.md}.
       # Homebrew strips the single top-level directory when it unpacks it.
       # `shasum` is used because macOS has no `sha256sum`.
       - name: Package
         run: |
           name="tasq-v${VERSION}-${TARGET}"
           mkdir -p "dist/$name"
-          cp target/release/tasq README.md LICENSE CHANGELOG.md "dist/$name/"
+          cp target/release/tasq target/release/tasq-git README.md LICENSE CHANGELOG.md "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
           cat "dist/$name.tar.gz.sha256"
@@ -161,7 +162,8 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
 
   # crates.io, in dependency order: tasq-core, then tasq-store, then the
-  # crates that depend on those, then the `tasq` binary crate. Each publish is
+  # crates that depend on those, then the `tasq` binary crate, then `tasq-git`
+  # (the store sync plugin, which depends on no tasq crate). Each publish is
   # skipped when that version is already on crates.io (re-runs), and is
   # followed by a wait until the version is visible in the sparse index,
   # because the next crate's `cargo publish` verification build resolves its
@@ -228,7 +230,7 @@ jobs:
             echo "$crate@$VERSION is in the index"
           }
 
-          for crate in tasq-core tasq-store tasq-sources tasq-launch tasq-worktree tasq-tui tasq; do
+          for crate in tasq-core tasq-store tasq-sources tasq-launch tasq-worktree tasq-tui tasq tasq-git; do
             echo "::group::$crate@$VERSION"
             if published "$crate" "$VERSION"; then
               echo "$crate@$VERSION is already on crates.io, skipping"
