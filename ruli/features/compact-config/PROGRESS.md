@@ -8,7 +8,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
 |---|---|---|---|
 | CC-001 | The config directory | done | 5c4944c; mutants 35: 34 caught, 1 unviable, 0 missed |
 | CC-002 | Profiles are files | done | 982b55f; mutants 39: 34 caught, 5 unviable, 0 missed |
-| CC-003 | `worktrees_enabled` | todo | |
+| CC-003 | `worktrees_enabled` | done | 42bf3ae; mutants 8: 6 caught, 2 unviable, 0 missed |
 | CC-004 | Repository configs replace `.tasq.toml` | todo | |
 | CC-005 | Hooks run without trust | todo | |
 | CC-006 | `tasq worktree config [DIR]` | todo | |
@@ -44,6 +44,19 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
   as is; a `tasq` in a worktree hook drops `--set` overrides.
 - 2026-10-27 (CC-002): `docs/config.md` still describes `[profile.<name>]` tables, now an
   error; CC-008 rewrites it.
+- 2026-10-27 (CC-003): every reader already went through `App::worktrees` (TUI, prompt,
+  JSON, help) or `app::worktrees_enabled` (before parsing), so the move was two lines in
+  `app.rs`. One reader outside Rust: the wrapup skill read `.config.worktree.enabled` from
+  `config show --json`; now `.config.worktrees_enabled`. A grep over `plugins/` belongs in
+  CC-008's guard.
+- 2026-10-27 (CC-003): a leftover `TASQ_WORKTREE_ENABLED` is now ignored without a word,
+  like `TASQ_CONFIG` after CC-001: worktrees quietly turn off. Same open decision for the
+  user (error, warning or a CC-008 migration note).
+- 2026-10-27 (CC-003): `README.md` (lines 111, 251), `docs/json.md:70` and `docs/config.md`
+  (the "Worktrees" section and the env table) still say `worktree.enabled`, which the new
+  error sends users to. CC-008 rewrites them.
+- 2026-10-27 (CC-003): a `deserialize_with` that ignores its deserializer still gets the
+  value's span, so the error points at the value (`3:11` for `enabled = true`).
 
 ## Blockers
 
@@ -74,3 +87,12 @@ None.
 - CC-002: the env for sessions and hooks is a new `plugins::config_env` (profile and config
   directory), split out of `passthrough_env`; worktree hooks get it through `lifecycle_git`
   in `commands/worktree.rs` (the `Git` env that create and release pass to hooks).
+- CC-003: `worktree.enabled` is kept as a private `Removed` field (like `copy_ignored`), so a
+  file fails at the value's file:line:column with `worktree.enabled moved to the top level:
+  set worktrees_enabled above any table (docs/config.md, "Worktrees")`, whatever the value.
+  `--set` and `TASQ_SET` have no position; they get `ConfigError::WorktreeEnabledMoved`,
+  `<--set|env>: worktree.enabled moved to the top level: set worktrees_enabled (...)`,
+  instead of the generic unknown key.
+- CC-003: also changed outside the Rust readers: `examples/config/*.toml`, the
+  `crates/core/tests/fixtures/worktree/*.toml` fixtures (they lose `enabled = true`; they are
+  repository settings, which CC-004 forbids it in) and `plugins/claude/skills/wrapup/SKILL.md`.

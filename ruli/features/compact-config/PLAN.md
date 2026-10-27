@@ -178,11 +178,11 @@ naming the new key; every reader moves over.
 
 **Blocked by:** CC-001.
 
-**Status:** todo
+**Status:** done
 
-- [ ] `worktrees_enabled = true` turns the feature on (commands, JSON, TUI, prompt).
-- [ ] `worktree.enabled` fails with file:line:column and the new key; `TASQ_WORKTREES_ENABLED` works.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] `worktrees_enabled = true` turns the feature on (commands, JSON, TUI, prompt).
+- [x] `worktree.enabled` fails with file:line:column and the new key; `TASQ_WORKTREES_ENABLED` works.
+- [x] `mutants-in` the diff: zero missed.
 
 ### CC-004: repository configs replace `.tasq.toml`
 
