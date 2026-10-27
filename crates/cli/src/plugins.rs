@@ -36,7 +36,10 @@ use std::time::{Duration, Instant};
 use clap::CommandFactory;
 use serde::Serialize;
 use serde_json::Value;
-use tasq_core::config::{ConfigError, ENV_CONFIG_DIR, ENV_PROFILE, ENV_SET, Loaded, expand_tilde};
+use tasq_core::config::{
+    ConfigError, ENV_CONFIG_DIR, ENV_PROFILE, ENV_SET, LoadOptions, Loaded, expand_tilde,
+    named_config_dir,
+};
 use tasq_core::doctor::Check;
 use tasq_core::launch::ENV_TASK_ID;
 use tasq_core::model::Task;
@@ -317,7 +320,7 @@ pub fn passthrough_env(
     if let Some(bin) = bin {
         vars.push((ENV_BIN.to_owned(), bin.display().to_string()));
     }
-    vars.extend(config_env(profile, config_dir, env));
+    vars.extend(config_env(profile, config_dir));
     let mut lines: Vec<String> = env(ENV_SET)
         .filter(|v| !v.trim().is_empty())
         .map(|v| v.lines().map(str::to_owned).collect())
@@ -332,32 +335,23 @@ pub fn passthrough_env(
 /// The variables that make a `tasq` started elsewhere (a plugin, a hook, a
 /// launched session) read the same config directory and profile:
 /// [`ENV_PROFILE`] when a profile is selected and [`ENV_CONFIG_DIR`] when
-/// a config directory was named. The config directory comes from
-/// `config_dir` (`--config-dir`), else from `TASQ_CONFIG_DIR` in `env`,
-/// and is forwarded absolute, so a process in another directory reads the
-/// same one.
-pub fn config_env(
-    profile: Option<&str>,
-    config_dir: Option<&Path>,
-    env: &dyn Fn(&str) -> Option<String>,
-) -> Vec<(String, String)> {
+/// a config directory was named. `config_dir` is the named directory as
+/// core resolved it ([`named_config_dir`]), absolute, so a process in
+/// another directory reads the same one.
+pub fn config_env(profile: Option<&str>, config_dir: Option<&Path>) -> Vec<(String, String)> {
     let mut vars = Vec::new();
     if let Some(profile) = profile {
         vars.push((ENV_PROFILE.to_owned(), profile.to_owned()));
     }
-    let named = config_dir.map(Path::to_path_buf).or_else(|| {
-        env(ENV_CONFIG_DIR)
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    });
-    if let Some(dir) = named {
-        let dir = expand_tilde(&dir, env("HOME").map(PathBuf::from).as_deref());
-        let absolute = std::fs::canonicalize(&dir)
-            .or_else(|_| std::path::absolute(&dir))
-            .unwrap_or(dir);
-        vars.push((ENV_CONFIG_DIR.to_owned(), absolute.display().to_string()));
+    if let Some(dir) = config_dir {
+        vars.push((ENV_CONFIG_DIR.to_owned(), dir.display().to_string()));
     }
     vars
+}
+
+/// The config directory `opts` names, as core resolves it.
+fn named_dir(opts: &LoadOptions) -> Option<PathBuf> {
+    named_config_dir(opts).map(|(dir, _)| dir)
 }
 
 /// The running binary, when the OS can tell.
@@ -372,12 +366,23 @@ pub fn current_bin() -> Option<PathBuf> {
 pub fn exec(path: &Path, external: &External) -> CliError {
     let mut command = Command::new(path);
     command.args(&external.args);
+    // Without a current directory (it was removed) a relative named
+    // directory is forwarded as given; nothing else needs one.
+    let process = LoadOptions::from_process().unwrap_or_else(|_| LoadOptions {
+        home: std::env::var_os("HOME").map(PathBuf::from),
+        env: std::env::vars().collect(),
+        ..LoadOptions::default()
+    });
+    let opts = LoadOptions {
+        config_dir: external.config_dir.clone(),
+        ..process
+    };
     let vars = passthrough_env(
         current_bin().as_deref(),
         external.profile.as_deref(),
-        external.config_dir.as_deref(),
+        named_dir(&opts).as_deref(),
         &external.set,
-        &|name| std::env::var(name).ok(),
+        &|name| opts.env.get(name).cloned(),
     );
     for (k, v) in vars {
         command.env(k, v);
@@ -518,8 +523,7 @@ pub fn run_hooks_with(
 pub fn app_config_env(app: &App) -> Vec<(String, String)> {
     config_env(
         app.loaded.profile.as_deref(),
-        app.global.config_dir.as_deref(),
-        &|name| app.opts.env.get(name).cloned(),
+        named_dir(&app.opts).as_deref(),
     )
 }
 
@@ -528,7 +532,7 @@ pub fn app_passthrough_env(app: &App) -> Vec<(String, String)> {
     passthrough_env(
         current_bin().as_deref(),
         app.loaded.profile.as_deref(),
-        app.global.config_dir.as_deref(),
+        named_dir(&app.opts).as_deref(),
         &app.global
             .set
             .iter()
@@ -1106,35 +1110,6 @@ mod tests {
             (name == ENV_SET).then(|| "  ".to_owned())
         });
         assert_eq!(vars, Vec::new());
-    }
-
-    #[test]
-    fn passthrough_env_makes_the_config_dir_absolute() {
-        let home = |name: &str| (name == "HOME").then(|| "/h".to_owned());
-        let dir = |flag: Option<&str>, env: &dyn Fn(&str) -> Option<String>| {
-            passthrough_env(None, None, flag.map(Path::new), &[], env)
-        };
-        let forwarded = |value: &str| vec![(ENV_CONFIG_DIR.to_owned(), value.to_owned())];
-        assert_eq!(dir(Some("~/conf"), &home), forwarded("/h/conf"));
-        // From the environment too, so a hook in another directory sees it.
-        let from_env = |name: &str| match name {
-            ENV_CONFIG_DIR => Some("~/env".to_owned()),
-            _ => home(name),
-        };
-        assert_eq!(dir(None, &from_env), forwarded("/h/env"));
-        // The flag wins over the variable.
-        assert_eq!(dir(Some("/flag"), &from_env), forwarded("/flag"));
-        let relative = std::env::current_dir().unwrap().join("nonexistent-conf");
-        assert_eq!(
-            dir(None, &|name| (name == ENV_CONFIG_DIR)
-                .then(|| "nonexistent-conf".to_owned())),
-            forwarded(&relative.display().to_string())
-        );
-        // An empty variable is unset.
-        assert_eq!(
-            dir(None, &|name| (name == ENV_CONFIG_DIR).then(String::new)),
-            Vec::new()
-        );
     }
 
     #[test]

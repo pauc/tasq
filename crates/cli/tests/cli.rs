@@ -761,9 +761,10 @@ mod doctor {
         assert!(text.contains("WARN  glow"), "{text}");
     }
 
-    /// The `repo-config` lines of `tasq doctor`, normalized.
+    /// The `repo-config` lines of `tasq doctor` with worktrees enabled,
+    /// normalized.
     fn repo_config_lines(env: &TestEnv) -> String {
-        let out = env.tasq().arg("doctor").output().unwrap();
+        let out = env.tasq_wt().arg("doctor").output().unwrap();
         let text = env.normalize(&stdout(&out));
         let mut lines = Vec::new();
         let mut in_check = false;
@@ -803,7 +804,14 @@ mod doctor {
             "WARN  repo-config  [ROOT]/home/.config/tasq/repos/gone.toml: path [ROOT]/home/gone does not exist or is not a directory\n\
              \x20                  fix: set path to the main checkout of a repository"
         );
-        assert!(env.tasq().arg("doctor").output().unwrap().status.success());
+        assert!(
+            env.tasq_wt()
+                .arg("doctor")
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
     }
 
     #[test]
@@ -869,11 +877,11 @@ mod doctor {
         env.git_repo(&env.home.join("proj"));
         env.write_repo_config("b", "path = \"~/proj\"\n");
         env.write_repo_config("a", "path = \"~/gone\"\n");
-        let out = env.tasq().arg("doctor").output().unwrap();
+        let out = env.tasq_wt().arg("doctor").output().unwrap();
         let text = env.normalize(&stdout(&out));
         assert!(
             text.starts_with(
-                "OK    config       loaded from defaults\n\
+                "OK    config       loaded from defaults, env\n\
                  WARN  repo-config  [ROOT]/home/.config/tasq/repos/a.toml: path [ROOT]/home/gone does not exist or is not a directory\n\
                  \x20                  fix: set path to the main checkout of a repository\n\
                  OK    repo-config  [ROOT]/home/.config/tasq/repos/b.toml: path [ROOT]/home/proj is a main checkout\n\
@@ -889,12 +897,64 @@ mod doctor {
         let env = TestEnv::fixture();
         env.write_repo_config("a", "path = \"~/proj\"\n");
         env.write_repo_config("b", "path = \"~/proj\"\n");
-        let out = env.tasq().arg("doctor").output().unwrap();
+        let out = env.tasq_wt().arg("doctor").output().unwrap();
         assert_eq!(out.status.code(), Some(1));
         assert_eq!(
             repo_config_lines(&env),
             "FAIL  repo-config  repository configs [ROOT]/home/.config/tasq/repos/a.toml and [ROOT]/home/.config/tasq/repos/b.toml both have path [ROOT]/home/proj\n\
              \x20                  fix: fix the file named in the message"
+        );
+    }
+
+    /// Only the worktree commands read `repos/`, so with worktrees off
+    /// nothing checks it, broken or not.
+    #[test]
+    fn repository_configs_are_not_checked_while_worktrees_are_off() {
+        let env = TestEnv::fixture();
+        env.write_repo_config("a", "path = \"~/proj\"\n");
+        env.write_repo_config("b", "path = \"~/proj\"\n");
+        let out = env.tasq().arg("doctor").output().unwrap();
+        let text = env.normalize(&stdout(&out));
+        assert!(out.status.success(), "{text}");
+        assert!(!text.contains("repo-config"), "{text}");
+    }
+
+    /// The checks that need the merged config (template variables, ...)
+    /// run with the repository config applied, as the worktree commands
+    /// load it.
+    #[test]
+    fn a_repository_config_that_fails_the_merged_load_fails() {
+        let env = TestEnv::fixture();
+        env.git_repo(&env.home.join("proj"));
+        env.write_repo_config(
+            "proj",
+            "path = \"~/proj\"\n\n[worktree.hooks]\npost-create = [\"echo {{db_prefix}}\"]\n",
+        );
+        let out = env.tasq_wt().arg("doctor").output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            repo_config_lines(&env),
+            "FAIL  repo-config  worktree.hooks.post-create (set by [ROOT]/home/.config/tasq/repos/proj.toml): \
+             unknown variable {{db_prefix}}; known: {{branch}}, {{branch_db}}, {{branch_safe}}, {{id}}, \
+             {{project}}, {{project_name}}, {{project_parent}}, {{repo}}, {{slug}}, {{title}}, \
+             {{worktree}}, {{worktree_name}}\n\
+             \x20                  fix: fix the file named in the message"
+        );
+    }
+
+    /// A `path` that names no main checkout never applies, so its
+    /// settings are not loaded: the warning is the whole report.
+    #[test]
+    fn a_repository_config_that_never_applies_is_not_loaded() {
+        let env = TestEnv::fixture();
+        env.write_repo_config(
+            "gone",
+            "path = \"~/gone\"\n\n[worktree.hooks]\npost-create = [\"echo {{db_prefix}}\"]\n",
+        );
+        assert_eq!(
+            repo_config_lines(&env),
+            "WARN  repo-config  [ROOT]/home/.config/tasq/repos/gone.toml: path [ROOT]/home/gone does not exist or is not a directory\n\
+             \x20                  fix: set path to the main checkout of a repository"
         );
     }
 
@@ -3182,6 +3242,48 @@ mod worktree {
         project
     }
 
+    /// A relative template `source` starts at the directory of the file
+    /// that set it, so a profile's starts at `profiles/` (`../` reaches the
+    /// config directory).
+    #[test]
+    fn a_profile_template_source_starts_at_the_profiles_directory() {
+        let env = TestEnv::fixture();
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        let profile = env.write_profile(
+            "work",
+            "[worktree]\n\
+             templates = [{ source = \"tpl/envrc\", target = \".envrc\" }, \
+             { source = \"../tpl/up\", target = \".up\" }]\n",
+        );
+        let profiles = profile.parent().unwrap();
+        for dir in [profiles.join("tpl"), profiles.join("../tpl")] {
+            std::fs::create_dir_all(&dir).unwrap();
+        }
+        std::fs::write(profiles.join("tpl/envrc"), "x\n").unwrap();
+        std::fs::write(profiles.join("../tpl/up"), "y\n").unwrap();
+        env.tasq_wt()
+            .args(["project", "3", project.to_str().unwrap()])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(["worktree", "set", "3", "b"])
+            .assert()
+            .success();
+        let dry = env
+            .tasq_wt()
+            .args(["--profile", "work", "worktree", "up", "3", "--dry-run"])
+            .output()
+            .unwrap();
+        assert!(dry.status.success(), "{}", stderr(&dry));
+        assert_eq!(
+            env.normalize(&stdout(&dry)),
+            "[3] would create worktree [ROOT]/home/proj-b on b (new from HEAD)\n  \
+             render .envrc from [ROOT]/home/.config/tasq/profiles/tpl/envrc\n  \
+             render .up from [ROOT]/home/.config/tasq/profiles/../tpl/up\n"
+        );
+    }
+
     #[test]
     fn up_provisions_from_the_repository_config() {
         let env = TestEnv::fixture();
@@ -5349,14 +5451,8 @@ mod plugins {
             .arg("echo")
             .output()
             .unwrap();
-        assert!(
-            stdout(&out).contains(&format!(
-                "config_dir={}\n",
-                env.home.join("conf").canonicalize().unwrap().display()
-            )),
-            "{}",
-            stdout(&out)
-        );
+        let text = env.normalize(&stdout(&out));
+        assert!(text.contains("config_dir=[ROOT]/home/conf\n"), "{text}");
         // Nothing in effect: none of the variables is set (TASQ_BIN always is).
         let out = env.tasq().arg("echo").output().unwrap();
         assert_eq!(
@@ -5365,6 +5461,33 @@ mod plugins {
                 "args=\nbin={}\nprofile=unset config_dir=unset\nset=unset\n",
                 env.normalize(&tasq_bin())
             )
+        );
+    }
+
+    /// Dispatch needs no current directory: a shell left in a removed
+    /// directory still reaches the plugin, with the config directory.
+    #[test]
+    fn dispatches_from_a_removed_directory() {
+        let env = TestEnv::fixture();
+        env.fake_tool(
+            "tasq-echo",
+            &format!("{PROBE}\necho \"ran config_dir=${{TASQ_CONFIG_DIR-unset}}\""),
+        );
+        std::fs::create_dir(env.home.join("gone")).unwrap();
+        let mut tasq = env.tasq_std();
+        tasq.env("TASQ_CONFIG_DIR", "~/conf");
+        let mut sh = std::process::Command::new("/bin/sh");
+        sh.env_clear()
+            .envs(tasq.get_envs().filter_map(|(k, v)| Some((k, v?))))
+            .current_dir(env.home.join("gone"))
+            .args(["-c", "/bin/rmdir \"$PWD\" && exec \"$0\" echo"])
+            .arg(tasq.get_program());
+        let out = sh.output().unwrap();
+        // The plugin's own shell complains about getcwd; tasq says nothing.
+        assert!(!stderr(&out).contains("tasq:"), "{}", stderr(&out));
+        assert_eq!(
+            env.normalize(&stdout(&out)),
+            "ran config_dir=[ROOT]/home/conf\n"
         );
     }
 

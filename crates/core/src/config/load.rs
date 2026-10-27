@@ -312,8 +312,8 @@ pub fn config_dir(opts: &LoadOptions) -> Option<PathBuf> {
 
 /// The config directory named by `--config-dir` or [`ENV_CONFIG_DIR`],
 /// with `~` expanded and made absolute against `cwd`, and which of the two
-/// named it.
-fn named_config_dir(opts: &LoadOptions) -> Option<(PathBuf, &'static str)> {
+/// named it. `None` when neither names one (an empty variable is unset).
+pub fn named_config_dir(opts: &LoadOptions) -> Option<(PathBuf, &'static str)> {
     let (dir, named_by) = match &opts.config_dir {
         Some(dir) => (dir.clone(), "--config-dir"),
         None => (
@@ -475,22 +475,46 @@ struct ParsedFile {
     table: Table,
 }
 
-/// Parses and validates `text` as a config file named `path`; a
-/// `[profile.<name>]` table in it names its target in `config_dir`.
-fn parse_file(path: &Path, text: &str, config_dir: &Path) -> Result<ParsedFile, ConfigError> {
+/// What a config file is, for the error a `[profile.<name>]` table in it
+/// gets: the file to move it to in the config directory, unless the file
+/// is that profile already.
+enum FileKind<'a> {
+    /// `config.toml` in this config directory.
+    Global(&'a Path),
+    /// `profiles/<name>.toml` in this config directory.
+    Profile {
+        /// The config directory.
+        config_dir: &'a Path,
+        /// The profile the file is.
+        name: &'a str,
+    },
+}
+
+/// Parses and validates `text` as a config file named `path`, of `kind`.
+fn parse_file(path: &Path, text: &str, kind: &FileKind) -> Result<ParsedFile, ConfigError> {
     let to_error = |e: toml::de::Error| parse_error(path, text, &e);
     if let Ok(InlineProfiles { profile }) = toml::from_str(text)
         && let Some(name) = profile.keys().min_by_key(|name| name.span().start)
     {
         let (line, column) = line_col(text, name.span().start);
-        return Err(ConfigError::InlineProfile {
-            file: path.to_path_buf(),
-            line,
-            column,
-            name: name.get_ref().clone(),
-            target: config_dir
-                .join(PROFILES_DIR)
-                .join(format!("{}.toml", name.get_ref())),
+        let file = path.to_path_buf();
+        let name = name.get_ref().clone();
+        return Err(match kind {
+            FileKind::Profile { name: own, .. } if *own == name => ConfigError::ProfileInProfile {
+                file,
+                line,
+                column,
+                name,
+            },
+            FileKind::Global(config_dir) | FileKind::Profile { config_dir, .. } => {
+                ConfigError::InlineProfile {
+                    target: config_dir.join(PROFILES_DIR).join(format!("{name}.toml")),
+                    file,
+                    line,
+                    column,
+                    name,
+                }
+            }
         });
     }
     // Typed first: `deny_unknown_fields` and the newtype validators report
@@ -749,7 +773,7 @@ fn read_file(path: &Path) -> Result<String, ConfigError> {
     clippy::disallowed_methods,
     reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
 )]
-fn global_file(opts: &LoadOptions) -> Result<(Option<PathBuf>, Option<PathBuf>), ConfigError> {
+fn config_paths(opts: &LoadOptions) -> Result<(Option<PathBuf>, Option<PathBuf>), ConfigError> {
     let dir = match named_config_dir(opts) {
         Some((dir, named_by)) if !dir.is_dir() => {
             return Err(ConfigError::MissingDir { dir, named_by });
@@ -777,7 +801,7 @@ pub struct RepoConfig {
 /// Every repository config in the config directory, in file name order.
 /// Fails like [`Config::load`] on a broken file or a duplicate `path`.
 pub fn repo_configs(opts: &LoadOptions) -> Result<Vec<RepoConfig>, ConfigError> {
-    let (dir, _) = global_file(opts)?;
+    let (dir, _) = config_paths(opts)?;
     let Some(dir) = dir else {
         return Ok(Vec::new());
     };
@@ -803,15 +827,14 @@ fn repo_file(
         .find_map(|(main, file)| (main == *repo).then_some(file)))
 }
 
-/// Every repository config in `dir`'s [`REPOS_DIR`], parsed, with the main
-/// checkout it names, in file name order. Two files with one `path` fail.
+/// The `*.toml` files in `dir`, sorted. None when it is absent.
 #[expect(
     clippy::disallowed_methods,
     reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
 )]
-fn repo_files(dir: &Path, opts: &LoadOptions) -> Result<Vec<(PathBuf, ParsedFile)>, ConfigError> {
-    let Ok(entries) = std::fs::read_dir(dir.join(REPOS_DIR)) else {
-        return Ok(Vec::new());
+fn toml_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
     };
     let mut paths: Vec<PathBuf> = entries
         .filter_map(Result::ok)
@@ -819,6 +842,13 @@ fn repo_files(dir: &Path, opts: &LoadOptions) -> Result<Vec<(PathBuf, ParsedFile
         .filter(|path| path.extension().is_some_and(|ext| ext == "toml") && path.is_file())
         .collect();
     paths.sort();
+    paths
+}
+
+/// Every repository config in `dir`'s [`REPOS_DIR`], parsed, with the main
+/// checkout it names, in file name order. Two files with one `path` fail.
+fn repo_files(dir: &Path, opts: &LoadOptions) -> Result<Vec<(PathBuf, ParsedFile)>, ConfigError> {
+    let paths = toml_files(&dir.join(REPOS_DIR));
     let mut mains: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
     let mut files = Vec::new();
     for path in paths {
@@ -872,22 +902,11 @@ fn parse_repo_file(
 
 /// The profile names in `dir`'s [`PROFILES_DIR`]: the stems of its
 /// `*.toml` files, sorted. None when the directory is absent.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
-)]
 fn profile_names(dir: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(dir.join(PROFILES_DIR)) else {
-        return Vec::new();
-    };
-    let mut names: Vec<String> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "toml") && path.is_file())
+    toml_files(&dir.join(PROFILES_DIR))
+        .into_iter()
         .filter_map(|path| path.file_stem()?.to_str().map(str::to_owned))
-        .collect();
-    names.sort();
-    names
+        .collect()
 }
 
 impl Config {
@@ -906,11 +925,11 @@ impl Config {
             keys: leaf_keys(&merged),
         }];
 
-        let (dir, global) = global_file(opts)?;
+        let (dir, global) = config_paths(opts)?;
         // Without a config directory, errors still name `profiles/x.toml`.
         let base = dir.clone().unwrap_or_default();
         if let Some(path) = global {
-            let file = parse_file(&path, &read_file(&path)?, &base)?;
+            let file = parse_file(&path, &read_file(&path)?, &FileKind::Global(&base))?;
             layers.push(Layer {
                 origin: Origin::File(file.path),
                 keys: leaf_keys(&file.table),
@@ -932,7 +951,11 @@ impl Config {
                     available: profiles,
                 });
             }
-            let file = parse_file(&path, &read_file(&path)?, &base)?;
+            let kind = FileKind::Profile {
+                config_dir: &base,
+                name,
+            };
+            let file = parse_file(&path, &read_file(&path)?, &kind)?;
             layers.push(Layer {
                 origin: Origin::Profile {
                     name: name.clone(),

@@ -45,13 +45,14 @@ jobs:
     # ADR 0031: configuration lives only in the config directory. ADRs, plans
     # and docs/migration.md may name what it replaced; so may the config
     # module that rejects the old keys, the tests that prove they are rejected
-    # or ignored, and CONTEXT.md's "Avoid" line.
+    # or ignored, and CONTEXT.md's "Avoid" line. `[worktree] enabled = ...` on
+    # one line is the table spelling of worktree.enabled.
     name: no .tasq.toml, TASQ_CONFIG or worktree.enabled
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: |
-          if grep -rnIE '\.tasq\.toml|TASQ_CONFIG\b|worktree\.enabled|TASQ_WORKTREE_ENABLED' \
+          if grep -rnIE '\.tasq\.toml|TASQ_CONFIG\b|worktree\.enabled|\[worktree\][[:space:]]*enabled[[:space:]]*=|TASQ_WORKTREE_ENABLED' \
               crates examples plugins README.md CLAUDE.md CONTEXT.md docs \
               --exclude-dir=adr --exclude=migration.md \
             | grep -vE '^crates/core/src/config/|^crates/core/tests/config_load\.rs:|^crates/cli/tests/cli\.rs:.*\.tasq\.toml|^CONTEXT\.md:[0-9]+:_Avoid_:'; then

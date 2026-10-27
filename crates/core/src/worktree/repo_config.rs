@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use crate::config::contract_tilde;
 use crate::doctor::Check;
 
-/// The name of the check.
-const NAME: &str = "repo-config";
+/// The name of the check, also for the doctor checks of repository
+/// configs made elsewhere.
+pub const NAME: &str = "repo-config";
 
 /// What a repository config's `path` points at on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]

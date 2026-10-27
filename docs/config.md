@@ -421,7 +421,7 @@ post-remove = []
 | `worktree.delete_branch` | `safe` \| `never` | `safe` | On release, delete the branch when it is merged into the default branch or pushed (`safe`), or never. |
 | `worktree.symlinks` | array of paths | `[]` | Paths in the main checkout linked into a new worktree, at the same relative path. |
 | `worktree.copies` | array of paths | `[]` | Paths in the main checkout (files or directories) copied into a new worktree. |
-| `worktree.templates` | array of `{source, target}` | `[]` | Files rendered into a new worktree; `source` relative to the directory of the file that set it, `target` to the worktree. |
+| `worktree.templates` | array of `{source, target}` | `[]` | Files rendered into a new worktree; `target` relative to the worktree, a relative `source` to the directory of the file that set it (a profile's starts at `profiles/`, so `../` reaches the config directory), else to the main checkout when `--set` or the environment set it. |
 | `worktree.variables` | table of strings | empty | Extra template variables. |
 | `worktree.ports` | `{base, span, block}` | unset | Enables `{{port}}`: `base` plus a stable per-branch offset below `span`, a multiple of `block`. |
 | `worktree.hooks.pre-create`, `post-create`, `pre-remove`, `post-remove` | arrays of command lines | `[]` | Templates, split into words and run without a shell (see above). `pre-create` and `post-remove` run in the main checkout, `post-create` and `pre-remove` in the worktree. A failing `pre-*` hook aborts the step; a failing `post-*` hook is a warning. |
@@ -464,15 +464,19 @@ a `path` that differs.
 - Every file in `repos/` is read on each worktree command, so a broken one fails them all, and
   two files with the same `path` are an error naming both.
 - A relative template `source` starts at the repository config's directory (`repos/`).
+- In a bare repository with linked worktrees, git names no main checkout, so each worktree is
+  its own: a repository config whose `path` is one of them applies only to that worktree.
 - Hooks run without asking, like every hook (ADR 0031).
 
 `tasq worktree config [DIR]` shows the `[worktree]` table that applies to the repository `DIR`
 (default: the current directory) is in, the layer that set each key and the repository config
 that matched (`none` when no file did); `--json` gives `repository`, `repository_config`,
-`worktree` and `origins`. `tasq doctor` checks each repository config (`repo-config`): `OK` when
-its `path` is a main checkout, `WARN` when it does not exist, is not inside a git repository, is
-a linked worktree or a subdirectory, or reaches the main checkout through a symlink or `..`, with
-the `path` to set; `FAIL` when the files do not load.
+`worktree` and `origins`. With worktrees enabled, `tasq doctor` checks each repository config
+(`repo-config`): `OK` when its `path` is a main checkout and the config loads with it applied,
+`WARN` when it does not exist, is not inside a git repository, is a linked worktree or a
+subdirectory, or reaches the main checkout through a symlink or `..`, with the `path` to set;
+`FAIL` when the files do not load, or when a matching one does not load merged (an undefined
+template variable, ...), as every worktree command for that repository would.
 
 ### Template variables
 

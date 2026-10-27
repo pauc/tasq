@@ -136,7 +136,7 @@ pub use self::error::ConfigError;
 pub use self::load::{
     ENV_CONFIG_DIR, ENV_DATA_DIR, ENV_KEYS, ENV_PROFILE, ENV_SET, ENV_STORE_NAME, GLOBAL_FILE,
     Layer, LoadOptions, Loaded, Origin, REPOS_DIR, RepoConfig, config_dir, default_data_dir,
-    parse_env_set, repo_configs,
+    named_config_dir, parse_env_set, repo_configs,
 };
 pub use self::path::{contract_tilde, expand_tilde};
 

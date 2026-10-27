@@ -68,7 +68,9 @@ pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
                     "remove it from [plugins] enabled; a built-in command is never a plugin",
                 ));
             }
-            checks.extend(repo_config_checks(&opts));
+            if loaded.config.worktrees_enabled {
+                checks.extend(repo_config_checks(&opts));
+            }
             Some(loaded)
         }
         Err(e) => {
@@ -121,17 +123,38 @@ pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
 }
 
 /// One check per repository config: whether its `path` is the main
-/// checkout the worktree commands match it against.
+/// checkout the worktree commands match it against and, when it is,
+/// whether the config loads with it applied, as those commands load it.
 fn repo_config_checks(opts: &LoadOptions) -> Vec<Check> {
     match repo_configs(opts) {
         Ok(configs) => configs
             .iter()
             .map(|c| {
-                repo_config::check(&c.file, &c.path, &repo::find(&c.path), opts.home.as_deref())
+                let check = repo_config::check(
+                    &c.file,
+                    &c.path,
+                    &repo::find(&c.path),
+                    opts.home.as_deref(),
+                );
+                if check.status != CheckStatus::Ok {
+                    return check;
+                }
+                let merged = LoadOptions {
+                    repo: Some(c.path.clone()),
+                    ..opts.clone()
+                };
+                match Config::load(&merged) {
+                    Ok(_) => check,
+                    Err(e) => Check::fail(
+                        repo_config::NAME,
+                        e.to_string(),
+                        "fix the file named in the message",
+                    ),
+                }
             })
             .collect(),
         Err(e) => vec![Check::fail(
-            "repo-config",
+            repo_config::NAME,
             e.to_string(),
             "fix the file named in the message",
         )],

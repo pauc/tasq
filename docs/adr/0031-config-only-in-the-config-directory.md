@@ -20,7 +20,7 @@ Forces:
    means walking directories and reading tables inside tables.
 2. **A file in a directory can come from someone else.** A `.tasq.toml` may arrive with a
    clone, so ADR-0022 made its hooks run only once approved: `trust.toml`, a terminal
-   prompt, `--yes` on five commands and `tasq worktree trust`. The user writes every
+   prompt, `--yes` on seven commands and `tasq worktree trust`. The user writes every
    `.tasq.toml` they have themselves.
 3. **Profile selection already follows directories.** `TASQ_PROFILE` is exported from
    `.envrc` files in each workspace; tasq does not need to look at the directory for that.
@@ -62,7 +62,8 @@ an error naming the new key.
 
 **No hook trust.** Every hook comes from a file the user wrote in their config directory,
 so hooks run without approval. `trust.toml`, the prompt, `tasq worktree trust` and `--yes`
-on `next`, `pick`, `done`, `worktree up` and `worktree release` are removed.
+on `next`, `pick`, `done`, `worktree up`, `worktree release`, `worktree prune` and
+`worktree switch` are removed.
 
 **Seeing it.** `tasq config show` shows the defaults, `config.toml`, the profile, the
 environment and `--set`, never a repository config. `tasq worktree config [DIR]` shows the
@@ -77,7 +78,7 @@ the repository config that matched. `tasq doctor` warns about a repository confi
 - One directory holds every setting; it can be versioned or copied as a whole.
 - Loading no longer depends on the directory tasq runs in, only on the profile and, for the
   worktree commands, the repository.
-- The trust store, its prompt, a command and five `--yes` flags go away.
+- The trust store, its prompt, a command and seven `--yes` flags go away.
 - Each profile and repository config is its own file, so errors point at short files.
 
 ### Negative
@@ -108,6 +109,7 @@ the repository config that matched. `tasq doctor` warns about a repository confi
 
 - Task tasq 60, GitHub issue pauc/tasq#13.
 - Plan: `ruli/features/compact-config/PLAN.md`.
+- ADR-0006 (plugins): plugins get `TASQ_CONFIG_DIR` in place of `TASQ_CONFIG`.
 - ADR-0022 (worktrees): the `.tasq.toml` lookup from the main checkout and the hook trust are
   superseded here.
 - `docs/config.md`, `docs/migration.md`.

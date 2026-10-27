@@ -112,7 +112,7 @@ pub fn rows(app: &App, store: &dyn Store, id: Option<&TaskId>, all: bool) -> Res
         None => store.list(&Filter::new().any_done())?,
     };
     let scope = listing::scope(id.is_some(), all, &app.opts.cwd);
-    let failed = std::cell::RefCell::new(None);
+    let mut failed = None;
     let rows = listing::rows(
         &app.git(),
         &tasks,
@@ -121,12 +121,12 @@ pub fn rows(app: &App, store: &dyn Store, id: Option<&TaskId>, all: bool) -> Res
         |project| match repo_settings(app, project) {
             Ok(settings) => Some(settings),
             Err(e) => {
-                failed.borrow_mut().get_or_insert(e);
+                failed.get_or_insert(e);
                 None
             }
         },
     );
-    match failed.into_inner() {
+    match failed {
         Some(e) => Err(e),
         None => Ok(rows),
     }

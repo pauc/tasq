@@ -199,7 +199,7 @@ environment variable, so check the list.
 
 | Before | Now | If left as is |
 |---|---|---|
-| `[profile.x]` in `config.toml` (or in a `.tasq.toml`) | `profiles/x.toml` in the config directory, the table's contents without the `[profile.x]` prefix (`[profile.x.store]` becomes `[store]`) | error at the table's name: `profiles are files now: move [profile.x] to <config dir>/profiles/x.toml` |
+| `[profile.x]` in `config.toml` (or in a `.tasq.toml`) | `profiles/x.toml` in the config directory, the table's contents without the `[profile.x]` prefix (`[profile.x.store]` becomes `[store]`); a relative template `source` it sets now starts at `profiles/`, so prefix it with `../` (or write an absolute or `~/` path) | error at the table's name: `profiles are files now: move [profile.x] to <config dir>/profiles/x.toml`; left inside `profiles/x.toml`: `a profile file is the profile itself: remove the [profile.x] header and the profile.x. prefix of its tables` |
 | `.tasq.toml` next to a repository (or above it) | `repos/<name>.toml` in the config directory (any name) with `path = "<main checkout>"` and the file's `[worktree]` table | silently ignored: `.tasq.toml` is never read, in the current directory or in a repository |
 | a relative template `source` in a `.tasq.toml` | relative to the repository config's directory, `~/.config/tasq/repos/`; move the template files there (or under it) or write an absolute or `~/` path | the template is not found and worktree creation stops |
 | `worktree.enabled = true` (under `[worktree]`) | `worktrees_enabled = true`, top level, in `config.toml` or a profile (never in a repository config) | error at the value: `worktree.enabled moved to the top level: set worktrees_enabled above any table` |

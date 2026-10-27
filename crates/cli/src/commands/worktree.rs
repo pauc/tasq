@@ -258,7 +258,8 @@ pub fn up(app: &App, id: &str, from: Option<&str>, dry_run: bool) -> Result<()> 
 }
 
 /// Step 2 of the lifecycle ([`tasq_worktree::create::materialize`]) in
-/// the task's project, with the hooks' output on the terminal. The caller checks that worktrees are enabled.
+/// the task's project, with the hooks' output on the terminal. The caller
+/// checks that worktrees are enabled.
 pub fn materialize(
     app: &App,
     task: &Task,

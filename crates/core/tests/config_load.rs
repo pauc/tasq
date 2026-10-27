@@ -1749,7 +1749,39 @@ fn profile_files_are_validated_like_any_config_file() {
     );
 }
 
-/// A `[profile.<name>]` table, in any file, fails at its name with the
+/// A `[profile.<name>]` table pasted into its own profile file: the file
+/// is the profile, so the fix is to drop the header and the prefix, not to
+/// move it to the file it is already in.
+#[test]
+fn an_inline_profile_in_a_profile_file_says_to_drop_the_header() {
+    let sb = Sandbox::new();
+    let file = sb.write_profile(
+        "work",
+        "[profile.work]\nworktrees_enabled = true\n\n[profile.work.store]\nname = \"w\"\n",
+    );
+    let mut opts = sb.opts();
+    opts.profile = Some("work".to_owned());
+    assert_eq!(
+        Config::load(&opts).unwrap_err().to_string(),
+        format!(
+            "{}:1:10: a profile file is the profile itself: remove the [profile.work] header \
+             and the profile.work. prefix of its tables",
+            file.display()
+        )
+    );
+    // Another profile's table belongs in that profile's file.
+    fs::write(&file, "profile.q.ui.pager = \"x\"\n").unwrap();
+    assert_eq!(
+        Config::load(&opts).unwrap_err().to_string(),
+        format!(
+            "{}:1:9: profiles are files now: move [profile.q] to {}",
+            file.display(),
+            sb.home.join(".config/tasq/profiles/q.toml").display()
+        )
+    );
+}
+
+/// A `[profile.<name>]` table in `config.toml` fails at its name with the
 /// file to move it to (ADR-0031), not as an unknown key.
 #[test]
 fn an_inline_profile_names_the_file_to_move_it_to() {
@@ -1775,19 +1807,17 @@ fn an_inline_profile_names_the_file_to_move_it_to() {
     );
     fs::remove_file(&global).unwrap();
 
-    // In a profile file, and with `--config-dir`, the target is in that directory.
+    // With `--config-dir`, the target is in that directory.
     let other = sb.home.join("other");
-    fs::create_dir_all(other.join("profiles")).unwrap();
-    let file = other.join("profiles/p.toml");
-    fs::write(&file, "profile.q.ui.pager = \"x\"\n").unwrap();
+    fs::create_dir_all(&other).unwrap();
+    fs::write(other.join("config.toml"), "profile.q.ui.pager = \"x\"\n").unwrap();
     let mut opts = sb.opts();
     opts.config_dir = Some(other.clone());
-    opts.profile = Some("p".to_owned());
     assert_eq!(
         Config::load(&opts).unwrap_err().to_string(),
         format!(
             "{}:1:9: profiles are files now: move [profile.q] to {}",
-            file.display(),
+            other.join("config.toml").display(),
             other.join("profiles/q.toml").display()
         )
     );
@@ -2334,6 +2364,34 @@ fn load_options_new_and_display_of_origins() {
     assert_eq!(
         tasq_core::config::config_dir(&opts),
         Some(PathBuf::from("/x/rel"))
+    );
+}
+
+/// Only a named directory, resolved as [`config_dir`] resolves it: what
+/// tasq forwards to the processes it starts.
+#[test]
+fn named_config_dir_is_the_flag_or_the_variable_resolved() {
+    use tasq_core::config::named_config_dir;
+    let mut opts = LoadOptions::new("/x");
+    opts.home = Some(PathBuf::from("/home/me"));
+    opts.env = env(&[("XDG_CONFIG_HOME", "/xdg")]);
+    assert_eq!(named_config_dir(&opts), None);
+    opts.env = env(&[("TASQ_CONFIG_DIR", "")]);
+    assert_eq!(named_config_dir(&opts), None, "empty is unset");
+    opts.env = env(&[("TASQ_CONFIG_DIR", "~/conf")]);
+    assert_eq!(
+        named_config_dir(&opts),
+        Some((PathBuf::from("/home/me/conf"), "TASQ_CONFIG_DIR"))
+    );
+    opts.env = env(&[("TASQ_CONFIG_DIR", "conf")]);
+    assert_eq!(
+        named_config_dir(&opts),
+        Some((PathBuf::from("/x/conf"), "TASQ_CONFIG_DIR"))
+    );
+    opts.config_dir = Some(PathBuf::from("rel"));
+    assert_eq!(
+        named_config_dir(&opts),
+        Some((PathBuf::from("/x/rel"), "--config-dir"))
     );
 }
 

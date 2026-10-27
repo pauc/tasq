@@ -64,6 +64,23 @@ pub enum ConfigError {
         /// config directory.
         target: PathBuf,
     },
+    /// The profile file `profiles/<name>.toml` holds a `[profile.<name>]`
+    /// table: the file is the profile, so its tables go without the prefix
+    /// (ADR-0031).
+    #[error(
+        "{file}:{line}:{column}: a profile file is the profile itself: remove the \
+         [profile.{name}] header and the profile.{name}. prefix of its tables"
+    )]
+    ProfileInProfile {
+        /// The profile file.
+        file: PathBuf,
+        /// 1-based line of the profile name.
+        line: usize,
+        /// 1-based column of the profile name.
+        column: usize,
+        /// The profile name in the table header.
+        name: String,
+    },
     /// Two repository configs name the same main checkout (ADR-0031).
     #[error(
         "repository configs {} and {} both have path {}",

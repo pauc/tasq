@@ -108,7 +108,7 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    The task is set to in-progress and a session opens in the task's project, else
    `work.default_project`. The default launcher is Claude Code with a prompt built from the
    task; `shell`, `tmux`, `herdr` and `auto` are the others (`launch.default`). With
-   worktrees enabled (`[worktree] enabled = true`), the session opens in the task's worktree
+   worktrees enabled (`worktrees_enabled = true`), the session opens in the task's worktree
    instead, creating it first when it does not exist; `tasq create ... --worktree [BRANCH]` and
    `tasq worktree set 12 [BRANCH]` declare one, `tasq worktree up 12` creates it without launching.
 
