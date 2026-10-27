@@ -10,9 +10,11 @@
 use std::fmt::Write as _;
 
 use serde_json::Value;
-use tasq_core::config::{Config, LoadOptions, UiConfig};
+use tasq_core::config::{Config, LoadOptions, UiConfig, repo_configs};
 use tasq_core::doctor::{Check, CheckStatus, any_failed};
+use tasq_core::worktree::repo_config;
 use tasq_launch::tool_check;
+use tasq_worktree::repo;
 
 use crate::app::{App, Provenance, env_vec};
 use crate::cli::GlobalArgs;
@@ -66,6 +68,7 @@ pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
                     "remove it from [plugins] enabled; a built-in command is never a plugin",
                 ));
             }
+            checks.extend(repo_config_checks(&opts));
             Some(loaded)
         }
         Err(e) => {
@@ -114,6 +117,24 @@ pub fn run(global: GlobalArgs, opts: LoadOptions) -> Result<()> {
         Err(CliError::Silent(1))
     } else {
         Ok(())
+    }
+}
+
+/// One check per repository config: whether its `path` is the main
+/// checkout the worktree commands match it against.
+fn repo_config_checks(opts: &LoadOptions) -> Vec<Check> {
+    match repo_configs(opts) {
+        Ok(configs) => configs
+            .iter()
+            .map(|c| {
+                repo_config::check(&c.file, &c.path, &repo::find(&c.path), opts.home.as_deref())
+            })
+            .collect(),
+        Err(e) => vec![Check::fail(
+            "repo-config",
+            e.to_string(),
+            "fix the file named in the message",
+        )],
     }
 }
 

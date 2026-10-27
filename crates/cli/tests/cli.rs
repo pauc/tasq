@@ -761,6 +761,143 @@ mod doctor {
         assert!(text.contains("WARN  glow"), "{text}");
     }
 
+    /// The `repo-config` lines of `tasq doctor`, normalized.
+    fn repo_config_lines(env: &TestEnv) -> String {
+        let out = env.tasq().arg("doctor").output().unwrap();
+        let text = env.normalize(&stdout(&out));
+        let mut lines = Vec::new();
+        let mut in_check = false;
+        for line in text.lines() {
+            // A check starts at column 0, its `fix:` line is indented.
+            if !line.starts_with(' ') {
+                in_check = line
+                    .get(6..)
+                    .is_some_and(|rest| rest.starts_with("repo-config"));
+            }
+            if in_check {
+                lines.push(line);
+            }
+        }
+        lines.join("\n")
+    }
+
+    /// One check per repository config: OK when `path` is a main checkout.
+    #[test]
+    fn a_repository_config_naming_a_main_checkout_is_ok() {
+        let env = TestEnv::fixture();
+        env.git_repo(&env.home.join("proj"));
+        env.write_repo_config("proj", "path = \"~/proj\"\n");
+        assert_eq!(
+            repo_config_lines(&env),
+            "OK    repo-config  [ROOT]/home/.config/tasq/repos/proj.toml: path [ROOT]/home/proj is a main checkout"
+        );
+    }
+
+    /// A warning, not a failure.
+    #[test]
+    fn a_repository_config_naming_a_missing_path_warns() {
+        let env = TestEnv::fixture();
+        env.write_repo_config("gone", "path = \"~/gone\"\n");
+        assert_eq!(
+            repo_config_lines(&env),
+            "WARN  repo-config  [ROOT]/home/.config/tasq/repos/gone.toml: path [ROOT]/home/gone does not exist or is not a directory\n\
+             \x20                  fix: set path to the main checkout of a repository"
+        );
+        assert!(env.tasq().arg("doctor").output().unwrap().status.success());
+    }
+
+    #[test]
+    fn a_repository_config_naming_a_directory_outside_git_warns() {
+        let env = TestEnv::fixture();
+        std::fs::create_dir(env.home.join("plain")).unwrap();
+        env.write_repo_config("plain", "path = \"~/plain\"\n");
+        assert_eq!(
+            repo_config_lines(&env),
+            "WARN  repo-config  [ROOT]/home/.config/tasq/repos/plain.toml: path [ROOT]/home/plain is not inside a git repository\n\
+             \x20                  fix: set path to the main checkout of a repository"
+        );
+    }
+
+    /// The fix names the main checkout to write instead.
+    #[test]
+    fn a_repository_config_naming_a_linked_worktree_warns() {
+        let env = TestEnv::fixture();
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        env.git(&project, &["worktree", "add", "-q", "-b", "l", "../proj-l"]);
+        env.write_repo_config("proj", "path = \"~/proj-l\"\n");
+        assert_eq!(
+            repo_config_lines(&env),
+            "WARN  repo-config  [ROOT]/home/.config/tasq/repos/proj.toml: path [ROOT]/home/proj-l is a linked worktree, not the main checkout\n\
+             \x20                  fix: set path = \"~/proj\""
+        );
+    }
+
+    #[test]
+    fn a_repository_config_naming_a_subdirectory_warns() {
+        let env = TestEnv::fixture();
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        std::fs::create_dir(project.join("sub")).unwrap();
+        env.write_repo_config("proj", "path = \"~/proj/sub\"\n");
+        assert_eq!(
+            repo_config_lines(&env),
+            "WARN  repo-config  [ROOT]/home/.config/tasq/repos/proj.toml: path [ROOT]/home/proj/sub is a subdirectory, not the main checkout\n\
+             \x20                  fix: set path = \"~/proj\""
+        );
+    }
+
+    /// The worktree commands compare `path` with the resolved main
+    /// checkout, so a symlink on the way never matches.
+    #[test]
+    fn a_repository_config_through_a_symlink_names_the_resolved_path() {
+        let env = TestEnv::fixture();
+        env.git_repo(&env.home.join("proj"));
+        std::os::unix::fs::symlink(env.home.join("proj"), env.home.join("link")).unwrap();
+        env.write_repo_config("proj", "path = \"~/link\"\n");
+        assert_eq!(
+            repo_config_lines(&env),
+            "WARN  repo-config  [ROOT]/home/.config/tasq/repos/proj.toml: path [ROOT]/home/link resolves to the main checkout [ROOT]/home/proj through a symlink or ..\n\
+             \x20                  fix: set path = \"~/proj\""
+        );
+    }
+
+    /// One check per file, in file name order, right after `config`.
+    #[test]
+    fn checks_every_repository_config_after_the_config() {
+        let env = TestEnv::fixture();
+        env.git_repo(&env.home.join("proj"));
+        env.write_repo_config("b", "path = \"~/proj\"\n");
+        env.write_repo_config("a", "path = \"~/gone\"\n");
+        let out = env.tasq().arg("doctor").output().unwrap();
+        let text = env.normalize(&stdout(&out));
+        assert!(
+            text.starts_with(
+                "OK    config       loaded from defaults\n\
+                 WARN  repo-config  [ROOT]/home/.config/tasq/repos/a.toml: path [ROOT]/home/gone does not exist or is not a directory\n\
+                 \x20                  fix: set path to the main checkout of a repository\n\
+                 OK    repo-config  [ROOT]/home/.config/tasq/repos/b.toml: path [ROOT]/home/proj is a main checkout\n\
+                 OK    location"
+            ),
+            "{text}"
+        );
+    }
+
+    /// Every worktree command fails on it, so `doctor` fails too.
+    #[test]
+    fn a_repository_config_that_does_not_load_fails() {
+        let env = TestEnv::fixture();
+        env.write_repo_config("a", "path = \"~/proj\"\n");
+        env.write_repo_config("b", "path = \"~/proj\"\n");
+        let out = env.tasq().arg("doctor").output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            repo_config_lines(&env),
+            "FAIL  repo-config  repository configs [ROOT]/home/.config/tasq/repos/a.toml and [ROOT]/home/.config/tasq/repos/b.toml both have path [ROOT]/home/proj\n\
+             \x20                  fix: fix the file named in the message"
+        );
+    }
+
     #[test]
     fn reports_a_store_that_cannot_be_read() {
         // A file where the store directory should be.

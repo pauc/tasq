@@ -7,7 +7,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tasq_worktree::Repo;
+use tasq_core::worktree::repo_config::Found;
+use tasq_worktree::{Repo, repo};
 use tempfile::TempDir;
 
 const ORIGIN: &str =
@@ -134,4 +135,29 @@ fn outside_a_repository_there_is_none() {
     let plain = root.join("plain");
     fs::create_dir_all(&plain).unwrap();
     assert_eq!(Repo::of(&plain), None);
+}
+
+/// `repo::find` for `tasq doctor`: only a directory counts, and the work
+/// tree and main checkout are found from the path as written.
+#[test]
+fn find_tells_what_a_repository_configs_path_points_at() {
+    let (_dir, root) = tree();
+    let main = shop(&root, ORIGIN);
+    write(&main.join("README"), "hi\n");
+    assert_eq!(repo::find(&root.join("gone")), Found::Missing);
+    assert_eq!(repo::find(&main.join("README")), Found::Missing, "a file");
+    let plain = root.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    assert_eq!(repo::find(&plain), Found::NotRepository);
+
+    let link = root.join("link");
+    std::os::unix::fs::symlink(&main, &link).unwrap();
+    assert_eq!(
+        repo::find(&link.join("src")),
+        Found::Repository {
+            resolved: main.join("src"),
+            root: link,
+            main,
+        }
+    );
 }

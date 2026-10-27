@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use tasq_core::worktree::git;
+use tasq_core::worktree::repo_config::Found;
 
 /// A git repository as found on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,5 +37,23 @@ impl Repo {
             main: git::main_checkout(root, &common),
             name,
         })
+    }
+}
+
+/// What `path` points at, for
+/// [`tasq_core::worktree::repo_config::check`]. The repository is found
+/// from `path` as written, as the worktree commands find it from a task's
+/// project.
+pub fn find(path: &Path) -> Found {
+    if !path.is_dir() {
+        return Found::Missing;
+    }
+    let (Some(root), Some(repo)) = (git::work_tree_root(path, Path::exists), Repo::of(path)) else {
+        return Found::NotRepository;
+    };
+    Found::Repository {
+        resolved: fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
+        root: root.to_path_buf(),
+        main: repo.main,
     }
 }

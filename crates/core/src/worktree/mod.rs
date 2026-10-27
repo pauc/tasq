@@ -14,6 +14,7 @@ pub mod lifecycle;
 pub mod listing;
 pub mod provision;
 pub mod prune;
+pub mod repo_config;
 pub mod status;
 pub mod target;
 pub mod vars;

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use tasq_core::config::{
     Config, ConfigError, DetailPosition, DueFormat, EnvStrategy, ForgeKind, KeySpec, LoadOptions,
-    Origin, SourceKind, Summarizer, WeekStart, expand_tilde,
+    Origin, RepoConfig, SourceKind, Summarizer, WeekStart, expand_tilde, repo_configs,
 };
 use tasq_core::model::Status;
 use tasq_core::theme::Preset;
@@ -1969,6 +1969,47 @@ fn repository_configs_are_the_toml_files_of_the_repos_directory() {
     let loaded = Config::load(&opts).unwrap();
     assert_eq!(loaded.config.worktree.base, "x");
     assert_eq!(loaded.file_for("worktree.base"), Some(file.as_path()));
+}
+
+/// `repo_configs` lists every repository config for `tasq doctor`: its
+/// file and its `path` with `~` expanded, in file name order, failing like
+/// a load on a duplicate.
+#[test]
+fn repo_configs_lists_each_file_with_its_path() {
+    let sb = Sandbox::new();
+    assert_eq!(repo_configs(&sb.opts()).unwrap(), Vec::new());
+    let b = sb.write_repo("b", "path = \"~/code/project\"\n");
+    let a = sb.write_repo("a", "path = \"/elsewhere\"\n[worktree]\nbase = \"x\"\n");
+    assert_eq!(
+        repo_configs(&sb.opts()).unwrap(),
+        vec![
+            RepoConfig {
+                file: a,
+                path: PathBuf::from("/elsewhere"),
+            },
+            RepoConfig {
+                file: b.clone(),
+                path: sb.project.clone(),
+            },
+        ]
+    );
+    let c = sb.write_repo("c", "path = \"~/code/project\"\n");
+    assert_eq!(
+        repo_configs(&sb.opts()).unwrap_err().to_string(),
+        format!(
+            "repository configs {} and {} both have path {}",
+            b.display(),
+            c.display(),
+            sb.project.display()
+        )
+    );
+    let mut opts = sb.opts();
+    opts.home = None;
+    assert_eq!(
+        repo_configs(&opts).unwrap(),
+        Vec::new(),
+        "no config directory"
+    );
 }
 
 // --- paths -----------------------------------------------------------------

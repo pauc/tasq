@@ -763,20 +763,54 @@ fn global_file(opts: &LoadOptions) -> Result<(Option<PathBuf>, Option<PathBuf>),
     Ok((dir, global))
 }
 
+/// A repository config: the file in [`REPOS_DIR`] and the main checkout
+/// its `path` names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoConfig {
+    /// The file, `repos/<any>.toml` in the config directory.
+    pub file: PathBuf,
+    /// Its `path`, `~` expanded.
+    pub path: PathBuf,
+}
+
+/// Every repository config in the config directory, in file name order.
+/// Fails like [`Config::load`] on a broken file or a duplicate `path`.
+pub fn repo_configs(opts: &LoadOptions) -> Result<Vec<RepoConfig>, ConfigError> {
+    let (dir, _) = global_file(opts)?;
+    let Some(dir) = dir else {
+        return Ok(Vec::new());
+    };
+    Ok(repo_files(&dir, opts)?
+        .into_iter()
+        .map(|(main, file)| RepoConfig {
+            file: file.path,
+            path: main,
+        })
+        .collect())
+}
+
 /// The repository config in `dir`'s [`REPOS_DIR`] whose `path` is `repo`,
 /// as its path and its table without `path`. Every file is parsed, so a
 /// mistake or a duplicate `path` fails whichever repository is asked about.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
-)]
 fn repo_file(
     dir: &Path,
     repo: &Path,
     opts: &LoadOptions,
 ) -> Result<Option<ParsedFile>, ConfigError> {
+    Ok(repo_files(dir, opts)?
+        .into_iter()
+        .find_map(|(main, file)| (main == *repo).then_some(file)))
+}
+
+/// Every repository config in `dir`'s [`REPOS_DIR`], parsed, with the main
+/// checkout it names, in file name order. Two files with one `path` fail.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
+)]
+fn repo_files(dir: &Path, opts: &LoadOptions) -> Result<Vec<(PathBuf, ParsedFile)>, ConfigError> {
     let Ok(entries) = std::fs::read_dir(dir.join(REPOS_DIR)) else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let mut paths: Vec<PathBuf> = entries
         .filter_map(Result::ok)
@@ -785,7 +819,7 @@ fn repo_file(
         .collect();
     paths.sort();
     let mut mains: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
-    let mut found = None;
+    let mut files = Vec::new();
     for path in paths {
         let (main, table) = parse_repo_file(&path, &read_file(&path)?, opts.home.as_deref())?;
         if let Some(first) = mains.get(&main) {
@@ -795,15 +829,10 @@ fn repo_file(
                 path: main,
             });
         }
-        if main == *repo {
-            found = Some(ParsedFile {
-                path: path.clone(),
-                table,
-            });
-        }
-        mains.insert(main, path);
+        mains.insert(main.clone(), path.clone());
+        files.push((main, ParsedFile { path, table }));
     }
-    Ok(found)
+    Ok(files)
 }
 
 /// Parses and validates `text` as the repository config `path`: its main
