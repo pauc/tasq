@@ -310,12 +310,12 @@ last fetch, rebase in progress).
 
 **Blocked by:** GS-004.
 
-**Status:** blocked
+**Status:** done
 
-- [ ] `git sync` output snapshot for a clean sync, an offline remote and a conflict.
-- [ ] Clone into an empty store works; into a store with task files is refused.
-- [ ] `doctor` JSON snapshot with each check.
-- [ ] `mutants-in`: zero missed.
+- [x] `git sync` output snapshot for a clean sync, an offline remote and a conflict.
+- [x] Clone into an empty store works; into a store with task files is refused.
+- [x] `doctor` JSON snapshot with each check.
+- [x] `mutants-in`: zero missed.
 
 ### GS-008: the docs describe store sync
 

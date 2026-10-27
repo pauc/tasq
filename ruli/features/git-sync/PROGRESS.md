@@ -13,7 +13,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
 | GS-004 | Push, fetch and rebase in the background | done | b61d272. Mutants with `--no-config` on `crates/git/src`: 0 missed (158: 139 caught, 16 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the whole diff: 0 missed (52: 50 caught, 2 unviable). A first run left 2 missed (the "still behind" guard before the push); the late-write test now has a commit of its own on B. |
 | GS-005 | Conflicts are aborted and reported | done | d6671fc. Mutants with `--no-config` on `crates/git/src`: 0 missed (174: 154 caught, 17 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the ticket's diff: 0 missed (27: 26 caught, 1 unviable). |
 | GS-006 | Duplicate ids are explained | done | f3689d5. Mutants with `--no-config` on `crates/git/src`: 0 missed (191: 170 caught, 18 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the ticket's diff (store and plugin): 0 missed (36: 29 caught, 7 unviable). |
-| GS-007 | `tasq git sync`, `tasq git clone` and the doctor checks | blocked | |
+| GS-007 | `tasq git sync`, `tasq git clone` and the doctor checks | done | a4d298d. Mutants with `--no-config` on `crates/git/src`: 0 missed (241: 209 caught, 29 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the ticket's diff: 0 missed (87: 71 caught, 15 unviable, 1 timeout, the same). |
 | GS-008 | The docs describe store sync | blocked | |
 
 ## Learnings
@@ -114,6 +114,22 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
 - 2026-10-27 (GS-006): the fixture store's task 3 is a 2026-09 ULID; a test file standing
   for "another machine's later task" needs a later ULID or doctor marks the fixture's file
   as the newer.
+- 2026-10-27 (GS-007): every `tasq` the foreground sync runs (`store info`, `view` for the
+  commit title, `store lock`, `doctor`) gets `TASQ_EVENT=sync`. Without it the `store info`
+  call fires `store-open`, whose hook (fetch due) spawns a background job beside the sync, and
+  each title lookup during the commit touches `pending`, so the sync went round twice.
+- 2026-10-27 (GS-007): `git var GIT_COMMITTER_IDENT` is git's own identity resolution, local
+  config, global config and the user/host fallback, without committing; with
+  `user.useConfigOnly` and no email it fails, and its last line is the reason (the lines above
+  are git's `--global` advice).
+- 2026-10-27 (GS-007): a clone into a store directory that already holds `.tasq/` cannot be a
+  `git clone` (it wants an empty directory). `git init`, `git remote add -t <b>` (the
+  single-branch refspec), `git fetch` and `git checkout --track origin/<b>` on the unborn
+  branch do the same and keep the other files; a tracked file colliding with an untracked one
+  fails the checkout, which the undo of init then covers.
+- 2026-10-27 (GS-007): while a rebase is stopped `HEAD` is detached, so `@{upstream}` and
+  `branch --show-current` say nothing useful; doctor then reports the identity and the failed
+  rebase check only.
 
 ## Blockers
 
@@ -275,3 +291,45 @@ None. tasq 59 is merged.
   (`an_id_pulled_in_twice_is_a_lasting_warning_until_fixed_by_hand`: real `tasq`, a pushed
   duplicate from a clone, the warning, the hand fix, a `tasq log` whose job clears it).
   CHANGELOG entry added.
+- GS-007: `tasq git sync` runs the job's rounds (`job::foreground`) with interval zero, so it
+  always fetches, and prints one line per step on stdout: `committed: <subject>` or `nothing
+  to commit`, `fetched <upstream>`, `pulled <n> commit(s) from <upstream>`, `pushed <n>
+  commit(s) to <upstream>`, `up to date with <upstream>`, `push failed, fetching again: ...`,
+  `no upstream: nothing to fetch or push`; a failed step prints the lasting warning it leaves
+  (`fetch failed: ...`, `rebase conflict on ...`, `duplicate id: ...`) and the exit is 1. It
+  updates the warnings and `last-fetch` like the job. git runs with the user's environment
+  minus `GIT_*` (it may prompt); the rebase still runs as `tasq-git rebase` under `tasq store
+  lock`. A failed commit is `tasq-git: commit failed: ...` on stderr, exit 1.
+- GS-007: beyond the plan: `tasq git sync` waits for a running background job (polling
+  `job.lock`, which goes stale after two minutes), and goes round again for writes that land
+  meanwhile, as the job does. A store that is not a repository, or one with a rebase in
+  progress, is refused (`tasq-git: <store> is not a git repository: ...`, `tasq-git: a rebase is
+  in progress in <store>: ...`).
+- GS-007: `tasq git clone <url> [--branch] [--store <name>] [--name --email --ssh-key]` is not
+  a `git clone` but init, the identity, `remote add -t <b>`, fetch and `checkout --track`
+  (Learnings). `--store` is passed to tasq as `--set store.name=<name>`; the branch defaults
+  to the resolved store name. Refusals, all before the store is touched: an existing
+  repository (init's text), task files (`<store> already has task files; tasq git clone only
+  fills an empty store` with the fix `tasq git clone <url> --store <another> into a new store,
+  or tasq git init <url> --branch <another> to push this one`), a missing branch (`branch <b> of
+  <url> does not exist`, fix `tasq git init <url> --branch <b> pushes a store to it`), an
+  unreachable remote. Output `cloned branch <b> of <url> into <store>: <n> task file(s)`.
+  `init.rs` now shares `create`, `or_undo` and `nearest_existing` with `clone.rs`; the undo's
+  error says `setup failed and could not remove`.
+- GS-007: doctor checks for a repository store, in order: `identity` (`commits as <name>
+  <email>`, plus `, pushes with <core.sshCommand>`; `fail` with git's reason and the fix `git -C
+  <store> config user.name '<name>' && git -C <store> config user.email '<email>'`),
+  `remote` (`branch <b> tracks <upstream> at <url>`, or `ok` `branch <b> has no upstream:
+  commits stay local`), `push` (`every commit is pushed`, or `warn` `<n> commit(s) not
+  pushed`, fix `tasq git sync`; counted against the upstream as of the last fetch), `fetch`
+  (`last fetch <n> s/min/h/d ago`, or `warn` `never fetched`, fix `tasq git sync`), `rebase`
+  (`no rebase in progress`, or `fail` `a rebase is in progress in <store>` with the commands).
+  `push` and `fetch` only with an upstream; while rebasing only `identity` and `rebase`. No
+  check asks the remote. The hook's `Check` gained an optional `fix`; `hook::run` and `answer`
+  take the `Git` (background environment) and `now`.
+- GS-007: tests: `crates/git/tests/sync.rs` (`mod foreground`: the three snapshots plus counts,
+  retry, no upstream, a duplicate, waiting, refusals, a failed commit; `mod doctor`: JSON
+  snapshots), `crates/git/tests/init.rs` (`mod clone`), unit tests for `ago` and
+  `has_task_files`, and two CLI tests (`git_sync_prints_each_step_and_doctor_explains_the_repository`,
+  `git_clone_fills_another_store`) through the real `tasq`. The hook tests for a `.git` store
+  now expect the repository checks. CHANGELOG entry added.
