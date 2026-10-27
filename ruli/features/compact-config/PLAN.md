@@ -231,11 +231,11 @@ template sources relative to the file; the project-file layer and its walk are r
 
 **Blocked by:** CC-004.
 
-**Status:** todo
+**Status:** done
 
-- [ ] `Warn` for a missing path, a non-repository, a linked worktree and a subdirectory, naming file and path.
-- [ ] `Ok` for a main checkout.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] `Warn` for a missing path, a non-repository, a linked worktree and a subdirectory, naming file and path.
+- [x] `Ok` for a main checkout.
+- [x] `mutants-in` the diff: zero missed.
 
 ### CC-008: the docs describe the config directory
 

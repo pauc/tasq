@@ -12,7 +12,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
 | CC-004 | Repository configs replace `.tasq.toml` | done | 674522d; mutants 22: 12 caught, 10 unviable, 0 missed |
 | CC-005 | Hooks run without trust | done | f561dff; mutants 48: 38 caught, 10 unviable, 0 missed |
 | CC-006 | `tasq worktree config [DIR]` | done | ffc1b8e; mutants 18: 18 caught, 0 missed |
-| CC-007 | `tasq doctor` checks repository configs | todo | |
+| CC-007 | `tasq doctor` checks repository configs | done | 7ba50f1; mutants 18: 12 caught, 6 unviable, 0 missed |
 | CC-008 | The docs describe the config directory | todo | |
 
 ## Learnings
@@ -109,6 +109,20 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
   common git directory is not named `.git` (a bare repository with worktrees), so each
   worktree of such a repository is its own "main checkout" for repository configs.
   Pre-existing in `tasq_core::worktree::git::main_checkout`, left as is (code review note).
+- 2026-10-27 (CC-007): `cargo mutants --in-diff` runs only the tests of the mutated crate, so
+  the CLI doctor tests caught nothing in `tasq-core` or `tasq-worktree`; the first run had 6
+  missed. The fix was tests at each crate's own seam: exact strings for
+  `repo_config::check`, `repo_configs` in `config_load.rs`, `repo::find` in
+  `crates/worktree/tests/repo.rs`.
+- 2026-10-27 (CC-007): the WARN for "not inside a git repository" is not strictly "never
+  applies": `repo_settings` falls back to `main = project` when `Repo::of` finds nothing, so a
+  repository config naming a plain directory does merge for a task whose project is that
+  directory (code review note). No worktree can be created there, so the warning stays, as
+  planned.
+- 2026-10-27 (CC-007): the repository config checks run whether or not worktrees are enabled
+  (like `check_worktree_templates`, so turning them on surfaces nothing new), and only when
+  the config loads: a broken `config.toml` hides them until it is fixed (code review notes,
+  not changed).
 
 ## Blockers
 
@@ -187,3 +201,15 @@ None.
 - CC-003: also changed outside the Rust readers: `examples/config/*.toml`, the
   `crates/core/tests/fixtures/worktree/*.toml` fixtures (they lose `enabled = true`; they are
   repository settings, which CC-004 forbids it in) and `plugins/claude/skills/wrapup/SKILL.md`.
+- CC-007: beyond the four planned warnings, a `path` that resolves to the main checkout through
+  a symlink or `..` warns too (`path <p> resolves to the main checkout <main> through a symlink
+  or ..`), as the CC-004 and CC-006 learnings asked. The three cases that name a main checkout
+  carry the fix `set path = "~/..."` (home shown as `~`, rendered as a TOML string); missing
+  and outside git get `set path to the main checkout of a repository`. A file that is not a
+  directory counts as missing (`does not exist or is not a directory`).
+- CC-007: repository configs that do not load (a parse error, a duplicate `path`) are one
+  `FAIL repo-config` check with the load error, since `Config::load` without a repository
+  never reads them and every worktree command would fail on them. The checks come right after
+  `config`. New public items: `tasq_core::config::{RepoConfig, repo_configs}`,
+  `tasq_core::worktree::repo_config::{Found, check}` and `tasq_worktree::repo::find`, which
+  reads the disk (no git process, so no injected env is needed, unlike the plan's wording).
