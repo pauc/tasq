@@ -1,7 +1,7 @@
 //! Worktree hooks (plan 4.5, WT-204): which lines may run, asking for
 //! approval, the trust store on disk, and running them.
 //!
-//! Hooks from the global configuration (or `--config`, `--set`, the
+//! Hooks from the global configuration (or `--config-dir`, `--set`, the
 //! environment) run without asking. Hooks from a repository's own
 //! `.tasq.toml`, which can arrive with a clone, run only once approved:
 //! stored in the trust file, `--yes` for one run, or a yes to the question

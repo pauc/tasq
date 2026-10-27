@@ -790,6 +790,58 @@ mod config {
         assert_snapshot!(env.normalize(&stdout(&out)));
     }
 
+    /// `--config-dir` and `TASQ_CONFIG_DIR` name the directory whose
+    /// `config.toml` replaces the global file; a named directory must exist.
+    #[test]
+    fn the_config_dir_is_named_by_flag_or_env() {
+        let env = TestEnv::fixture();
+        env.write_global_config("[store]\nname = \"global\"\n");
+        let conf = env.home.join("conf");
+        std::fs::create_dir(&conf).unwrap();
+        std::fs::write(conf.join("config.toml"), "[store]\nname = \"named\"\n").unwrap();
+        let show = |cmd: &mut assert_cmd::Command| {
+            let out = cmd.args(["config", "show", "--json"]).output().unwrap();
+            assert!(out.status.success(), "{}", stderr(&out));
+            let value: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+            value["config"]["store"]["name"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        assert_eq!(show(&mut env.tasq()), "global");
+        assert_eq!(show(env.tasq().args(["--config-dir", "conf"])), "named");
+        assert_eq!(show(env.tasq().env("TASQ_CONFIG_DIR", "~/conf")), "named");
+
+        let out = env
+            .tasq()
+            .args(["--config-dir", "missing", "config", "show"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            "tasq: config directory [ROOT]/home/missing does not exist or is not a directory (named by --config-dir)\n"
+        );
+        let out = env
+            .tasq()
+            .env("TASQ_CONFIG_DIR", "~/missing")
+            .args(["config", "show"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            "tasq: config directory [ROOT]/home/missing does not exist or is not a directory (named by TASQ_CONFIG_DIR)\n"
+        );
+        // The old flag is gone.
+        let out = env
+            .tasq()
+            .args(["--config", "conf/config.toml", "config", "show"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    }
+
     #[test]
     fn show_with_layers() {
         let env = TestEnv::fixture();
@@ -5061,11 +5113,11 @@ mod plugins {
             "tasq-echo",
             &format!(
                 "{PROBE}\necho \"args=$*\"\necho \"bin=$TASQ_BIN\"\n\
-                 echo \"profile=${{TASQ_PROFILE-unset}} config=${{TASQ_CONFIG-unset}}\"\n\
+                 echo \"profile=${{TASQ_PROFILE-unset}} config_dir=${{TASQ_CONFIG_DIR-unset}}\"\n\
                  echo \"set=${{TASQ_SET-unset}}\"\nexit 3"
             ),
         );
-        std::fs::write(env.home.join("c.toml"), "").unwrap();
+        std::fs::create_dir(env.home.join("conf")).unwrap();
         // Dispatch happens before the config is loaded: the profile need not exist.
         let out = env
             .tasq()
@@ -5075,8 +5127,8 @@ mod plugins {
                 "-v",
                 "--profile",
                 "p",
-                "--config",
-                "c.toml",
+                "--config-dir",
+                "conf",
                 "--set",
                 "a=1",
                 "--set=b=2",
@@ -5092,16 +5144,31 @@ mod plugins {
         assert_eq!(
             env.normalize(&stdout(&out)),
             format!(
-                "args=one --set two\nbin={}\nprofile=p config=[ROOT]/home/c.toml\nset=ui.no_osc8=true\na=1\nb=2\n",
+                "args=one --set two\nbin={}\nprofile=p config_dir=[ROOT]/home/conf\nset=ui.no_osc8=true\na=1\nb=2\n",
                 env.normalize(&tasq_bin())
             )
+        );
+        // A relative TASQ_CONFIG_DIR reaches the plugin absolute.
+        let out = env
+            .tasq()
+            .env("TASQ_CONFIG_DIR", "conf")
+            .arg("echo")
+            .output()
+            .unwrap();
+        assert!(
+            stdout(&out).contains(&format!(
+                "config_dir={}\n",
+                env.home.join("conf").canonicalize().unwrap().display()
+            )),
+            "{}",
+            stdout(&out)
         );
         // Nothing in effect: none of the variables is set (TASQ_BIN always is).
         let out = env.tasq().arg("echo").output().unwrap();
         assert_eq!(
             env.normalize(&stdout(&out)),
             format!(
-                "args=\nbin={}\nprofile=unset config=unset\nset=unset\n",
+                "args=\nbin={}\nprofile=unset config_dir=unset\nset=unset\n",
                 env.normalize(&tasq_bin())
             )
         );
@@ -5596,13 +5663,20 @@ mod worktrees_disabled {
             .output()
             .unwrap();
         assert!(stdout(&view).contains("\"worktrees\""), "{}", stdout(&view));
-        // `--set` and `--config` before parsing decide too.
+        // `--set` and `--config-dir` before parsing decide too.
         let set = env
             .tasq()
             .args(["--set", "worktree.enabled=true", "--help"])
             .output()
             .unwrap();
         assert!(stdout(&set).contains("  worktree "), "{}", stdout(&set));
+        let conf = env.home.join("conf");
+        std::fs::create_dir(&conf).unwrap();
+        std::fs::write(conf.join("config.toml"), "[worktree]\nenabled = true\n").unwrap();
+        for args in [["--config-dir", "conf"], ["--config-dir=conf", "--json"]] {
+            let dir = env.tasq().args(args).arg("--help").output().unwrap();
+            assert!(stdout(&dir).contains("  worktree "), "{}", stdout(&dir));
+        }
     }
 
     #[test]

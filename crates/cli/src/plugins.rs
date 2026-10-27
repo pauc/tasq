@@ -23,7 +23,8 @@
 //!
 //! Plugins and hooks call back into `tasq` through [`ENV_BIN`] and see the
 //! same configuration because [`passthrough_env`] forwards `--profile`,
-//! `--config` and `--set` as `TASQ_PROFILE`, `TASQ_CONFIG` and `TASQ_SET`.
+//! `--config-dir` and `--set` as `TASQ_PROFILE`, `TASQ_CONFIG_DIR` and
+//! `TASQ_SET`.
 
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
@@ -35,7 +36,7 @@ use std::time::{Duration, Instant};
 use clap::CommandFactory;
 use serde::Serialize;
 use serde_json::Value;
-use tasq_core::config::{ConfigError, ENV_CONFIG, ENV_PROFILE, ENV_SET, Loaded, expand_tilde};
+use tasq_core::config::{ConfigError, ENV_CONFIG_DIR, ENV_PROFILE, ENV_SET, Loaded, expand_tilde};
 use tasq_core::doctor::Check;
 use tasq_core::launch::ENV_TASK_ID;
 use tasq_core::model::Task;
@@ -67,7 +68,7 @@ pub const PREFIX: &str = "tasq-";
 
 /// Global flags that take a value, so that `--profile work tlogs` skips
 /// `work` when looking for the command name.
-const VALUE_FLAGS: &[&str] = &["--profile", "--config", "--set", "--color"];
+const VALUE_FLAGS: &[&str] = &["--profile", "--config-dir", "--set", "--color"];
 /// Global flags without a value.
 const BOOL_FLAGS: &[&str] = &["--json", "--no-color", "--no-pager", "--verbose"];
 
@@ -81,8 +82,8 @@ pub struct External {
     pub args: Vec<OsString>,
     /// `--profile` given before the name.
     pub profile: Option<String>,
-    /// `--config` given before the name.
-    pub config: Option<PathBuf>,
+    /// `--config-dir` given before the name.
+    pub config_dir: Option<PathBuf>,
     /// `--set KEY=VALUE` flags given before the name, in order.
     pub set: Vec<String>,
 }
@@ -121,7 +122,7 @@ impl External {
                 };
                 match flag.as_str() {
                     "--profile" => external.profile = Some(value),
-                    "--config" => external.config = Some(PathBuf::from(value)),
+                    "--config-dir" => external.config_dir = Some(PathBuf::from(value)),
                     "--set" => external.set.push(value),
                     _ => {}
                 }
@@ -303,13 +304,15 @@ fn is_executable(path: &Path) -> bool {
 
 /// The variables a plugin or hook needs to see the same configuration as
 /// the `tasq` that ran it: [`ENV_BIN`], and [`ENV_PROFILE`],
-/// [`ENV_CONFIG`] and [`ENV_SET`] when a profile, a config file or
+/// [`ENV_CONFIG_DIR`] and [`ENV_SET`] when a profile, a config directory or
 /// overrides are in effect (`set` is appended to any `TASQ_SET` already
-/// in `env`, one entry per line).
+/// in `env`, one entry per line). The config directory comes from
+/// `config_dir` (`--config-dir`), else from `TASQ_CONFIG_DIR` in `env`, and
+/// is forwarded absolute, so a hook in another directory reads the same one.
 pub fn passthrough_env(
     bin: Option<&Path>,
     profile: Option<&str>,
-    config: Option<&Path>,
+    config_dir: Option<&Path>,
     set: &[String],
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<(String, String)> {
@@ -320,9 +323,17 @@ pub fn passthrough_env(
     if let Some(profile) = profile {
         vars.push((ENV_PROFILE.to_owned(), profile.to_owned()));
     }
-    if let Some(config) = config {
-        let absolute = std::fs::canonicalize(config).unwrap_or_else(|_| config.to_path_buf());
-        vars.push((ENV_CONFIG.to_owned(), absolute.display().to_string()));
+    let named = config_dir.map(Path::to_path_buf).or_else(|| {
+        env(ENV_CONFIG_DIR)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    });
+    if let Some(dir) = named {
+        let dir = expand_tilde(&dir, env("HOME").map(PathBuf::from).as_deref());
+        let absolute = std::fs::canonicalize(&dir)
+            .or_else(|_| std::path::absolute(&dir))
+            .unwrap_or(dir);
+        vars.push((ENV_CONFIG_DIR.to_owned(), absolute.display().to_string()));
     }
     let mut lines: Vec<String> = env(ENV_SET)
         .filter(|v| !v.trim().is_empty())
@@ -350,7 +361,7 @@ pub fn exec(path: &Path, external: &External) -> CliError {
     let vars = passthrough_env(
         current_bin().as_deref(),
         external.profile.as_deref(),
-        external.config.as_deref(),
+        external.config_dir.as_deref(),
         &external.set,
         &|name| std::env::var(name).ok(),
     );
@@ -494,7 +505,7 @@ pub fn app_passthrough_env(app: &App) -> Vec<(String, String)> {
     passthrough_env(
         current_bin().as_deref(),
         app.loaded.profile.as_deref(),
-        app.global.config.as_deref(),
+        app.global.config_dir.as_deref(),
         &app.global
             .set
             .iter()
@@ -968,7 +979,7 @@ mod tests {
         let ext = External::parse(&argv(&[
             "--profile",
             "work",
-            "--config=/c.toml",
+            "--config-dir=/conf",
             "--set",
             "a=1",
             "--set=b=2",
@@ -984,7 +995,7 @@ mod tests {
         .unwrap();
         assert_eq!(ext.name, "tlogs");
         assert_eq!(ext.profile.as_deref(), Some("work"));
-        assert_eq!(ext.config, Some(PathBuf::from("/c.toml")));
+        assert_eq!(ext.config_dir, Some(PathBuf::from("/conf")));
         assert_eq!(ext.set, vec!["a=1".to_owned(), "b=2".to_owned()]);
         assert_eq!(
             ext.args,
@@ -1054,7 +1065,7 @@ mod tests {
         let vars = passthrough_env(
             Some(Path::new("/usr/bin/tasq")),
             Some("work"),
-            Some(Path::new("/nonexistent/c.toml")),
+            Some(Path::new("/nonexistent/conf")),
             &["a=1".to_owned(), "b=2".to_owned()],
             &|name| (name == ENV_SET).then(|| "z=0\n".to_owned()),
         );
@@ -1063,13 +1074,44 @@ mod tests {
             vec![
                 (ENV_BIN.to_owned(), "/usr/bin/tasq".to_owned()),
                 (ENV_PROFILE.to_owned(), "work".to_owned()),
-                (ENV_CONFIG.to_owned(), "/nonexistent/c.toml".to_owned()),
+                (ENV_CONFIG_DIR.to_owned(), "/nonexistent/conf".to_owned()),
                 (ENV_SET.to_owned(), "z=0\na=1\nb=2".to_owned()),
             ]
         );
         // An empty TASQ_SET in the environment is not forwarded.
-        let vars = passthrough_env(None, None, None, &[], &|_| Some("  ".to_owned()));
+        let vars = passthrough_env(None, None, None, &[], &|name| {
+            (name == ENV_SET).then(|| "  ".to_owned())
+        });
         assert_eq!(vars, Vec::new());
+    }
+
+    #[test]
+    fn passthrough_env_makes_the_config_dir_absolute() {
+        let home = |name: &str| (name == "HOME").then(|| "/h".to_owned());
+        let dir = |flag: Option<&str>, env: &dyn Fn(&str) -> Option<String>| {
+            passthrough_env(None, None, flag.map(Path::new), &[], env)
+        };
+        let forwarded = |value: &str| vec![(ENV_CONFIG_DIR.to_owned(), value.to_owned())];
+        assert_eq!(dir(Some("~/conf"), &home), forwarded("/h/conf"));
+        // From the environment too, so a hook in another directory sees it.
+        let from_env = |name: &str| match name {
+            ENV_CONFIG_DIR => Some("~/env".to_owned()),
+            _ => home(name),
+        };
+        assert_eq!(dir(None, &from_env), forwarded("/h/env"));
+        // The flag wins over the variable.
+        assert_eq!(dir(Some("/flag"), &from_env), forwarded("/flag"));
+        let relative = std::env::current_dir().unwrap().join("nonexistent-conf");
+        assert_eq!(
+            dir(None, &|name| (name == ENV_CONFIG_DIR)
+                .then(|| "nonexistent-conf".to_owned())),
+            forwarded(&relative.display().to_string())
+        );
+        // An empty variable is unset.
+        assert_eq!(
+            dir(None, &|name| (name == ENV_CONFIG_DIR).then(String::new)),
+            Vec::new()
+        );
     }
 
     #[test]

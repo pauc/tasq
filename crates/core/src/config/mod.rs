@@ -11,9 +11,9 @@
 //! leaves every other key alone):
 //!
 //! 1. built-in defaults ([`Config::default`]);
-//! 2. the global file, `$XDG_CONFIG_HOME/tasq/config.toml` or
-//!    `~/.config/tasq/config.toml`, replaced by `TASQ_CONFIG` / `--config`
-//!    when given (that file must then exist);
+//! 2. the global file, `config.toml` in the config directory: the one named
+//!    by `--config-dir` / `TASQ_CONFIG_DIR` (which must then exist), else
+//!    `$XDG_CONFIG_HOME/tasq`, else `~/.config/tasq` (see [`config_dir`]);
 //! 3. the nearest `.tasq.toml` walking up from the working directory (see
 //!    [`project_file`] for the stop rule);
 //! 4. the selected profile, a `[profile.<name>]` block from any of the files
@@ -128,8 +128,8 @@ use crate::worktree::lifecycle::DeleteBranch;
 
 pub use self::error::ConfigError;
 pub use self::load::{
-    ENV_CONFIG, ENV_DATA_DIR, ENV_KEYS, ENV_PROFILE, ENV_SET, ENV_STORE_NAME, GLOBAL_FILE, Layer,
-    LoadOptions, Loaded, Origin, PROJECT_FILE, default_data_dir, global_file, parse_env_set,
+    ENV_CONFIG_DIR, ENV_DATA_DIR, ENV_KEYS, ENV_PROFILE, ENV_SET, ENV_STORE_NAME, GLOBAL_FILE,
+    Layer, LoadOptions, Loaded, Origin, PROJECT_FILE, config_dir, default_data_dir, parse_env_set,
     project_file,
 };
 pub use self::path::{contract_tilde, expand_tilde};

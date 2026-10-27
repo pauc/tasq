@@ -85,9 +85,9 @@ pub struct GlobalArgs {
     #[arg(long, global = true, value_name = "NAME")]
     pub profile: Option<String>,
 
-    /// Use FILE instead of the global config file (also TASQ_CONFIG).
-    #[arg(long, global = true, value_name = "FILE")]
-    pub config: Option<PathBuf>,
+    /// Read the configuration from DIR instead of ~/.config/tasq (also TASQ_CONFIG_DIR).
+    #[arg(long, global = true, value_name = "DIR")]
+    pub config_dir: Option<PathBuf>,
 
     /// Override one config key, e.g. --set store.name=work. Repeatable.
     #[arg(long = "set", global = true, value_name = "KEY=VALUE", value_parser = parse_key_value)]
@@ -678,7 +678,7 @@ action that [ui.keys] can rebind (`launch-window = \"alt+enter\"`); the
 const PLUGINS_HELP: &str = "\
 `tasq <name> [args...]` runs the executable tasq-<name> found on PATH when
 <name> is not a built-in command, with the remaining arguments verbatim and
-TASQ_BIN (this binary), TASQ_PROFILE, TASQ_CONFIG and TASQ_SET (the --set
+TASQ_BIN (this binary), TASQ_PROFILE, TASQ_CONFIG_DIR and TASQ_SET (the --set
 flags, one per line) in its environment, so `$TASQ_BIN ... --json` inside
 the plugin sees the same configuration. Built-in commands (and their
 aliases, such as `ls`) always win.
@@ -1064,7 +1064,7 @@ fn launch_help_with_worktrees(command: clap::Command) -> clap::Command {
     command.after_help(format!("{LAUNCH_HELP_WORKTREES}\n{launchers}"))
 }
 
-/// `--config`, `--profile` and `--set` wherever they appear in `argv`
+/// `--config-dir`, `--profile` and `--set` wherever they appear in `argv`
 /// (program name first, up to a `--`), so the configuration can be loaded
 /// before clap parses. Malformed values are skipped; clap reports them.
 pub fn early_globals(argv: &[std::ffi::OsString]) -> GlobalArgs {
@@ -1078,14 +1078,14 @@ pub fn early_globals(argv: &[std::ffi::OsString]) -> GlobalArgs {
             Some((f, v)) if f.starts_with("--") => (f.to_owned(), Some(v.to_owned())),
             _ => (arg.clone().into_owned(), None),
         };
-        if !matches!(flag.as_str(), "--config" | "--profile" | "--set") {
+        if !matches!(flag.as_str(), "--config-dir" | "--profile" | "--set") {
             continue;
         }
         let Some(value) = inline.or_else(|| rest.next().map(std::borrow::Cow::into_owned)) else {
             break;
         };
         match flag.as_str() {
-            "--config" => global.config = Some(PathBuf::from(value)),
+            "--config-dir" => global.config_dir = Some(PathBuf::from(value)),
             "--profile" => global.profile = Some(value),
             _ => global.set.extend(parse_key_value(&value).ok()),
         }

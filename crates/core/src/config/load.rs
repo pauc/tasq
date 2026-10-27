@@ -13,8 +13,8 @@ use super::{Config, ConfigError, ForgeKind, expand_tilde};
 pub const GLOBAL_FILE: &str = "config.toml";
 /// Name of the per-project file searched upwards from the working directory.
 pub const PROJECT_FILE: &str = ".tasq.toml";
-/// Environment variable naming a file that replaces the global one.
-pub const ENV_CONFIG: &str = "TASQ_CONFIG";
+/// Environment variable naming the config directory (ADR-0031).
+pub const ENV_CONFIG_DIR: &str = "TASQ_CONFIG_DIR";
 /// Environment variable selecting a `[profile.<name>]`.
 pub const ENV_PROFILE: &str = "TASQ_PROFILE";
 /// Environment variable carrying `key=value` overrides, one per line, the
@@ -60,7 +60,7 @@ pub const ENV_STORE_NAME: &str = "TASQ_STORE_NAME";
 /// | `TASQ_WORKTREE_DELETE_BRANCH` | `worktree.delete_branch` |
 ///
 /// Values are converted like `--set` values (see [`LoadOptions::overrides`]).
-/// A variable set to the empty string is treated as unset. [`ENV_CONFIG`],
+/// A variable set to the empty string is treated as unset. [`ENV_CONFIG_DIR`],
 /// [`ENV_PROFILE`] and [`ENV_SET`] are not keys and are handled separately;
 /// [`ENV_SET`] entries belong to the same layer as these variables and win
 /// over them for the same key.
@@ -104,8 +104,8 @@ pub struct LoadOptions {
     pub home: Option<PathBuf>,
     /// The process environment (or any subset of it).
     pub env: BTreeMap<String, String>,
-    /// File replacing the global one (`--config`). Wins over [`ENV_CONFIG`].
-    pub explicit_file: Option<PathBuf>,
+    /// Config directory (`--config-dir`). Wins over [`ENV_CONFIG_DIR`].
+    pub config_dir: Option<PathBuf>,
     /// Profile to apply (`--profile`). Wins over [`ENV_PROFILE`].
     pub profile: Option<String>,
     /// Final overrides as `(key path, value)`, for example
@@ -126,7 +126,7 @@ impl LoadOptions {
     }
 
     /// Options from the real process: current directory, `$HOME` and the
-    /// whole environment. `explicit_file`, `profile` and `overrides` stay
+    /// whole environment. `config_dir`, `profile` and `overrides` stay
     /// empty for the command line to fill.
     ///
     /// Reason: reads process state, nothing to assert in a unit test.
@@ -311,14 +311,38 @@ pub fn project_file(cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
     None
 }
 
-/// The global file: `$XDG_CONFIG_HOME/tasq/config.toml`, else
-/// `~/.config/tasq/config.toml`, else `None` when neither is known.
-pub fn global_file(opts: &LoadOptions) -> Option<PathBuf> {
-    let dir = match opts.env_nonempty("XDG_CONFIG_HOME") {
+/// The config directory: the one named by `--config-dir` or
+/// [`ENV_CONFIG_DIR`] (`~` expanded, relative to `cwd`), else
+/// `$XDG_CONFIG_HOME/tasq`, else `~/.config/tasq`, else `None` when none is
+/// known (ADR-0031).
+pub fn config_dir(opts: &LoadOptions) -> Option<PathBuf> {
+    named_config_dir(opts)
+        .map(|(dir, _)| dir)
+        .or_else(|| default_config_dir(opts))
+}
+
+/// The config directory named by `--config-dir` or [`ENV_CONFIG_DIR`],
+/// with `~` expanded and made absolute against `cwd`, and which of the two
+/// named it.
+fn named_config_dir(opts: &LoadOptions) -> Option<(PathBuf, &'static str)> {
+    let (dir, named_by) = match &opts.config_dir {
+        Some(dir) => (dir.clone(), "--config-dir"),
+        None => (
+            PathBuf::from(opts.env_nonempty(ENV_CONFIG_DIR)?),
+            ENV_CONFIG_DIR,
+        ),
+    };
+    let dir = opts.cwd.join(expand_tilde(&dir, opts.home.as_deref()));
+    Some((dir, named_by))
+}
+
+/// `$XDG_CONFIG_HOME/tasq`, else `~/.config/tasq`.
+fn default_config_dir(opts: &LoadOptions) -> Option<PathBuf> {
+    let base = match opts.env_nonempty("XDG_CONFIG_HOME") {
         Some(xdg) => PathBuf::from(xdg),
         None => opts.home.as_ref()?.join(".config"),
     };
-    Some(dir.join("tasq").join(GLOBAL_FILE))
+    Some(base.join("tasq"))
 }
 
 /// The default `data_dir`: `$XDG_DATA_HOME/tasq/stores`, else
@@ -683,28 +707,16 @@ fn read_file(path: &Path) -> Result<String, ConfigError> {
     reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
 )]
 fn file_paths(opts: &LoadOptions) -> Result<Vec<PathBuf>, ConfigError> {
-    let explicit = opts
-        .explicit_file
-        .as_ref()
-        .map(|p| (p.clone(), "--config"))
-        .or_else(|| {
-            opts.env_nonempty(ENV_CONFIG)
-                .map(|v| (PathBuf::from(v), ENV_CONFIG))
-        });
+    let dir = match named_config_dir(opts) {
+        Some((dir, named_by)) if !dir.is_dir() => {
+            return Err(ConfigError::MissingDir { dir, named_by });
+        }
+        Some((dir, _)) => Some(dir),
+        None => default_config_dir(opts),
+    };
     let mut files = Vec::new();
-    match explicit {
-        Some((file, named_by)) => {
-            let file = expand_tilde(&file, opts.home.as_deref());
-            if !file.is_file() {
-                return Err(ConfigError::MissingFile { file, named_by });
-            }
-            files.push(file);
-        }
-        None => {
-            if let Some(global) = global_file(opts).filter(|p| p.is_file()) {
-                files.push(global);
-            }
-        }
+    if let Some(global) = dir.map(|dir| dir.join(GLOBAL_FILE)).filter(|p| p.is_file()) {
+        files.push(global);
     }
     if let Some(project) = project_file(&opts.cwd, opts.home.as_deref()) {
         files.push(project);

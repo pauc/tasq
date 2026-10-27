@@ -63,7 +63,7 @@ impl Sandbox {
             cwd: self.project.clone(),
             home: Some(self.home.clone()),
             env: BTreeMap::new(),
-            explicit_file: None,
+            config_dir: None,
             profile: None,
             overrides: Vec::new(),
         }
@@ -831,64 +831,106 @@ fn a_directory_named_like_the_project_file_is_skipped() {
 }
 
 #[test]
-fn explicit_file_replaces_the_global_file_and_must_exist() {
+fn config_dir_replaces_the_default_directory_and_must_exist() {
     let sb = Sandbox::new();
     sb.write_global("[store]\nname = \"global\"\n[ui]\nno_osc8 = true\n");
-    let explicit = sb.home.join("explicit.toml");
-    fs::write(&explicit, "[store]\nname = \"explicit\"\n").unwrap();
+    let named = sb.home.join("conf");
+    fs::create_dir(&named).unwrap();
+    let file = named.join("config.toml");
+    fs::write(&file, "[store]\nname = \"named\"\n").unwrap();
     sb.write_project("[ui]\nglow_style = \"light\"\n");
 
     let mut opts = sb.opts();
-    opts.explicit_file = Some(explicit.clone());
+    opts.config_dir = Some(named.clone());
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.name, "explicit");
-    assert!(!loaded.config.ui.no_osc8, "global file is not read");
+    assert_eq!(loaded.config.store.name, "named");
+    assert_eq!(loaded.file_for("store.name"), Some(file.as_path()));
+    assert!(
+        !loaded.config.ui.no_osc8,
+        "the default directory is not read"
+    );
     assert_eq!(
         loaded.config.ui.glow_style, "light",
         "project file still applies"
     );
 
-    // TASQ_CONFIG does the same, with `~` expanded; the flag wins over it.
-    opts.explicit_file = None;
-    opts.env = env(&[("TASQ_CONFIG", "~/explicit.toml")]);
+    // TASQ_CONFIG_DIR does the same, with `~` expanded.
+    opts.config_dir = None;
+    opts.env = env(&[("TASQ_CONFIG_DIR", "~/conf")]);
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.file_for("store.name"), Some(explicit.as_path()));
+    assert_eq!(loaded.file_for("store.name"), Some(file.as_path()));
 
-    opts.env = env(&[("TASQ_CONFIG", "~/missing.toml")]);
+    // The flag wins over the variable, and the variable over XDG_CONFIG_HOME.
+    let other = sb.home.join("other");
+    fs::create_dir(&other).unwrap();
+    fs::write(other.join("config.toml"), "[store]\nname = \"flag\"\n").unwrap();
+    opts.config_dir = Some(other.clone());
+    assert_eq!(Config::load(&opts).unwrap().config.store.name, "flag");
+    opts.config_dir = None;
+    opts.env = env(&[
+        ("TASQ_CONFIG_DIR", "~/conf"),
+        ("XDG_CONFIG_HOME", other.to_str().unwrap()),
+    ]);
+    assert_eq!(Config::load(&opts).unwrap().config.store.name, "named");
+
+    // A named directory without a config.toml is an empty layer.
+    fs::remove_file(&file).unwrap();
+    opts.env = env(&[("TASQ_CONFIG_DIR", "~/conf")]);
+    let loaded = Config::load(&opts).unwrap();
+    assert_eq!(loaded.config.store.name, "default");
+    assert_eq!(loaded.layers.len(), 2, "defaults and the project file");
+
+    opts.env = env(&[("TASQ_CONFIG_DIR", "~/missing")]);
     let err = Config::load(&opts).unwrap_err();
     match &err {
-        ConfigError::MissingFile { file, named_by } => {
-            assert_eq!(file, &sb.home.join("missing.toml"));
-            assert_eq!(*named_by, "TASQ_CONFIG");
+        ConfigError::MissingDir { dir, named_by } => {
+            assert_eq!(dir, &sb.home.join("missing"));
+            assert_eq!(*named_by, "TASQ_CONFIG_DIR");
         }
         other => panic!("{other:?}"),
     }
     assert_eq!(
         err.to_string(),
         format!(
-            "config file {} does not exist (named by TASQ_CONFIG)",
-            sb.home.join("missing.toml").display()
+            "config directory {} does not exist or is not a directory (named by TASQ_CONFIG_DIR)",
+            sb.home.join("missing").display()
         )
     );
 
-    opts.explicit_file = Some(PathBuf::from("/nonexistent.toml"));
+    // A file is not a directory.
+    opts.config_dir = Some(sb.global_path());
     let err = Config::load(&opts).unwrap_err();
-    assert!(
-        matches!(
-            err,
-            ConfigError::MissingFile {
-                named_by: "--config",
-                ..
-            }
-        ),
-        "{err}"
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "config directory {} does not exist or is not a directory (named by --config-dir)",
+            sb.global_path().display()
+        )
     );
 
-    // An empty TASQ_CONFIG is ignored.
-    opts.explicit_file = None;
-    opts.env = env(&[("TASQ_CONFIG", "")]);
+    // A relative directory starts at the injected cwd, not the process's.
+    opts.cwd = sb.home.clone();
+    opts.config_dir = Some(PathBuf::from("conf"));
+    fs::write(&file, "[store]\nname = \"relative\"\n").unwrap();
+    let loaded = Config::load(&opts).unwrap();
+    assert_eq!(loaded.config.store.name, "relative");
+    assert_eq!(loaded.file_for("store.name"), Some(file.as_path()));
+    opts.cwd = sb.project.clone();
+    fs::remove_file(&file).unwrap();
+
+    // An empty TASQ_CONFIG_DIR is ignored.
+    opts.config_dir = None;
+    opts.env = env(&[("TASQ_CONFIG_DIR", "")]);
     let loaded = Config::load(&opts).unwrap();
     assert_eq!(loaded.config.store.name, "global");
+}
+
+#[test]
+fn an_absent_default_config_dir_is_not_an_error() {
+    let sb = Sandbox::new();
+    fs::remove_dir_all(sb.home.join(".config/tasq")).unwrap();
+    let loaded = Config::load(&sb.opts()).unwrap();
+    assert_eq!(loaded.config.store.name, "default");
 }
 
 #[test]
@@ -896,14 +938,9 @@ fn unreadable_file_names_the_file() {
     let sb = Sandbox::new();
     let path = sb.global_path();
     fs::create_dir(&path).unwrap();
-    let mut opts = sb.opts();
-    opts.explicit_file = None;
-    // A directory is not a file, so it is skipped as the global file ...
-    assert!(Config::load(&opts).is_ok());
-    // ... but naming it explicitly fails as missing.
-    opts.explicit_file = Some(path.clone());
-    let err = Config::load(&opts).unwrap_err();
-    assert!(matches!(err, ConfigError::MissingFile { .. }), "{err}");
+    // A directory is not a file, so it is skipped as the global file.
+    let loaded = Config::load(&sb.opts()).unwrap();
+    assert_eq!(loaded.layers.len(), 1, "only the defaults");
 
     // An unreadable regular file reports a read error.
     #[cfg(unix)]
@@ -1700,7 +1737,7 @@ fn tilde_is_expanded_in_path_values() {
     // Without a home the paths are left as written.
     let mut opts = sb.opts();
     opts.home = None;
-    opts.explicit_file = Some(sb.global_path());
+    opts.config_dir = Some(sb.home.join(".config/tasq"));
     let loaded = Config::load(&opts).unwrap();
     assert_eq!(
         loaded.config.work.default_project,
@@ -1871,9 +1908,11 @@ fn every_example_config_loads() {
     files.push(root.join("sources/config.toml"));
     assert_eq!(files.len(), 3, "{files:?}");
     for file in files {
+        let dir = tempfile::tempdir().unwrap();
+        fs::copy(&file, dir.path().join("config.toml")).unwrap();
         let mut opts = LoadOptions::new("/nonexistent");
         opts.home = Some(PathBuf::from("/home/u"));
-        opts.explicit_file = Some(file.clone());
+        opts.config_dir = Some(dir.path().to_path_buf());
         if let Err(e) = Config::load(&opts) {
             panic!("{}: {e}", file.display());
         }
@@ -1975,15 +2014,32 @@ fn load_options_new_and_display_of_origins() {
         .path(),
         Some(Path::new("/a"))
     );
-    assert_eq!(
-        tasq_core::config::global_file(&LoadOptions::new("/x")),
-        None
-    );
+    assert_eq!(tasq_core::config::config_dir(&LoadOptions::new("/x")), None);
     let mut opts = LoadOptions::new("/x");
     opts.home = Some(PathBuf::from("/home/me"));
     assert_eq!(
-        tasq_core::config::global_file(&opts),
-        Some(PathBuf::from("/home/me/.config/tasq/config.toml"))
+        tasq_core::config::config_dir(&opts),
+        Some(PathBuf::from("/home/me/.config/tasq"))
+    );
+    opts.env = env(&[("XDG_CONFIG_HOME", "/xdg")]);
+    assert_eq!(
+        tasq_core::config::config_dir(&opts),
+        Some(PathBuf::from("/xdg/tasq"))
+    );
+    opts.env = env(&[("TASQ_CONFIG_DIR", "~/conf"), ("XDG_CONFIG_HOME", "/xdg")]);
+    assert_eq!(
+        tasq_core::config::config_dir(&opts),
+        Some(PathBuf::from("/home/me/conf"))
+    );
+    opts.config_dir = Some(PathBuf::from("/flag"));
+    assert_eq!(
+        tasq_core::config::config_dir(&opts),
+        Some(PathBuf::from("/flag"))
+    );
+    opts.config_dir = Some(PathBuf::from("rel"));
+    assert_eq!(
+        tasq_core::config::config_dir(&opts),
+        Some(PathBuf::from("/x/rel"))
     );
 }
 
@@ -2005,7 +2061,7 @@ fn explain_matches_prefixes_but_not_lookalike_keys() {
 
 #[test]
 fn env_vars_named_by_the_plan_are_all_supported() {
-    use tasq_core::config::{ENV_CONFIG, ENV_KEYS, ENV_PROFILE};
+    use tasq_core::config::{ENV_CONFIG_DIR, ENV_KEYS, ENV_PROFILE};
     let keyed: Vec<&str> = ENV_KEYS.iter().map(|(var, _)| *var).collect();
     for var in [
         "TASQ_STORE_NAME",
@@ -2018,8 +2074,8 @@ fn env_vars_named_by_the_plan_are_all_supported() {
         assert!(keyed.contains(&var), "{var} missing from ENV_KEYS");
     }
     assert_eq!(ENV_PROFILE, "TASQ_PROFILE");
-    assert_eq!(ENV_CONFIG, "TASQ_CONFIG");
-    assert!(!keyed.contains(&ENV_PROFILE) && !keyed.contains(&ENV_CONFIG));
+    assert_eq!(ENV_CONFIG_DIR, "TASQ_CONFIG_DIR");
+    assert!(!keyed.contains(&ENV_PROFILE) && !keyed.contains(&ENV_CONFIG_DIR));
     let mut vars = keyed.clone();
     vars.sort_unstable();
     vars.dedup();

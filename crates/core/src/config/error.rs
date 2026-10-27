@@ -12,12 +12,13 @@ use super::Origin;
 /// expected, so they can be shown to the user as they are.
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    /// The file named by `--config` or `TASQ_CONFIG` does not exist.
-    #[error("config file {file} does not exist (named by {named_by})")]
-    MissingFile {
-        /// The missing file.
-        file: PathBuf,
-        /// `--config` or `TASQ_CONFIG`.
+    /// The directory named by `--config-dir` or `TASQ_CONFIG_DIR` does not
+    /// exist (or is not a directory).
+    #[error("config directory {dir} does not exist or is not a directory (named by {named_by})")]
+    MissingDir {
+        /// The missing directory, `~` expanded and absolute.
+        dir: PathBuf,
+        /// `--config-dir` or `TASQ_CONFIG_DIR`.
         named_by: &'static str,
     },
     /// A file exists but could not be read.

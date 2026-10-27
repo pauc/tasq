@@ -323,15 +323,15 @@ fn wait_for(command: &mut Command, name: &str) -> std::result::Result<(), String
 }
 
 /// The global flags that select the configuration, as arguments for a
-/// child `tasq`: `--profile`, `--config` and every `--set`. Output flags
+/// child `tasq`: `--profile`, `--config-dir` and every `--set`. Output flags
 /// are left to the child, which has the terminal.
 pub fn global_args(global: &GlobalArgs) -> Vec<String> {
     let mut args = Vec::new();
     if let Some(profile) = &global.profile {
         args.extend(["--profile".to_owned(), profile.clone()]);
     }
-    if let Some(config) = &global.config {
-        args.extend(["--config".to_owned(), config.display().to_string()]);
+    if let Some(dir) = &global.config_dir {
+        args.extend(["--config-dir".to_owned(), dir.display().to_string()]);
     }
     for (key, value) in &global.set {
         args.extend(["--set".to_owned(), format!("{key}={value}")]);
@@ -695,7 +695,7 @@ post-create = [
         assert_eq!(global_args(&GlobalArgs::default()), Vec::<String>::new());
         let global = GlobalArgs {
             profile: Some("work".into()),
-            config: Some("/etc/tasq.toml".into()),
+            config_dir: Some("/etc/tasq".into()),
             set: vec![("store.name".into(), "x".into())],
             json: true,
             no_color: true,
@@ -706,8 +706,8 @@ post-create = [
             [
                 "--profile",
                 "work",
-                "--config",
-                "/etc/tasq.toml",
+                "--config-dir",
+                "/etc/tasq",
                 "--set",
                 "store.name=x"
             ]
