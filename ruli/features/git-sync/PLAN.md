@@ -221,12 +221,12 @@ once on `store-open`/`post-write` and answers `doctor` with one `Ok` "store sync
 
 **Blocked by:** tasq 59.
 
-**Status:** blocked
+**Status:** done
 
-- [ ] An unknown schema is a warning naming it; a missing `.git` is a no-op.
-- [ ] `tasq doctor` with the plugin enabled on the fixture store shows the `Ok` line.
-- [ ] `scripts/install` and CI build and test it.
-- [ ] `mutants-in crates/git/src`: zero missed.
+- [x] An unknown schema is a warning naming it; a missing `.git` is a no-op.
+- [x] `tasq doctor` with the plugin enabled on the fixture store shows the `Ok` line.
+- [x] `scripts/install` and CI build and test it.
+- [x] `mutants-in crates/git/src`: zero missed.
 
 ### GS-002: `tasq git init` with identity
 
