@@ -249,3 +249,39 @@ section), the `.tasq.toml` guard grep.
 
 - [x] No current doc, test or example mentions `.tasq.toml`, `TASQ_CONFIG` or `worktree.enabled` outside ADRs, plans and the migration section.
 - [x] `cargo doc` adds no warnings; the full suite passes.
+
+### CC-009: fix the branch review findings
+
+**What to build:** the findings of the whole-branch review of 2026-10-27 (findings 1 to 9 and
+12; finding 11 joins the follow-up with the four known issues in PROGRESS.md Learnings):
+
+1. `README.md` enables worktrees with `[worktree] enabled = true`: write `worktrees_enabled =
+   true`; the `no-old-config` CI grep also catches the table spelling.
+2. `tasq doctor` loads each repository config merged (`Config::load` with `repo` set) when its
+   path check passes, and turns a load error (an undefined template variable, ...) into a
+   `Fail` on that config's check.
+3. A relative template `source` keeps starting at the directory of the file that set it, so a
+   profile's starts at `profiles/` (decided: document, no code change). `docs/migration.md`'s
+   `[profile.x]` row and `docs/config.md` say so, with `../` as the fix; a test pins it.
+4. A `[profile.<name>]` table inside a profile file gets its own error: drop the header and the
+   `profile.<name>.` prefix, instead of "move it to" the file it is in.
+5. The repository config checks in `doctor` run only with `worktrees_enabled`.
+6. `config_env` forwards the config directory core resolved (exposed by core, e.g. on
+   `Loaded`) instead of resolving it again against the process cwd; no `std::env` in the test.
+7. The ADR 0006 index row notes `TASQ_CONFIG` replaced by `TASQ_CONFIG_DIR` (ADR-0031); ADR
+   0031's References list ADR-0006.
+8. ADR 0031 names all seven removed `--yes` flags (add `worktree prune`, `worktree switch`).
+9. `docs/config.md`: a template `source` set by `--set` or the environment starts at the main
+   checkout; a bare repository's worktrees are each their own main checkout (finding 10).
+12. Cleanups: one `toml_files(dir)` helper for the `profiles/` and `repos/` scans,
+    `global_file` renamed for what it returns, the `"repo-config"` name as one public const,
+    the `RefCell` in `worktree_nav.rs` replaced by a captured `Option`, the doc line over 100
+    columns in `commands/worktree.rs`.
+
+**Blocked by:** CC-008.
+
+**Status:** todo
+
+- [ ] Each finding fixed, with a test where it changes behaviour (doctor merged load, doctor with worktrees off, the profile-file error string, a profile's relative template source).
+- [ ] The CI grep catches `[worktree]` followed by `enabled`.
+- [ ] `mutants-in` the diff: zero missed.

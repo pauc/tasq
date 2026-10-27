@@ -14,6 +14,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
 | CC-006 | `tasq worktree config [DIR]` | done | ffc1b8e; mutants 18: 18 caught, 0 missed |
 | CC-007 | `tasq doctor` checks repository configs | done | 7ba50f1; mutants 18: 12 caught, 6 unviable, 0 missed |
 | CC-008 | The docs describe the config directory | done | 5ff45bd; no Rust beyond one doc comment: mutants 0 (none in the diff), 0 missed |
+| CC-009 | Fix the branch review findings | todo | |
 
 ## Learnings
 
