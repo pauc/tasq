@@ -1,7 +1,8 @@
 //! The plugin's own files, under `<store>/.tasq/plugins/git/`:
 //!
-//! - `job.lock`: held by the running job (one per store), created
-//!   exclusively, taken for a dead job's once it is two minutes old.
+//! - `job.lock`: locked by the running job (one per store) with an OS
+//!   file lock, which goes with the job: a job that died blocks nothing,
+//!   and one that runs long (a slow fetch) is never taken for dead.
 //! - `pending`: touched by every `post-write`; the job removes it before
 //!   each commit and goes round again while it is back.
 //! - `writes`: one line per `post-write` not yet committed (`<command>
@@ -11,14 +12,10 @@
 //!   seconds; `store-open` starts a job once it is older than the interval.
 //! - `warnings`: the lasting warnings tasq shows (`docs/plugins.md`).
 
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
-
-/// How old a `job.lock` must be to be taken for a dead job's, as for the
-/// store lock.
-pub const STALE: Duration = Duration::from_secs(120);
 
 /// The state directory of one store.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,37 +97,40 @@ impl State {
         self.path("pending").exists()
     }
 
-    /// Whether a live job holds `job.lock` at `now`.
-    pub fn job_running(&self, now: SystemTime) -> bool {
-        modified(&self.path("job.lock"))
+    /// Whether a job holds `job.lock`. One that cannot be opened is no
+    /// job's: the job started for it reports why.
+    pub fn job_running(&self) -> bool {
+        open_existing(&self.path("job.lock"))
             .ok()
             .flatten()
-            .is_some_and(|modified| !is_stale(modified, now))
+            .is_some_and(|file| matches!(file.try_lock_shared(), Err(TryLockError::WouldBlock)))
     }
 
-    /// Takes `job.lock`, breaking a stale one; `None` while a live job
-    /// holds it.
-    pub fn lock_job(&self, now: SystemTime) -> io::Result<Option<JobLock>> {
-        self.create_dir()?;
-        let path = self.path("job.lock");
-        // Twice: once more after breaking a dead job's lock. Two jobs
-        // breaking it at once both remove it; one exclusive create wins.
-        for _ in 0..2 {
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(mut file) => {
-                    let token = token(now);
-                    file.write_all(token.as_bytes())?;
-                    return Ok(Some(JobLock { path, token }));
-                }
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(err) => return Err(err),
-            }
-            match modified(&path)? {
-                Some(modified) if !is_stale(modified, now) => return Ok(None),
-                _ => remove_if_present(&path)?,
-            }
+    /// Takes `job.lock`; `None` while another job holds it.
+    pub fn lock_job(&self) -> io::Result<Option<JobLock>> {
+        let file = self.job_lock_file()?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(JobLock { _file: file })),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(err)) => Err(err),
         }
-        Ok(None)
+    }
+
+    /// Takes `job.lock`, waiting while another job holds it.
+    pub fn wait_job(&self) -> io::Result<JobLock> {
+        let file = self.job_lock_file()?;
+        file.lock()?;
+        Ok(JobLock { _file: file })
+    }
+
+    /// `job.lock`, created if missing; it stays when the job is done.
+    fn job_lock_file(&self) -> io::Result<File> {
+        self.create_dir()?;
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.path("job.lock"))
     }
 
     /// Whether the remote is due a look at `now`: `last-fetch` is missing,
@@ -211,15 +211,6 @@ fn open_existing(path: &Path) -> io::Result<Option<File>> {
     }
 }
 
-/// When `path` was last modified; `None` when it does not exist.
-fn modified(path: &Path) -> io::Result<Option<SystemTime>> {
-    match std::fs::metadata(path) {
-        Ok(meta) => meta.modified().map(Some),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err),
-    }
-}
-
 /// Removes the file `path`; one that is not there is fine.
 fn remove_if_present(path: &Path) -> io::Result<()> {
     match std::fs::remove_file(path) {
@@ -228,51 +219,10 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
-/// `job.lock`, removed when dropped unless another job has taken it since
-/// (this one went stale).
+/// The lock on `job.lock`, released when dropped (or when the job dies).
 #[derive(Debug)]
 pub struct JobLock {
-    path: PathBuf,
-    token: String,
-}
-
-impl JobLock {
-    /// Stamps the lock with `now`, so that a round running long (a slow
-    /// fetch or push) is not taken for a dead job's. A lock another job
-    /// has taken since is left alone.
-    pub fn refresh(&self, now: SystemTime) -> io::Result<()> {
-        if std::fs::read_to_string(&self.path)? != self.token {
-            return Ok(());
-        }
-        File::options()
-            .write(true)
-            .open(&self.path)?
-            .set_modified(now)
-    }
-}
-
-impl Drop for JobLock {
-    fn drop(&mut self) {
-        if std::fs::read_to_string(&self.path).is_ok_and(|text| text == self.token) {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
-}
-
-/// What a job writes into its `job.lock`: its process and the time it
-/// took the lock.
-fn token(now: SystemTime) -> String {
-    let nanos = now
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    format!("{} {nanos}\n", std::process::id())
-}
-
-/// Whether a lock last stamped at `modified` is a dead holder's at `now`.
-/// One stamped after `now` is live.
-fn is_stale(modified: SystemTime, now: SystemTime) -> bool {
-    now.duration_since(modified).is_ok_and(|age| age >= STALE)
+    _file: File,
 }
 
 #[cfg(test)]
@@ -295,9 +245,6 @@ mod tests {
         let below = file.join("child");
         assert!(open_existing(&missing).unwrap().is_none());
         assert!(open_existing(&below).is_err());
-        assert_eq!(modified(&missing).unwrap(), None);
-        assert!(modified(&below).is_err());
-        assert!(modified(&file).unwrap().is_some());
         remove_if_present(&missing).unwrap();
         assert!(remove_if_present(&below).is_err());
         remove_if_present(&file).unwrap();
@@ -305,16 +252,14 @@ mod tests {
     }
 
     #[test]
-    fn a_job_lock_that_cannot_be_created_is_an_error() {
+    fn a_job_lock_that_cannot_be_opened_is_an_error_and_no_job() {
         let root = tempfile::tempdir().unwrap();
         let state = State::of(root.path());
         state.create_dir().unwrap();
         std::fs::create_dir(state.path("job.lock")).unwrap();
-        std::fs::write(state.path("job.lock").join("x"), "").unwrap();
-        // A directory in its place: exists, is old enough to break (its
-        // mtime is now, the clock two hours on), and cannot be removed.
-        let later = SystemTime::now() + Duration::from_secs(7200);
-        assert!(state.lock_job(later).is_err());
+        assert!(state.lock_job().is_err());
+        assert!(state.wait_job().is_err());
+        assert!(!state.job_running());
     }
 
     #[test]
@@ -325,7 +270,7 @@ mod tests {
         state.create_dir().unwrap();
         let read_only = std::fs::Permissions::from_mode(0o555);
         std::fs::set_permissions(&state.dir, read_only).unwrap();
-        let result = state.lock_job(SystemTime::now());
+        let result = state.lock_job();
         std::fs::set_permissions(&state.dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(
             result.map(|_| ()).unwrap_err().kind(),
@@ -334,39 +279,23 @@ mod tests {
     }
 
     #[test]
-    fn a_lock_is_stale_from_two_minutes_on() {
-        assert!(!is_stale(at(0), at(119)));
-        assert!(is_stale(at(0), at(120)));
-        assert!(is_stale(at(0), at(121)));
-        assert!(!is_stale(at(10), at(0)));
-    }
-
-    #[test]
-    fn a_refreshed_lock_lives_two_minutes_from_the_refresh() {
+    fn one_job_holds_the_lock_until_it_drops_it() {
         let root = tempfile::tempdir().unwrap();
         let state = State::of(root.path());
-        let lock = state.lock_job(at(0)).unwrap().unwrap();
-        lock.refresh(at(100)).unwrap();
-        assert!(state.job_running(at(219)));
-        assert!(!state.job_running(at(220)));
-    }
-
-    #[test]
-    fn a_lock_taken_over_is_not_refreshed() {
-        let root = tempfile::tempdir().unwrap();
-        let state = State::of(root.path());
-        let lock = state.lock_job(at(0)).unwrap().unwrap();
-        std::fs::write(state.path("job.lock"), "another job\n").unwrap();
-        File::options()
-            .write(true)
-            .open(state.path("job.lock"))
-            .unwrap()
-            .set_modified(at(0))
-            .unwrap();
-        lock.refresh(at(100)).unwrap();
-        assert!(!state.job_running(at(120)));
-        std::fs::remove_file(state.path("job.lock")).unwrap();
-        assert!(lock.refresh(at(100)).is_err());
+        assert!(!state.job_running(), "no lock file yet");
+        let lock = state.lock_job().unwrap().unwrap();
+        assert!(state.job_running());
+        assert!(state.lock_job().unwrap().is_none());
+        let other = File::open(state.path("job.lock")).unwrap();
+        assert!(matches!(other.try_lock(), Err(TryLockError::WouldBlock)));
+        drop(lock);
+        assert!(!state.job_running());
+        assert!(state.path("job.lock").exists(), "the file stays");
+        let again = state.wait_job().unwrap();
+        assert!(state.job_running());
+        assert!(state.lock_job().unwrap().is_none());
+        drop(again);
+        assert!(state.lock_job().unwrap().is_some());
     }
 
     #[test]
@@ -389,29 +318,5 @@ mod tests {
         assert!(state.fetch_due(earlier, minute), "the clock went back");
         std::fs::write(state.path("last-fetch"), "soon\n").unwrap();
         assert!(state.fetch_due(at(0), minute));
-    }
-
-    #[test]
-    fn job_lock_follows_the_clock_it_is_given() {
-        let root = tempfile::tempdir().unwrap();
-        let state = State::of(root.path());
-        let lock = state.lock_job(at(0)).unwrap().unwrap();
-        File::options()
-            .write(true)
-            .open(state.path("job.lock"))
-            .unwrap()
-            .set_modified(at(0))
-            .unwrap();
-        assert!(state.job_running(at(119)));
-        assert_eq!(state.lock_job(at(119)).unwrap().map(|_| ()), None);
-        assert!(!state.job_running(at(120)));
-        let again = state.lock_job(at(120)).unwrap();
-        assert!(again.is_some());
-        // The stale holder lost it: its drop leaves the new holder's lock.
-        drop(lock);
-        assert!(state.path("job.lock").exists());
-        drop(again);
-        assert!(!state.path("job.lock").exists());
-        assert!(!state.job_running(at(0)));
     }
 }

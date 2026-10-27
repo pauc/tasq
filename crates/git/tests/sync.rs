@@ -191,16 +191,56 @@ impl World {
         std::fs::read_to_string(self.base().join("locked")).unwrap_or_default()
     }
 
-    /// A global `pre-push` hook running `script`.
-    fn pre_push(&self, script: &str) {
+    /// A `git` first on `PATH` that runs `body` for a command line
+    /// matching the `case` pattern `when`, then the real git.
+    fn wrap_git(&self, when: &str, body: &str) {
+        install(
+            &self.base().join("bin/git"),
+            &format!(
+                "#!/bin/sh\ncase \" $* \" in\n  {when}) {body} ;;\nesac\nexec '{}' \"$@\"\n",
+                real_git().display()
+            ),
+        );
+    }
+
+    fn unwrap_git(&self) {
+        std::fs::remove_file(self.base().join("bin/git")).unwrap();
+    }
+
+    /// `script` run before every `git push`, which fails when it does.
+    fn on_push(&self, script: &str) {
+        let file = self.base().join("on-push");
+        std::fs::write(&file, script).unwrap();
+        self.wrap_git("*' push '*", &format!("sh '{}' || exit 1", file.display()));
+    }
+
+    /// A global git config that signs every commit with a `gpg` that
+    /// cannot, and hooks that refuse everything.
+    fn hostile_gitconfig(&self) {
         let hooks = self.home().join("hooks");
         std::fs::create_dir_all(&hooks).unwrap();
-        install(&hooks.join("pre-push"), &format!("#!/bin/sh\n{script}"));
+        for hook in ["pre-commit", "pre-push", "pre-rebase"] {
+            install(
+                &hooks.join(hook),
+                &format!("#!/bin/sh\necho global {hook} >&2\nexit 1\n"),
+            );
+        }
+        let gpg = self.base().join("bin/no-gpg");
+        install(&gpg, "#!/bin/sh\necho no pinentry >&2\nexit 2\n");
         std::fs::write(
             self.home().join(".gitconfig"),
-            format!("[core]\n\thooksPath = {}\n", hooks.display()),
+            format!(
+                "[commit]\n\tgpgSign = true\n[gpg]\n\tprogram = {}\n[core]\n\thooksPath = {}\n",
+                gpg.display(),
+                hooks.display()
+            ),
         )
         .unwrap();
+    }
+
+    /// Whether a job holds machine `m`'s `job.lock`.
+    fn job_running(m: &Machine) -> bool {
+        std::fs::File::open(m.state("job.lock")).is_ok_and(|file| file.try_lock().is_err())
     }
 }
 
@@ -343,6 +383,14 @@ impl Machine<'_> {
     }
 }
 
+/// The real `git`: the first on the test's own `PATH`.
+fn real_git() -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join("git"))
+        .find(|path| path.is_file())
+        .unwrap()
+}
+
 /// Writes an executable script, waiting until it can run (ETXTBSY while
 /// another test thread forks with the file still open for writing). The
 /// probe run exits at once: a hook script must not act on it.
@@ -424,7 +472,28 @@ mod two_machines {
             )
         );
         assert!(b.state("last-fetch").exists());
-        assert!(!b.state("job.lock").exists());
+        assert!(!World::job_running(&b));
+    }
+
+    #[test]
+    fn the_users_signing_and_hooks_are_not_applied() {
+        let world = World::new();
+        let a = world.first();
+        let b = world.second();
+        world.hostile_gitconfig();
+        a.note(TASK_3, "on a");
+        assert_silent(&a.job(&[]));
+        b.note(TASK_4, "on b");
+        // B commits, rebases its commit onto A's and pushes it.
+        assert_silent(&b.job(&[]));
+        assert_eq!(world.remote_head(), b.head());
+        assert_eq!(
+            b.subjects(),
+            ["update task files", "update task files", "start"]
+        );
+        assert_eq!(b.git(&["log", "-2", "--format=%G?"]), "N\nN\n");
+        assert_eq!(a.warnings(), None);
+        assert_eq!(b.warnings(), None);
     }
 
     #[test]
@@ -464,7 +533,7 @@ mod two_machines {
         a.git(&["commit", "-q", "-am", "from a"]);
         // B's first push races A's: A gets there between B's fetch and
         // B's push.
-        world.pre_push(&format!(
+        world.on_push(&format!(
             "[ -f '{done}' ] && exit 0\n: > '{done}'\ngit -C '{a}' push -q\n",
             done = world.base().join("raced").display(),
             a = a.store.display()
@@ -519,40 +588,39 @@ mod two_machines {
     }
 
     #[test]
-    fn a_long_round_keeps_its_job_lock() {
+    fn a_job_started_during_a_long_round_does_nothing() {
         let world = World::new();
         let a = world.first();
         let b = world.second();
         a.note(TASK_3, "on a");
         assert_silent(&a.job(&[]));
-        // By the rebase, B's round has run for three minutes; its push
-        // must find the job lock fresh, not one another job would break.
-        let stamp = |name: &str, ago: u64| {
-            let path = world.base().join(name);
-            let file = std::fs::File::create(&path).unwrap();
-            file.set_modified(SystemTime::now() - Duration::from_secs(ago))
-                .unwrap();
-            path
-        };
-        let old = stamp("old", 180);
-        let recent = stamp("recent", 60);
-        let lock = b.state("job.lock");
+        // By the rebase, B's round has run for three minutes; a second job
+        // started then must find the job lock held, however old it looks.
+        let old = world.base().join("old");
+        std::fs::File::create(&old)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(180))
+            .unwrap();
+        let second = world.base().join("second");
         std::fs::write(
             world.base().join("on-lock"),
-            format!("touch -r '{}' '{}'\n", old.display(), lock.display()),
+            format!(
+                "touch -r '{old}' '{lock}'\n\
+                 '{exe}' job --store '{store}' --interval 0 > '{second}' 2>&1\n\
+                 echo \"exit $?\" >> '{second}'\n",
+                old = old.display(),
+                lock = b.state("job.lock").display(),
+                exe = env!("CARGO_BIN_EXE_tasq-git"),
+                store = b.store.display(),
+                second = second.display(),
+            ),
         )
         .unwrap();
-        world.pre_push(&format!(
-            "[ -n \"$(find '{}' -newer '{}')\" ] || {{ echo 'the job lock went stale' >&2; exit 1; }}\n",
-            lock.display(),
-            recent.display()
-        ));
         b.note(TASK_4, "on b");
         assert_silent(&b.job(&[]));
-        assert!(
-            world.base().join("on-lock.run").exists(),
-            "on-lock never ran"
-        );
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "exit 0\n");
+        assert_eq!(world.fetches(), 1, "the second job fetched");
+        assert_eq!(world.locked().lines().count(), 1);
         assert_eq!(b.warnings(), None);
         assert_eq!(world.remote_head(), b.head());
     }
@@ -620,7 +688,7 @@ mod interval {
         b.fetched(Duration::from_secs(10));
         assert_silent(&b.store_open(&serde_json::json!({"interval": 5})));
         eventually("the pull", || b.head() == a.head());
-        eventually("the job to exit", || !b.state("job.lock").exists());
+        eventually("the job to exit", || !World::job_running(&b));
         assert_eq!(world.fetches(), 1);
         assert_eq!(b.read(TASK_3), a.read(TASK_3));
     }
@@ -634,7 +702,7 @@ mod interval {
         assert_silent(&a.job(&[]));
         assert_silent(&b.store_open(&serde_json::json!({})));
         eventually("the pull", || b.head() == a.head());
-        eventually("the job to exit", || !b.state("job.lock").exists());
+        eventually("the job to exit", || !World::job_running(&b));
     }
 
     #[test]
@@ -647,7 +715,7 @@ mod interval {
     }
 
     #[test]
-    fn an_interval_that_is_not_whole_seconds_is_an_error() {
+    fn an_interval_that_is_not_whole_seconds_is_an_error_and_the_default_applies() {
         let world = World::new();
         let a = world.first();
         for (value, shown) in [
@@ -662,7 +730,9 @@ mod interval {
                 format!("[plugin.git] interval must be a whole number of seconds, not {shown}\n")
             );
         }
-        assert!(!a.store.join(".tasq").exists());
+        // Never fetched: due whatever the interval, so a job fetched.
+        eventually("the fetch", || a.state("last-fetch").exists());
+        eventually("the job to exit", || !World::job_running(&a));
     }
 }
 
@@ -706,7 +776,7 @@ mod failure {
         let world = World::new();
         let a = world.first();
         let tries = world.base().join("tries");
-        world.pre_push(&format!(
+        world.on_push(&format!(
             "echo try >> '{}'\necho nope >&2\nexit 1\n",
             tries.display()
         ));
@@ -715,13 +785,9 @@ mod failure {
         assert_silent(&a.job(&[]));
         assert_eq!(std::fs::read_to_string(&tries).unwrap(), "try\ntry\n");
         assert_eq!(world.remote_head(), pushed);
-        let warning = a.warnings().unwrap();
-        assert!(
-            warning.starts_with("push failed: nope; error: failed to push some refs to "),
-            "{warning}"
-        );
+        assert_eq!(a.warnings().as_deref(), Some("push failed: nope\n"));
 
-        std::fs::remove_file(world.home().join(".gitconfig")).unwrap();
+        world.unwrap_git();
         assert_silent(&a.job(&["--interval", "0"]));
         assert_eq!(world.remote_head(), a.head());
         assert_eq!(a.warnings(), None);
@@ -734,15 +800,9 @@ mod failure {
         let b = world.second();
         a.note(TASK_3, "on a");
         assert_silent(&a.job(&[]));
-        // A pre-rebase hook that refuses: the rebase fails, whatever git
+        // A rebase that refuses before it starts: it fails, whatever git
         // says about conflicts (GS-005).
-        let hooks = world.home().join("hooks");
-        std::fs::create_dir_all(&hooks).unwrap();
-        install(
-            &hooks.join("pre-rebase"),
-            "#!/bin/sh\necho refused >&2\nexit 1\n",
-        );
-        b.git(&["config", "core.hooksPath", hooks.to_str().unwrap()]);
+        world.wrap_git("*' rebase --quiet '*", "echo refused >&2; exit 1");
         b.note(TASK_4, "on b");
         let pushed = world.remote_head();
         assert_silent(&b.job(&[]));
@@ -750,7 +810,7 @@ mod failure {
         let warning = b.warnings().unwrap();
         assert!(warning.starts_with("rebase failed: refused"), "{warning}");
 
-        b.git(&["config", "--unset", "core.hooksPath"]);
+        world.unwrap_git();
         assert_silent(&b.job(&["--interval", "0"]));
         assert_eq!(world.remote_head(), b.head());
         assert_eq!(b.warnings(), None);
@@ -788,6 +848,31 @@ mod failure {
             warning.starts_with("fetch failed: Permission denied (publickey).; "),
             "{warning}"
         );
+    }
+
+    #[test]
+    fn a_remote_that_hangs_is_given_up_on() {
+        let world = World::new();
+        let a = world.first();
+        install(
+            &world.base().join("bin/ssh"),
+            "#!/bin/sh\nsleep 20\nexit 255\n",
+        );
+        a.git(&[
+            "remote",
+            "set-url",
+            "origin",
+            "ssh://example.invalid/remote.git",
+        ]);
+        a.note(TASK_3, "on a");
+        let started = Instant::now();
+        assert_silent(&a.job(&["--timeout", "1"]));
+        assert!(started.elapsed() < Duration::from_secs(10), "it waited");
+        assert_eq!(
+            a.warnings().as_deref(),
+            Some("fetch failed: git timed out after 1 s\n")
+        );
+        assert_eq!(a.subjects(), ["update task files", "start"]);
     }
 }
 
@@ -834,6 +919,21 @@ mod conflict {
         assert_eq!(world.remote_head(), pushed);
         assert_eq!(b.warnings(), Some(warning(&b)));
         assert_eq!(world.locked().lines().count(), 1);
+    }
+
+    #[test]
+    fn a_conflict_whose_files_cannot_be_listed_is_still_aborted() {
+        let world = World::new();
+        let (_a, b) = conflicted(&world);
+        world.wrap_git("*' diff --name-only '*", "echo diff broke >&2; exit 128");
+        assert_silent(&b.job(&["--interval", "0"]));
+        assert!(!b.rebasing(), "the stopped rebase was left behind");
+        assert_eq!(b.read(TASK_3), B_ONLY);
+        assert_eq!(b.warnings().as_deref(), Some("rebase failed: diff broke\n"));
+
+        world.unwrap_git();
+        assert_silent(&b.job(&["--interval", "0"]));
+        assert_eq!(b.warnings().unwrap(), warning(&b));
     }
 
     #[test]
@@ -1036,7 +1136,7 @@ mod foreground {
         assert_eq!(world.remote_head(), a.head());
         assert_eq!(a.subjects(), ["log 3: Three", "update task files", "start"]);
         assert_eq!(a.warnings(), None);
-        assert!(!a.state("job.lock").exists());
+        assert!(!World::job_running(&a));
         assert_eq!(
             std::fs::read_to_string(world.base().join("events")).unwrap(),
             "sync\n",
@@ -1140,7 +1240,7 @@ mod foreground {
         let b = world.second();
         a.note(TASK_3, "on a");
         a.git(&["commit", "-q", "-am", "from a"]);
-        world.pre_push(&format!(
+        world.on_push(&format!(
             "[ -f '{done}' ] && exit 0\n: > '{done}'\ngit -C '{a}' push -q\n",
             done = world.base().join("raced").display(),
             a = a.store.display()
@@ -1158,9 +1258,10 @@ mod foreground {
             lines[2].starts_with("push failed, fetching again: "),
             "{out}"
         );
+        assert!(lines[2].contains("! [rejected]"), "{out}");
         assert!(
-            lines[2].ends_with(&format!(
-                "; error: failed to push some refs to '{}'",
+            lines[2].contains(&format!(
+                "; error: failed to push some refs to '{}'; ",
                 world.url()
             )),
             "{out}"
@@ -1190,6 +1291,30 @@ mod foreground {
             )
         );
         assert_eq!(a.subjects(), ["update task files", "start"]);
+    }
+
+    #[test]
+    fn the_users_signing_and_hooks_are_not_applied() {
+        let world = World::new();
+        let a = world.first();
+        let b = world.second();
+        world.hostile_gitconfig();
+        a.note(TASK_3, "on a");
+        assert_eq!(synced(&a).1, Some(0));
+        b.note(TASK_4, "on b");
+        assert_eq!(
+            synced(&b),
+            (
+                "committed: update task files\n\
+                 fetched origin/default\n\
+                 pulled 1 commit from origin/default\n\
+                 pushed 1 commit to origin/default\n"
+                    .to_owned(),
+                Some(0)
+            )
+        );
+        assert_eq!(world.remote_head(), b.head());
+        assert_eq!(b.git(&["log", "-2", "--format=%G?"]), "N\nN\n");
     }
 
     #[test]
@@ -1223,7 +1348,8 @@ mod foreground {
         let world = World::new();
         let a = world.first();
         std::fs::create_dir_all(a.state("")).unwrap();
-        std::fs::write(a.state("job.lock"), "another job\n").unwrap();
+        let lock = std::fs::File::create(a.state("job.lock")).unwrap();
+        lock.lock().unwrap();
         let mut child = a
             .command(&["sync"])
             .stdout(Stdio::piped())
@@ -1233,7 +1359,7 @@ mod foreground {
         std::thread::sleep(Duration::from_millis(300));
         assert!(child.try_wait().unwrap().is_none(), "it did not wait");
         assert!(!a.state("last-fetch").exists());
-        std::fs::remove_file(a.state("job.lock")).unwrap();
+        drop(lock);
         let out = child.wait_with_output().unwrap();
         assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
         assert!(a.state("last-fetch").exists());
@@ -1285,13 +1411,7 @@ mod foreground {
     fn a_failed_commit_is_an_error() {
         let world = World::new();
         let a = world.first();
-        let hooks = world.home().join("hooks");
-        std::fs::create_dir_all(&hooks).unwrap();
-        install(
-            &hooks.join("pre-commit"),
-            "#!/bin/sh\necho no >&2\nexit 1\n",
-        );
-        a.git(&["config", "core.hooksPath", hooks.to_str().unwrap()]);
+        world.wrap_git("*' commit '*", "echo no >&2; exit 1");
         a.note(TASK_3, "on a");
         let out = a.sync();
         assert_eq!(out.status.code(), Some(1));

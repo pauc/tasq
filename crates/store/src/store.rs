@@ -125,9 +125,11 @@ impl Scan {
     /// One [`StoreError::AmbiguousId`] per id claimed by more than one
     /// file, in id order.
     fn ambiguous(&self) -> Vec<StoreError> {
-        self.duplicates()
-            .into_iter()
-            .filter_map(|(id, _)| self.single(&id).err())
+        let mut ids: Vec<&TaskId> = self.tasks.iter().map(|f| &f.parsed.task.id).collect();
+        ids.sort();
+        ids.dedup();
+        ids.into_iter()
+            .filter_map(|id| self.single(id).err())
             .collect()
     }
 

@@ -59,8 +59,8 @@ const PUSH_FAILED: &str = "push failed: ";
 /// The start of the lasting warning for an id claimed by several files.
 const DUPLICATE_ID: &str = "duplicate id: ";
 
-/// What the job is told on its command line.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What the job is told on its command line, and its clock.
+#[derive(Debug, Clone)]
 pub struct Settings {
     /// How old the last fetch must be for a round that committed nothing
     /// to fetch.
@@ -68,6 +68,8 @@ pub struct Settings {
     /// `tasq-git` itself: the rebase runs as `<exe> rebase --store <dir>`
     /// under `tasq store lock`.
     pub exe: PathBuf,
+    /// The time, for `last-fetch`.
+    pub now: fn() -> SystemTime,
 }
 
 /// What the rounds did, one line per step, for `tasq git sync` to print.
@@ -157,21 +159,16 @@ pub fn foreground(
         return Err(JobError::Rebasing(store.to_owned()));
     }
     let state = State::of(store);
-    let lock = loop {
-        if let Some(lock) = take_lock(&state)? {
-            break lock;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    };
+    let lock = state
+        .wait_job()
+        .map_err(io("could not take the job lock"))?;
     let mut report = Report::default();
     rounds(git, tasq, store, &state, lock, settings, &mut report)?;
     Ok(report)
 }
 
 fn take_lock(state: &State) -> Result<Option<JobLock>, JobError> {
-    state
-        .lock_job(SystemTime::now())
-        .map_err(io("could not take the job lock"))
+    state.lock_job().map_err(io("could not take the job lock"))
 }
 
 /// Rounds under `lock`, then under the lock taken again, while a hook
@@ -192,7 +189,7 @@ fn rounds(
         // A rebase in progress is the user resolving a conflict: the
         // writes wait for it, uncommitted, and nothing is synced.
         if !rebasing(git, store) {
-            round(git, tasq, store, state, &lock, settings, report)?;
+            round(git, tasq, store, state, settings, report)?;
         }
         // A hook that touched `pending` while this lock was held started no
         // job: the work is this one's.
@@ -213,7 +210,6 @@ fn round(
     tasq: &Tasq,
     store: &Path,
     state: &State,
-    lock: &JobLock,
     settings: &Settings,
     report: &mut Report,
 ) -> Result<(), JobError> {
@@ -230,11 +226,11 @@ fn round(
         None => report.step("nothing to commit".to_owned()),
     }
     let mut pulled = false;
-    if committed.is_some() || state.fetch_due(SystemTime::now(), settings.interval) {
+    if committed.is_some() || state.fetch_due((settings.now)(), settings.interval) {
         let before = head(git, store);
-        sync(git, tasq, store, state, lock, &settings.exe, report)?;
+        sync(git, tasq, store, state, &settings.exe, report)?;
         state
-            .record_fetch(SystemTime::now())
+            .record_fetch((settings.now)())
             .map_err(io("could not record the fetch"))?;
         pulled = head(git, store) != before;
     }
@@ -328,7 +324,6 @@ fn sync(
     tasq: &Tasq,
     store: &Path,
     state: &State,
-    lock: &JobLock,
     exe: &Path,
     report: &mut Report,
 ) -> Result<(), JobError> {
@@ -346,7 +341,6 @@ fn sync(
         git,
         tasq,
         store,
-        lock,
         rebase: &rebase,
         upstream: upstream.trim(),
     };
@@ -388,7 +382,6 @@ struct Remote<'a> {
     git: &'a Git,
     tasq: &'a Tasq,
     store: &'a Path,
-    lock: &'a JobLock,
     /// `tasq-git rebase --store <dir>`, run under the store lock.
     rebase: &'a [&'a OsStr],
     /// Its short name (`origin/default`), for the report.
@@ -404,18 +397,15 @@ impl Remote<'_> {
             git,
             tasq,
             store,
-            lock,
             rebase,
             upstream,
         } = *self;
         for last in [false, true] {
-            refresh(lock);
             git.check(store, &["fetch", "--quiet"])
                 .map_err(|err| (FETCH_FAILED, err.message))?;
             report.step(format!("fetched {upstream}"));
             let (_, behind) = divergence(git, store).map_err(|m| (FETCH_FAILED, m))?;
             if behind > 0 {
-                refresh(lock);
                 tasq.locked(rebase)
                     .map_err(|m| (REBASE, rebase_failure(&m)))?;
             }
@@ -436,7 +426,6 @@ impl Remote<'_> {
                 }
                 return Ok(Exchange::Done);
             }
-            refresh(lock);
             match git.check(store, &["-c", "push.default=upstream", "push", "--quiet"]) {
                 Ok(_) => {
                     report.step(format!("pushed {} to {upstream}", commits(ahead)));
@@ -488,12 +477,6 @@ fn divergence(git: &Git, store: &Path) -> Result<(usize, usize), String> {
     counts.ok_or_else(|| format!("git rev-list answered {out:?}"))
 }
 
-/// Stamps the job lock before a step that may take long. A lock that
-/// cannot be stamped only risks a second job starting meanwhile.
-fn refresh(lock: &JobLock) {
-    let _ = lock.refresh(SystemTime::now());
-}
-
 /// `tasq-git rebase --store <dir>`, run by the job under the store lock:
 /// rebases the branch onto its upstream, unless a task file has changes
 /// not committed yet (a write that landed after the job's commit): the
@@ -519,11 +502,12 @@ pub fn rebase(git: &Git, store: &Path) -> Result<(), String> {
     if !rebasing(git, store) {
         return Err(failed.message);
     }
-    let unmerged = git
-        .check(store, &["diff", "--name-only", "-z", "--diff-filter=U"])
-        .map_err(|err| err.message)?;
+    // Listed while the rebase is stopped, and aborted whether or not they
+    // could be: a stopped rebase left behind stops every later round.
+    let unmerged = git.check(store, &["diff", "--name-only", "-z", "--diff-filter=U"]);
     git.check(store, &["rebase", "--abort"])
         .map_err(|err| err.message)?;
+    let unmerged = unmerged.map_err(|err| err.message)?;
     let tasks: Vec<String> = unmerged
         .split('\0')
         .filter(|file| !file.is_empty())

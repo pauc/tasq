@@ -209,6 +209,14 @@ impl Env {
     }
 }
 
+/// The real `git`: the first on the test's own `PATH`.
+fn real_git() -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join("git"))
+        .find(|path| path.is_file())
+        .unwrap()
+}
+
 /// Writes an executable script, waiting until it can run (ETXTBSY while
 /// another test thread forks with the file still open for writing).
 fn install(path: &Path, script: &str) {
@@ -364,13 +372,14 @@ mod local {
     fn a_failed_commit_leaves_no_repository() {
         let env = Env::new();
         env.store_with(&[TASK_3]);
-        let hooks = env.base().join("hooks");
-        std::fs::create_dir_all(&hooks).unwrap();
         install(
-            &hooks.join("pre-commit"),
-            "#!/bin/sh\necho no commits today >&2\nexit 1\n",
+            &env.bin.join("git"),
+            &format!(
+                "#!/bin/sh\ncase \" $* \" in *' commit '*) echo no commits today >&2; exit 1 ;; esac\n\
+                 exec '{}' \"$@\"\n",
+                real_git().display()
+            ),
         );
-        env.gitconfig(&format!("[core]\n\thooksPath = {}\n", hooks.display()));
         let out = env.tasq_git(&ME);
         assert_eq!(out.status.code(), Some(1));
         assert!(
@@ -659,17 +668,46 @@ mod remote {
     }
 
     #[test]
-    fn a_failed_push_leaves_no_repository() {
+    fn the_users_signing_and_hooks_are_not_applied() {
         let env = Env::new();
         env.store_with(&[TASK_3]);
         let url = env.remote();
         let hooks = env.base().join("hooks");
         std::fs::create_dir_all(&hooks).unwrap();
+        for hook in ["pre-commit", "pre-push"] {
+            install(
+                &hooks.join(hook),
+                &format!("#!/bin/sh\necho global {hook} >&2\nexit 1\n"),
+            );
+        }
         install(
-            &hooks.join("pre-push"),
+            &env.bin.join("no-gpg"),
+            "#!/bin/sh\necho no pinentry >&2\nexit 2\n",
+        );
+        env.gitconfig(&format!(
+            "[commit]\n\tgpgSign = true\n[gpg]\n\tprogram = {}\n[core]\n\thooksPath = {}\n",
+            env.bin.join("no-gpg").display(),
+            hooks.display()
+        ));
+        let out = env.tasq_git(&with_url(&url, &[]));
+        assert_ok(&out);
+        assert_eq!(env.git(&env.store, &["log", "-1", "--format=%G?"]), "N\n");
+        assert_eq!(
+            env.git(&env.remote_dir(), &["rev-parse", "default"]),
+            env.git(&env.store, &["rev-parse", "HEAD"])
+        );
+    }
+
+    #[test]
+    fn a_failed_push_leaves_no_repository() {
+        let env = Env::new();
+        env.store_with(&[TASK_3]);
+        let url = env.remote();
+        // The remote refuses it (a server-side hook).
+        install(
+            &env.remote_dir().join("hooks/pre-receive"),
             "#!/bin/sh\necho no pushes today >&2\nexit 1\n",
         );
-        env.gitconfig(&format!("[core]\n\thooksPath = {}\n", hooks.display()));
         let out = env.tasq_git(&with_url(&url, &[]));
         assert_eq!(out.status.code(), Some(1));
         assert!(

@@ -110,6 +110,28 @@ struct Config {
 }
 
 impl Tasq {
+    /// The `tasq` the job asks about the store at `store`: `bin` with
+    /// `env`, run in `cwd`, the directory the job started in, or in the
+    /// store when that one is gone (a `tasq done` that removed the
+    /// worktree it ran in). The store is pinned (`TASQ_DATA_DIR`,
+    /// `TASQ_STORE_NAME`), so a `.tasq.toml` of either directory cannot
+    /// point it at another store.
+    pub fn for_store(bin: PathBuf, env: Env, cwd: Option<PathBuf>, store: &Path) -> Self {
+        let mut env: Env = env
+            .into_iter()
+            .filter(|(key, _)| key != "TASQ_DATA_DIR" && key != "TASQ_STORE_NAME")
+            .collect();
+        if let (Some(data_dir), Some(name)) = (store.parent(), store.file_name()) {
+            env.push(("TASQ_DATA_DIR".into(), data_dir.into()));
+            env.push(("TASQ_STORE_NAME".into(), name.into()));
+        }
+        Self {
+            bin,
+            env,
+            cwd: cwd.unwrap_or_else(|| store.to_owned()),
+        }
+    }
+
     /// The store the command resolves.
     pub fn store(&self) -> Result<Store, TasqError> {
         self.store_info(&["store", "info", "--json"])
@@ -196,4 +218,42 @@ impl Tasq {
 /// else `tasq` on `PATH`.
 pub fn bin(tasq_bin: Option<&Path>) -> PathBuf {
     tasq_bin.map_or_else(|| PathBuf::from("tasq"), Path::to_path_buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_jobs_tasq_is_pinned_to_its_store() {
+        let env: Env = [
+            ("HOME", "/home/me"),
+            ("TASQ_STORE_NAME", "work"),
+            ("TASQ_DATA_DIR", "/elsewhere"),
+            ("TASQ_SET", "ui.pager=less"),
+        ]
+        .map(|(k, v)| (OsString::from(k), OsString::from(v)))
+        .to_vec();
+        let store = Path::new("/data/stores/default");
+        let pinned = [
+            ("HOME", "/home/me"),
+            ("TASQ_SET", "ui.pager=less"),
+            ("TASQ_DATA_DIR", "/data/stores"),
+            ("TASQ_STORE_NAME", "default"),
+        ]
+        .map(|(k, v)| (OsString::from(k), OsString::from(v)))
+        .to_vec();
+        let here = Tasq::for_store("tasq".into(), env.clone(), Some("/proj".into()), store);
+        assert_eq!(
+            here,
+            Tasq {
+                bin: "tasq".into(),
+                env: pinned.clone(),
+                cwd: "/proj".into(),
+            }
+        );
+        let gone = Tasq::for_store("tasq".into(), env, None, store);
+        assert_eq!(gone.cwd, store);
+        assert_eq!(gone.env, pinned);
+    }
 }

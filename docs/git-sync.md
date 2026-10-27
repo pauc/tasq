@@ -103,11 +103,20 @@ only this one). `git` run by hand in the store directory uses the same config. W
 the three, git's own resolution applies (your global config); `tasq doctor` shows what it
 resolved to, and `git -C <store> config user.email ...` changes it later.
 
-The background job runs git with a cleared environment (`PATH`, `HOME`, `SSH_AUTH_SOCK` and
-its own settings), so exported `GIT_*` variables (a direnv `GIT_AUTHOR_EMAIL`, a `GIT_DIR`,
-a `GIT_SSH_COMMAND`) never reach it. `tasq git init`, `clone` and `sync` drop every `GIT_*`
-variable too. A git command you type yourself does not: unset them first if your shell sets
-them.
+The background job runs git with a cleared environment: `PATH`, `HOME`, `XDG_CONFIG_HOME`
+(where git finds your global config), `SSH_AUTH_SOCK`, `XDG_RUNTIME_DIR` and
+`DBUS_SESSION_BUS_ADDRESS` (for a credential helper that talks to your keyring), the proxy
+variables git reads (`https_proxy`, `no_proxy`, ...) and its own settings. Exported `GIT_*`
+variables (a direnv `GIT_AUTHOR_EMAIL`, a `GIT_DIR`, a `GIT_SSH_COMMAND`) never reach it.
+`tasq git init`, `clone` and `sync` drop every `GIT_*` variable too. A git command you type
+yourself does not: unset them first if your shell sets them.
+
+Every git the plugin runs, in the background or not, does so without commit signing and
+without hooks (`commit.gpgSign=false`, `core.hooksPath=/dev/null`, passed as
+`GIT_CONFIG_COUNT` variables), whatever your global config says: a background job has no
+terminal for a pinentry, and a global `pre-commit` or `pre-push` hook is about code, not task
+files. This is not written into the store's config, so a commit you make by hand in the store
+directory is signed and hooked as usual.
 
 ## What happens in the background
 
@@ -124,10 +133,13 @@ detached job and returns at once. The job:
    lock`), so it never races a tasq write; a write that lands meanwhile waits for it;
 3. goes round again if anything was written while it ran, then exits.
 
-One job runs per store at a time (`.tasq/plugins/git/job.lock`; a job that died stops blocking
-after two minutes). The job never prompts: a passphrase, an unknown host key or an HTTPS
+One job runs per store at a time: it holds an OS file lock on `.tasq/plugins/git/job.lock`,
+which goes with it, so a job that died blocks nothing and one waiting on a slow remote is
+never taken for dead. The job never prompts: a passphrase, an unknown host key or an HTTPS
 password fails it at once with a lasting warning. Use an agent-loaded or passphrase-less key,
-or run `tasq git sync`, which can prompt.
+or run `tasq git sync`, which can prompt. A git command of the job that runs for two minutes
+(a fetch or push hanging on an unreachable host) is killed and its step fails (`fetch failed:
+git timed out after 120 s`); `tasq git sync` waits as long as git does.
 
 ### The interval
 
@@ -136,7 +148,8 @@ included, and `tasq ui` at start and on `r`) and the last fetch is older than `[
 interval` seconds (default 60), the job is started to fetch and rebase. A command that wrote
 always fetches and pushes, whatever the interval. Set it per profile or per command like any
 key (`--set plugin.git.interval=600`); `0` fetches whenever the store opens. A value that is
-not a whole number of seconds is a warning on every command.
+not a whole number of seconds is a warning on every command, and the default applies
+meanwhile: writes are still committed and pushed.
 
 `tasq ui` reloads by itself when the job pulls changes in (it checks the files every 2 s), so a
 task edited on another machine shows without a keypress.
@@ -258,7 +271,7 @@ The plugin keeps its state in the store, under `.tasq/plugins/git/`, never commi
 
 | File | |
 |---|---|
-| `job.lock` | the running job; stale after two minutes |
+| `job.lock` | locked by the running job (an OS file lock, released when it exits); the file stays |
 | `pending` | a write or store open that came while the job ran; the job goes round again |
 | `writes` | one `<command> <ids>` line per write not committed yet, for the commit message |
 | `last-fetch` | when the remote was last asked (Unix seconds) |

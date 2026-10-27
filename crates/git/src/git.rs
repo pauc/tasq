@@ -1,6 +1,7 @@
 //! `git`, with the environment every call gets.
 
 use std::path::Path;
+use std::time::Duration;
 
 use crate::process::{self, Env, Finished};
 
@@ -39,12 +40,20 @@ pub enum RemoteBranch {
 pub struct Git {
     /// The environment of every `git` process.
     pub env: Env,
+    /// How long one `git` may run before it is killed and counts as
+    /// failed; `None` waits for it (in the foreground, where the user can
+    /// stop it).
+    pub timeout: Option<Duration>,
 }
 
 impl Git {
     /// `git <args>` in `dir`, whatever its outcome.
     pub fn run(&self, dir: &Path, args: &[&str]) -> Finished {
-        process::run(Path::new("git"), args, dir, &self.env)
+        let git = Path::new("git");
+        match self.timeout {
+            Some(limit) => process::run_within(git, args, dir, &self.env, limit),
+            None => process::run(git, args, dir, &self.env),
+        }
     }
 
     /// `git <args>` in `dir`; its stdout, or an error naming the

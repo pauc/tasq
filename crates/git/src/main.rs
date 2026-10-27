@@ -12,7 +12,7 @@ use tasq_git::clone;
 use tasq_git::git::Git;
 use tasq_git::init::{self, Identity, InitError, Options};
 use tasq_git::job::{self, Settings};
-use tasq_git::process::{background_env, spawn_detached, without_git_vars};
+use tasq_git::process::{background_env, foreground_env, spawn_detached};
 use tasq_git::tasq::{self, Tasq};
 
 /// Store sync for tasq: commits, pushes and pulls a store's task files.
@@ -42,6 +42,9 @@ enum Command {
         /// Seconds after the last fetch that the next one is due.
         #[arg(long, default_value_t = tasq_git::hook::INTERVAL.as_secs())]
         interval: u64,
+        /// Seconds one git command may run before it is killed.
+        #[arg(long, default_value_t = TIMEOUT.as_secs())]
+        timeout: u64,
     },
     /// Rebase the store onto its upstream (run by the job under the store
     /// lock).
@@ -94,6 +97,11 @@ struct IdentityArgs {
     ssh_key: Option<String>,
 }
 
+/// How long one git command of the background job may run: a fetch or
+/// push hanging on an unreachable host fails with a lasting warning
+/// instead of holding the job lock for good.
+const TIMEOUT: Duration = Duration::from_secs(120);
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
@@ -101,7 +109,11 @@ fn main() -> ExitCode {
         Command::Init(args) => report(run_init(args)),
         Command::Clone(args) => report(run_clone(args)),
         Command::Sync => sync(),
-        Command::Job { store, interval } => report(run_job(&store, interval)),
+        Command::Job {
+            store,
+            interval,
+            timeout,
+        } => report(run_job(&store, interval, timeout)),
         Command::Rebase { store } => rebase(&store),
     }
 }
@@ -127,21 +139,32 @@ fn tasq_here() -> Result<Tasq, String> {
     let cwd = std::env::current_dir()
         .map_err(|err| format!("could not read the working directory: {err}"))?;
     Ok(Tasq {
-        bin: tasq::bin(std::env::var_os("TASQ_BIN").map(PathBuf::from).as_deref()),
+        bin: tasq_bin(),
         env: std::env::vars_os().collect(),
         cwd,
     })
 }
 
-fn run_job(store: &Path, interval: u64) -> Result<String, String> {
-    let tasq = tasq_here()?;
+fn tasq_bin() -> PathBuf {
+    tasq::bin(std::env::var_os("TASQ_BIN").map(PathBuf::from).as_deref())
+}
+
+fn run_job(store: &Path, interval: u64, timeout: u64) -> Result<String, String> {
+    let tasq = Tasq::for_store(
+        tasq_bin(),
+        std::env::vars_os().collect(),
+        std::env::current_dir().ok(),
+        store,
+    );
     let git = Git {
         env: background_env(std::env::vars_os()),
+        timeout: Some(Duration::from_secs(timeout)),
     };
     let settings = Settings {
         interval: Duration::from_secs(interval),
         exe: std::env::current_exe()
             .map_err(|err| format!("could not find tasq-git itself: {err}"))?,
+        now: SystemTime::now,
     };
     job::run(&git, &tasq, store, &settings)
         .map(|()| String::new())
@@ -153,6 +176,7 @@ fn run_job(store: &Path, interval: u64) -> Result<String, String> {
 fn rebase(store: &Path) -> ExitCode {
     let git = Git {
         env: background_env(std::env::vars_os()),
+        timeout: None,
     };
     match job::rebase(&git, store) {
         Ok(()) => ExitCode::SUCCESS,
@@ -173,12 +197,14 @@ fn sync() -> ExitCode {
         tasq.env.push(("TASQ_EVENT".into(), "sync".into()));
         let store = tasq.store().map_err(|err| err.to_string())?;
         let git = Git {
-            env: without_git_vars(std::env::vars_os()),
+            env: foreground_env(std::env::vars_os()),
+            timeout: None,
         };
         let settings = Settings {
             interval: Duration::ZERO,
             exe: std::env::current_exe()
                 .map_err(|err| format!("could not find tasq-git itself: {err}"))?,
+            now: SystemTime::now,
         };
         job::foreground(&git, &tasq, &store.location, &settings).map_err(|err| err.to_string())
     })();
@@ -200,7 +226,8 @@ fn sync() -> ExitCode {
 fn run_clone(args: CloneArgs) -> Result<String, String> {
     let tasq = tasq_here()?;
     let git = Git {
-        env: without_git_vars(std::env::vars_os()),
+        env: foreground_env(std::env::vars_os()),
+        timeout: None,
     };
     let result = (|| -> Result<_, InitError> {
         let store = tasq.store_named(args.store.as_deref())?;
@@ -230,7 +257,8 @@ impl IdentityArgs {
 fn run_init(args: InitArgs) -> Result<String, String> {
     let tasq = tasq_here()?;
     let git = Git {
-        env: without_git_vars(std::env::vars_os()),
+        env: foreground_env(std::env::vars_os()),
+        timeout: None,
     };
     let result = (|| -> Result<_, InitError> {
         let store = tasq.store()?;
@@ -255,6 +283,7 @@ fn hook() -> ExitCode {
         .and_then(|_| {
             let git = Git {
                 env: background_env(std::env::vars_os()),
+                timeout: None,
             };
             tasq_git::hook::run(&stdin, &git, SystemTime::now(), spawn_job)
                 .map_err(|err| err.to_string())
@@ -273,7 +302,9 @@ fn hook() -> ExitCode {
 }
 
 /// Detaches `tasq-git job --store <store> --interval <secs>`, this very
-/// binary.
+/// binary, with this environment: its `tasq` calls resolve the profile and
+/// overrides of the command, and `TASQ_EVENT` keeps them from firing
+/// events.
 fn spawn_job(store: &Path, interval: Duration) -> std::io::Result<()> {
     let exe = std::env::current_exe()?;
     let interval = interval.as_secs().to_string();
@@ -286,5 +317,6 @@ fn spawn_job(store: &Path, interval: Duration) -> std::io::Result<()> {
             OsStr::new("--interval"),
             OsStr::new(&interval),
         ],
+        &std::env::vars_os().collect(),
     )
 }

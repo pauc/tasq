@@ -4,7 +4,9 @@
 //! the commit message, touches `pending` and, unless a job is running
 //! already (it will see `pending`), detaches `tasq-git job`. `store-open`
 //! does the same, recording nothing, once the last fetch is older than
-//! `[plugin.git] interval`. Either returns at once.
+//! `[plugin.git] interval`. Either returns at once. An interval that is
+//! not whole seconds is the event's error, after the work was done with
+//! the default one.
 
 use std::io;
 use std::path::Path;
@@ -59,8 +61,8 @@ pub const INTERVAL: Duration = Duration::from_secs(60);
 /// Handles the event in `stdin` and returns what to print on stdout:
 /// nothing, or for `doctor` the checks as a JSON array and a newline.
 /// `spawn` detaches the job for a store directory and the fetch interval;
-/// `now` judges whether a running job's lock is stale and a fetch due, and
-/// dates the last fetch for `doctor`; `git` answers `doctor`'s questions.
+/// `now` judges whether a fetch is due and dates the last fetch for
+/// `doctor`; `git` answers `doctor`'s questions.
 pub fn run(
     stdin: &str,
     git: &Git,
@@ -70,7 +72,7 @@ pub fn run(
     let payload = payload::parse(stdin)?;
     if is_repository(&payload.store.location) {
         match payload.event.as_str() {
-            "post-write" => post_write(&payload, now, spawn)?,
+            "post-write" => post_write(&payload, spawn)?,
             "store-open" => store_open(&payload, now, spawn)?,
             _ => {}
         }
@@ -91,26 +93,34 @@ pub fn interval(
     }
 }
 
+/// `[plugin.git] interval`, or [`INTERVAL`] and the error to report once
+/// the event's work is done.
+fn interval_or_default(payload: &Payload) -> (Duration, Result<(), HookError>) {
+    match interval(&payload.config) {
+        Ok(interval) => (interval, Ok(())),
+        Err(err) => (INTERVAL, Err(err)),
+    }
+}
+
 fn store_open(
     payload: &Payload,
     now: SystemTime,
     spawn: impl FnOnce(&Path, Duration) -> io::Result<()>,
 ) -> Result<(), HookError> {
-    let interval = interval(&payload.config)?;
+    let (interval, valid) = interval_or_default(payload);
     let store = &payload.store.location;
     let state = State::of(store);
     if state.fetch_due(now, interval) {
-        start(&state, store, interval, now, spawn)?;
+        start(&state, store, interval, spawn)?;
     }
-    Ok(())
+    valid
 }
 
 fn post_write(
     payload: &Payload,
-    now: SystemTime,
     spawn: impl FnOnce(&Path, Duration) -> io::Result<()>,
 ) -> Result<(), HookError> {
-    let interval = interval(&payload.config)?;
+    let (interval, valid) = interval_or_default(payload);
     let command = payload
         .command
         .as_deref()
@@ -127,7 +137,8 @@ fn post_write(
     let store = &payload.store.location;
     let state = State::of(store);
     state.record(&line).map_err(HookError::State)?;
-    start(&state, store, interval, now, spawn)
+    start(&state, store, interval, spawn)?;
+    valid
 }
 
 /// Touches `pending` and detaches a job unless a live one holds the lock:
@@ -136,11 +147,10 @@ fn start(
     state: &State,
     store: &Path,
     interval: Duration,
-    now: SystemTime,
     spawn: impl FnOnce(&Path, Duration) -> io::Result<()>,
 ) -> Result<(), HookError> {
     state.touch_pending().map_err(HookError::State)?;
-    if !state.job_running(now) {
+    if !state.job_running() {
         spawn(store, interval).map_err(HookError::Spawn)?;
     }
     Ok(())

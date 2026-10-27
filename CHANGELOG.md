@@ -29,9 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which commits the task files only (never `.tasq/` or other files) with the subject
   `<command> <ids>: <title of the first id>` (for example `log 57: Git sync as an opt-in
   feature for tasq stores`) and, when several writes are batched, one body line each. One job
-  runs per store (`.tasq/plugins/git/job.lock`, taken over after two minutes); a write made
-  while it runs is committed before it exits. The job ignores exported `GIT_*` variables and
-  cannot prompt. A failed commit is the lasting warning `commit failed: <git's message>`,
+  runs per store (an OS file lock on `.tasq/plugins/git/job.lock`, gone with the job); a write
+  made while it runs is committed before it exits. The job ignores exported `GIT_*` variables,
+  cannot prompt, and still commits when the command's working directory is gone (a `tasq done`
+  that removed its worktree). Every git the plugin runs does so without commit signing or hooks
+  (`commit.gpgSign=false`, `core.hooksPath=/dev/null`), whatever the global config says. A failed commit is the lasting warning `commit failed: <git's message>`,
   cleared by the next commit.
 - With `tasq-git` enabled, a store whose branch has an upstream is synced in the background:
   after a commit, and whenever a command opens the store and the last fetch is older than
@@ -39,8 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   upstream under `tasq store lock` when behind, and pushes when ahead. A push that fails is
   tried once more after another fetch and rebase. A failed fetch, rebase or push is the lasting
   warning `fetch failed: ...`, `rebase failed: ...` or `push failed: ...`, cleared once that
-  step succeeds. The job refreshes its lock during a long round, and ssh asks `false` instead of
-  the terminal (`SSH_ASKPASS_REQUIRE=force`), so a passphrase or host key prompt fails at once.
+  step succeeds. A git command of the job running two minutes is killed (`fetch failed: git
+  timed out after 120 s`), and ssh asks `false` instead of the terminal
+  (`SSH_ASKPASS_REQUIRE=force`), so a passphrase or host key prompt fails at once. An `interval`
+  that is not whole seconds is a warning, and the default applies.
 - With `tasq-git` enabled, a rebase that conflicts (both machines edited one task) is aborted
   under the store lock: the task files and the local commits stay as they were, no task file
   ever holds conflict markers, and the lasting warning `rebase conflict on task <ids>: local

@@ -50,6 +50,7 @@ impl Env {
             "#!/bin/sh\n\
              base='{base}'\n\
              [ \"$1 $3\" = 'view --json' ] || {{ echo \"fake tasq: $*\" >&2; exit 2; }}\n\
+             printf '%s|%s|%s\\n' \"$(pwd)\" \"$TASQ_DATA_DIR\" \"$TASQ_STORE_NAME\" >> \"$base/calls\"\n\
              if [ -f \"$base/on-view\" ]; then\n\
                mv \"$base/on-view\" \"$base/on-view.run\"\n\
                sh \"$base/on-view.run\"\n\
@@ -99,12 +100,35 @@ impl Env {
         self.store.join(".tasq/plugins/git").join(file)
     }
 
-    /// A `job.lock` as a running job leaves it, `age` old.
-    fn job_lock(&self, age: Duration) {
+    /// `job.lock` held as a running job holds it, until the file is
+    /// dropped.
+    fn hold_job_lock(&self) -> std::fs::File {
         let path = self.state("job.lock");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let file = std::fs::File::create(&path).unwrap();
-        file.set_modified(SystemTime::now() - age).unwrap();
+        file.lock().unwrap();
+        file
+    }
+
+    /// Whether a job holds `job.lock`.
+    fn job_running(&self) -> bool {
+        std::fs::File::open(self.state("job.lock")).is_ok_and(|file| file.try_lock().is_err())
+    }
+
+    /// A `git` first on `PATH` that runs `body` for a command line
+    /// matching the `case` pattern `when`, then the real git.
+    fn wrap_git(&self, when: &str, body: &str) {
+        install(
+            &self.bin.join("git"),
+            &format!(
+                "#!/bin/sh\ncase \" $* \" in\n  {when}) {body} ;;\nesac\nexec '{}' \"$@\"\n",
+                real_git().display()
+            ),
+        );
+    }
+
+    fn unwrap_git(&self) {
+        std::fs::remove_file(self.bin.join("git")).unwrap();
     }
 
     /// The `post-write` payload for `command` writing `ids`.
@@ -145,11 +169,11 @@ impl Env {
     /// Tells the plugin about writes while a job holds `job.lock`, so that
     /// the hook records them and detaches nothing; the lock is gone after.
     fn record(&self, writes: &[(&str, &[&str])]) {
-        self.job_lock(Duration::ZERO);
+        let lock = self.hold_job_lock();
         for (command, ids) in writes {
             assert_silent(&self.hook(&self.payload(command, ids)));
         }
-        std::fs::remove_file(self.state("job.lock")).unwrap();
+        drop(lock);
     }
 
     /// `tasq-git job --store <store>` in the foreground.
@@ -221,6 +245,14 @@ impl Env {
     }
 }
 
+/// The real `git`: the first on the test's own `PATH`.
+fn real_git() -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join("git"))
+        .find(|path| path.is_file())
+        .unwrap()
+}
+
 /// Writes an executable script, waiting until it can run (ETXTBSY while
 /// another test thread forks with the file still open for writing).
 fn install(path: &Path, script: &str) {
@@ -274,7 +306,7 @@ mod commit {
         assert_eq!(env.messages(), ["log 3: Three"]);
         assert_eq!(env.changed("HEAD"), format!("M\t{TASK_3}\n"));
         assert_eq!(env.git(&["status", "--porcelain", "--", "*.md"]), "");
-        assert!(!env.state("job.lock").exists(), "the job left its lock");
+        assert!(!env.job_running(), "the job left its lock held");
     }
 
     #[test]
@@ -394,6 +426,98 @@ mod commit {
     }
 
     #[test]
+    fn the_users_signing_and_hooks_are_not_applied() {
+        let env = Env::new();
+        let hooks = env.home.join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        install(
+            &hooks.join("pre-commit"),
+            "#!/bin/sh\necho global hook >&2\nexit 1\n",
+        );
+        install(
+            &env.bin.join("no-gpg"),
+            "#!/bin/sh\necho no pinentry >&2\nexit 2\n",
+        );
+        std::fs::write(
+            env.home.join(".gitconfig"),
+            format!(
+                "[commit]\n\tgpgSign = true\n[gpg]\n\tprogram = {}\n[core]\n\thooksPath = {}\n",
+                env.bin.join("no-gpg").display(),
+                hooks.display()
+            ),
+        )
+        .unwrap();
+        env.touch_task(TASK_3);
+        env.record(&[("log", &["3"])]);
+        assert_silent(&env.job());
+        assert_eq!(env.messages(), ["log 3: Three"]);
+        assert_eq!(env.git(&["log", "-1", "--format=%G?"]), "N\n");
+        assert_eq!(env.warnings(), None);
+    }
+
+    #[test]
+    fn the_identity_may_come_from_xdg_config_home() {
+        let env = Env::new();
+        env.git(&["config", "--unset", "user.name"]);
+        env.git(&["config", "--unset", "user.email"]);
+        std::fs::write(
+            env.home.join(".gitconfig"),
+            "[user]\n\tuseConfigOnly = true\n",
+        )
+        .unwrap();
+        let xdg = env.base().join("xdg");
+        std::fs::create_dir_all(xdg.join("git")).unwrap();
+        std::fs::write(
+            xdg.join("git/config"),
+            "[user]\n\tname = Xdg Me\n\temail = xdg@example.invalid\n",
+        )
+        .unwrap();
+        env.touch_task(TASK_3);
+        assert_silent(&env.job_with(&[("XDG_CONFIG_HOME", xdg.to_str().unwrap())]));
+        assert_eq!(
+            env.git(&["log", "-1", "--format=%an <%ae>"]),
+            "Xdg Me <xdg@example.invalid>\n"
+        );
+    }
+
+    #[test]
+    fn a_job_whose_directory_is_gone_asks_tasq_from_the_store() {
+        let env = Env::new();
+        env.touch_task(TASK_3);
+        env.record(&[("log", &["3"])]);
+        // `tasq done` in the worktree it removes: the hook, and the job it
+        // detaches, start in a directory that no longer exists.
+        let gone = env.base().join("gone");
+        std::fs::create_dir_all(&gone).unwrap();
+        let out = Command::new("sh")
+            .args([
+                "-c",
+                "cd \"$1\" && rmdir \"$1\" && exec \"$2\" job --store \"$3\"",
+                "sh",
+            ])
+            .arg(&gone)
+            .arg(env!("CARGO_BIN_EXE_tasq-git"))
+            .arg(&env.store)
+            .env_clear()
+            .env("HOME", &env.home)
+            .env("PATH", env.path())
+            .env("TASQ_BIN", env.bin.join("tasq"))
+            .current_dir(env.base())
+            .output()
+            .unwrap();
+        assert_silent(&out);
+        assert_eq!(env.messages(), ["log 3: Three"]);
+        assert_eq!(
+            std::fs::read_to_string(env.base().join("calls")).unwrap(),
+            format!(
+                "{}|{}|default\n",
+                env.store.display(),
+                env.store.parent().unwrap().display()
+            )
+        );
+    }
+
+    #[test]
     fn a_store_that_is_not_a_repository_is_left_alone() {
         let env = Env::new();
         std::fs::remove_dir_all(env.store.join(".git")).unwrap();
@@ -429,46 +553,38 @@ mod running {
         assert_eq!(env.messages(), ["log 3: Three", "set 4: Four"]);
         assert_eq!(env.git(&["status", "--porcelain", "--", "*.md"]), "");
         assert!(!env.state("pending").exists());
-        assert!(!env.state("job.lock").exists());
+        assert!(!env.job_running());
     }
 
     #[test]
-    fn a_live_job_lock_means_another_job_is_running() {
+    fn a_held_job_lock_means_another_job_is_running() {
         let env = Env::new();
         env.touch_task(TASK_3);
-        env.job_lock(Duration::from_secs(100));
+        let lock = env.hold_job_lock();
+        // However old: a job holds the lock for as long as it lives.
+        lock.set_modified(SystemTime::now() - Duration::from_secs(600))
+            .unwrap();
         assert_silent(&env.job());
         assert_eq!(env.messages(), Vec::<String>::new());
-        assert!(env.state("job.lock").exists(), "the job took a live lock");
+        drop(lock);
     }
 
     #[test]
-    fn a_job_lock_older_than_two_minutes_is_a_dead_job() {
+    fn a_job_lock_nobody_holds_is_a_dead_jobs() {
         let env = Env::new();
         env.touch_task(TASK_3);
-        env.job_lock(Duration::from_secs(130));
+        drop(env.hold_job_lock());
         assert_silent(&env.job());
         assert_eq!(env.messages(), ["update task files"]);
-        assert!(!env.state("job.lock").exists());
     }
 }
 
 mod failure {
     use super::*;
 
-    /// A global `pre-commit` hook that fails with "nope".
+    /// A `git commit` that fails with "nope" and "twice".
     fn failing_commits(env: &Env) {
-        let hooks = env.home.join("hooks");
-        std::fs::create_dir_all(&hooks).unwrap();
-        install(
-            &hooks.join("pre-commit"),
-            "#!/bin/sh\necho nope >&2\necho twice >&2\nexit 1\n",
-        );
-        std::fs::write(
-            env.home.join(".gitconfig"),
-            format!("[core]\n\thooksPath = {}\n", hooks.display()),
-        )
-        .unwrap();
+        env.wrap_git("*' commit '*", "echo nope >&2; echo twice >&2; exit 1");
     }
 
     #[test]
@@ -489,9 +605,9 @@ mod failure {
             Some("push failed: offline\ncommit failed: nope; twice\n")
         );
         assert_eq!(env.messages(), Vec::<String>::new());
-        assert!(!env.state("job.lock").exists());
+        assert!(!env.job_running());
 
-        std::fs::remove_file(env.home.join(".gitconfig")).unwrap();
+        env.unwrap_git();
         assert_silent(&env.job());
         assert_eq!(env.messages(), ["log 3: Three"]);
         assert_eq!(env.warnings().as_deref(), Some("push failed: offline\n"));
@@ -507,7 +623,7 @@ mod failure {
             env.warnings().as_deref(),
             Some("commit failed: nope; twice\n")
         );
-        std::fs::remove_file(env.home.join(".gitconfig")).unwrap();
+        env.unwrap_git();
         assert_silent(&env.job());
         assert_eq!(env.warnings(), None);
     }
@@ -535,24 +651,42 @@ mod hook {
             env.base().join("on-view.run").exists()
         });
         assert_eq!(env.messages(), Vec::<String>::new());
+        assert!(env.job_running());
 
         std::fs::write(&go, "").unwrap();
         eventually("the commit", || env.messages() == ["log 3: Three"]);
-        eventually("the job to exit", || !env.state("job.lock").exists());
+        eventually("the job to exit", || !env.job_running());
+    }
+
+    #[test]
+    fn a_post_write_with_a_bad_interval_still_commits() {
+        let env = Env::new();
+        env.touch_task(TASK_3);
+        let mut payload: serde_json::Value =
+            serde_json::from_str(&env.payload("log", &["3"])).unwrap();
+        payload["config"] = serde_json::json!({"interval": "10m"});
+        let out = env.hook(&payload.to_string());
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            stderr(&out),
+            "[plugin.git] interval must be a whole number of seconds, not \"10m\"\n"
+        );
+        eventually("the commit", || env.messages() == ["log 3: Three"]);
+        eventually("the job to exit", || !env.job_running());
     }
 
     #[test]
     fn post_write_records_the_writes_while_a_job_runs() {
         let env = Env::new();
         env.touch_task(TASK_3);
-        env.job_lock(Duration::ZERO);
+        let lock = env.hold_job_lock();
         assert_silent(&env.hook(&env.payload("move", &["3", "4"])));
         assert_silent(&env.hook(&env.payload("log", &["3"])));
         assert!(env.state("pending").exists());
-        // No job was started: nothing waits on the live lock to commit.
+        // No job was started: nothing waits on the held lock to commit.
         std::thread::sleep(Duration::from_millis(200));
         assert_eq!(env.messages(), Vec::<String>::new());
-        std::fs::remove_file(env.state("job.lock")).unwrap();
+        drop(lock);
         assert_silent(&env.job());
         assert_eq!(env.messages(), ["move 3 4: Three\n\nmove 3 4\nlog 3"]);
     }
