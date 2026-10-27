@@ -10,7 +10,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
 | GS-001 | The `tasq-git` crate answers events and does nothing for a plain store | done | e71fd21. Mutants with `--no-config` on `crates/git/src`, and `--in-diff` on the whole diff: 0 missed (14 mutants: 13 caught, 1 unviable). |
 | GS-002 | `tasq git init` with identity | done | 2c07c38. Mutants with `--no-config` on `crates/git/src`: 0 missed (50: 43 caught, 7 unviable); `--in-diff` on the whole diff: 0 missed (37: 31 caught, 6 unviable). |
 | GS-003 | Writes are committed in the background | done | df8198e. Mutants with `--no-config` on `crates/git/src`: 0 missed (121: 103 caught, 15 unviable, 3 timeouts); `--in-diff` on the whole diff: 0 missed (77: 66 caught, 8 unviable, 3 timeouts). The timeouts are mutants that make the job loop forever (`pending` never cleared or always there). |
-| GS-004 | Push, fetch and rebase in the background | blocked | |
+| GS-004 | Push, fetch and rebase in the background | done | b61d272. Mutants with `--no-config` on `crates/git/src`: 0 missed (158: 139 caught, 16 unviable, 3 timeouts, the endless-loop mutants of GS-003); `--in-diff` on the whole diff: 0 missed (52: 50 caught, 2 unviable). A first run left 2 missed (the "still behind" guard before the push); the late-write test now has a commit of its own on B. |
 | GS-005 | Conflicts are aborted and reported | blocked | |
 | GS-006 | Duplicate ids are explained | blocked | |
 | GS-007 | `tasq git sync`, `tasq git clone` and the doctor checks | blocked | |
@@ -67,6 +67,29 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
 - 2026-10-27 (GS-003): for GS-004: the job takes `job.lock` afresh each round, so its mtime is
   the round's start; a single round over two minutes (a slow fetch or push) is taken for dead
   and a second job starts. Refresh the lock during long git steps.
+- 2026-10-27 (GS-004): `process_group(0)` detaches the job from tasq's group but not from the
+  terminal: it keeps the session's controlling tty. With `SSH_ASKPASS_REQUIRE=never` (the plan,
+  and GS-003's environment) OpenSSH reads a passphrase or host-key answer from `/dev/tty`, and a
+  background group reading the tty is stopped by SIGTTIN, so the job would hang, not fail.
+  `SSH_ASKPASS_REQUIRE=force` with `SSH_ASKPASS=false` makes every ssh prompt fail at once; git
+  also asks `SSH_ASKPASS` for credentials before `GIT_TERMINAL_PROMPT=0` refuses.
+- 2026-10-27 (GS-004): `git rebase --autostash` whose stash pop conflicts exits 0 and leaves
+  conflict markers in the working file (git 2.47). The rebase therefore never autostashes; it
+  is skipped when a task file has uncommitted changes (a write that landed after the job's
+  commit and before the store lock), and the round after commits and rebases.
+- 2026-10-27 (GS-004): `tasq store lock` hands its command tasq's environment, `GIT_*`
+  included, so `tasq store lock -- git rebase` would let a direnv `GIT_DIR` through. The
+  command is `tasq-git rebase --store <dir>` (hidden), which runs git with the background
+  environment like the job.
+- 2026-10-27 (GS-004): test seams with real git only: `remote.origin.uploadpack` set to a
+  wrapper that logs and execs `git-upload-pack` counts fetches exactly; a global `pre-push`
+  hook that pushes from the other machine on its first run stages a rejected push; a
+  `pre-rebase` hook stages a failed rebase without leaving one in progress; `touch -r` and
+  `find -newer` (POSIX, so macOS CI too) age the job lock mid-round and check it was refreshed.
+- 2026-10-27 (GS-004): for GS-005: a failed rebase is now only the `rebase failed: ...`
+  warning; a conflict leaves the rebase in progress, which `@{upstream}` and the commit round
+  do not expect. The skip on uncommitted changes is not a failure and must not be aborted. For
+  GS-007: `last-fetch` is the last look at the remote, failed or not (Deviations).
 
 ## Blockers
 
@@ -157,3 +180,33 @@ None. tasq 59 is merged.
   while the job runs), unit tests for the message, the background environment and the lock's
   clock, and one CLI test (`a_write_is_committed_in_the_background`: `tasq git init`, `tasq
   log 3`, the commit `log 3: Answer the support ticket` appears).
+- GS-004: the background environment sets `SSH_ASKPASS=false` and `SSH_ASKPASS_REQUIRE=force`
+  in place of the plan's `SSH_ASKPASS_REQUIRE=never` (Learnings: `never` hangs a job that still
+  has the terminal).
+- GS-004: the rebase is `tasq store lock -- tasq-git rebase --store <dir>`, a hidden subcommand
+  (Learnings), onto `@{upstream}`; it does nothing when a task file has uncommitted changes.
+  The remote and branch are the branch's upstream: no upstream, and the job only commits. The
+  push is `git -c push.default=upstream push`, so a global `push.default` cannot change where
+  it goes.
+- GS-004: `last-fetch` records every look at the remote, failed ones and a store without an
+  upstream included, so an offline machine or a local-only repository is not asked again on
+  every command; a round that committed always syncs. A future `last-fetch` (the clock went
+  back) is due.
+- GS-004: any failed push is fetched, rebased and pushed once more, not only a rejection: no
+  parsing of git's message, and an offline remote fails at the second fetch.
+- GS-004: `store-open` touches `pending` too, so a running job goes round once more and fetches
+  if due. The hook passes the interval to the job (`job --interval <secs>`, default 60); an
+  `interval` that is not a whole number of seconds is a hook error (`[plugin.git] interval
+  must be a whole number of seconds, not <json>`), for `post-write` too.
+- GS-004: warnings: the failed step's kind (`fetch failed: `, `rebase failed: `, `push failed:
+  `) is set, the steps before it cleared, those after it left as they were. Not behind clears
+  the rebase warning, not ahead the push warning. A failed sync step is only a warning: the job
+  still exits 0 (a failed commit stays exit 1). The job lock is refreshed before the fetch, the
+  rebase and the push.
+- GS-004: GS-003's `store_open_starts_nothing` test is gone (a repository store now fetches on
+  `store-open` when due); `tests/sync.rs` covers `store-open`. Tests: `crates/git/tests/sync.rs`
+  (two machines on a bare `file://` remote, the job in the foreground and through the hook),
+  state unit tests (`fetch_due`, lock refresh), and one CLI test
+  (`another_machines_write_is_pulled_when_the_store_opens`: `tasq git init <url>`, a push from
+  a clone, `tasq list`, the commit arrives through the real `tasq store lock`).
+- GS-004: a failed rebase is not aborted; that and the conflict warning are GS-005's.

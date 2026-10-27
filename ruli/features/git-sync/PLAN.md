@@ -267,13 +267,13 @@ as lasting warnings that clear on success.
 
 **Blocked by:** GS-003.
 
-**Status:** blocked
+**Status:** done
 
-- [ ] Two-machine tests: writes on A reach B; interleaved writes on different tasks converge.
-- [ ] `store-open` before the interval spawns nothing; after it, one fetch.
-- [ ] Offline remote: warning, then cleared after a successful run.
-- [ ] A remote that would prompt fails fast.
-- [ ] `mutants-in`: zero missed.
+- [x] Two-machine tests: writes on A reach B; interleaved writes on different tasks converge.
+- [x] `store-open` before the interval spawns nothing; after it, one fetch.
+- [x] Offline remote: warning, then cleared after a successful run.
+- [x] A remote that would prompt fails fast.
+- [x] `mutants-in`: zero missed.
 
 ### GS-005: conflicts are aborted and reported
 
