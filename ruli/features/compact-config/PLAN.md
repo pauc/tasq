@@ -280,8 +280,8 @@ section), the `.tasq.toml` guard grep.
 
 **Blocked by:** CC-008.
 
-**Status:** todo
+**Status:** done
 
-- [ ] Each finding fixed, with a test where it changes behaviour (doctor merged load, doctor with worktrees off, the profile-file error string, a profile's relative template source).
-- [ ] The CI grep catches `[worktree]` followed by `enabled`.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] Each finding fixed, with a test where it changes behaviour (doctor merged load, doctor with worktrees off, the profile-file error string, a profile's relative template source).
+- [x] The CI grep catches `[worktree]` followed by `enabled`.
+- [x] `mutants-in` the diff: zero missed.

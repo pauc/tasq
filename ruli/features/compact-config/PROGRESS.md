@@ -14,7 +14,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
 | CC-006 | `tasq worktree config [DIR]` | done | ffc1b8e; mutants 18: 18 caught, 0 missed |
 | CC-007 | `tasq doctor` checks repository configs | done | 7ba50f1; mutants 18: 12 caught, 6 unviable, 0 missed |
 | CC-008 | The docs describe the config directory | done | 5ff45bd; no Rust beyond one doc comment: mutants 0 (none in the diff), 0 missed |
-| CC-009 | Fix the branch review findings | todo | |
+| CC-009 | Fix the branch review findings | done | 1affecb; mutants 47: 40 caught, 7 unviable, 0 missed |
 
 ## Learnings
 
@@ -142,6 +142,17 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
   `profile_names` and `repo_files` duplicate one directory scan. Worth a follow-up task. The
   one doc finding (the stale `Loaded::profiles` comment) is fixed here, and the symlink
   sentence in the docs was softened to match the `.git` file case.
+- 2026-10-27 (CC-009): doctor's merged load reruns `Config::load` once per repository config
+  whose `path` is a main checkout, and each load parses every `repos/*.toml` again, so doctor
+  does N+1 full parses of `repos/` (code review note, not changed). Belongs with finding 11
+  and the per-task reload in the follow-up.
+- 2026-10-27 (CC-009): the code review's other notes, not changed: `exec` builds its
+  `LoadOptions` by hand next to `app::load_options` (it has no `GlobalArgs`), the private
+  `named_dir` wrapper in `plugins.rs`, and the ADR 0031 / ADR 0006 index edits (asked for by
+  the plan; ADR 0031 is unmerged on this branch).
+- 2026-10-27 (CC-009): the first mutants run left two survivors in `exec`'s fallback (dropping
+  `home` or `env` when the cwd is gone); the removed-directory test now forwards
+  `TASQ_CONFIG_DIR=~/conf`, which needs both.
 
 ## Blockers
 
@@ -246,3 +257,22 @@ None.
   key table, a "Profiles" section and a "Repository configs" subsection (including `tasq
   worktree config` and the doctor check), and the env of sessions and worktree hooks lists
   `TASQ_CONFIG_DIR`. README lists `tasq worktree config [DIR]`.
+- CC-009: a `[profile.<name>]` table in a profile file gets the new error
+  (`ConfigError::ProfileInProfile`: `<file>:<line>:<column>: a profile file is the profile
+  itself: remove the [profile.<name>] header and the profile.<name>. prefix of its tables`)
+  only when `<name>` is the file's own profile; another profile's table keeps
+  `InlineProfile`'s "move it to `profiles/<name>.toml`" (code review finding: dropping the
+  prefix would move the settings into the wrong profile).
+- CC-009: the config directory is exposed as a public function,
+  `tasq_core::config::named_config_dir`, not a field on `Loaded`: plugin dispatch (`exec`)
+  runs before any config loads. It is no longer canonicalised, so plugins and hooks get the
+  directory tasq loaded (symlinks kept). `exec` now builds `LoadOptions` from the process and
+  falls back to no cwd when the current directory was removed (code review finding; a
+  relative named directory is then forwarded as given).
+- CC-009: the CI grep matches the table spelling as a key, `\[worktree\][[:space:]]*enabled[[:space:]]*=`,
+  not `\[worktree\][^]]*enabled`, so prose about the `[worktree]` table while worktrees are
+  enabled passes (code review finding). A `[worktree]` header and `enabled` on separate lines
+  is still not caught.
+- CC-009: finding 10 is the bare-repository line in `docs/config.md`'s repository config
+  section; no doctor warning. Doctor's `repo-config` doc sentence also gained the merged load
+  and the `worktrees_enabled` condition.
