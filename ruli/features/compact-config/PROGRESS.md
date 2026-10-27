@@ -10,7 +10,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
 | CC-002 | Profiles are files | done | 982b55f; mutants 39: 34 caught, 5 unviable, 0 missed |
 | CC-003 | `worktrees_enabled` | done | 42bf3ae; mutants 8: 6 caught, 2 unviable, 0 missed |
 | CC-004 | Repository configs replace `.tasq.toml` | done | 674522d; mutants 22: 12 caught, 10 unviable, 0 missed |
-| CC-005 | Hooks run without trust | todo | |
+| CC-005 | Hooks run without trust | done | f561dff; mutants 48: 38 caught, 10 unviable, 0 missed |
 | CC-006 | `tasq worktree config [DIR]` | todo | |
 | CC-007 | `tasq doctor` checks repository configs | todo | |
 | CC-008 | The docs describe the config directory | todo | |
@@ -78,6 +78,25 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
 - 2026-10-27 (CC-004): the trust store still applies, now to the repository config's hooks
   (`RepoSettings::repo_file` is the matched file, `untrusted` the kinds it sets), so the
   approvals key by `repos/<name>.toml`. CC-005 removes it.
+- 2026-10-27 (CC-005): `--yes` lived on seven commands, not the five ADR 0031 lists:
+  `worktree prune` and `worktree switch` had it too. All gone; an old `--yes` is now clap's
+  exit 2 (`unexpected argument`), so a script passing it breaks loudly.
+- 2026-10-27 (CC-005): the TUI's `d` used `Approval::Skip`, so a repository config's
+  `pre-remove`/`post-remove` hooks never ran from it. They run now, synchronously, like the
+  global ones always did; a slow hook freezes the UI for its duration (code review note,
+  not changed).
+- 2026-10-27 (CC-005): a hook line that does not render now fails a dry-run release for any
+  layer; before, a repository config's unapproved line was skipped unrendered on a dry run.
+- 2026-10-27 (CC-005): `tasq_core::worktree::hooks::state_file` is now used only for
+  `switch -` (`previous-worktree`); it would sit better in a state/paths module. Left in
+  place. `Loaded::repo` lost its last production reader (`repo_settings`); CC-006's
+  "matched file or none" is meant to use it.
+- 2026-10-27 (CC-005): CHANGELOG.md has no entry for any CC sub-task yet (removed
+  `--config`, inline profiles, `worktree.enabled`, `.tasq.toml`, now trust and `--yes`).
+  Worth one Removed/Changed block in CC-008.
+- 2026-10-27 (CC-005): the first mutants baseline failed on
+  `commands::view::tests::render_with_glow_runs_the_program_and_reports_failures`
+  (`ETXTBSY`, the same flake as CC-001's); the rerun passed.
 
 ## Blockers
 
@@ -135,6 +154,14 @@ None.
   (`write_project_config`) now write `config.toml`; core tests that stacked it over the
   global file use a selected profile. The trust and `--yes` help texts say "repository
   config" until CC-005 deletes them.
+- CC-005: also removed `HookFailure::{NoTrustFile, TrustFile, Ask}`, `Hooks::skipped` and the
+  `skip` argument of `Hooks::render` (a dry run no longer prints `skip ... (not approved)`
+  lines), and the CLI's unused `worktree_hooks::{prepare, run}`; the `From` impls in
+  `error.rs` for the hook, create and release errors collapse to one arm each. `prepare`
+  drops its `dry_run` and `report` arguments, `materialize` and `release` their `Approver`.
+- CC-005: the trust sentences in `docs/config.md`, `docs/json.md` (the `worktree trust`
+  row), `docs/architecture.md`, `README.md` and `CLAUDE.md` are removed here rather than in
+  CC-008, since the commands they describe are gone.
 - CC-003: also changed outside the Rust readers: `examples/config/*.toml`, the
   `crates/core/tests/fixtures/worktree/*.toml` fixtures (they lose `enabled = true`; they are
   repository settings, which CC-004 forbids it in) and `plugins/claude/skills/wrapup/SKILL.md`.

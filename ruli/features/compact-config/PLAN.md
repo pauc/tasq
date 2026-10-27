@@ -206,11 +206,11 @@ template sources relative to the file; the project-file layer and its walk are r
 
 **Blocked by:** CC-004.
 
-**Status:** todo
+**Status:** done
 
-- [ ] Hooks from a repository config run on `worktree up`, `next`, `done` without a prompt.
-- [ ] `trust` and `--yes` are gone from help; no code reads `trust.toml`.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] Hooks from a repository config run on `worktree up`, `next`, `done` without a prompt.
+- [x] `trust` and `--yes` are gone from help; no code reads `trust.toml`.
+- [x] `mutants-in` the diff: zero missed.
 
 ### CC-006: `tasq worktree config [DIR]`
 
