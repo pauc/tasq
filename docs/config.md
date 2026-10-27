@@ -1,23 +1,67 @@
 # Configuration
 
-`tasq` reads TOML configuration in layers; later layers override earlier ones field by field:
+`tasq` reads TOML configuration from one directory, the **config directory** (ADR 0031):
+`--config-dir <dir>`, else `TASQ_CONFIG_DIR`, else `$XDG_CONFIG_HOME/tasq`, else
+`~/.config/tasq`. A directory named by `--config-dir` or `TASQ_CONFIG_DIR` must exist (a
+relative one starts at the current directory); the default one may be absent, and every file
+in it is optional:
+
+```
+~/.config/tasq/
+├── config.toml           the global config
+├── profiles/<name>.toml  one profile per file
+└── repos/<any>.toml      one repository config per file
+```
+
+Nothing is read from the directory tasq runs in or from a repository. Later layers override
+earlier ones field by field:
 
 1. Built-in defaults (below).
-2. Global file: `$XDG_CONFIG_HOME/tasq/config.toml`, else `~/.config/tasq/config.toml`.
-   `TASQ_CONFIG=<file>` or `--config <file>` replaces it (the file must then exist).
-3. Project file: the nearest `.tasq.toml` walking up from the current directory (stopping at
-   your home directory; nothing above home is read).
-4. `[profile.<name>]` blocks from the loaded files, when selected with `--profile` or `TASQ_PROFILE`.
+2. `config.toml`.
+3. The selected profile, `profiles/<name>.toml`, when selected with `--profile` or
+   `TASQ_PROFILE` (see "Profiles").
+4. The repository config, for the worktree commands only: the file in `repos/` whose `path` is
+   the repository's main checkout (see "Repository configs").
 5. Environment variables (table below), including `TASQ_SET`.
 6. `--set key=value` overrides.
 
 Tables deep-merge; scalars and arrays replace (a later `[[source]]` list replaces the whole list).
 Unknown keys are errors naming the file, line and column. `tasq config show` prints the effective
-config and which layer set each value.
+config and which layer set each value; it never shows a repository config, `tasq worktree
+config [DIR]` does (see "Repository configs").
 
 Values given through the environment or `--set` are converted to the key's type:
 `true`/`false`/`yes`/`no`/`1`/`0`/`on`/`off` for booleans, a comma-separated list for arrays,
 text otherwise. A key that does not exist is an error.
+
+## Profiles
+
+A profile is a named partial configuration: `profiles/<name>.toml` in the config directory is
+the profile `<name>`, applied over `config.toml` only when selected with `--profile <name>` or
+`TASQ_PROFILE=<name>` (`--profile` wins). Its body has the shape of `config.toml`, any key of
+this page, with no wrapper table:
+
+```toml
+# ~/.config/tasq/profiles/work.toml
+[store]
+name = "work"
+
+[[source]]
+name = "gitlab-review-requests"
+kind = "gitlab-review-requests"
+forge = "gitlab"
+```
+
+Only the selected file is read. Selecting a name with no file is an error that names the file
+it looked for and the profiles there are (`profile "x" is not defined: no file
+~/.config/tasq/profiles/x.toml; available profiles: home, work`). Profiles do not nest, and a
+`[profile.<name>]` table in `config.toml` or a profile file is an error at its name:
+`profiles are files now: move [profile.<name>] to <config dir>/profiles/<name>.toml`.
+`tasq config show` names the profile file as the layer of each key it sets
+(`profile work (~/.config/tasq/profiles/work.toml)`).
+
+To pick a profile per directory, export `TASQ_PROFILE` from that directory's `.envrc`; tasq
+itself never looks at the directory it runs in.
 
 ## Defaults
 
@@ -29,6 +73,7 @@ else `~/.local/share/tasq/stores`), so `tasq config show` prints it as a default
 
 ```toml
 # data_dir = "~/.local/share/tasq/stores"   # $XDG_DATA_HOME/tasq/stores when set
+worktrees_enabled = false    # worktrees per task, see "Worktrees"
 
 [store]
 name = "default"             # the store directory is <data_dir>/<name>
@@ -173,7 +218,7 @@ timeout = 2                  # seconds a plugin may take over one event
 | `plugins.enabled` | array of strings | `[]` | Plugins told about events, each run as `tasq-<name>` from `PATH`, in this order. Not empty, no `/`, no whitespace, not `.` or `..`, no leading `-`, not a built-in command, not listed twice. See "Plugins". |
 | `plugins.timeout` | integer (seconds) | `2` | How long one plugin may take over one event before its process group is killed and a warning reported. `0` kills every plugin at once. |
 | `plugin.<name>.*` | any TOML | empty table | The plugin's own settings, not checked by tasq, sent to it as `config` in every event payload. See "Plugins". |
-| `profile.<name>.*` | table | none | A partial configuration (any key above) applied when the profile is selected. Profiles do not nest. |
+| `worktrees_enabled` | bool | `false` | Whether worktrees per task exist. Off hides the commands, the JSON field and the TUI section; files are never rewritten because of it. Top level only, never in a repository config. See "Worktrees". |
 
 Source of truth: `crates/core/src/config/mod.rs`.
 
@@ -181,8 +226,8 @@ Source of truth: `crates/core/src/config/mod.rs`.
 
 | Variable | Effect |
 |---|---|
-| `TASQ_CONFIG` | replaces the global file (must exist) |
-| `TASQ_PROFILE` | selects `[profile.<name>]` |
+| `TASQ_CONFIG_DIR` | the config directory (must exist); `--config-dir` wins over it |
+| `TASQ_PROFILE` | selects `profiles/<name>.toml`; `--profile` wins over it |
 | `TASQ_SET` | newline-separated `key=value` overrides, applied like `--set` (any key); part of the env layer, wins over the `TASQ_*` variables below for the same key, loses to `--set` flags. `tasq` sets it for the plugins and hooks it runs, so they see the same `--set` overrides |
 | `TASQ_DATA_DIR` | `data_dir` |
 | `TASQ_STORE_NAME` | `store.name` |
@@ -203,7 +248,7 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
 | `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
 | `TASQ_SUMMARY_PROMPT_FILE` | `report.summary.prompt_file` |
-| `TASQ_WORKTREE_ENABLED` | `worktree.enabled` |
+| `TASQ_WORKTREES_ENABLED` | `worktrees_enabled` |
 | `TASQ_WORKTREE_PATH` | `worktree.path` |
 | `TASQ_WORKTREE_BRANCH` | `worktree.branch` |
 | `TASQ_WORKTREE_BASE` | `worktree.base` |
@@ -211,13 +256,14 @@ Source of truth: `crates/core/src/config/mod.rs`.
 | `TASQ_WORKTREE_ON_DONE` | `worktree.on_done` |
 | `TASQ_WORKTREE_DELETE_BRANCH` | `worktree.delete_branch` |
 
-Empty values count as unset. `XDG_CONFIG_HOME` is honoured for the global file location,
+Empty values count as unset. `XDG_CONFIG_HOME` is honoured for the config directory,
 `XDG_DATA_HOME` for the default `data_dir`.
 
 Variables that are not configuration: `NO_COLOR` turns colour off; `TASQ_NOW="YYYY-MM-DD
 HH:MM"` fixes the clock (see `docs/testing.md`); `TASQ_TASK_ID`, `TASQ_DATA_DIR`,
-`TASQ_STORE_NAME` and `TASQ_PROFILE` are set in launched sessions (the first two double as the
-overrides above, so the session's `tasq` opens the same store); `TASQ_BIN`, `TASQ_HOOK` and
+`TASQ_STORE_NAME` and, when in effect, `TASQ_PROFILE` and `TASQ_CONFIG_DIR` are set in launched
+sessions (the first two double as the overrides above, so the session's `tasq` opens the same
+store); `TASQ_BIN`, `TASQ_HOOK` and
 `TASQ_TASK_ID` are set for plugins and hooks, `TASQ_EVENT` for a plugin told about an event
 (a `tasq` started with it set tells no plugin and prints no lasting warnings), and
 `TASQ_STORE_DIR` and `TASQ_LOCKED=1` for the command `tasq store lock` runs (see
@@ -230,6 +276,9 @@ overrides above, so the session's `tasq` opens the same store); `TASQ_BIN`, `TAS
   layer that set it.
 - `[worktree.ports]` needs `block` of at least 1, `span` of at least `block`, and
   `base + span` at most 65536.
+- A `[profile.<name>]` table is an error naming the file to move it to (see "Profiles").
+- `enabled` under `[worktree]` is an error at its value naming `worktrees_enabled` (see
+  "Worktrees"), from a file, `--set` or `TASQ_SET`.
 - `work.worktree_manager` and `work.worktree_command` no longer exist; setting them is an error
   pointing here.
 - `worktree.copy_ignored` (copy gitignored files) is not implemented yet; setting it is an error.
@@ -240,7 +289,8 @@ overrides above, so the session's `tasq` opens the same store); `TASQ_BIN`, `TAS
 
 ## Worktrees
 
-Worktrees per task are off by default (ADR 0022). With `worktree.enabled = false` nothing about
+Worktrees per task are off by default (ADR 0022). With `worktrees_enabled = false` (a top-level
+key, in `config.toml` or a profile, or `TASQ_WORKTREES_ENABLED`) nothing about
 them shows anywhere; turn them on to declare a worktree for a task, create it when the task is
 launched and release it when the task is closed.
 
@@ -283,8 +333,9 @@ everything, nothing is created), `post-create` in the new worktree after provisi
 is a warning). A hook line is split into words like a shell would (quotes group, nothing is
 expanded), then each word is rendered with the template variables, so a value with spaces stays
 one argument; no shell runs it, write `sh -c '...'` for one. A hook gets the user's environment
-plus `TASQ_WORKTREE`, `TASQ_BRANCH`, `TASQ_TASK_ID` and every variable as `TASQ_VAR_<NAME>`
-(`TASQ_VAR_BRANCH_DB`, `TASQ_VAR_DB_PREFIX`, ...); its output shows with `-v`.
+plus `TASQ_WORKTREE`, `TASQ_BRANCH`, `TASQ_TASK_ID`, every variable as `TASQ_VAR_<NAME>`
+(`TASQ_VAR_BRANCH_DB`, `TASQ_VAR_DB_PREFIX`, ...) and, when in effect, `TASQ_PROFILE` and
+`TASQ_CONFIG_DIR`; its output shows with `-v`.
 
 Every hook runs without asking, whichever layer set it (ADR 0031): there is no approval step, and
 nothing is read from a repository or the directory tasq runs in.
@@ -332,8 +383,9 @@ not installed. A program cannot change its shell's directory, so `switch` needs 
 scripts and never creates anything.
 
 ```toml
+worktrees_enabled = true       # top level, above every table
+
 [worktree]
-enabled = true
 path = "{{project_parent}}/{{project_name}}-{{branch_safe}}"   # where a declared worktree lives
 branch = "{{id}}-{{slug}}"     # branch of a worktree declared without one
 base = "origin/HEAD"           # start point of a new branch
@@ -361,7 +413,6 @@ post-remove = []
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `worktree.enabled` | bool | `false` | Whether the feature exists. Off hides the commands, the JSON field and the TUI section; files are never rewritten because of it. |
 | `worktree.path` | template | `{{project_parent}}/{{project_name}}-{{branch_safe}}` | Where a declared worktree lives. Rendered when it is declared and stored on the task. |
 | `worktree.branch` | template | `{{id}}-{{slug}}` | Branch of a worktree declared without one. |
 | `worktree.base` | string | `origin/HEAD` | Ref a new branch starts from. |
@@ -370,16 +421,58 @@ post-remove = []
 | `worktree.delete_branch` | `safe` \| `never` | `safe` | On release, delete the branch when it is merged into the default branch or pushed (`safe`), or never. |
 | `worktree.symlinks` | array of paths | `[]` | Paths in the main checkout linked into a new worktree, at the same relative path. |
 | `worktree.copies` | array of paths | `[]` | Paths in the main checkout (files or directories) copied into a new worktree. |
-| `worktree.templates` | array of `{source, target}` | `[]` | Files rendered into a new worktree; `source` relative to the config file, `target` to the worktree. |
+| `worktree.templates` | array of `{source, target}` | `[]` | Files rendered into a new worktree; `source` relative to the directory of the file that set it, `target` to the worktree. |
 | `worktree.variables` | table of strings | empty | Extra template variables. |
 | `worktree.ports` | `{base, span, block}` | unset | Enables `{{port}}`: `base` plus a stable per-branch offset below `span`, a multiple of `block`. |
 | `worktree.hooks.pre-create`, `post-create`, `pre-remove`, `post-remove` | arrays of command lines | `[]` | Templates, split into words and run without a shell (see above). `pre-create` and `post-remove` run in the main checkout, `post-create` and `pre-remove` in the worktree. A failing `pre-*` hook aborts the step; a failing `post-*` hook is a warning. |
 
-Per-repository settings (links, copies, templates, hooks) belong in a `.tasq.toml` next to the
-repository or in the directory above it; the worktree commands load the configuration from the
-repository's main checkout (the task's project, or the checkout it is a worktree of), not from
-the directory tasq runs in, so the right file applies from anywhere. A relative template
-`source` starts at the directory of the file that set `worktree.templates`.
+`[worktree]` in `config.toml` or a profile holds the personal defaults; what belongs to one
+repository goes in its repository config.
+
+### Repository configs
+
+A repository config is a file in `repos/` of the config directory with a `path`, the main
+checkout of one repository (the working tree that holds its `.git` directory, not a worktree
+added from it), and a `[worktree]` table. The file name is free:
+
+```toml
+# ~/.config/tasq/repos/silverfin.toml
+path = "~/code/SF/silverfin_worspace/silverfin"
+
+[worktree]
+symlinks = ["node_modules"]
+templates = [{ source = "templates/silverfin.envrc", target = ".envrc" }]  # ~/.config/tasq/repos/templates/
+
+[worktree.hooks]
+post-create = ["direnv allow ."]
+```
+
+The worktree commands (`worktree up`/`release`/`ls`/`prune`/`switch`, and `create`, `next`,
+`pick` and `done` when they declare, create or release a worktree) resolve the task's project to its
+repository's main checkout and apply the repository config whose `path` is exactly that
+directory, from whatever directory tasq runs in and whichever profile is selected. It is the
+layer after the profile, so its values win over the profile's `[worktree]` defaults and lose
+to the environment and `--set`. There is no walk up: a `path` naming a parent directory, a
+subdirectory or a linked worktree never applies. Write `path` as the real directory, without
+symlinks or `..`: the main checkout is found with them resolved, and `tasq doctor` warns about
+a `path` that differs.
+
+- `path` is required and must be absolute or start with `~/`.
+- Any key other than `path` and `[worktree]` is an error, including `worktrees_enabled` and
+  `enabled` under `[worktree]` (`worktrees_enabled is not a repository setting: set it in config.toml or
+  a profile`).
+- Every file in `repos/` is read on each worktree command, so a broken one fails them all, and
+  two files with the same `path` are an error naming both.
+- A relative template `source` starts at the repository config's directory (`repos/`).
+- Hooks run without asking, like every hook (ADR 0031).
+
+`tasq worktree config [DIR]` shows the `[worktree]` table that applies to the repository `DIR`
+(default: the current directory) is in, the layer that set each key and the repository config
+that matched (`none` when no file did); `--json` gives `repository`, `repository_config`,
+`worktree` and `origins`. `tasq doctor` checks each repository config (`repo-config`): `OK` when
+its `path` is a main checkout, `WARN` when it does not exist, is not inside a git repository, is
+a linked worktree or a subdirectory, or reaches the main checkout through a symlink or `..`, with
+the `path` to set; `FAIL` when the files do not load.
 
 ### Template variables
 
@@ -460,7 +553,7 @@ process from `herdr pane process-info` (`foreground: gitstatusd (pid 42)`), the 
 look at when a shell hangs on startup.
 
 The session's environment carries `TASQ_TASK_ID`, `TASQ_DATA_DIR` (resolved, absolute),
-`TASQ_STORE_NAME` and, when a profile is selected, `TASQ_PROFILE`. `--dry-run` prints the directory, the commands and the prompt
+`TASQ_STORE_NAME` and, when in effect, `TASQ_PROFILE` and `TASQ_CONFIG_DIR`. `--dry-run` prints the directory, the commands and the prompt
 without launching (with `--json`: `task`, `workdir`, `in_worktree`, `launcher`, `env`, `steps`)
 and skips the `pre-launch` hooks.
 
@@ -478,7 +571,7 @@ reads a JSON document on stdin:
 
 `task` is the `Task` object of `docs/json.md`. The environment carries `TASQ_HOOK` (the hook
 name), `TASQ_TASK_ID`, `TASQ_BIN` (the `tasq` binary to call back) and, when in effect,
-`TASQ_PROFILE`, `TASQ_CONFIG` and `TASQ_SET`, so a hook that runs `$TASQ_BIN` sees the same
+`TASQ_PROFILE`, `TASQ_CONFIG_DIR` (absolute) and `TASQ_SET`, so a hook that runs `$TASQ_BIN` sees the same
 configuration. `--dry-run` skips hooks. The terminal UI's `c` and `d` keys run the
 `post-create` and `post-done` hooks as `tasq create` and `tasq done` do, and its `Enter` runs
 `tasq pick`, so `pre-launch` fires. Plugins and a worked example: `docs/plugins.md`.
@@ -510,7 +603,7 @@ remote = "origin"
 
 `[plugins]` is checked like every other table (an unknown key is an error with file, line and
 column). `[plugin.<name>]` is not: tasq hands it to the plugin as the payload's `config`,
-merged across layers key by key, so a `.tasq.toml` or a profile can change one setting of a
+merged across layers key by key, so a profile can change one setting of a
 plugin configured globally. `--set` and `TASQ_SET` reach it too (`--set
 plugin.git.interval=30`); such a value takes the type the key has in the layers below, and is
 a string when no layer set it. The rest (payloads, environment, lasting warnings, doctor
@@ -587,7 +680,7 @@ what was being typed, and a recalled filter applies to the list at once. Only su
 entries count (not one closed with `Esc`); the history lives in memory and ends with `tasq ui`.
 `E` opens the task file in `$VISUAL`, else `$EDITOR`,
 else `vi`; `Enter`, `s` and `S` run `tasq pick <id>`, `tasq sync` and `tasq sync --source ...`
-(the sources checked in the picker) as child processes with the same `--profile`, `--config`
+(the sources checked in the picker) as child processes with the same `--profile`, `--config-dir`
 and `--set` flags, while the UI has released the terminal. `?` lists every key.
 
 ### Key bindings

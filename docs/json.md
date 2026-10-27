@@ -67,7 +67,7 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
 - `origin` is `{"source", "external_id", "url"}` for tasks created by `tasq sync`.
 - `closed_at` is when a done task was closed (`YYYY-MM-DD HH:MM`), `null` on open tasks and
   on tasks closed outside tasq (ADR 0020). It may be left out on input.
-- `worktrees` is present only when worktrees are enabled (`worktree.enabled`, ADR 0022), in
+- `worktrees` is present only when worktrees are enabled (`worktrees_enabled`, ADR 0022), in
   every document that carries a task, hook documents included. It may be left out on input,
   which leaves the stored worktrees unchanged.
 - `created` is when the task was created (`YYYY-MM-DD HH:MM`, local time), read from the task

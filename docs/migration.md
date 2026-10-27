@@ -53,8 +53,10 @@ in), `tasq dates`, `tasq store info`, `tasq doctor`, `tasq config show`,
 ## Environment and configuration mapping
 
 The script is configured with environment variables and hard-coded values.
-`tasq` reads layered TOML (`~/.config/tasq/config.toml`, nearest `.tasq.toml`,
-`[profile.<name>]`, `TASQ_*`, `--set`; [`docs/config.md`](config.md)). Key
+`tasq` reads layered TOML from its config directory (`~/.config/tasq/config.toml`,
+`profiles/<name>.toml`, `repos/*.toml`, then `TASQ_*` and `--set`;
+[`docs/config.md`](config.md)). An earlier `tasq` setup moves as described in
+"From an earlier `tasq`: the config directory" below. Key
 names below are from `crates/core/src/config/mod.rs`.
 
 | Script | Default in the script | `tasq` key | `tasq` env |
@@ -97,9 +99,10 @@ token_cmd = "glab config get token --host gitlab.silverfin.com"
 model = "sonnet"
 ```
 
-`export TASKS_NB_NOTEBOOK=Zantop` per project becomes a `.tasq.toml` in that
-project with `[store] name = "Zantop"`, or a
-`[profile.zantop]` block and `--profile zantop` / `TASQ_PROFILE`.
+`export TASKS_NB_NOTEBOOK=Zantop` per project becomes a profile,
+`~/.config/tasq/profiles/zantop.toml` with `[store] name = "Zantop"`, selected
+by `export TASQ_PROFILE=zantop` in that project's `.envrc` (or `--profile
+zantop`).
 
 ## What `tasq` writes that the script never did
 
@@ -184,6 +187,55 @@ From the deviations log in `ruli/features/rust-rewrite/PROGRESS.md`:
 - [ ] Last: retire the old `/wrapup` and `/update-tasks` skills once every
       session is started by `tasq`. Do not delete `original/tasks`; it is the
       reference the tests are built against.
+
+## From an earlier `tasq`: the config directory
+
+Since ADR 0031 every setting lives in the config directory (`~/.config/tasq`,
+or `--config-dir` / `TASQ_CONFIG_DIR`), and the moves below are done by hand;
+there is no migration command. A half-moved setup fails loudly where it can:
+an inline profile and the old worktree switch are errors that name the
+replacement. Nothing warns about a leftover `.tasq.toml` or a leftover
+environment variable, so check the list.
+
+| Before | Now | If left as is |
+|---|---|---|
+| `[profile.x]` in `config.toml` (or in a `.tasq.toml`) | `profiles/x.toml` in the config directory, the table's contents without the `[profile.x]` prefix (`[profile.x.store]` becomes `[store]`) | error at the table's name: `profiles are files now: move [profile.x] to <config dir>/profiles/x.toml` |
+| `.tasq.toml` next to a repository (or above it) | `repos/<name>.toml` in the config directory (any name) with `path = "<main checkout>"` and the file's `[worktree]` table | silently ignored: `.tasq.toml` is never read, in the current directory or in a repository |
+| a relative template `source` in a `.tasq.toml` | relative to the repository config's directory, `~/.config/tasq/repos/`; move the template files there (or under it) or write an absolute or `~/` path | the template is not found and worktree creation stops |
+| `worktree.enabled = true` (under `[worktree]`) | `worktrees_enabled = true`, top level, in `config.toml` or a profile (never in a repository config) | error at the value: `worktree.enabled moved to the top level: set worktrees_enabled above any table` |
+| `--set worktree.enabled=...`, `TASQ_SET` with it | `--set worktrees_enabled=...` | error naming `worktrees_enabled` |
+| `TASQ_WORKTREE_ENABLED` | `TASQ_WORKTREES_ENABLED` | silently ignored: worktrees are off |
+| `--config FILE` | `--config-dir DIR`, the directory holding `config.toml` (and `profiles/`, `repos/`) | `--config` is an unknown argument (exit 2) |
+| `TASQ_CONFIG=FILE` | `TASQ_CONFIG_DIR=DIR` | silently ignored: the default directory is read |
+| `.config.worktree.enabled` in `tasq config show --json` | `.config.worktrees_enabled` | `null` |
+| `trust.toml` (`$XDG_STATE_HOME/tasq/trust.toml`), the hook approval prompt, `tasq worktree trust` | gone: every hook runs without asking, since every one comes from the config directory | the file is never read; delete it. `tasq worktree trust` is an unknown command |
+| `--yes` on `next`, `pick`, `done`, `worktree up`, `worktree release`, `worktree prune`, `worktree switch` | gone, nothing to approve | an unknown argument (exit 2): drop it from scripts |
+
+A repository config's `path` is the repository's **main checkout** (the
+working tree holding its `.git` directory, not a linked worktree, not a
+parent or a subdirectory), absolute or starting with `~/`, and written as the
+real directory, without symlinks or `..`: the main checkout is found with them
+resolved, so `~/code/x` where `~/code` is a link never matches (`tasq doctor`
+warns). There is no walk up, so a
+`.tasq.toml` that sat in a workspace directory above several repositories
+becomes one repository config per repository.
+
+```toml
+# ~/.config/tasq/repos/silverfin.toml, was ~/code/SF/silverfin_worspace/.tasq.toml
+path = "~/code/SF/silverfin_worspace/silverfin"
+
+[worktree]
+templates = [{ source = "templates/silverfin.envrc", target = ".envrc" }]  # repos/templates/
+```
+
+Then check:
+
+- `tasq config show` loads, and names `profiles/<name>.toml` for the keys a
+  profile sets (run it with each `TASQ_PROFILE` you use).
+- `tasq worktree config <main checkout>` prints `# repository config:
+  <your file>`, not `none`, and the `[worktree]` values you expect.
+- `tasq doctor` shows an `OK repo-config` line per repository config; a `WARN`
+  names the `path` to set.
 
 ## Rollback
 

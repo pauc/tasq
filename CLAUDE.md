@@ -80,7 +80,7 @@ Time comes from a `Clock` trait, config loading from `LoadOptions` (cwd, home, e
 
 ### Config
 
-Layered TOML (`tasq_core::config`): defaults, global `~/.config/tasq/config.toml`, nearest `.tasq.toml` walking up to home, selected `[profile.<name>]`, `TASQ_*` env, `--set`. Layers are deep-merged as TOML tables and deserialised once; each file is also checked alone with `deny_unknown_fields` so errors carry file:line:column. `Loaded::file_for("store.name")` gives the provenance used in error messages and `tasq store info`. Full reference in `docs/config.md`.
+Layered TOML (`tasq_core::config`), all of it from the config directory (`--config-dir`, `TASQ_CONFIG_DIR`, else `~/.config/tasq`, ADR 0031): defaults, `config.toml`, the selected profile `profiles/<name>.toml`, for the worktree commands the repository config `repos/*.toml` whose `path` is the main checkout (`LoadOptions::repo`, resolved by the caller), `TASQ_*` env, `--set`. Nothing is read from the cwd or a repository; `worktrees_enabled` is the top-level feature switch. Layers are deep-merged as TOML tables and deserialised once; each file is also checked alone with `deny_unknown_fields` so errors carry file:line:column. `Loaded::file_for("store.name")` gives the provenance used in error messages and `tasq store info`. Full reference in `docs/config.md`.
 
 ## Testing the store
 

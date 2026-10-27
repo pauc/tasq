@@ -39,7 +39,7 @@ variables:
 |---|---|---|
 | `TASQ_BIN` | always | path of the `tasq` binary that ran the plugin |
 | `TASQ_PROFILE` | `--profile` given (or already in the environment) | the profile name |
-| `TASQ_CONFIG` | `--config` given (or already in the environment) | absolute path of the config file |
+| `TASQ_CONFIG_DIR` | `--config-dir` given (or already in the environment) | absolute path of the config directory |
 | `TASQ_SET` | `--set` given (or already in the environment) | `key=value` overrides, one per line, existing entries first |
 
 `tasq` itself reads the same variables (`docs/config.md`), so `"$TASQ_BIN" list --json` inside
@@ -132,7 +132,7 @@ remote = "origin"
   other checks without them.
 - `[plugin.<name>]` is the plugin's: tasq checks nothing under it and hands the whole table to
   the plugin in every payload (`config`). It is layered like the rest of the configuration:
-  the global file, `.tasq.toml`, a profile, `TASQ_SET` and `--set plugin.git.interval=30`
+  `config.toml`, a profile, `TASQ_SET` and `--set plugin.git.interval=30`
   apply key by key. A value from `TASQ_SET` or `--set` takes the type the key has in the
   layers below it (`interval = 60` makes `--set plugin.git.interval=30` an integer, `soon`
   an error), and is a string when no layer set the key.
@@ -177,7 +177,7 @@ plugin is not woken by the files its own background job changed.
 |---|---|
 | Arguments | `hook`, nothing else. A plugin that also serves `tasq <name> ...` must tell the two apart by this first argument. |
 | Working directory | `tasq`'s own. |
-| Environment | the environment `tasq` was started with, plus `TASQ_BIN` (the running `tasq`), `TASQ_PROFILE`, `TASQ_CONFIG` and `TASQ_SET` when in effect (as for dispatch, above), and `TASQ_EVENT` (the event name). |
+| Environment | the environment `tasq` was started with, plus `TASQ_BIN` (the running `tasq`), `TASQ_PROFILE`, `TASQ_CONFIG_DIR` and `TASQ_SET` when in effect (as for dispatch, above), and `TASQ_EVENT` (the event name). |
 | Process group | its own; on a timeout the whole group is killed. The plugin is reaped only after that, so its group id cannot have been reused. A Ctrl-C at the terminal reaches `tasq`'s group, not the plugin's, so `tasq` passes it on: the plugin's group gets SIGINT, has until the timeout to be over (then, or on a second Ctrl-C, it is killed like a timeout), is reaped, and `tasq` exits 130 without running anything more (no further plugin, and for `store-open` not the command). Outside an event Ctrl-C ends `tasq` as usual. |
 | stdin | the payload, then end of file. The plugin's group is not the terminal's foreground group, so a plugin that opens `/dev/tty` is stopped until the timeout kills it; a Ctrl-C meanwhile cannot reach a stopped plugin, so it too waits for the timeout. |
 | stdout | shown at `-v` as `tasq: plugin <name>: <event>: <output>`; for `doctor`, the answer. |
@@ -367,7 +367,7 @@ tasq store lock [--timeout SECS] -- <cmd> [args...]
   stderr, releases the lock and exits with `<cmd>`'s exit code (128 plus the signal when a
   signal ended it).
 - `<cmd>`'s environment is the environment `tasq` was started with, plus `TASQ_BIN`,
-  `TASQ_PROFILE`, `TASQ_CONFIG` and `TASQ_SET` when in effect, `TASQ_STORE_DIR` (the store
+  `TASQ_PROFILE`, `TASQ_CONFIG_DIR` and `TASQ_SET` when in effect, `TASQ_STORE_DIR` (the store
   directory, absolute) and `TASQ_LOCKED=1`.
 - While `<cmd>` runs, the lock's mtime is refreshed every 30 s, so a command that runs longer
   than two minutes is not taken for dead. A `tasq` killed meanwhile (Ctrl-C included) leaves

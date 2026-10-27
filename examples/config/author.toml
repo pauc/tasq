@@ -92,7 +92,7 @@ pre-launch = []
 [worktree]
 # Every task in a git project gets a declared worktree, created when the task is
 # launched and released when it is closed (docs/config.md, "Worktrees").
-# Per-repository links, copies, templates and hooks go in a .tasq.toml next to
-# the repository; these are the personal defaults.
+# Per-repository links, copies, templates and hooks go in a repository config,
+# ~/.config/tasq/repos/<name>.toml; these are the personal defaults.
 path = "{{project_parent}}/{{branch_safe}}"   # siblings of the main checkout
 branch = "{{id}}-{{slug}}"

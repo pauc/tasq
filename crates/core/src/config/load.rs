@@ -225,7 +225,8 @@ pub struct Loaded {
     pub layers: Vec<Layer>,
     /// The profile that was applied, if any.
     pub profile: Option<String>,
-    /// Every profile name defined in the loaded files, sorted.
+    /// Every profile in the config directory: the stems of
+    /// `profiles/*.toml`, sorted.
     pub profiles: Vec<String>,
     /// The repository config that matched [`LoadOptions::repo`], if any.
     pub repo: Option<PathBuf>,

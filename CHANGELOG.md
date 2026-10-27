@@ -186,6 +186,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** configuration lives only in the config directory (ADR 0031): `--config-dir`,
+  else `TASQ_CONFIG_DIR`, else `$XDG_CONFIG_HOME/tasq`, else `~/.config/tasq`. The moves are
+  listed in `docs/migration.md` ("From an earlier `tasq`").
+  - The config directory holds `config.toml`, `profiles/<name>.toml` and `repos/*.toml`. A
+    directory named by `--config-dir` or `TASQ_CONFIG_DIR` must exist; plugins, hooks,
+    launched sessions and worktree hooks get it as `TASQ_CONFIG_DIR`, absolute.
+  - A profile is the file `profiles/<name>.toml`, the shape of `config.toml`, read only when
+    selected. A `[profile.<name>]` table is an error at its name naming the file to move it
+    to; an unknown profile names the file looked for and the profiles there are.
+  - A repository config, `repos/<any>.toml`, holds `path` (the repository's main checkout,
+    absolute or `~/`) and `[worktree]`; it applies to that repository's worktree commands from
+    any directory and with any profile, after the profile and before the environment. Any
+    other key, a relative `path` and two files with one `path` are errors. A relative
+    template `source` starts at its directory.
+  - The worktree feature switch is `worktrees_enabled` at the top level
+    (`TASQ_WORKTREES_ENABLED`). `worktree.enabled` is an error at its value naming the new
+    key, and `config show --json` has `.config.worktrees_enabled`.
+  - Worktree hooks run without approval, whichever file set them.
+  - `tasq worktree config [DIR]` shows the `[worktree]` settings that apply to `DIR`'s
+    repository, the layer of each and the repository config that matched (`--json` too).
+  - `tasq doctor` checks each repository config (`repo-config`): `WARN` when its `path` does
+    not exist, is not in a git repository, is a linked worktree or a subdirectory, or reaches
+    the main checkout through a symlink or `..`; `FAIL` when the files do not load.
 - **Breaking:** no positional argument shares a slot with subcommands any more (ADR-0028),
   so the generated shell completions reach every subcommand (`tasq worktree rel<TAB>`,
   `tasq store <TAB>`, ...).
@@ -223,6 +246,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `.tasq.toml` is no longer read, in the current directory, above it or in a repository, and
+  nothing warns about one (ADR 0031). Its settings move to a profile or a repository config.
+- `--config FILE` and `TASQ_CONFIG` (use `--config-dir DIR` / `TASQ_CONFIG_DIR`), and
+  `TASQ_WORKTREE_ENABLED` (use `TASQ_WORKTREES_ENABLED`). A leftover `TASQ_CONFIG` or
+  `TASQ_WORKTREE_ENABLED` in the environment is ignored without a word.
+- Hook trust: `trust.toml`, the approval prompt, `tasq worktree trust` and `--yes` on `next`,
+  `pick`, `done`, `worktree up`, `worktree release`, `worktree prune` and `worktree switch`
+  (now an unknown argument, exit 2).
 - `tasq store info --json` no longer has the top-level `"bookkeeper"` key (always `null`; the
   store has no bookkeeper), and `StoreInfo::bookkeeper` is gone. Enabled plugins are listed
   under `"plugins"` instead.
