@@ -150,12 +150,12 @@ silverfin `.envrc` template into the config directory, `worktree.enabled` to
 
 **Blocked by:** None (can start immediately).
 
-**Status:** todo
+**Status:** done
 
-- [ ] `--config-dir` wins over `TASQ_CONFIG_DIR`, which wins over `$XDG_CONFIG_HOME/tasq`.
-- [ ] A named directory that does not exist fails with an exact message; an absent default does not.
-- [ ] `--config` and `TASQ_CONFIG` are gone from help and code; `TASQ_CONFIG_DIR` reaches plugins.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] `--config-dir` wins over `TASQ_CONFIG_DIR`, which wins over `$XDG_CONFIG_HOME/tasq`.
+- [x] A named directory that does not exist fails with an exact message; an absent default does not.
+- [x] `--config` and `TASQ_CONFIG` are gone from help and code; `TASQ_CONFIG_DIR` reaches plugins.
+- [x] `mutants-in` the diff: zero missed.
 
 ### CC-002: profiles are files
 
