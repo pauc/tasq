@@ -9,6 +9,10 @@
 //! goes through an upload-pack wrapper that counts it in `fetches`.
 //!
 //! Conflicts (GS-005): both machines edit one task.
+//!
+//! Duplicate ids (GS-006): `doctor --json` notes the call in `doctors` and
+//! answers from the store in `FAKE_STORE`: an `ids` failure for an id two
+//! files claim, the `ids` check `ok` otherwise.
 
 #![allow(clippy::unwrap_used, reason = "test helpers panic on setup failures")]
 
@@ -49,6 +53,17 @@ impl World {
                  sh \"$base/on-lock.run\"\n\
                fi\n\
                exec \"$@\"\n\
+             fi\n\
+             if [ \"$1 $2\" = 'doctor --json' ]; then\n\
+               printf '%s\\n' \"$FAKE_STORE\" >> \"$base/doctors\"\n\
+               [ -z \"$FAKE_DOCTOR_BROKEN\" ] || {{ echo 'doctor broke' >&2; exit 2; }}\n\
+               dup=$(sed -n 's/^id: //p' \"$FAKE_STORE\"/*.md | sort | uniq -d | head -n 1)\n\
+               if [ -z \"$dup\" ]; then\n\
+                 echo '{{\"schema\":1,\"ok\":true,\"checks\":[{{\"name\":\"ids\",\"status\":\"ok\",\"detail\":\"no id is claimed twice\",\"fix\":null}}]}}'\n\
+                 exit 0\n\
+               fi\n\
+               printf '{{\"schema\":1,\"ok\":false,\"checks\":[{{\"name\":\"task-file\",\"status\":\"fail\",\"detail\":\"x.md is not a task file\",\"fix\":\"move it\"}},{{\"name\":\"ids\",\"status\":\"fail\",\"detail\":\"id %s is claimed twice\",\"fix\":\"renumber the newer\"}}]}}\\n' \"$dup\"\n\
+               exit 1\n\
              fi\n\
              [ \"$1 $3\" = 'view --json' ] || {{ echo \"fake tasq: $*\" >&2; exit 2; }}\n\
              [ -f \"$base/titles/$2\" ] || {{ echo \"no task $2\" >&2; exit 1; }}\n\
@@ -159,6 +174,11 @@ impl World {
     /// How many fetches machine B made.
     fn fetches(&self) -> usize {
         std::fs::read_to_string(self.base().join("fetches")).map_or(0, |text| text.lines().count())
+    }
+
+    /// The stores `tasq doctor --json` was asked about, one per call.
+    fn doctors(&self) -> String {
+        std::fs::read_to_string(self.base().join("doctors")).unwrap_or_default()
     }
 
     /// The commands run under `tasq store lock`, one per line.
@@ -294,6 +314,7 @@ impl Machine<'_> {
             .env("HOME", self.world.home())
             .env("PATH", self.world.path())
             .env("TASQ_BIN", self.world.base().join("bin/tasq"))
+            .env("FAKE_STORE", &self.store)
             .current_dir(self.world.home());
         cmd
     }
@@ -874,5 +895,82 @@ mod conflict {
         );
         assert_silent(&a.job(&["--interval", "0"]));
         assert_eq!(a.read(TASK_3), b.read(TASK_3));
+    }
+}
+
+mod duplicate {
+    use super::*;
+
+    /// Task 5 as machine A created it offline.
+    const A_5: &str = "01K6Q8ZT3D000000000000000A.md";
+    /// Task 5 as machine B created it offline, later.
+    const B_5: &str = "01K6Q8ZT3E000000000000000B.md";
+
+    const WARNING: &str = "duplicate id: id 5 is claimed twice; fix: renumber the newer\n";
+
+    #[test]
+    fn an_id_pulled_in_twice_is_a_warning_until_fixed_by_hand() {
+        let world = World::new();
+        let a = world.first();
+        let b = world.second();
+        a.write(A_5, "---\nid: 5\n---\n# Five on a\n");
+        b.write(B_5, "---\nid: 5\n---\n# Five on b\n");
+
+        // A pulls nothing: doctor is not asked.
+        assert_silent(&a.job(&[]));
+        assert_eq!(world.doctors(), "");
+        assert_eq!(a.warnings(), None);
+
+        // B's rebase brings A's task 5.
+        assert_silent(&b.job(&[]));
+        assert_eq!(world.remote_head(), b.head(), "the duplicate is pushed");
+        assert_eq!(b.warnings().as_deref(), Some(WARNING));
+        assert_eq!(world.doctors(), format!("{}\n", b.store.display()));
+
+        // A pulls B's task 5.
+        assert_silent(&a.job(&["--interval", "0"]));
+        assert_eq!(a.warnings().as_deref(), Some(WARNING));
+
+        // The warning stands until doctor says otherwise: a round that pulls
+        // nothing asks again.
+        assert_silent(&b.job(&["--interval", "0"]));
+        assert_eq!(b.warnings().as_deref(), Some(WARNING));
+        assert_eq!(world.doctors().lines().count(), 3);
+
+        // The fix by hand on B: committed, pushed, the warning gone.
+        b.write(B_5, "---\nid: 6\n---\n# Five on b\n");
+        assert_silent(&b.job(&[]));
+        assert_eq!(b.warnings(), None);
+        assert_eq!(world.remote_head(), b.head());
+
+        // A pulls the fix.
+        assert_silent(&a.job(&["--interval", "0"]));
+        assert_eq!(a.warnings(), None);
+        assert_eq!(a.head(), b.head());
+        assert_eq!(world.doctors().lines().count(), 5);
+
+        // No warning and nothing pulled: doctor is not asked.
+        assert_silent(&a.job(&["--interval", "0"]));
+        assert_eq!(world.doctors().lines().count(), 5);
+    }
+
+    #[test]
+    fn a_doctor_that_fails_leaves_the_warnings_as_they_were() {
+        let world = World::new();
+        let a = world.first();
+        let b = world.second();
+        a.note(TASK_3, "on a");
+        assert_silent(&a.job(&[]));
+        std::fs::create_dir_all(b.state("")).unwrap();
+        std::fs::write(b.state("warnings"), WARNING).unwrap();
+        let out = b
+            .command(&["job", "--store", b.store.to_str().unwrap()])
+            .env("FAKE_DOCTOR_BROKEN", "1")
+            .output()
+            .unwrap();
+        assert_silent(&out);
+        assert_eq!(b.head(), a.head(), "the pull happened");
+        assert_eq!(world.doctors().lines().count(), 1, "doctor was asked");
+        assert_eq!(b.warnings().as_deref(), Some(WARNING));
     }
 }

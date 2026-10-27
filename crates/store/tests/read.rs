@@ -387,11 +387,16 @@ fn doctor_reports_the_directory_the_non_task_files_and_the_duplicate_ids() {
             Check::fail(
                 "ids",
                 format!(
-                    "id 7 is claimed by more than one file: {}, {}",
+                    "id 7 is claimed by more than one file: {} (created {}, \"Original\"), {} (created {}, \"Copy\", newer)",
                     temp.file(&ulid_name(1_000)).display(),
+                    created(1_000),
+                    copy.display(),
+                    created(3_000),
+                ),
+                format!(
+                    "give the newer file the next free id: write 'id: 8' in {} (or remove it if it is a copy)",
                     copy.display()
                 ),
-                "give one of the files another id, or remove the copy",
             ),
             Check::ok("lock", "no write in progress"),
         ]
@@ -412,6 +417,84 @@ fn doctor_reports_the_directory_the_non_task_files_and_the_duplicate_ids() {
             Check::ok("lock", "no write in progress"),
         ]
     );
+}
+
+/// The creation time doctor shows for a file minted at `millis`: local, to the minute.
+fn created(millis: u64) -> String {
+    DateTime::from_timestamp_millis(i64::try_from(millis).unwrap())
+        .unwrap()
+        .with_timezone(&Local)
+        .format("%Y-%m-%d %H:%M")
+        .to_string()
+}
+
+#[test]
+fn doctor_names_the_newer_files_of_a_duplicate_id_and_the_next_free_ids() {
+    let at = |text: &str| {
+        support::local_millis(
+            chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M").unwrap(),
+        )
+    };
+    let temp = TempStore::empty();
+    // Two machines created id 7 offline; the file minted later is the newer.
+    // The next free ids follow the highest id, 10.
+    let older = temp.write(
+        &ulid_name(at("2026-10-20 09:15")),
+        &task_file(7, "Write the plan", "ready"),
+    );
+    let newer = temp.write(
+        &ulid_name(at("2026-10-21 18:40")),
+        &task_file(7, "Book the train", "ready"),
+    );
+    temp.write(
+        &ulid_name(at("2026-10-19 08:00")),
+        &task_file(10, "Highest", "ready"),
+    );
+    // Id 9 three times: a file whose name carries no creation time counts
+    // as newer than any that does, whatever its name's order.
+    let unknown = temp.write("0-copy.md", &task_file(9, "Copied by hand", "ready"));
+    let first = temp.write(
+        &ulid_name(at("2026-10-22 07:05")),
+        &task_file(9, "First", "ready"),
+    );
+    let second = temp.write(
+        &ulid_name(at("2026-10-23 07:05")),
+        &task_file(9, "Second", "ready"),
+    );
+    let checks = temp.open().doctor();
+    assert_eq!(
+        checks[2],
+        Check::fail(
+            "ids",
+            format!(
+                "id 7 is claimed by more than one file: {} (created 2026-10-20 09:15, \"Write the plan\"), {} (created 2026-10-21 18:40, \"Book the train\", newer)",
+                older.display(),
+                newer.display()
+            ),
+            format!(
+                "give the newer file the next free id: write 'id: 11' in {} (or remove it if it is a copy)",
+                newer.display()
+            ),
+        )
+    );
+    assert_eq!(
+        checks[3],
+        Check::fail(
+            "ids",
+            format!(
+                "id 9 is claimed by more than one file: {} (created 2026-10-22 07:05, \"First\"), {} (created 2026-10-23 07:05, \"Second\", newer), {} (creation time unknown, \"Copied by hand\", newer)",
+                first.display(),
+                second.display(),
+                unknown.display()
+            ),
+            format!(
+                "give the newer files the next free ids: write 'id: 12' in {}, 'id: 13' in {} (or remove the copies)",
+                second.display(),
+                unknown.display()
+            ),
+        )
+    );
+    assert_eq!(checks.len(), 5, "{checks:#?}");
 }
 
 #[test]

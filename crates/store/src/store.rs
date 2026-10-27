@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
-use tasq_core::clock::{Clock, SystemClock, to_minute};
+use tasq_core::clock::{Clock, SystemClock, format_timestamp, to_minute};
 use tasq_core::doctor::Check;
 use tasq_core::format::{self, Document, FormatError, Parsed};
 use tasq_core::model::{Task, TaskDraft, TaskId, Workflow};
@@ -125,11 +125,28 @@ impl Scan {
     /// One [`StoreError::AmbiguousId`] per id claimed by more than one
     /// file, in id order.
     fn ambiguous(&self) -> Vec<StoreError> {
+        self.duplicates()
+            .into_iter()
+            .filter_map(|(id, _)| self.single(&id).err())
+            .collect()
+    }
+
+    /// Every id claimed by more than one file, in id order, with its files
+    /// oldest first: by creation time, a file whose name carries none
+    /// after those that do, and name order between equals.
+    fn duplicates(&self) -> Vec<(TaskId, Vec<&TaskFile>)> {
         let mut ids: Vec<&TaskId> = self.tasks.iter().map(|f| &f.parsed.task.id).collect();
         ids.sort();
         ids.dedup();
         ids.into_iter()
-            .filter_map(|id| self.single(id).err())
+            .filter_map(|id| {
+                let mut files = self.claiming(id);
+                files.sort_by_key(|f| {
+                    let created = f.parsed.task.created_at;
+                    (created.is_none(), created)
+                });
+                (files.len() > 1).then(|| (id.clone(), files))
+            })
             .collect()
     }
 }
@@ -403,12 +420,64 @@ pub(crate) fn unix_millis(at: SystemTime) -> u64 {
 /// there is none. Open and done tasks count, as do the files of an
 /// ambiguous id.
 fn next_id(scan: &Scan) -> TaskId {
+    TaskId::from(next_number(scan))
+}
+
+/// [`next_id`] as a number.
+fn next_number(scan: &Scan) -> u64 {
     let highest = scan
         .tasks
         .iter()
         .filter_map(|f| f.parsed.task.id.as_str().parse::<u64>().ok())
         .max();
-    TaskId::from(highest.map_or(1, |h| h + 1))
+    highest.map_or(1, |h| h + 1)
+}
+
+/// Doctor's `ids` failure for `id`, claimed by `files` (oldest first): each
+/// file with its creation time and title, the newer ones marked, and the
+/// fix writing the next ids from `free` into the newer files.
+fn duplicate_check(id: &TaskId, files: &[&TaskFile], free: &mut std::ops::RangeFrom<u64>) -> Check {
+    let described: Vec<String> = files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let created = f.parsed.task.created_at.map_or_else(
+                || "creation time unknown".to_owned(),
+                |at| format!("created {}", format_timestamp(at)),
+            );
+            let newer = if i == 0 { "" } else { ", newer" };
+            format!(
+                "{} ({created}, {:?}{newer})",
+                f.path.display(),
+                f.parsed.task.title
+            )
+        })
+        .collect();
+    let newer = &files[1..];
+    let assignments: Vec<String> = newer
+        .iter()
+        .zip(free)
+        .map(|(f, n)| format!("'id: {n}' in {}", f.path.display()))
+        .collect();
+    let fix = if let [_] = newer {
+        format!(
+            "give the newer file the next free id: write {} (or remove it if it is a copy)",
+            assignments.join(", ")
+        )
+    } else {
+        format!(
+            "give the newer files the next free ids: write {} (or remove the copies)",
+            assignments.join(", ")
+        )
+    };
+    Check::fail(
+        "ids",
+        format!(
+            "id {id} is claimed by more than one file: {}",
+            described.join(", ")
+        ),
+        fix,
+    )
 }
 
 /// 128 random bits from the OS; [`Ulid::from_parts`] keeps 80. The
@@ -598,19 +667,17 @@ impl Store for TasqStore {
                 task_file_fix(error),
             ));
         }
-        let ambiguous = scan.ambiguous();
-        if ambiguous.is_empty() {
+        let duplicates = scan.duplicates();
+        if duplicates.is_empty() {
             checks.push(Check::ok(
                 "ids",
                 "ids are stable and no id is claimed twice",
             ));
         }
-        for ambiguous in ambiguous {
-            checks.push(Check::fail(
-                "ids",
-                ambiguous.to_string(),
-                "give one of the files another id, or remove the copy",
-            ));
+        // Each newer file gets its own free id, across every duplicate.
+        let mut free = next_number(&scan)..;
+        for (id, files) in duplicates {
+            checks.push(duplicate_check(&id, &files, &mut free));
         }
         checks.push(self.lock_check());
         checks

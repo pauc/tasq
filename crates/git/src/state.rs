@@ -158,19 +158,33 @@ impl State {
     /// by `message`, or removes them when `message` is `None`. The other
     /// lines are kept; the file goes when none is left.
     pub fn set_warning(&self, kind: &str, message: Option<&str>) -> io::Result<()> {
-        let path = self.path("warnings");
+        self.set_warnings(kind, message.as_slice())
+    }
+
+    /// Whether a warning line starts with `kind`.
+    pub fn has_warning(&self, kind: &str) -> io::Result<bool> {
+        Ok(self.warnings()?.lines().any(|line| line.starts_with(kind)))
+    }
+
+    /// The text of `warnings`, empty when there is none.
+    fn warnings(&self) -> io::Result<String> {
         let mut text = String::new();
-        if let Some(mut file) = open_existing(&path)? {
+        if let Some(mut file) = open_existing(&self.path("warnings"))? {
             file.read_to_string(&mut text)?;
         }
-        let mut lines: Vec<String> = text
+        Ok(text)
+    }
+
+    /// [`Self::set_warning`] with one line per message, none removing them.
+    pub fn set_warnings(&self, kind: &str, messages: &[&str]) -> io::Result<()> {
+        let path = self.path("warnings");
+        let mut lines: Vec<String> = self
+            .warnings()?
             .lines()
             .filter(|line| !line.starts_with(kind))
             .map(str::to_owned)
             .collect();
-        if let Some(message) = message {
-            lines.push(format!("{kind}{message}"));
-        }
+        lines.extend(messages.iter().map(|message| format!("{kind}{message}")));
         if lines.is_empty() {
             return remove_if_present(&path);
         }

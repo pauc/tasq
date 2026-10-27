@@ -48,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files, git add them, git rebase --continue` names the tasks. Nothing is pushed until it is
   resolved; while a rebase is in progress in the store the job leaves the repository alone,
   and the first job after `git rebase --continue` clears the warning and pushes.
+- `tasq doctor` explains a duplicate id: its `ids` failure names each file with its creation
+  time and title, oldest first, marks the newer ones, and its fix gives the next free id to
+  write into each newer file (`write 'id: 8' in <file>`; several duplicates get consecutive
+  ids). With `tasq-git` enabled, a pull that brings in such an id (two machines created a task
+  offline) leaves the lasting warning `duplicate id: <doctor's detail>; fix: <doctor's fix>`,
+  one per id, until the files are fixed by hand. Ids are never renumbered automatically.
 - `docs/plugins.md` describes the plugin extension points normatively (ADR 0030): enabling a
   plugin, the events and every payload with an example, the plugin's process (arguments,
   environment, timeout, exit codes), lasting warnings, doctor checks, `tasq store lock` and

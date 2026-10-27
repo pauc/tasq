@@ -16,6 +16,11 @@
 //! tasks and the commands that resolve it by hand. Nothing is pushed until
 //! then: the branch stays behind its upstream. While a rebase is in
 //! progress (the user resolving it), the job leaves the repository alone.
+//!
+//! A pull can bring in a task whose id a local one has (both machines
+//! created it offline). After a rebase moved the branch, and while that
+//! warning stands, the job asks `tasq doctor --json` and keeps one lasting
+//! warning per `ids` failure, until they are fixed by hand.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -47,6 +52,9 @@ const CONFLICT: &str = "conflict on ";
 
 /// The start of the lasting warning a push that failed twice leaves.
 const PUSH_FAILED: &str = "push failed: ";
+
+/// The start of the lasting warning for an id claimed by several files.
+const DUPLICATE_ID: &str = "duplicate id: ";
 
 /// What the job is told on its command line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,13 +132,47 @@ fn round(
     }
     .map_err(io("could not write the warnings"))?;
     let committed = outcome?;
+    let mut pulled = false;
     if committed || state.fetch_due(SystemTime::now(), settings.interval) {
+        let before = head(git, store);
         sync(git, tasq, store, state, lock, &settings.exe)?;
         state
             .record_fetch(SystemTime::now())
             .map_err(io("could not record the fetch"))?;
+        pulled = head(git, store) != before;
+    }
+    let standing = state
+        .has_warning(DUPLICATE_ID)
+        .map_err(io("could not read the warnings"))?;
+    if pulled || standing {
+        duplicates(tasq, state)?;
     }
     Ok(())
+}
+
+/// The commit `HEAD` names, if git can say.
+fn head(git: &Git, store: &Path) -> Option<String> {
+    git.check(store, &["rev-parse", "HEAD"]).ok()
+}
+
+/// One [`DUPLICATE_ID`] warning per `ids` failure of `tasq doctor`,
+/// `<detail>; fix: <fix>`; the warnings are left as they were when doctor
+/// gives no answer.
+fn duplicates(tasq: &Tasq, state: &State) -> Result<(), JobError> {
+    let Some(failures) = tasq.id_failures() else {
+        return Ok(());
+    };
+    let lines: Vec<String> = failures
+        .iter()
+        .map(|check| match &check.fix {
+            Some(fix) => format!("{}; fix: {fix}", check.detail),
+            None => check.detail.clone(),
+        })
+        .collect();
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    state
+        .set_warnings(DUPLICATE_ID, &lines)
+        .map_err(io("could not write the warnings"))
 }
 
 fn io(action: &'static str) -> impl Fn(std::io::Error) -> JobError {

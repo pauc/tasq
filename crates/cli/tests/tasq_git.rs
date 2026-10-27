@@ -142,12 +142,9 @@ fn a_write_is_committed_in_the_background() {
     );
 }
 
-#[test]
-fn another_machines_write_is_pulled_when_the_store_opens() {
-    let env = TestEnv::fixture();
-    if !enable_tasq_git(&env) {
-        return;
-    }
+/// `tasq git init <url>` on the fixture store, with a bare remote, and a
+/// clone of it standing for another machine; the clone's directory.
+fn with_another_machine(env: &TestEnv) -> std::path::PathBuf {
     let root = env.root.path().canonicalize().unwrap();
     env.git(
         &root,
@@ -168,8 +165,6 @@ fn another_machines_write_is_pulled_when_the_store_opens() {
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
-
-    // Another machine edits task 3 and pushes.
     let other = root.join("other");
     env.git(
         &root,
@@ -184,6 +179,27 @@ fn another_machines_write_is_pulled_when_the_store_opens() {
     );
     env.git(&other, &["config", "user.name", "Me"]);
     env.git(&other, &["config", "user.email", "me@example.invalid"]);
+    other
+}
+
+/// Polls `check` every 20 ms until it holds, for at most ten seconds.
+fn eventually(what: &str, check: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !check() {
+        assert!(std::time::Instant::now() < deadline, "timed out: {what}");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn another_machines_write_is_pulled_when_the_store_opens() {
+    let env = TestEnv::fixture();
+    if !enable_tasq_git(&env) {
+        return;
+    }
+    let other = with_another_machine(&env);
+
+    // Another machine edits task 3 and pushes.
     let name = env.file_of(3).file_name().unwrap().to_owned();
     let text = std::fs::read_to_string(other.join(&name)).unwrap();
     std::fs::write(
@@ -201,17 +217,63 @@ fn another_machines_write_is_pulled_when_the_store_opens() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stderr(&out), "");
     let store = env.store();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while env.git(&store, &["rev-parse", "HEAD"]) != pushed {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the other machine's commit never arrived"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    eventually("the other machine's commit to arrive", || {
+        env.git(&store, &["rev-parse", "HEAD"]) == pushed
+    });
     assert!(
         std::fs::read_to_string(env.file_of(3))
             .unwrap()
             .ends_with("- from the other machine\n")
     );
+}
+
+#[test]
+fn an_id_pulled_in_twice_is_a_lasting_warning_until_fixed_by_hand() {
+    let env = TestEnv::fixture();
+    if !enable_tasq_git(&env) {
+        return;
+    }
+    let other = with_another_machine(&env);
+
+    // Another machine created a task offline and gave it id 3 too.
+    let name = "01MA000000000000000000000Z.md";
+    std::fs::write(other.join(name), "---\nid: 3\n---\n# Elsewhere\n").unwrap();
+    env.git(&other, &["add", name]);
+    env.git(&other, &["commit", "-q", "-m", "create 3: Elsewhere"]);
+    env.git(&other, &["push", "-q"]);
+
+    let out = env.tasq().arg("list").output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let warnings = env.store().join(".tasq/plugins/git/warnings");
+    eventually("the duplicate id warning", || warnings.exists());
+    let text = std::fs::read_to_string(&warnings).unwrap();
+    let ours = env.store().join(name);
+    assert!(
+        text.starts_with("duplicate id: id 3 is claimed by more than one file: "),
+        "{text}"
+    );
+    assert!(
+        text.ends_with(&format!(
+            "(created 2026-12-16 17:56, \"Elsewhere\", newer); fix: give the newer file the \
+             next free id: write 'id: 8' in {} (or remove it if it is a copy)\n",
+            ours.display()
+        )),
+        "{text}"
+    );
+    let out = env.tasq().arg("list").output().unwrap();
+    assert!(
+        stderr(&out).contains("tasq: warning: git: duplicate id: id 3 is claimed"),
+        "{}",
+        stderr(&out)
+    );
+
+    // The fix the warning gives, then any write: its job clears the warning.
+    std::fs::write(&ours, "---\nid: 8\n---\n# Elsewhere\n").unwrap();
+    let out = env
+        .tasq()
+        .args(["log", "1", "renumbered 8"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    eventually("the warning to clear", || !warnings.exists());
 }

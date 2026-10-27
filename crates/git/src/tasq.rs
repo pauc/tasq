@@ -1,7 +1,8 @@
 //! What the plugin asks `tasq`: the store (`tasq store info --json`), its
-//! own `[plugin.git]` table (`tasq config show --json`) and a task's title
-//! (`tasq view <id> --json`), as `docs/json.md` describes them; and it runs
-//! a command under the store lock (`tasq store lock -- <cmd>`).
+//! own `[plugin.git]` table (`tasq config show --json`), a task's title
+//! (`tasq view <id> --json`) and the duplicate ids (`tasq doctor --json`),
+//! as `docs/json.md` describes them; and it runs a command under the store
+//! lock (`tasq store lock -- <cmd>`).
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -79,6 +80,25 @@ struct Title {
 }
 
 #[derive(Deserialize)]
+struct Doctor {
+    checks: Vec<Check>,
+}
+
+/// One check of `tasq doctor --json`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Check {
+    /// Its name: `ids` for the store's duplicate ids.
+    pub name: String,
+    /// `ok`, `warn` or `fail`.
+    pub status: String,
+    /// What it found.
+    pub detail: String,
+    /// What to do about it.
+    #[serde(default)]
+    pub fix: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct ConfigShow {
     config: Config,
 }
@@ -112,6 +132,21 @@ impl Tasq {
     pub fn title(&self, id: &str) -> Result<String, TasqError> {
         let view: View = self.ask(&["view", id, "--json"])?;
         Ok(view.task.title)
+    }
+
+    /// The store's `ids` failures (an id claimed by more than one file)
+    /// from `tasq doctor --json`; `None` when it gives no answer. Doctor
+    /// exits 1 whenever a check fails, so only its output counts.
+    pub fn id_failures(&self) -> Option<Vec<Check>> {
+        let out = process::run(&self.bin, &["doctor", "--json"], &self.cwd, &self.env);
+        let doctor: Doctor = serde_json::from_str(&out.stdout).ok()?;
+        Some(
+            doctor
+                .checks
+                .into_iter()
+                .filter(|c| c.name == "ids" && c.status == "fail")
+                .collect(),
+        )
     }
 
     /// Runs `cmd` under the store lock (`tasq store lock -- <cmd>`); the
