@@ -10,7 +10,8 @@ the event payloads below are the whole API.
 
 This page is normative: a plugin can be written from it alone.
 `examples/plugins/tasq-echo` (bash builtins only) is the smallest plugin that follows it: it
-appends every event it is told about to a log file.
+appends every event it is told about to a log file. `tasq-git` (`crates/git`), the store sync
+plugin, uses every extension point below; how to use it is in [`git-sync.md`](git-sync.md).
 
 ## Running a plugin
 
@@ -119,9 +120,9 @@ enabled, by name, in any configuration layer:
 enabled = ["git"]     # tasq-git, told about every event; in this order
 timeout = 2           # seconds a plugin may take over one event (default 2)
 
-[plugin.git]          # the plugin's own settings, passed to it as is
+[plugin.git]          # the plugin's own settings, passed to it as is (docs/git-sync.md)
 interval = 60
-remote = "origin"
+email = "me@example.com"
 ```
 
 - `[plugins]` is tasq's: an unknown key there is an error with file, line and column, like
@@ -308,7 +309,7 @@ JSON array of checks:
 ```json
 [
   {"name": "remote", "status": "ok", "message": "origin reachable"},
-  {"name": "push", "status": "warn", "message": "3 commits not pushed", "fix": "tasq git push"}
+  {"name": "push", "status": "warn", "message": "3 commits not pushed", "fix": "tasq git sync"}
 ]
 ```
 
@@ -342,7 +343,7 @@ OK    lock         no write in progress
 OK    tasq-git     plugin git is /home/me/bin/tasq-git
 OK    git/remote   origin reachable
 WARN  git/push     3 commits not pushed
-                   fix: tasq git push
+                   fix: tasq git sync
 WARN  git/warning  push failed: no network
                    fix: shown until tasq-git removes it from /home/me/.local/share/tasq/stores/default/.tasq/plugins/git/warnings
 OK    git          git found at /usr/bin/git

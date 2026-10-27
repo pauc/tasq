@@ -69,6 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (who it commits as, and the `ssh` command it pushes with), `git/remote` (the branch and the
   upstream it tracks, or that it has none), `git/push` (commits not pushed), `git/fetch` (how
   long ago the last fetch was) and `git/rebase` (a rebase left in progress fails).
+- `docs/git-sync.md` describes store sync: install and enable, the first and a second machine,
+  identity, what the background job does and the interval, `tasq git sync`, the lasting
+  warnings, conflicts, duplicate ids, the doctor checks and the plugin's state files. README,
+  `docs/plugins.md`, `docs/config.md` and `docs/architecture.md` link to it.
 - `docs/plugins.md` describes the plugin extension points normatively (ADR 0030): enabling a
   plugin, the events and every payload with an example, the plugin's process (arguments,
   environment, timeout, exit codes), lasting warnings, doctor checks, `tasq store lock` and

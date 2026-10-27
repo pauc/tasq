@@ -511,7 +511,7 @@ timeout = 5
 
 [plugin.git]
 interval = 60
-remote = "origin"
+email = "me@example.com"
 ```
 
 `[plugins]` is checked like every other table (an unknown key is an error with file, line and
@@ -520,7 +520,8 @@ merged across layers key by key, so a `.tasq.toml` or a profile can change one s
 plugin configured globally. `--set` and `TASQ_SET` reach it too (`--set
 plugin.git.interval=30`); such a value takes the type the key has in the layers below, and is
 a string when no layer set it. The rest (payloads, environment, lasting warnings, doctor
-checks, `tasq store lock`): `docs/plugins.md`.
+checks, `tasq store lock`): `docs/plugins.md`. The keys of `[plugin.git]` (`name`, `email`,
+`ssh_key`, `interval`): `docs/git-sync.md`.
 
 ## Colours
 

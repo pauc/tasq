@@ -28,7 +28,7 @@ The recordings are the `docs/demo/*.tape` files against a throwaway store
 | crates.io (once published) | `cargo install tasq` |
 | Prebuilt binary | Download `tasq-vX.Y.Z-<target>.tar.gz` for your platform from the [GitHub releases](https://github.com/pauc/tasq/releases) (Linux x86_64 and aarch64, macOS x86_64 and arm64; a `.sha256` sits next to each tarball), unpack it and put `tasq` on your `PATH` |
 | Homebrew | `brew install pauc/tasq/tasq` (the tap is `pauc/homebrew-tasq`) <!-- TODO: the tap repository does not exist yet; the first release with HOMEBREW_TAP_TOKEN set creates the formula --> |
-| From source | `git clone https://github.com/pauc/tasq && cd tasq && cargo install --path crates/cli` |
+| From source | `git clone https://github.com/pauc/tasq && cd tasq && cargo install --path crates/cli` (and `--path crates/git` for store sync) |
 
 The binary is called `tasq`. Rust 1.90 or newer builds it from source. Nothing else is
 required: git, glow, claude, direnv, tmux, herdr, glab and gh are all optional and
@@ -188,9 +188,17 @@ parallel, both succeed, and `ls` sorts the store chronologically.
 **Files, a lock, no index and no git.** Reads never spawn a process and never lock: every
 command reads the frontmatter of the store's files. A write takes `.tasq/lock` in the store
 directory (a crashed holder's lock is broken after two minutes), rewrites one file atomically,
-and refuses with a conflict when the file changed since it was read. Nothing is committed;
-syncing a store with git comes back as an opt-in feature
-([ADR-0026](docs/adr/0026-store-v2-frontmatter-tasq-directory-ulid-files.md)).
+and refuses with a conflict when the file changed since it was read. tasq itself commits
+nothing ([ADR-0026](docs/adr/0026-store-v2-frontmatter-tasq-directory-ulid-files.md)); store
+sync is a plugin, below.
+
+**Store sync.** `tasq-git`, shipped next to `tasq`, makes a store a git repository and keeps
+it in step across machines. Enabled with `[plugins] enabled = ["git"]`, it commits every
+command's writes in the background and pushes them, fetches and rebases when the store opens
+after an interval, and turns a conflict or a duplicate id into a warning shown until it is
+fixed. `tasq git init <url>` sets up the first machine, `tasq git clone <url>` the next ones,
+`tasq git sync` syncs now. Each store commits and pushes with its own identity and SSH key.
+[`docs/git-sync.md`](docs/git-sync.md).
 
 **Layered configuration.** TOML, later layers winning key by key: built-in defaults,
 `~/.config/tasq/config.toml`, the nearest `.tasq.toml` walking up from the current directory,
@@ -265,6 +273,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq plugins list` | Enabled plugins, discovered `tasq-*` plugins and configured hooks |
 | `tasq completions SHELL` | Completion script for bash, zsh, fish and others |
 | `tasq NAME [ARGS]...` | Run the plugin `tasq-NAME` from `PATH` |
+| `tasq git init\|clone\|sync` | Store sync, with `tasq-git` installed ([`docs/git-sync.md`](docs/git-sync.md)) |
 
 Global flags, accepted before or after the subcommand: `--profile NAME`, `--config FILE`,
 `--set KEY=VALUE` (repeatable), `--json`, `--color auto|always|never`, `--no-color`,

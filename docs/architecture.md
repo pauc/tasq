@@ -24,6 +24,8 @@ flowchart TB
 
     core["<b>tasq-core</b> (crates/core)<br/>model · format · query · config · clock<br/>Store / Source / Launcher traits"]
 
+    git["<b>tasq-git</b> (crates/git)<br/>store sync plugin, no tasq crate"]
+
     cli --> tstore
     tstore --> core
     cli --> sources
@@ -34,10 +36,14 @@ flowchart TB
     tui --> core
     sources --> core
     launch --> core
+    cli -. "tasq-git hook (events)" .-> git
+    git -. "tasq --json, tasq store lock" .-> cli
 ```
 
 Dependencies flow one way, toward `tasq-core`. The adapters never depend on each other, and the
-TUI depends on core only; the CLI is the single place where everything meets.
+TUI depends on core only; the CLI is the single place where everything meets. `tasq-git` is
+outside that graph: a separate binary that knows tasq only through the plugin contract
+(`docs/plugins.md`), so it could move to its own repository unchanged.
 
 | Crate | Package | Role | Talks to the world through |
 |---|---|---|---|
@@ -47,6 +53,7 @@ TUI depends on core only; the CLI is the single place where everything meets.
 | `crates/launch` | `tasq-launch` | `Launcher` implementations (shell, tmux, Claude Code, herdr), the command `Summarizer` behind `tasq summary`. | Child processes, with an explicitly injected environment. |
 | `crates/worktree` | `tasq-worktree` | Carries out the worktree lifecycle (ADR 0022): where a branch lives, `git worktree add` at the declared path, provisioning and the `pre-create`/`post-create` hooks around it, the release at close (removal, branch deletion, `pre-remove`/`post-remove` hooks), the declared worktrees `worktree ls` lists and their changes, hook approvals in the trust file. | `git` child processes, with an explicitly injected environment. |
 | `crates/tui` | `tasq-tui` | Full-screen terminal UI. Elm architecture over `tasq-core`; everything that needs the outside world goes through a `Host` the CLI provides. | The terminal (ratatui / crossterm). |
+| `crates/git` | `tasq-git` | Store sync, the plugin of ADR 0030 ([`docs/git-sync.md`](git-sync.md)): `hook` answers tasq's events, `job` commits a store's task files in the background and fetches, rebases (under `tasq store lock`) and pushes, `init`, `clone` and `sync` are `tasq git ...`, `doctor` the repository checks. Depends on no tasq crate. | `git` child processes with an injected environment (no `GIT_*`, no prompts in the background); `tasq` itself for `--json` and `store lock`; files under `<store>/.tasq/plugins/git/`. |
 | `crates/cli` | `tasq` (lib `tasq_cli`) | The binary. Argument parsing, config loading, opening the store, building sources and launchers, rendering human and `--json` output, hooks and out-of-process plugins. | Everything above, plus stdout, the pager and `PATH` for plugins. |
 
 ## tasq-core

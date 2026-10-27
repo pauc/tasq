@@ -48,7 +48,7 @@ Rules that are easy to get wrong:
 
 ## Architecture
 
-Workspace of seven crates; dependencies flow one way, toward `tasq-core`.
+Workspace of eight crates; dependencies flow one way, toward `tasq-core`, except `tasq-git`, which depends on no tasq crate.
 
 | Crate | Role |
 |---|---|
@@ -58,6 +58,7 @@ Workspace of seven crates; dependencies flow one way, toward `tasq-core`.
 | `crates/launch` (`tasq-launch`) | `Launcher` implementations (shell, tmux, Claude Code, herdr) and the command `Summarizer` behind `tasq summary`. |
 | `crates/worktree` (`tasq-worktree`) | Runs `git` for declared worktrees (ADR 0022): branch state, `git worktree add`, creating a task's worktree (`create::materialize`: provisioning, hooks, the trust store), releasing it at close (`release::release`: removal, branch deletion, remove hooks), the rows of `worktree ls` (`listing::rows`: scope, changes). The decisions live in `tasq_core::worktree`; the CLI passes in the terminal question (`hooks::Approver`). |
 | `crates/cli` (binary `tasq`) | Argument parsing, config loading, opening the store, rendering, hooks and plugins: dispatch to `tasq-<name>`, and the events told to `[plugins] enabled` (`plugins::fire`; `store-open` in `App::open_store`, `post-write` from the `writes::Recording` store decorator after the command, `doctor`), lasting warnings, `tasq store lock` (ADR 0030, `docs/plugins.md`). Must stay thin: every command is a core function plus rendering, and every command gets `--json`. |
+| `crates/git` (binary `tasq-git`) | The store sync plugin (ADR 0030, `docs/git-sync.md`). Depends on no tasq crate: it knows tasq only through the event payloads, `tasq ... --json` and `tasq store lock`. `hook` answers events (`store-open` and `post-write` detach `job`, the `doctor` event gets the repository checks of `doctor::checks`); `job` commits the task files and fetches, rebases (as `tasq-git rebase` under `tasq store lock`) and pushes, foreground for `tasq git sync`; `init` and `clone` set up a store with its identity; `state` is `.tasq/plugins/git/` (job lock, `pending`, `writes`, `last-fetch`, lasting warnings). Every `git` runs through `git::Git` with an injected environment (`process::background_env`: no `GIT_*`, no prompts). |
 | `crates/tui` (`tasq-tui`) | Full-screen terminal UI. Depends on core only; the outside world comes through a `Host` the CLI provides. |
 
 ### The model vs the file
@@ -72,7 +73,7 @@ A task file holds status, priority and topic tags as frontmatter keys (`status: 
 
 A store is `<data_dir>/<store.name>` (default `$XDG_DATA_HOME/tasq/stores/default`, else `~/.local/share/tasq/stores/default`); an absent directory is an empty store and the first write creates it. There is no index, no cache and no git: `TasqStore` reads every `.md` file's frontmatter on each call to map ids to files. A task's id is the `id:` key, written once (highest plus one on create) and never changed. Two files with one id make it ambiguous (`StoreError::AmbiguousId`, naming both).
 
-Reads never lock and never spawn a process. A write (`create`, `update`, `set_done`) takes `.tasq/lock` (exclusive create, stale after two minutes against the injected clock, polled) for its whole duration. `create` mints a ULID from the clock and an injected random source and writes no-clobber, retrying on a taken name. `Store::update` takes the whole task, diffs it against disk (`tasq_store::diff`), applies ops and writes atomically (`NamedTempFile::persist`). A `Revision` (mtime + length + hash) remembered on read makes a later `update` fail with `Conflict` if the file changed. `tasq store lock -- <cmd>` runs a command holding the same lock (refreshed every 30 s), for plugins that rewrite task files. Commits and sync are task 57, as the `tasq-git` plugin (ADR 0030).
+Reads never lock and never spawn a process. A write (`create`, `update`, `set_done`) takes `.tasq/lock` (exclusive create, stale after two minutes against the injected clock, polled) for its whole duration. `create` mints a ULID from the clock and an injected random source and writes no-clobber, retrying on a taken name. `Store::update` takes the whole task, diffs it against disk (`tasq_store::diff`), applies ops and writes atomically (`NamedTempFile::persist`). A `Revision` (mtime + length + hash) remembered on read makes a later `update` fail with `Conflict` if the file changed. `tasq store lock -- <cmd>` runs a command holding the same lock (refreshed every 30 s), for plugins that rewrite task files. Commits and sync are the `tasq-git` plugin (`crates/git`, ADR 0030, `docs/git-sync.md`): enabled, it commits each command's writes in a detached job and syncs the store with its remote, taking the store lock only for the rebase.
 
 ### Injected everything
 
