@@ -191,14 +191,14 @@ template sources relative to the file; the project-file layer and its walk are r
 
 **Blocked by:** CC-002, CC-003.
 
-**Status:** todo
+**Status:** done
 
-- [ ] A repository config applies to its main checkout from any cwd and any profile, and to no other.
-- [ ] It wins over the profile and loses to env and `--set`.
-- [ ] Unknown key (including `enabled`), missing `path` and duplicate `path` fail with exact messages.
-- [ ] A relative template `source` resolves from the repository config's directory.
-- [ ] A `.tasq.toml` in the cwd or the repository has no effect.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] A repository config applies to its main checkout from any cwd and any profile, and to no other.
+- [x] It wins over the profile and loses to env and `--set`.
+- [x] Unknown key (including `enabled`), missing `path` and duplicate `path` fail with exact messages.
+- [x] A relative template `source` resolves from the repository config's directory.
+- [x] A `.tasq.toml` in the cwd or the repository has no effect.
+- [x] `mutants-in` the diff: zero missed.
 
 ### CC-005: hooks run without trust
 

@@ -9,7 +9,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
 | CC-001 | The config directory | done | 5c4944c; mutants 35: 34 caught, 1 unviable, 0 missed |
 | CC-002 | Profiles are files | done | 982b55f; mutants 39: 34 caught, 5 unviable, 0 missed |
 | CC-003 | `worktrees_enabled` | done | 42bf3ae; mutants 8: 6 caught, 2 unviable, 0 missed |
-| CC-004 | Repository configs replace `.tasq.toml` | todo | |
+| CC-004 | Repository configs replace `.tasq.toml` | done | 674522d; mutants 22: 12 caught, 10 unviable, 0 missed |
 | CC-005 | Hooks run without trust | todo | |
 | CC-006 | `tasq worktree config [DIR]` | todo | |
 | CC-007 | `tasq doctor` checks repository configs | todo | |
@@ -57,6 +57,27 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
   error sends users to. CC-008 rewrites them.
 - 2026-10-27 (CC-003): a `deserialize_with` that ignores its deserializer still gets the
   value's span, so the error points at the value (`3:11` for `enabled = true`).
+- 2026-10-27 (CC-004): `Repo::of` canonicalizes the main checkout, core compares `path`
+  without canonicalizing (as planned), so a `path` written through a symlink (`~/code`
+  linked elsewhere, macOS `/tmp`) never matches and nothing says so. CC-007's doctor check
+  should warn when `path` differs from its canonical form, not only when it is not a main
+  checkout.
+- 2026-10-27 (CC-004): every repository config is parsed on each worktree load, so one broken
+  or duplicate file fails `worktree up`, `create` (auto worktree) and `done` (release) for
+  every repository, by design. `worktree ls` used to swallow load errors per task
+  (`repo_settings(..).ok()`), which would have listed every repository with default
+  settings; it now fails with the error.
+- 2026-10-27 (CC-004): `repo_settings` reloads the whole config once per task in `worktree ls`
+  and `prune` (pre-existing with `config_at`); each load now also parses every
+  `repos/*.toml` three times (switch probe, typed check, table). Fine at today's sizes;
+  memoize by main checkout if `ls --all` gets slow.
+- 2026-10-27 (CC-004): `#[serde(untagged)]` buffers the input and loses `toml::Spanned`, so
+  two probes with spans need two structs tried in turn.
+- 2026-10-27 (CC-004): `CLAUDE.md`, `README.md`, `docs/config.md`, `docs/json.md` and
+  `docs/plugins.md` still describe the `.tasq.toml` walk, now silently ignored. CC-008.
+- 2026-10-27 (CC-004): the trust store still applies, now to the repository config's hooks
+  (`RepoSettings::repo_file` is the matched file, `untrusted` the kinds it sets), so the
+  approvals key by `repos/<name>.toml`. CC-005 removes it.
 
 ## Blockers
 
@@ -93,6 +114,27 @@ None.
   `--set` and `TASQ_SET` have no position; they get `ConfigError::WorktreeEnabledMoved`,
   `<--set|env>: worktree.enabled moved to the top level: set worktrees_enabled (...)`,
   instead of the generic unknown key.
+- CC-004: a relative `path` in a repository config is an error
+  (`<file>:<line>:<column>: path must be absolute or start with ~/, the main checkout of a
+  repository`), not joined to anything: core does not normalise `..`, so a relative one
+  could never compare equal to a main checkout.
+- CC-004: `worktrees_enabled` and `worktree.enabled` in a repository config get one dedicated
+  error at the value, `worktrees_enabled is not a repository setting: set it in config.toml
+  or a profile (docs/config.md, "Worktrees")`, rather than the generic unknown field or
+  CC-003's "moved to the top level" (which would send the user to a key the file cannot
+  hold). Other unknown keys keep the parser's message (`unknown field `store`, expected
+  `path` or `worktree``); a missing `path` is `missing field `path`` at 1:1. Duplicates are
+  `ConfigError::DuplicateRepo`: `repository configs <a> and <b> both have path <main>`, in
+  file name order.
+- CC-004: `Loaded::repo` holds the matched file (for CC-006's "matched file or none");
+  `Origin::Repo` displays as the bare path, like `Origin::File`.
+- CC-004: `tasq worktree ls` now fails when a repository config does not load, instead of
+  listing with default settings (code review finding; the swallowed error predates CC-004
+  but CC-004 widened it to every repository).
+- CC-004: the CLI tests that used `<home>/.tasq.toml` as a generic config layer
+  (`write_project_config`) now write `config.toml`; core tests that stacked it over the
+  global file use a selected profile. The trust and `--yes` help texts say "repository
+  config" until CC-005 deletes them.
 - CC-003: also changed outside the Rust readers: `examples/config/*.toml`, the
   `crates/core/tests/fixtures/worktree/*.toml` fixtures (they lose `enabled = true`; they are
   repository settings, which CC-004 forbids it in) and `plugins/claude/skills/wrapup/SKILL.md`.
