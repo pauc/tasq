@@ -218,12 +218,12 @@ template sources relative to the file; the project-file layer and its walk are r
 
 **Blocked by:** CC-004.
 
-**Status:** todo
+**Status:** done
 
-- [ ] Text and JSON snapshots: each `worktree.*` key with its origin, and the matched file or none.
-- [ ] `DIR` inside a linked worktree shows the main checkout's settings.
-- [ ] Hidden and refused with worktrees disabled.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] Text and JSON snapshots: each `worktree.*` key with its origin, and the matched file or none.
+- [x] `DIR` inside a linked worktree shows the main checkout's settings.
+- [x] Hidden and refused with worktrees disabled.
+- [x] `mutants-in` the diff: zero missed.
 
 ### CC-007: `tasq doctor` checks repository configs
 

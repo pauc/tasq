@@ -11,7 +11,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
 | CC-003 | `worktrees_enabled` | done | 42bf3ae; mutants 8: 6 caught, 2 unviable, 0 missed |
 | CC-004 | Repository configs replace `.tasq.toml` | done | 674522d; mutants 22: 12 caught, 10 unviable, 0 missed |
 | CC-005 | Hooks run without trust | done | f561dff; mutants 48: 38 caught, 10 unviable, 0 missed |
-| CC-006 | `tasq worktree config [DIR]` | todo | |
+| CC-006 | `tasq worktree config [DIR]` | done | ffc1b8e; mutants 18: 18 caught, 0 missed |
 | CC-007 | `tasq doctor` checks repository configs | todo | |
 | CC-008 | The docs describe the config directory | todo | |
 
@@ -97,6 +97,18 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 60. ADR: 0031.
 - 2026-10-27 (CC-005): the first mutants baseline failed on
   `commands::view::tests::render_with_glow_runs_the_program_and_reports_failures`
   (`ETXTBSY`, the same flake as CC-001's); the rerun passed.
+- 2026-10-27 (CC-006): hidden came for free: the whole `worktree` command is hidden while
+  worktrees are disabled (`cli::command`), so a new subcommand only needs the `disabled()`
+  check in its handler.
+- 2026-10-27 (CC-006): `worktree config` resolves `DIR` with `existing_dir` (canonical) and
+  `Repo::of`, the same main checkout every worktree command loads with, so it shows exactly
+  what `up` and `release` use, including CC-004's symlink blind spot: a `path` written through
+  a symlink shows `repository config: none` (code review note; CC-007's doctor check is the
+  place to report it).
+- 2026-10-27 (CC-006): `Repo::of` gives a linked worktree's own root as `main` when the
+  common git directory is not named `.git` (a bare repository with worktrees), so each
+  worktree of such a repository is its own "main checkout" for repository configs.
+  Pre-existing in `tasq_core::worktree::git::main_checkout`, left as is (code review note).
 
 ## Blockers
 
@@ -162,6 +174,16 @@ None.
 - CC-005: the trust sentences in `docs/config.md`, `docs/json.md` (the `worktree trust`
   row), `docs/architecture.md`, `README.md` and `CLAUDE.md` are removed here rather than in
   CC-008, since the commands they describe are gone.
+- CC-006: the text output puts the matched file first, as a comment header
+  (`# repository: <main>`, `# repository config: <file>|none`), then the `[worktree]` table
+  rendered as `config show` renders it; it does not list the layers. The JSON is
+  `repository`, `repository_config` (`null` for none), `worktree` and `origins`
+  (`{"worktree.base": "<origin>", ...}`, an array or an empty table is one leaf); its row is
+  added to `docs/json.md` here, not in CC-008.
+- CC-006: a `DIR` that does not exist, is not a directory or is outside a git repository is a
+  user error (`directory not found: <dir>`, `not a directory: <dir>`, `not inside a git
+  repository: <dir>`), rather than falling back to the directory itself as `repo_settings`
+  does for a task's project.
 - CC-003: also changed outside the Rust readers: `examples/config/*.toml`, the
   `crates/core/tests/fixtures/worktree/*.toml` fixtures (they lose `enabled = true`; they are
   repository settings, which CC-004 forbids it in) and `plugins/claude/skills/wrapup/SKILL.md`.
