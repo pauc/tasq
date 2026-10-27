@@ -1,7 +1,6 @@
 //! `tasq next` and `tasq pick`: open a work session (plan T-401 to T-405).
 
 use serde_json::Value;
-use tasq_core::config::ENV_PROFILE;
 use tasq_core::launch::{ENV_TASK_ID, LaunchContext, LaunchOutcome, resolve_workdir};
 use tasq_core::model::{Status, TaskId};
 use tasq_core::query::{self, Filter};
@@ -16,7 +15,7 @@ use crate::cli::Command;
 use crate::commands::worktree::{Created, materialize};
 use crate::error::{CliError, Result};
 use crate::json;
-use crate::plugins::{self, Hook};
+use crate::plugins::{self, Hook, app_config_env};
 
 /// How `next`/`pick` open the session: `--launcher`, `--window`,
 /// `--no-focus`.
@@ -229,9 +228,7 @@ fn open_session(
 
     let mut env = vec![(ENV_TASK_ID.to_owned(), id.to_string())];
     env.extend(app.store_env()?);
-    if let Some(profile) = &app.loaded.profile {
-        env.push((ENV_PROFILE.to_owned(), profile.clone()));
-    }
+    env.extend(app_config_env(app));
     let ctx = LaunchContext {
         statuses: app
             .workflow()

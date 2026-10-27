@@ -2,19 +2,20 @@
 source: crates/cli/tests/cli.rs
 expression: env.normalize(&stdout(&out))
 ---
-# profile: none
-# profiles available: work
+# profile: work
+# profiles available: play, work
 # layers, later ones win:
 #   1. defaults
 #   2. [ROOT]/home/.config/tasq/config.toml
 #   3. [ROOT]/home/.tasq.toml
-#   4. env
-#   5. --set
+#   4. profile work ([ROOT]/home/.config/tasq/profiles/work.toml)
+#   5. env
+#   6. --set
 
 data_dir = "[ROOT]/home/.local/share/tasq/stores" # defaults
 
 [store]
-name = "default"                             # defaults
+name = "work"                                # profile work ([ROOT]/home/.config/tasq/profiles/work.toml)
 
 [workflow]
 default_status = "ready"                     # defaults

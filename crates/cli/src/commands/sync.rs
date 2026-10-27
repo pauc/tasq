@@ -2,7 +2,6 @@
 //! `--interactive` open the Claude briefing session that does it.
 
 use serde_json::Value;
-use tasq_core::config::ENV_PROFILE;
 use tasq_core::model::{Origin, Status, Task, TaskId};
 use tasq_core::query::Filter;
 use tasq_core::source::{self, Applied, Change, Defaults, SyncContext};
@@ -15,6 +14,7 @@ use tasq_sources::{Built, build_sources, real_transport};
 use crate::app::App;
 use crate::error::{CliError, Result};
 use crate::json;
+use crate::plugins::app_config_env;
 
 /// What the briefing session is asked to do: the plugin's sync skill.
 pub const BRIEFING_PROMPT: &str = "/tasq:sync";
@@ -141,9 +141,7 @@ pub fn interactive(app: &App, dry_run: bool) -> Result<()> {
         &env,
     );
     let mut extra = app.store_env()?;
-    if let Some(profile) = &app.loaded.profile {
-        extra.push((ENV_PROFILE.to_owned(), profile.clone()));
-    }
+    extra.extend(app_config_env(app));
 
     if dry_run {
         let mut steps = Vec::new();

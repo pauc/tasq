@@ -46,7 +46,7 @@ Commands:
 
 Options:
       --profile <NAME>
-          Apply the `[profile.<NAME>]` block of the config files (also TASQ_PROFILE)
+          Apply the profile file `profiles/<NAME>.toml` of the config directory (also TASQ_PROFILE)
 
       --config-dir <DIR>
           Read the configuration from DIR instead of ~/.config/tasq (also TASQ_CONFIG_DIR)

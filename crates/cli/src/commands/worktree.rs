@@ -15,19 +15,19 @@ use tasq_core::work;
 use tasq_core::worktree::declaration;
 use tasq_core::worktree::hooks::Kind;
 use tasq_core::worktree::lifecycle::Declared;
-use tasq_worktree::Repo;
 pub use tasq_worktree::RepoSettings;
 pub use tasq_worktree::create::Created;
 use tasq_worktree::create::{self, CreateError};
 use tasq_worktree::release;
 pub use tasq_worktree::release::Releasing;
+use tasq_worktree::{Git, Repo};
 
 use crate::app::App;
 use crate::cli::{Command, WorktreeAction};
 use crate::commands::{existing_dir, finish};
 use crate::error::{CliError, Result};
 use crate::json;
-use crate::plugins::HookEvent;
+use crate::plugins::{HookEvent, app_config_env};
 
 /// `tasq worktree <subcommand>`.
 pub fn dispatch(app: &App, command: &Command) -> Result<()> {
@@ -304,7 +304,7 @@ pub fn materialize(
     };
     let approver = worktree_hooks::approver(app, Approval::from_yes(yes));
     create::materialize(
-        &app.git(),
+        &lifecycle_git(app),
         task,
         settings.as_ref(),
         from,
@@ -316,6 +316,15 @@ pub fn materialize(
         (CreateError::NoProject, Err(no_project)) => no_project,
         (e, _) => e.into(),
     })
+}
+
+/// [`App::git`] for creating and releasing worktrees: its environment
+/// also carries [`app_config_env`], so the hooks it runs (and a `tasq`
+/// they call) read the same config directory and profile.
+fn lifecycle_git(app: &App) -> Git {
+    let mut git = app.git();
+    git.env.extend(app_config_env(app));
+    git
 }
 
 /// Records `path` (which must exist) with its current branch, unless it is
@@ -410,7 +419,7 @@ pub fn release(
     }
     let settings = repo_settings(app, &project_of(app, task)?)?;
     Ok(release::release(
-        &app.git(),
+        &lifecycle_git(app),
         task,
         &settings,
         &app.opts.cwd,

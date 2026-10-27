@@ -45,6 +45,25 @@ pub enum ConfigError {
         /// ``unknown field `nmae`, expected one of `name`, ... ``.
         message: String,
     },
+    /// A file holds a `[profile.<name>]` table: a profile is a file of
+    /// its own now (ADR-0031).
+    #[error(
+        "{file}:{line}:{column}: profiles are files now: move [profile.{name}] to {}",
+        target.display()
+    )]
+    InlineProfile {
+        /// The file holding the table.
+        file: PathBuf,
+        /// 1-based line of the profile name.
+        line: usize,
+        /// 1-based column of the profile name.
+        column: usize,
+        /// The profile name.
+        name: String,
+        /// The profile file to move it to, `profiles/<name>.toml` in the
+        /// config directory.
+        target: PathBuf,
+    },
     /// A value set by the environment or `--set` could not be used.
     #[error("{origin}: {key}={value:?}: expected {expected}")]
     InvalidValue {
@@ -65,15 +84,20 @@ pub enum ConfigError {
         /// The key path as given.
         key: String,
     },
-    /// The selected profile is not defined in any file.
+    /// The selected profile has no file in the config directory's
+    /// `profiles/`.
     #[error(
-        "profile {name:?} is not defined; available profiles: {}",
-        list(available)
+        "profile {name:?} is not defined: no file {}; available profiles: {}",
+        file.display(),
+        if available.is_empty() { "none".to_owned() } else { list(available) }
     )]
     UnknownProfile {
         /// The requested profile.
         name: String,
-        /// Profiles defined across the loaded files.
+        /// The file it would be, `profiles/<name>.toml` in the config
+        /// directory.
+        file: PathBuf,
+        /// The profiles that have a file.
         available: Vec<String>,
     },
     /// The merged layers do not form a valid config. Each file is valid on

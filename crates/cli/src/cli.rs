@@ -81,7 +81,7 @@ pub struct Cli {
 #[derive(Debug, Clone, Args, Default)]
 #[command(next_display_order = 900)]
 pub struct GlobalArgs {
-    /// Apply the `[profile.<NAME>]` block of the config files (also TASQ_PROFILE).
+    /// Apply the profile file `profiles/<NAME>.toml` of the config directory (also TASQ_PROFILE).
     #[arg(long, global = true, value_name = "NAME")]
     pub profile: Option<String>,
 

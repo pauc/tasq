@@ -303,12 +303,9 @@ fn is_executable(path: &Path) -> bool {
 }
 
 /// The variables a plugin or hook needs to see the same configuration as
-/// the `tasq` that ran it: [`ENV_BIN`], and [`ENV_PROFILE`],
-/// [`ENV_CONFIG_DIR`] and [`ENV_SET`] when a profile, a config directory or
-/// overrides are in effect (`set` is appended to any `TASQ_SET` already
-/// in `env`, one entry per line). The config directory comes from
-/// `config_dir` (`--config-dir`), else from `TASQ_CONFIG_DIR` in `env`, and
-/// is forwarded absolute, so a hook in another directory reads the same one.
+/// the `tasq` that ran it: [`ENV_BIN`], the [`config_env`], and
+/// [`ENV_SET`] when overrides are in effect (`set` is appended to any
+/// `TASQ_SET` already in `env`, one entry per line).
 pub fn passthrough_env(
     bin: Option<&Path>,
     profile: Option<&str>,
@@ -320,6 +317,31 @@ pub fn passthrough_env(
     if let Some(bin) = bin {
         vars.push((ENV_BIN.to_owned(), bin.display().to_string()));
     }
+    vars.extend(config_env(profile, config_dir, env));
+    let mut lines: Vec<String> = env(ENV_SET)
+        .filter(|v| !v.trim().is_empty())
+        .map(|v| v.lines().map(str::to_owned).collect())
+        .unwrap_or_default();
+    lines.extend(set.iter().cloned());
+    if !lines.is_empty() {
+        vars.push((ENV_SET.to_owned(), lines.join("\n")));
+    }
+    vars
+}
+
+/// The variables that make a `tasq` started elsewhere (a plugin, a hook, a
+/// launched session) read the same config directory and profile:
+/// [`ENV_PROFILE`] when a profile is selected and [`ENV_CONFIG_DIR`] when
+/// a config directory was named. The config directory comes from
+/// `config_dir` (`--config-dir`), else from `TASQ_CONFIG_DIR` in `env`,
+/// and is forwarded absolute, so a process in another directory reads the
+/// same one.
+pub fn config_env(
+    profile: Option<&str>,
+    config_dir: Option<&Path>,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Vec<(String, String)> {
+    let mut vars = Vec::new();
     if let Some(profile) = profile {
         vars.push((ENV_PROFILE.to_owned(), profile.to_owned()));
     }
@@ -334,14 +356,6 @@ pub fn passthrough_env(
             .or_else(|_| std::path::absolute(&dir))
             .unwrap_or(dir);
         vars.push((ENV_CONFIG_DIR.to_owned(), absolute.display().to_string()));
-    }
-    let mut lines: Vec<String> = env(ENV_SET)
-        .filter(|v| !v.trim().is_empty())
-        .map(|v| v.lines().map(str::to_owned).collect())
-        .unwrap_or_default();
-    lines.extend(set.iter().cloned());
-    if !lines.is_empty() {
-        vars.push((ENV_SET.to_owned(), lines.join("\n")));
     }
     vars
 }
@@ -498,6 +512,15 @@ pub fn run_hooks_with(
         }
     }
     Ok(())
+}
+
+/// [`config_env`] for `app`'s flags and environment.
+pub fn app_config_env(app: &App) -> Vec<(String, String)> {
+    config_env(
+        app.loaded.profile.as_deref(),
+        app.global.config_dir.as_deref(),
+        &|name| app.opts.env.get(name).cloned(),
+    )
 }
 
 /// [`passthrough_env`] for `app`'s flags and environment.

@@ -52,6 +52,14 @@ impl Sandbox {
         path
     }
 
+    fn write_profile(&self, name: &str, text: &str) -> PathBuf {
+        let dir = self.home.join(".config/tasq/profiles");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{name}.toml"));
+        fs::write(&path, text).unwrap();
+        path
+    }
+
     fn write_project(&self, text: &str) -> PathBuf {
         let path = self.project.join(".tasq.toml");
         fs::write(&path, text).unwrap();
@@ -532,8 +540,10 @@ fn plugins_are_enabled_by_name_and_their_tables_load_unchecked() {
     ));
 
     // Profiles carry plugin settings too.
-    sb.write_project(
-        "[profile.work.plugins]\nenabled = [\"echo\"]\n[profile.work.plugin.echo]\nlog = \"w\"\n",
+    fs::remove_file(sb.project.join(".tasq.toml")).unwrap();
+    sb.write_profile(
+        "work",
+        "[plugins]\nenabled = [\"echo\"]\n[plugin.echo]\nlog = \"w\"\n",
     );
     let mut opts = sb.opts();
     opts.profile = Some("work".to_owned());
@@ -1013,10 +1023,6 @@ fn unknown_section_and_nested_unknown_key_are_errors() {
     sb.write_global("[forge.gitlab]\nhots = \"x\"\n");
     let err = Config::load(&sb.opts()).unwrap_err();
     assert!(err.to_string().contains("unknown field `hots`"), "{err}");
-
-    sb.write_global("[profile.x]\ncolour = \"x\"\n");
-    let err = Config::load(&sb.opts()).unwrap_err();
-    assert!(err.to_string().contains("unknown field `colour`"), "{err}");
 }
 
 /// `[store]` has one key, `name`: a file that sets `kind`, `notebook` or
@@ -1120,8 +1126,10 @@ fn data_dir_defaults_to_the_xdg_data_directory() {
 #[test]
 fn data_dir_and_store_name_come_from_every_layer() {
     let sb = Sandbox::new();
-    let global = sb.write_global(
-        "data_dir = \"~/tasks\"\n\n[store]\nname = \"global\"\n\n[profile.work]\ndata_dir = \"/srv/work\"\n[profile.work.store]\nname = \"work\"\n",
+    let global = sb.write_global("data_dir = \"~/tasks\"\n\n[store]\nname = \"global\"\n");
+    sb.write_profile(
+        "work",
+        "data_dir = \"/srv/work\"\n[store]\nname = \"work\"\n",
     );
     let loaded = Config::load(&sb.opts()).unwrap();
     assert_eq!(loaded.config.data_dir, Some(sb.home.join("tasks")));
@@ -1600,15 +1608,14 @@ fn override_can_set_a_key_a_file_made_scalar_or_table() {
 // --- profiles --------------------------------------------------------------
 
 #[test]
-fn profile_overlay_from_flag_and_env() {
+fn a_selected_profile_file_applies_over_the_global_file() {
     let sb = Sandbox::new();
-    let global = sb.write_global(
-        "[store]\nname = \"home\"\n\n[profile.work]\n[profile.work.store]\nname = \"work\"\n\
-         [profile.work.ui]\nglow_style = \"light\"\n\n[profile.play]\n[profile.play.store]\nname = \"play\"\n",
+    let global = sb.write_global("[store]\nname = \"home\"\n[ui]\nno_osc8 = true\n");
+    let work = sb.write_profile(
+        "work",
+        "[store]\nname = \"work\"\n[ui]\nglow_style = \"light\"\n",
     );
-    let project = sb.write_project(
-        "[ui]\nno_osc8 = true\n[profile.work.launch]\ndefault = \"shell\"\n[profile.other]\n",
-    );
+    sb.write_profile("play", "[store]\nname = \"play\"\n");
     let mut opts = sb.opts();
     let loaded = Config::load(&opts).unwrap();
     assert_eq!(
@@ -1616,72 +1623,80 @@ fn profile_overlay_from_flag_and_env() {
         "no profile without selection"
     );
     assert_eq!(loaded.profile, None);
-    assert_eq!(loaded.profiles, vec!["other", "play", "work"]);
-    assert_eq!(loaded.layers.len(), 3);
+    assert_eq!(loaded.profiles, vec!["play", "work"]);
+    assert_eq!(loaded.layers.len(), 2);
 
     opts.profile = Some("work".to_owned());
     let loaded = Config::load(&opts).unwrap();
     let c = &loaded.config;
     assert_eq!(c.store.name, "work");
     assert_eq!(c.ui.glow_style, "light");
-    assert!(c.ui.no_osc8, "project keys outside the profile still apply");
-    assert_eq!(
-        c.launch.default, "shell",
-        "profile blocks from every file merge"
-    );
+    assert!(c.ui.no_osc8, "global keys outside the profile still apply");
     assert_eq!(loaded.profile.as_deref(), Some("work"));
-    let work_in_global = Origin::Profile {
+    let work_origin = Origin::Profile {
         name: "work".to_owned(),
-        file: global.clone(),
+        file: work.clone(),
     };
-    let work_in_project = Origin::Profile {
-        name: "work".to_owned(),
-        file: project.clone(),
-    };
-    assert_eq!(loaded.explain("store.name"), Some(&work_in_global));
-    assert_eq!(loaded.explain("launch.default"), Some(&work_in_project));
-    assert_eq!(loaded.file_for("launch.default"), Some(project.as_path()));
+    assert_eq!(loaded.explain("store.name"), Some(&work_origin));
+    assert_eq!(loaded.file_for("ui.glow_style"), Some(work.as_path()));
     assert_eq!(
-        work_in_global.to_string(),
-        format!("[profile.work] in {}", global.display())
+        work_origin.to_string(),
+        format!("profile work ({})", work.display())
     );
     let origins: Vec<&Origin> = loaded.layers.iter().map(|l| &l.origin).collect();
     assert_eq!(
         origins,
-        vec![
-            &Origin::Defaults,
-            &Origin::File(global.clone()),
-            &Origin::File(project.clone()),
-            &work_in_global,
-            &work_in_project,
-        ]
+        vec![&Origin::Defaults, &Origin::File(global), &work_origin]
     );
 
     // Env selects a profile too; the flag wins over the env.
     opts.profile = None;
     opts.env = env(&[("TASQ_PROFILE", "play")]);
-    let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.name, "play");
-    assert_eq!(loaded.config.launch.default, "claude");
+    assert_eq!(Config::load(&opts).unwrap().config.store.name, "play");
     opts.profile = Some("work".to_owned());
-    let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.name, "work");
+    assert_eq!(Config::load(&opts).unwrap().config.store.name, "work");
 
     // Env overrides still beat the profile.
     opts.env = env(&[("TASQ_STORE_NAME", "env")]);
+    assert_eq!(Config::load(&opts).unwrap().config.store.name, "env");
+}
+
+/// Only `*.toml` files directly in `profiles/` are profiles; a profile
+/// file in the directory named by `--config-dir` is found there.
+#[test]
+fn profile_names_come_from_the_toml_files_of_the_profiles_directory() {
+    let sb = Sandbox::new();
+    sb.write_profile("b", "");
+    sb.write_profile("a", "");
+    let dir = sb.home.join(".config/tasq/profiles");
+    fs::write(dir.join("notes.md"), "").unwrap();
+    fs::create_dir_all(dir.join("nested.toml")).unwrap();
+    assert_eq!(Config::load(&sb.opts()).unwrap().profiles, vec!["a", "b"]);
+
+    let other = sb.home.join("other");
+    fs::create_dir_all(other.join("profiles")).unwrap();
+    let file = other.join("profiles/x.toml");
+    fs::write(&file, "[store]\nname = \"x\"\n").unwrap();
+    let mut opts = sb.opts();
+    opts.config_dir = Some(other);
+    opts.profile = Some("x".to_owned());
     let loaded = Config::load(&opts).unwrap();
-    assert_eq!(loaded.config.store.name, "env");
+    assert_eq!(loaded.profiles, vec!["x"]);
+    assert_eq!(loaded.file_for("store.name"), Some(file.as_path()));
 }
 
 #[test]
 fn unknown_profile_lists_the_available_ones() {
     let sb = Sandbox::new();
-    sb.write_global("[profile.a]\n[profile.b]\n");
+    sb.write_profile("a", "");
+    sb.write_profile("b", "");
     let mut opts = sb.opts();
     opts.profile = Some("c".to_owned());
     let err = Config::load(&opts).unwrap_err();
     match &err {
-        ConfigError::UnknownProfile { name, available } => {
+        ConfigError::UnknownProfile {
+            name, available, ..
+        } => {
             assert_eq!(name, "c");
             assert_eq!(available, &["a", "b"]);
         }
@@ -1689,8 +1704,18 @@ fn unknown_profile_lists_the_available_ones() {
     }
     assert_eq!(
         err.to_string(),
-        "profile \"c\" is not defined; available profiles: \"a\", \"b\""
+        format!(
+            "profile \"c\" is not defined: no file {}; available profiles: \"a\", \"b\"",
+            sb.home.join(".config/tasq/profiles/c.toml").display()
+        )
     );
+    // A name is a file stem in `profiles/`, never a path.
+    fs::write(sb.home.join(".config/tasq/escape.toml"), "").unwrap();
+    opts.profile = Some("../escape".to_owned());
+    assert!(matches!(
+        Config::load(&opts).unwrap_err(),
+        ConfigError::UnknownProfile { .. }
+    ));
     opts.env = env(&[("TASQ_PROFILE", "zzz")]);
     opts.profile = None;
     let err = Config::load(&opts).unwrap_err();
@@ -1701,22 +1726,78 @@ fn unknown_profile_lists_the_available_ones() {
 }
 
 #[test]
-fn profile_bodies_are_validated_and_cannot_nest() {
+fn profile_files_are_validated_like_any_config_file() {
     let sb = Sandbox::new();
-    let path = sb.write_global("[profile.work.store]\nnotebok = \"x\"\n");
-    let err = Config::load(&sb.opts()).unwrap_err().to_string();
+    let path = sb.write_profile("work", "[store]\nnotebok = \"x\"\n");
+    let mut opts = sb.opts();
+    opts.profile = Some("work".to_owned());
+    let err = Config::load(&opts).unwrap_err().to_string();
     assert!(
         err.starts_with(&format!("{}:2:1: unknown field `notebok`", path.display())),
         "{err}"
     );
+}
 
-    sb.write_global("[profile.work.profile.inner]\n");
-    let err = Config::load(&sb.opts()).unwrap_err().to_string();
-    assert!(err.contains("unknown field `profile`"), "{err}");
+/// A `[profile.<name>]` table, in any file, fails at its name with the
+/// file to move it to (ADR-0031), not as an unknown key.
+#[test]
+fn an_inline_profile_names_the_file_to_move_it_to() {
+    let sb = Sandbox::new();
+    let target = sb.home.join(".config/tasq/profiles/work.toml");
+    let global = sb.write_global("[store]\nname = \"x\"\n\n[profile.work.store]\nname = \"w\"\n");
+    assert_eq!(
+        Config::load(&sb.opts()).unwrap_err().to_string(),
+        format!(
+            "{}:4:10: profiles are files now: move [profile.work] to {}",
+            global.display(),
+            target.display()
+        )
+    );
+    fs::remove_file(&global).unwrap();
 
-    sb.write_global("profile = 3\n");
-    let err = Config::load(&sb.opts()).unwrap_err().to_string();
-    assert!(err.contains("expected a map"), "{err}");
+    let project = sb.write_project("[profile.a]\n[profile.work]\n");
+    let err = Config::load(&sb.opts()).unwrap_err();
+    assert!(
+        matches!(&err, ConfigError::InlineProfile { file, line: 1, column: 10, name, .. }
+            if file == &project && name == "a"),
+        "{err:?}"
+    );
+    fs::remove_file(&project).unwrap();
+
+    // In a profile file, and with `--config-dir`, the target is in that directory.
+    let other = sb.home.join("other");
+    fs::create_dir_all(other.join("profiles")).unwrap();
+    let file = other.join("profiles/p.toml");
+    fs::write(&file, "profile.q.ui.pager = \"x\"\n").unwrap();
+    let mut opts = sb.opts();
+    opts.config_dir = Some(other.clone());
+    opts.profile = Some("p".to_owned());
+    assert_eq!(
+        Config::load(&opts).unwrap_err().to_string(),
+        format!(
+            "{}:1:9: profiles are files now: move [profile.q] to {}",
+            file.display(),
+            other.join("profiles/q.toml").display()
+        )
+    );
+
+    // The first profile in the file, not the first by name.
+    let global = sb.write_global("[profile.zed]\n\n[profile.alpha]\n");
+    let err = Config::load(&sb.opts()).unwrap_err();
+    assert!(
+        matches!(&err, ConfigError::InlineProfile { line: 1, name, .. } if name == "zed"),
+        "{err:?}"
+    );
+
+    // A `profile` key that is not a table of tables is an unknown key like any other.
+    for text in ["profile = 3\n", "profile = { x = 1 }\n"] {
+        fs::write(&global, text).unwrap();
+        let err = Config::load(&sb.opts()).unwrap_err().to_string();
+        assert!(
+            err.contains("1:1: unknown field `profile`"),
+            "{text}: {err}"
+        );
+    }
 }
 
 // --- paths -----------------------------------------------------------------
@@ -2086,9 +2167,11 @@ fn env_vars_named_by_the_plan_are_all_supported() {
 fn all_six_layers_stack_field_wise_in_documented_order() {
     let sb = Sandbox::new();
     // Every layer sets `store.name`; each also owns one private key.
-    let global = sb.write_global(
-        "[store]\nname = \"global\"\n[hooks]\npost-done = [\"echo done\"]\n\
-         [profile.p.store]\nname = \"profile\"\n[profile.p.ui]\nglow_style = \"light\"\n",
+    let global =
+        sb.write_global("[store]\nname = \"global\"\n[hooks]\npost-done = [\"echo done\"]\n");
+    let profile_file = sb.write_profile(
+        "p",
+        "[store]\nname = \"profile\"\n[ui]\nglow_style = \"light\"\n",
     );
     let project = sb.write_project("[store]\nname = \"project\"\n[ui]\npager = \"more\"\n");
     let mut opts = sb.opts();
@@ -2108,7 +2191,7 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
 
     let profile = Origin::Profile {
         name: "p".to_owned(),
-        file: global.clone(),
+        file: profile_file.clone(),
     };
     assert_eq!(loaded.explain("store.name"), Some(&Origin::Overrides));
     assert_eq!(
@@ -2124,7 +2207,10 @@ fn all_six_layers_stack_field_wise_in_documented_order() {
     assert_eq!(loaded.explain("launch.env"), Some(&Origin::Overrides));
     assert_eq!(loaded.explain("ui.no_osc8"), Some(&Origin::Defaults));
     assert_eq!(loaded.file_for("store.name"), None);
-    assert_eq!(loaded.file_for("ui.glow_style"), Some(global.as_path()));
+    assert_eq!(
+        loaded.file_for("ui.glow_style"),
+        Some(profile_file.as_path())
+    );
 
     let origins: Vec<&Origin> = loaded.layers.iter().map(|l| &l.origin).collect();
     assert_eq!(

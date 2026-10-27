@@ -11,11 +11,14 @@ use super::{Config, ConfigError, ForgeKind, expand_tilde};
 
 /// Name of the global file inside the config directory.
 pub const GLOBAL_FILE: &str = "config.toml";
+/// Directory of profile files inside the config directory: the profile
+/// `<name>` is `profiles/<name>.toml` (ADR-0031).
+pub const PROFILES_DIR: &str = "profiles";
 /// Name of the per-project file searched upwards from the working directory.
 pub const PROJECT_FILE: &str = ".tasq.toml";
 /// Environment variable naming the config directory (ADR-0031).
 pub const ENV_CONFIG_DIR: &str = "TASQ_CONFIG_DIR";
-/// Environment variable selecting a `[profile.<name>]`.
+/// Environment variable selecting a profile (`profiles/<name>.toml`).
 pub const ENV_PROFILE: &str = "TASQ_PROFILE";
 /// Environment variable carrying `key=value` overrides, one per line, the
 /// same way `--set` does. It is how `tasq` hands its `--set` flags to the
@@ -160,11 +163,11 @@ pub enum Origin {
     Defaults,
     /// A config file.
     File(PathBuf),
-    /// A `[profile.<name>]` block in a config file.
+    /// A profile file, `profiles/<name>.toml` in the config directory.
     Profile {
         /// The profile name.
         name: String,
-        /// The file defining the block.
+        /// The profile file.
         file: PathBuf,
     },
     /// `TASQ_*` environment variables.
@@ -188,9 +191,7 @@ impl fmt::Display for Origin {
         match self {
             Self::Defaults => f.write_str("defaults"),
             Self::File(p) => write!(f, "{}", p.display()),
-            Self::Profile { name, file } => {
-                write!(f, "[profile.{name}] in {}", file.display())
-            }
+            Self::Profile { name, file } => write!(f, "profile {name} ({})", file.display()),
             Self::Env => f.write_str("env"),
             Self::Overrides => f.write_str("--set"),
         }
@@ -356,11 +357,10 @@ pub fn default_data_dir(opts: &LoadOptions) -> Option<PathBuf> {
     Some(dir.join("tasq").join("stores"))
 }
 
-/// Shape of one file: a partial [`Config`] plus `[profile.<name>]` blocks.
+/// Shape of one file: a partial [`Config`].
 ///
 /// Mirrors the sections of [`Config`] so that each file is checked for
-/// unknown keys and bad values with its own spans. A profile body is a
-/// partial [`Config`], so profiles cannot nest.
+/// unknown keys and bad values with its own spans.
 #[derive(Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct FileSchema {
@@ -377,7 +377,6 @@ struct FileSchema {
     plugins: super::PluginsConfig,
     plugin: BTreeMap<String, Table>,
     worktree: super::WorktreeConfig,
-    profile: BTreeMap<String, Config>,
 }
 
 impl Default for FileSchema {
@@ -411,9 +410,16 @@ impl Default for FileSchema {
             plugins,
             plugin,
             worktree,
-            profile: BTreeMap::new(),
         }
     }
+}
+
+/// The `[profile.<name>]` tables of a file, with the span of each name.
+/// Anything else, a `profile` that is not a table of tables included, is
+/// left to [`FileSchema`].
+#[derive(Deserialize)]
+struct InlineProfiles {
+    profile: BTreeMap<toml::Spanned<String>, Table>,
 }
 
 /// Splits the value of [`ENV_SET`] into `(key, value)` pairs: one
@@ -442,15 +448,15 @@ pub fn parse_env_set(text: &str) -> Result<Vec<(String, String)>, ConfigError> {
     Ok(pairs)
 }
 
-/// A parsed file: its config table and its profile blocks.
+/// A parsed file: its path and its config table.
 struct ParsedFile {
     path: PathBuf,
     table: Table,
-    profiles: BTreeMap<String, Table>,
 }
 
-/// Parses and validates `text` as a config file named `path`.
-fn parse_file(path: &Path, text: &str) -> Result<ParsedFile, ConfigError> {
+/// Parses and validates `text` as a config file named `path`; a
+/// `[profile.<name>]` table in it names its target in `config_dir`.
+fn parse_file(path: &Path, text: &str, config_dir: &Path) -> Result<ParsedFile, ConfigError> {
     let to_error = |e: toml::de::Error| {
         let (line, column) = line_col(text, e.span().map_or(0, |s| s.start));
         ConfigError::Parse {
@@ -460,25 +466,27 @@ fn parse_file(path: &Path, text: &str) -> Result<ParsedFile, ConfigError> {
             message: e.message().to_owned(),
         }
     };
+    if let Ok(InlineProfiles { profile }) = toml::from_str(text)
+        && let Some(name) = profile.keys().min_by_key(|name| name.span().start)
+    {
+        let (line, column) = line_col(text, name.span().start);
+        return Err(ConfigError::InlineProfile {
+            file: path.to_path_buf(),
+            line,
+            column,
+            name: name.get_ref().clone(),
+            target: config_dir
+                .join(PROFILES_DIR)
+                .join(format!("{}.toml", name.get_ref())),
+        });
+    }
     // Typed first: `deny_unknown_fields` and the newtype validators report
     // with spans, which the generic table cannot do.
     toml::from_str::<FileSchema>(text).map_err(to_error)?;
-    let mut table: Table = toml::from_str(text).map_err(to_error)?;
-    let profiles = match table.remove("profile") {
-        Some(Value::Table(profiles)) => profiles
-            .into_iter()
-            .map(|(name, body)| match body {
-                Value::Table(t) => (name, t),
-                // Unreachable: the typed pass accepted only tables here.
-                _ => (name, Table::new()),
-            })
-            .collect(),
-        _ => BTreeMap::new(),
-    };
+    let table: Table = toml::from_str(text).map_err(to_error)?;
     Ok(ParsedFile {
         path: path.to_path_buf(),
         table,
-        profiles,
     })
 }
 
@@ -701,12 +709,12 @@ fn read_file(path: &Path) -> Result<String, ConfigError> {
     })
 }
 
-/// Which files take part, in order.
+/// The config directory, checked, and the files that take part, in order.
 #[expect(
     clippy::disallowed_methods,
     reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
 )]
-fn file_paths(opts: &LoadOptions) -> Result<Vec<PathBuf>, ConfigError> {
+fn file_paths(opts: &LoadOptions) -> Result<(Option<PathBuf>, Vec<PathBuf>), ConfigError> {
     let dir = match named_config_dir(opts) {
         Some((dir, named_by)) if !dir.is_dir() => {
             return Err(ConfigError::MissingDir { dir, named_by });
@@ -715,13 +723,37 @@ fn file_paths(opts: &LoadOptions) -> Result<Vec<PathBuf>, ConfigError> {
         None => default_config_dir(opts),
     };
     let mut files = Vec::new();
-    if let Some(global) = dir.map(|dir| dir.join(GLOBAL_FILE)).filter(|p| p.is_file()) {
+    if let Some(global) = dir
+        .as_ref()
+        .map(|dir| dir.join(GLOBAL_FILE))
+        .filter(|p| p.is_file())
+    {
         files.push(global);
     }
     if let Some(project) = project_file(&opts.cwd, opts.home.as_deref()) {
         files.push(project);
     }
-    Ok(files)
+    Ok((dir, files))
+}
+
+/// The profile names in `dir`'s [`PROFILES_DIR`]: the stems of its
+/// `*.toml` files, sorted. None when the directory is absent.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
+)]
+fn profile_names(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir.join(PROFILES_DIR)) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "toml") && path.is_file())
+        .filter_map(|path| path.file_stem()?.to_str().map(str::to_owned))
+        .collect();
+    names.sort();
+    names
 }
 
 impl Config {
@@ -740,50 +772,41 @@ impl Config {
             keys: leaf_keys(&merged),
         }];
 
-        let mut files = Vec::new();
-        for path in file_paths(opts)? {
-            let text = read_file(&path)?;
-            files.push(parse_file(&path, &text)?);
-        }
-        for file in &files {
+        let (dir, paths) = file_paths(opts)?;
+        // Without a config directory, errors still name `profiles/x.toml`.
+        let base = dir.clone().unwrap_or_default();
+        for path in paths {
+            let file = parse_file(&path, &read_file(&path)?, &base)?;
             layers.push(Layer {
-                origin: Origin::File(file.path.clone()),
+                origin: Origin::File(file.path),
                 keys: leaf_keys(&file.table),
             });
-            deep_merge(&mut merged, file.table.clone());
+            deep_merge(&mut merged, file.table);
         }
 
-        let mut profiles: Vec<String> = files
-            .iter()
-            .flat_map(|f| f.profiles.keys().cloned())
-            .collect();
-        profiles.sort();
-        profiles.dedup();
+        let profiles = dir.as_deref().map(profile_names).unwrap_or_default();
         let profile = opts
             .profile
             .clone()
             .or_else(|| opts.env_nonempty(ENV_PROFILE).map(str::to_owned));
         if let Some(name) = &profile {
-            let mut found = false;
-            for file in &files {
-                if let Some(body) = file.profiles.get(name) {
-                    found = true;
-                    layers.push(Layer {
-                        origin: Origin::Profile {
-                            name: name.clone(),
-                            file: file.path.clone(),
-                        },
-                        keys: leaf_keys(body),
-                    });
-                    deep_merge(&mut merged, body.clone());
-                }
-            }
-            if !found {
+            let path = base.join(PROFILES_DIR).join(format!("{name}.toml"));
+            if !profiles.contains(name) {
                 return Err(ConfigError::UnknownProfile {
                     name: name.clone(),
+                    file: path,
                     available: profiles,
                 });
             }
+            let file = parse_file(&path, &read_file(&path)?, &base)?;
+            layers.push(Layer {
+                origin: Origin::Profile {
+                    name: name.clone(),
+                    file: file.path,
+                },
+                keys: leaf_keys(&file.table),
+            });
+            deep_merge(&mut merged, file.table);
         }
 
         let template = template();

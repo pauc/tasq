@@ -16,8 +16,9 @@
 //!    `$XDG_CONFIG_HOME/tasq`, else `~/.config/tasq` (see [`config_dir`]);
 //! 3. the nearest `.tasq.toml` walking up from the working directory (see
 //!    [`project_file`] for the stop rule);
-//! 4. the selected profile, a `[profile.<name>]` block from any of the files
-//!    above, chosen with `--profile` or `TASQ_PROFILE`;
+//! 4. the selected profile, `profiles/<name>.toml` in the config directory
+//!    (the same shape as `config.toml`), chosen with `--profile` or
+//!    `TASQ_PROFILE`; a `[profile.<name>]` table in any file is an error;
 //! 5. `TASQ_*` environment variables (see [`ENV_KEYS`]);
 //! 6. explicit overrides passed by the command line (`--set key=value`).
 //!

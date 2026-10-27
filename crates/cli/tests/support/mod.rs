@@ -175,6 +175,16 @@ impl TestEnv {
         file
     }
 
+    /// Writes the profile `name`, `profiles/<name>.toml` in the default
+    /// config directory, and returns its path.
+    pub fn write_profile(&self, name: &str, text: &str) -> PathBuf {
+        let dir = self.home.join(".config").join("tasq").join("profiles");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(format!("{name}.toml"));
+        std::fs::write(&file, text).unwrap();
+        file
+    }
+
     /// Replaces the temporary root with `[ROOT]` so output can be snapshotted.
     pub fn normalize(&self, text: &str) -> String {
         let canonical = self.root.path().canonicalize().unwrap();

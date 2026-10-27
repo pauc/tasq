@@ -153,7 +153,8 @@ mod runner {
                 log.display()
             ),
         );
-        env.write_project_config("[plugins]\nenabled = [\"envy\"]\n\n[profile.p]\n");
+        env.write_project_config("[plugins]\nenabled = [\"envy\"]\n");
+        env.write_profile("p", "");
         env.tasq()
             .args(["--profile", "p", "--set", "ui.no_osc8=true", "list"])
             .assert()

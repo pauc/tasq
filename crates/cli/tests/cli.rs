@@ -84,7 +84,9 @@ mod errors {
             .args(["--profile", "nope"])
             .assert()
             .code(1)
-            .stderr("tasq: profile \"nope\" is not defined; available profiles: \n");
+            .stderr(predicate::str::ends_with(
+                "/home/.config/tasq/profiles/nope.toml; available profiles: none\n",
+            ));
     }
 
     #[test]
@@ -592,10 +594,8 @@ mod store_location {
     #[test]
     fn every_layer_overrides_the_one_before() {
         let env = TestEnv::fixture();
-        env.write_global_config(
-            "data_dir = \"~/global\"\n\n[store]\nname = \"g\"\n\n\
-             [profile.work]\ndata_dir = \"~/profile\"\n[profile.work.store]\nname = \"p\"\n",
-        );
+        env.write_global_config("data_dir = \"~/global\"\n\n[store]\nname = \"g\"\n");
+        env.write_profile("work", "data_dir = \"~/profile\"\n[store]\nname = \"p\"\n");
         assert_eq!(location(&env, &mut env.tasq()), "[ROOT]/home/global/g");
         env.write_project_config("[store]\nname = \"project\"\n");
         assert_eq!(
@@ -845,13 +845,14 @@ mod config {
     #[test]
     fn show_with_layers() {
         let env = TestEnv::fixture();
-        env.write_global_config(
-            "[ui]\npager = \"cat\"\n\n[profile.work]\n[profile.work.store]\nname = \"work\"\n",
-        );
+        env.write_global_config("[ui]\npager = \"cat\"\n");
+        env.write_profile("work", "[store]\nname = \"work\"\n");
+        env.write_profile("play", "");
         env.write_project_config("[work]\ndefault_project = \"~/code/x\"\n");
         let out = env
             .tasq()
             .env("TASQ_GLOW_STYLE", "light")
+            .env("TASQ_PROFILE", "work")
             .args(["config", "show", "--set", "ui.no_osc8=true"])
             .output()
             .unwrap();
@@ -887,7 +888,7 @@ mod config {
     #[test]
     fn show_json_with_profile() {
         let env = TestEnv::fixture();
-        env.write_global_config("[profile.work]\n[profile.work.store]\nname = \"work\"\n");
+        let file = env.write_profile("work", "[store]\nname = \"work\"\n");
         let out = env
             .tasq()
             .args(["--profile", "work", "config", "show", "--json"])
@@ -899,7 +900,27 @@ mod config {
         assert_eq!(value["profile"], "work");
         assert_eq!(value["config"]["store"]["name"], "work");
         assert_eq!(value["layers"][0]["origin"], "defaults");
-        assert_eq!(value["layers"].as_array().unwrap().len(), 3);
+        assert_eq!(value["layers"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            value["layers"][1]["origin"],
+            format!("profile work ({})", file.display())
+        );
+        assert_eq!(value["profiles"], serde_json::json!(["work"]));
+    }
+
+    /// A leftover `[profile.<name>]` table fails at its name with the
+    /// profile file to move it to (ADR-0031).
+    #[test]
+    fn an_inline_profile_names_the_profile_file() {
+        let env = TestEnv::fixture();
+        env.write_global_config("[ui]\npager = \"cat\"\n[profile.work.store]\nname = \"w\"\n");
+        let out = env.tasq().args(["config", "show"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            env.normalize(&stderr(&out)),
+            "tasq: [ROOT]/home/.config/tasq/config.toml:3:10: profiles are files now: \
+             move [profile.work] to [ROOT]/home/.config/tasq/profiles/work.toml\n"
+        );
     }
 }
 
@@ -3293,6 +3314,42 @@ mod worktree {
             .stdout(predicate::str::starts_with("no hooks to approve in "));
     }
 
+    /// Hooks get the profile and the config directory, absolute, so a
+    /// `tasq` they call reads the same configuration.
+    #[test]
+    fn hooks_get_the_profile_and_the_config_directory() {
+        let env = TestEnv::fixture();
+        hooked_project(&env, "");
+        env.fake_tool(
+            "envy",
+            "echo \"$1|${TASQ_PROFILE-unset}|${TASQ_CONFIG_DIR-unset}\" >> \"$HOME/hooks.log\"",
+        );
+        let conf = env.home.join("conf");
+        std::fs::create_dir_all(conf.join("profiles")).unwrap();
+        std::fs::write(
+            conf.join("profiles/p.toml"),
+            "[worktree.hooks]\npre-create = [\"envy pre\"]\npost-create = [\"envy post\"]\n\
+             pre-remove = [\"envy pre-remove\"]\npost-remove = [\"envy post-remove\"]\n",
+        )
+        .unwrap();
+        let global = ["--config-dir", "~/conf", "--profile", "p"];
+        env.tasq_wt()
+            .args(global)
+            .args(["worktree", "up", "3"])
+            .assert()
+            .success();
+        env.tasq_wt()
+            .args(global)
+            .args(["worktree", "release", "3", "--force"])
+            .assert()
+            .success();
+        assert_eq!(
+            hook_log(&env),
+            "pre|p|[ROOT]/home/conf\npost|p|[ROOT]/home/conf\n\
+             pre-remove|p|[ROOT]/home/conf\npost-remove|p|[ROOT]/home/conf\n"
+        );
+    }
+
     #[test]
     fn trust_json_lists_the_approved_lines() {
         let env = TestEnv::fixture();
@@ -4136,20 +4193,37 @@ mod launch {
             "Custom prompt for [{{id}}] {{title}} in {{workdir}}\n",
         )
         .unwrap();
-        env.write_global_config(&format!(
-            "[work]\ndefault_project = \"{}\"\n\n[launch.claude]\nprompt_file = \"{}\"\n\n[profile.work]\n",
-            env.home.display(),
-            template.display()
-        ));
+        // A config directory of its own, named relative to home: the session
+        // gets it absolute next to the profile, so its `tasq` finds the profile.
+        let conf = env.home.join("conf");
+        std::fs::create_dir_all(conf.join("profiles")).unwrap();
+        std::fs::write(
+            conf.join("config.toml"),
+            format!(
+                "[work]\ndefault_project = \"{}\"\n\n[launch.claude]\nprompt_file = \"{}\"\n",
+                env.home.display(),
+                template.display()
+            ),
+        )
+        .unwrap();
+        std::fs::write(conf.join("profiles/work.toml"), "").unwrap();
         let out = env
             .tasq()
-            .args(["--profile", "work", "pick", "3", "--dry-run"])
+            .args([
+                "--config-dir",
+                "~/conf",
+                "--profile",
+                "work",
+                "pick",
+                "3",
+                "--dry-run",
+            ])
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         let text = env.normalize(&stdout(&out));
         assert!(
-            text.contains("TASQ_TASK_ID=3 TASQ_DATA_DIR=[ROOT]/home/.local/share/tasq/stores TASQ_STORE_NAME=default TASQ_PROFILE=work exec claude"),
+            text.contains("TASQ_TASK_ID=3 TASQ_DATA_DIR=[ROOT]/home/.local/share/tasq/stores TASQ_STORE_NAME=default TASQ_PROFILE=work TASQ_CONFIG_DIR=[ROOT]/home/conf exec claude"),
             "{text}"
         );
         assert!(
@@ -4160,7 +4234,7 @@ mod launch {
         );
         std::fs::write(&template, "{{bogus}}").unwrap();
         env.tasq()
-            .args(["pick", "3", "--dry-run"])
+            .args(["--config-dir", "~/conf", "pick", "3", "--dry-run"])
             .assert()
             .code(1)
             .stderr(predicate::str::ends_with(
@@ -4558,10 +4632,12 @@ mod sync {
         // the profile travels with the store.
         std::fs::write(env.home.join(".envrc"), "").unwrap();
         env.fake_tool("direnv", "echo 'Found RC allowed true'");
-        env.write_project_config("[profile.work]\n");
+        let conf = env.home.join(".config/tasq");
+        env.write_profile("work", "");
         let out = env
             .tasq()
             .env("TASQ_DEFAULT_PROJECT", env.home.to_str().unwrap())
+            .env("TASQ_CONFIG_DIR", &conf)
             .args([
                 "--profile",
                 "work",
@@ -4584,12 +4660,14 @@ mod sync {
             serde_json::json!(["direnv", "exec", home, "claude", "/tasq:sync"])
         );
         let data_dir = env.data_dir().display().to_string();
+        let conf_dir = conf.canonicalize().unwrap().display().to_string();
         assert_eq!(
             value["env"],
             serde_json::json!([
                 ["TASQ_DATA_DIR", data_dir],
                 ["TASQ_STORE_NAME", "default"],
-                ["TASQ_PROFILE", "work"]
+                ["TASQ_PROFILE", "work"],
+                ["TASQ_CONFIG_DIR", conf_dir]
             ])
         );
         assert_eq!(
@@ -4597,7 +4675,7 @@ mod sync {
             serde_json::json!([
                 format!("cd {home}"),
                 format!(
-                    "TASQ_DATA_DIR={data_dir} TASQ_STORE_NAME=default TASQ_PROFILE=work exec direnv exec {home} claude \"/tasq:sync\""
+                    "TASQ_DATA_DIR={data_dir} TASQ_STORE_NAME=default TASQ_PROFILE=work TASQ_CONFIG_DIR={conf_dir} exec direnv exec {home} claude \"/tasq:sync\""
                 ),
             ])
         );
