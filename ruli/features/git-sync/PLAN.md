@@ -251,13 +251,13 @@ prompt.
 
 **Blocked by:** GS-002.
 
-**Status:** blocked
+**Status:** done
 
-- [ ] One commit per job run with the subject and batched body lines.
-- [ ] `.tasq/` and non-`.md` files are never committed.
-- [ ] A write during a running job is committed before it exits.
-- [ ] Exported `GIT_*` variables do not change the commit identity.
-- [ ] `mutants-in`: zero missed.
+- [x] One commit per job run with the subject and batched body lines.
+- [x] `.tasq/` and non-`.md` files are never committed.
+- [x] A write during a running job is committed before it exits.
+- [x] Exported `GIT_*` variables do not change the commit identity.
+- [x] `mutants-in`: zero missed.
 
 ### GS-004: push, fetch and rebase in the background
 

@@ -9,7 +9,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
 |---|---|---|---|
 | GS-001 | The `tasq-git` crate answers events and does nothing for a plain store | done | e71fd21. Mutants with `--no-config` on `crates/git/src`, and `--in-diff` on the whole diff: 0 missed (14 mutants: 13 caught, 1 unviable). |
 | GS-002 | `tasq git init` with identity | done | 2c07c38. Mutants with `--no-config` on `crates/git/src`: 0 missed (50: 43 caught, 7 unviable); `--in-diff` on the whole diff: 0 missed (37: 31 caught, 6 unviable). |
-| GS-003 | Writes are committed in the background | blocked | |
+| GS-003 | Writes are committed in the background | done | df8198e. Mutants with `--no-config` on `crates/git/src`: 0 missed (121: 103 caught, 15 unviable, 3 timeouts); `--in-diff` on the whole diff: 0 missed (77: 66 caught, 8 unviable, 3 timeouts). The timeouts are mutants that make the job loop forever (`pending` never cleared or always there). |
 | GS-004 | Push, fetch and rebase in the background | blocked | |
 | GS-005 | Conflicts are aborted and reported | blocked | |
 | GS-006 | Duplicate ids are explained | blocked | |
@@ -45,6 +45,28 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 57. ADR: 0030. Blocked by tasq 59
   `.git`, where an unconditional `remove_dir_all` replaced git's error with `NotFound`.
 - 2026-10-27 (GS-002): a global `core.hooksPath` with a failing `pre-commit` or `pre-push` is
   how the tests make a commit or a push fail on demand, with no fake git.
+- 2026-10-27 (GS-003): the job and the hooks agree without a race by ordering, not by a
+  check-then-act on `job.lock`: a hook appends to `writes` and touches `pending` first, and
+  only then spawns a job unless one is live; the job clears `pending` before each commit,
+  releases `job.lock` after it, and only then looks at `pending` again (and retakes the lock
+  if it is there). A hook that saw the lock held is therefore always seen by that job, and one
+  that came after the release starts its own. A spawned job that finds the lock taken exits.
+- 2026-10-27 (GS-003): `writes` is appended by hooks while the job drops the lines it
+  committed, so both take `File::lock` (std since 1.89) on it, and the job truncates the file in
+  place (a rename would move the lock's inode away from a hook that already opened it).
+- 2026-10-27 (GS-003): the first `lock_job` removed `job.lock` whenever it was not live,
+  absent included, so a job starting at the same moment could delete the lock another had just
+  made; and a stale holder's `Drop` deleted its successor's lock. The lock now carries a token
+  (pid and time) that `Drop` checks, and only a lock seen stale is removed (self-review).
+- 2026-10-27 (GS-003): `NotFound`/`AlreadyExists` match guards written inline in each `fs`
+  call leave mutants no binary test can reach (they need a non-missing error). One helper per
+  guard (`open_existing`, `modified`, `remove_if_present`) with a unit test below a file
+  (`ENOTDIR`), and a read-only state directory for `create_new`, killed them. `lock_job` tries
+  the exclusive create first, so a live lock goes through the `AlreadyExists` arm the binary
+  tests cover.
+- 2026-10-27 (GS-003): for GS-004: the job takes `job.lock` afresh each round, so its mtime is
+  the round's start; a single round over two minutes (a slow fetch or push) is taken for dead
+  and a second job starts. Refresh the lock during long git steps.
 
 ## Blockers
 
@@ -101,3 +123,37 @@ None. tasq 59 is merged.
   (`crates/git/tests/init.rs`, a fake `tasq` answering the two documents, real git, a bare
   `file://` remote) plus one CLI test through the real `tasq git init` on the fixture store.
 - GS-002: added a CHANGELOG entry (PE-007's learning).
+- GS-003: the hook spawns the job unless a live job holds `job.lock`, and touches `pending`
+  either way (the plan touches it only when the lock is held); see Learnings for why. The job
+  takes and releases `job.lock` once per commit round rather than holding it across the loop.
+- GS-003: the `writes` line is `<command> <ids>`, ids separated by spaces (`move 4 3`). The
+  commit subject is the first line plus `: <title>` of its first id, from `tasq view <id>
+  --json`; with several lines the body lists them all, the first included. A change no line
+  explains (a hand edit) is committed as `update task files`. A round with nothing to commit
+  makes no commit and forgets its lines (the change was committed already).
+- GS-003: beyond the plan: a failed commit (or `git status`/`git add`) is the lasting warning
+  `commit failed: <git's message, lines joined by "; ">`, replacing the previous one and
+  cleared by the next good round; other plugin warning lines are kept, and the file is
+  removed when it has none left. The job keeps `writes` then, exits 1 with
+  `tasq-git: commit failed: ...` (seen only when run by hand), and the next `post-write`
+  retries. GS-004 reuses `State::set_warning` for push and fetch.
+- GS-003: the job is `tasq-git job --store <dir>` (hidden from `--help`), spawned from
+  `current_exe` in its own process group (`process_group(0)`, no `setsid`: `unsafe_code`
+  forbids `pre_exec`) with stdio on `/dev/null`, keeping the hook's environment (so
+  `TASQ_EVENT`: its `tasq view` calls fire no event) and working directory. git runs with
+  `process::background_env`: `PATH`, `HOME`, `SSH_AUTH_SOCK`, `GIT_TERMINAL_PROMPT=0`,
+  `SSH_ASKPASS_REQUIRE=never`, `LANG=C`, stdin `/dev/null`. `store-open` still does nothing
+  (GS-004).
+- GS-003: the commit is of the index, not limited by pathspec, so the commit of the job
+  following a write sees the tasks' staged changes only; a file a user stages by hand in the
+  store goes into that commit too (limiting `git commit` to the task-file pathspecs takes the
+  working tree, which would also pull in a write that lands after `git add` without its
+  message line). Writes racing the job the same way may be committed under the previous
+  write's message; the content is always committed.
+- GS-003: payload `command` and `writes` are optional for every event; a `post-write` to a
+  repository store without either is an error (`the post-write event payload has no command`).
+  Tests: `crates/git/tests/job.rs` (the job in the foreground, the detach with a fake `tasq`
+  that holds the job in its title lookup until the test says go, a write made by that fake
+  while the job runs), unit tests for the message, the background environment and the lock's
+  clock, and one CLI test (`a_write_is_committed_in_the_background`: `tasq git init`, `tasq
+  log 3`, the commit `log 3: Answer the support ticket` appears).
