@@ -802,6 +802,17 @@ pub enum WorktreeAction {
         #[arg(value_enum, value_name = "SHELL")]
         shell: InitShell,
     },
+    /// Show the worktree settings that apply to a repository.
+    ///
+    /// The `[worktree]` settings for the repository that contains DIR
+    /// (default: the current directory), each with the layer it came from, and the
+    /// repository config whose `path` is that repository's main checkout,
+    /// or none. A linked worktree shows its main checkout's settings.
+    Config {
+        /// A directory inside the repository.
+        #[arg(value_name = "DIR")]
+        dir: Option<PathBuf>,
+    },
 }
 
 /// `tasq create` arguments.

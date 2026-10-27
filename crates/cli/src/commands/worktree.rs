@@ -6,6 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
+
+use crate::commands::config;
 use crate::commands::worktree_hooks;
 use crate::commands::worktree_nav;
 use tasq_core::model::{Task, TaskId, Worktree};
@@ -24,6 +27,7 @@ use crate::app::App;
 use crate::cli::{Command, WorktreeAction};
 use crate::commands::{existing_dir, finish};
 use crate::error::{CliError, Result};
+use crate::json;
 use crate::plugins::{HookEvent, app_config_env};
 
 /// `tasq worktree <subcommand>`.
@@ -44,6 +48,7 @@ pub fn dispatch(app: &App, command: &Command) -> Result<()> {
             release_command(app, id, *force, *dry_run)
         }
         WorktreeAction::Prune { all, dry_run } => worktree_nav::prune(app, *all, *dry_run),
+        WorktreeAction::Config { dir } => show_config(app, dir.as_deref()),
     }
 }
 
@@ -78,6 +83,36 @@ pub fn run(app: &App, id: &str, target: Option<&str>, create: Option<&str>) -> R
             )
         }
     }
+}
+
+/// `tasq worktree config [DIR]`: the `[worktree]` settings for the
+/// repository that contains `dir` (default: the working directory),
+/// loaded with the repository config of its main checkout (ADR-0031).
+pub fn show_config(app: &App, dir: Option<&Path>) -> Result<()> {
+    if !app.worktrees() {
+        return Err(disabled());
+    }
+    let asked = dir.map_or_else(|| app.opts.cwd.clone(), |d| app.opts.cwd.join(d));
+    let dir = existing_dir(&asked).ok_or_else(|| {
+        let what = if asked.exists() {
+            "not a directory"
+        } else {
+            "directory not found"
+        };
+        CliError::user(format!("{what}: {}", asked.display()))
+    })?;
+    let repo = Repo::of(&dir)
+        .ok_or_else(|| CliError::user(format!("not inside a git repository: {}", dir.display())))?;
+    let loaded = app.config_for_repo(&repo.main)?;
+    if app.out.json_mode() {
+        return app.out.json(&json::document([
+            ("repository", json::to_value(&repo.main)),
+            ("repository_config", json::to_value(&loaded.repo)),
+            ("worktree", json::to_value(&loaded.config.worktree)),
+            ("origins", Value::Object(config::worktree_origins(&loaded)?)),
+        ]));
+    }
+    app.out.page(&config::render_worktree(&repo.main, &loaded)?)
 }
 
 /// The error for a worktree command or flag while the feature is off.

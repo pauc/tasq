@@ -6,8 +6,9 @@
 //! staying valid TOML.
 
 use std::fmt::Write as _;
+use std::path::Path;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tasq_core::config::Loaded;
 use toml::Table;
 
@@ -47,15 +48,21 @@ pub fn run(app: &App, command: ConfigCommand) -> Result<()> {
 /// Column where the `# origin` comment starts.
 const COMMENT_COLUMN: usize = 44;
 
+/// `value` serialised to a TOML table.
+fn to_table<T: serde::Serialize>(value: &T) -> Result<Table> {
+    match toml::Value::try_from(value)
+        .map_err(|e| CliError::Internal(anyhow::anyhow!("serialising config: {e}")))?
+    {
+        toml::Value::Table(table) => Ok(table),
+        _ => Err(CliError::Internal(anyhow::anyhow!(
+            "config did not serialise to a table"
+        ))),
+    }
+}
+
 /// The annotated TOML.
 pub fn render(loaded: &Loaded) -> Result<String> {
-    let table = toml::Value::try_from(&loaded.config)
-        .map_err(|e| CliError::Internal(anyhow::anyhow!("serialising config: {e}")))?;
-    let Some(table) = table.as_table() else {
-        return Err(CliError::Internal(anyhow::anyhow!(
-            "config did not serialise to a table"
-        )));
-    };
+    let table = &to_table(&loaded.config)?;
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -77,6 +84,60 @@ pub fn render(loaded: &Loaded) -> Result<String> {
     }
     write_table(table, "", loaded, &mut out);
     Ok(out)
+}
+
+/// `[worktree]` alone, as a table holding it.
+fn worktree_table(loaded: &Loaded) -> Result<Table> {
+    let mut table = Table::new();
+    table.insert(
+        "worktree".to_owned(),
+        toml::Value::Table(to_table(&loaded.config.worktree)?),
+    );
+    Ok(table)
+}
+
+/// The annotated `[worktree]` table of `tasq worktree config`, after the
+/// main checkout and the repository config that matched it.
+pub fn render_worktree(main: &Path, loaded: &Loaded) -> Result<String> {
+    let mut out = String::new();
+    let _ = writeln!(out, "# repository: {}", main.display());
+    let _ = writeln!(
+        out,
+        "# repository config: {}",
+        loaded
+            .repo
+            .as_ref()
+            .map_or_else(|| "none".to_owned(), |file| file.display().to_string())
+    );
+    write_table(&worktree_table(loaded)?, "", loaded, &mut out);
+    Ok(out)
+}
+
+/// The origin of every `worktree.*` leaf, keyed by its dotted path: an
+/// array, a scalar or an empty table is one leaf.
+pub fn worktree_origins(loaded: &Loaded) -> Result<Map<String, Value>> {
+    let mut out = Map::new();
+    leaf_origins(&worktree_table(loaded)?, "", loaded, &mut out);
+    Ok(out)
+}
+
+fn leaf_origins(table: &Table, prefix: &str, loaded: &Loaded, out: &mut Map<String, Value>) {
+    for (key, value) in table {
+        let path = join(prefix, key);
+        match value.as_table() {
+            Some(sub) if !sub.is_empty() => leaf_origins(sub, &path, loaded, out),
+            _ => {
+                out.insert(path.clone(), Value::from(origin_of(loaded, &path)));
+            }
+        }
+    }
+}
+
+/// The layer that set `key`, or `unset`.
+fn origin_of(loaded: &Loaded, key: &str) -> String {
+    loaded
+        .explain(key)
+        .map_or_else(|| "unset".to_owned(), ToString::to_string)
 }
 
 fn is_array_of_tables(value: &toml::Value) -> bool {
@@ -119,10 +180,7 @@ fn write_table(table: &Table, prefix: &str, loaded: &Loaded, out: &mut String) {
         if value.is_table() || is_array_of_tables(value) {
             continue;
         }
-        let path = join(prefix, key);
-        let origin = loaded
-            .explain(&path)
-            .map_or_else(|| "unset".to_owned(), ToString::to_string);
+        let origin = origin_of(loaded, &join(prefix, key));
         let line = format!("{key} = {}", format_value(value));
         let _ = writeln!(out, "{line:<COMMENT_COLUMN$} # {origin}");
     }

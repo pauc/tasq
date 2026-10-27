@@ -1,0 +1,26 @@
+---
+source: crates/cli/tests/cli.rs
+expression: "config_in(&env, &project, &[])"
+---
+# repository: [ROOT]/home/proj
+# repository config: [ROOT]/home/.config/tasq/repos/proj.toml
+
+[worktree]
+base = "origin/main"                         # [ROOT]/home/.config/tasq/repos/proj.toml
+branch = "pau/{{id}}"                        # profile work ([ROOT]/home/.config/tasq/profiles/work.toml)
+copies = []                                  # defaults
+delete_branch = "safe"                       # defaults
+on_create = "auto"                           # defaults
+on_done = "keep"                             # env
+path = "{{project_parent}}/{{project_name}}-{{branch_safe}}" # defaults
+symlinks = []                                # defaults
+templates = []                               # defaults
+
+[worktree.hooks]
+post-create = ["make setup"]                 # [ROOT]/home/.config/tasq/repos/proj.toml
+post-remove = []                             # defaults
+pre-create = []                              # defaults
+pre-remove = []                              # defaults
+
+[worktree.variables]
+service = "api"                              # [ROOT]/home/.config/tasq/repos/proj.toml

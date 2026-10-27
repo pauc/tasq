@@ -2689,6 +2689,13 @@ mod worktree {
             "[3] worktree already tracked: [ROOT]/home/wt\n"
         );
         // A plain directory has no branch.
+        let file = env.home.join("file");
+        std::fs::write(&file, "").unwrap();
+        env.tasq_wt()
+            .args(["worktree", "config", "file"])
+            .assert()
+            .code(1)
+            .stderr(format!("tasq: not a directory: {}\n", file.display()));
         let plain = env.home.join("plain");
         std::fs::create_dir(&plain).unwrap();
         let out = env
@@ -2835,6 +2842,13 @@ mod worktree {
         let env = TestEnv::fixture();
         let project = env.home.join("proj");
         env.git_repo(&project);
+        let file = env.home.join("file");
+        std::fs::write(&file, "").unwrap();
+        env.tasq_wt()
+            .args(["worktree", "config", "file"])
+            .assert()
+            .code(1)
+            .stderr(format!("tasq: not a directory: {}\n", file.display()));
         let plain = env.home.join("plain");
         std::fs::create_dir(&plain).unwrap();
         let create = |args: &[&str]| {
@@ -3874,6 +3888,13 @@ mod launch {
         let env = TestEnv::fixture();
         let project = env.home.join("proj");
         std::fs::create_dir(&project).unwrap();
+        let file = env.home.join("file");
+        std::fs::write(&file, "").unwrap();
+        env.tasq_wt()
+            .args(["worktree", "config", "file"])
+            .assert()
+            .code(1)
+            .stderr(format!("tasq: not a directory: {}\n", file.display()));
         let plain = env.home.join("plain");
         std::fs::create_dir(&plain).unwrap();
         env.tasq_wt()
@@ -6175,6 +6196,13 @@ mod worktree_release {
             .code(1)
             .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
         // A project that is not a repository: closed anyway, with a warning.
+        let file = env.home.join("file");
+        std::fs::write(&file, "").unwrap();
+        env.tasq_wt()
+            .args(["worktree", "config", "file"])
+            .assert()
+            .code(1)
+            .stderr(format!("tasq: not a directory: {}\n", file.display()));
         let plain = env.home.join("plain");
         std::fs::create_dir(&plain).unwrap();
         env.tasq_wt()
@@ -6574,5 +6602,140 @@ mod worktree_nav {
             .assert()
             .code(1)
             .stderr(predicate::str::starts_with("tasq: worktrees are disabled"));
+    }
+}
+
+/// `tasq worktree config [DIR]` (CC-006): the `[worktree]` settings that
+/// apply to a repository, where each came from, and the repository config
+/// that matched (ADR-0031).
+mod worktree_config {
+    use super::*;
+
+    /// A repository at `<home>/proj` with a repository config, a profile
+    /// `work` with worktree settings, and a linked worktree at
+    /// `<home>/proj-l`.
+    fn layered(env: &TestEnv) -> std::path::PathBuf {
+        let project = env.home.join("proj");
+        env.git_repo(&project);
+        env.git(&project, &["worktree", "add", "-q", "-b", "l", "../proj-l"]);
+        env.write_global_config("[worktree]\nbase = \"origin/develop\"\n");
+        env.write_profile("work", "[worktree]\nbranch = \"pau/{{id}}\"\n");
+        env.write_repo_config(
+            "proj",
+            "path = \"~/proj\"\n\n[worktree]\nbase = \"origin/main\"\n\n\
+             [worktree.variables]\nservice = \"api\"\n\n\
+             [worktree.hooks]\npost-create = [\"make setup\"]\n",
+        );
+        project
+    }
+
+    fn config_in(env: &TestEnv, dir: &Path, args: &[&str]) -> String {
+        let out = env
+            .tasq_wt()
+            .env("TASQ_PROFILE", "work")
+            .env("TASQ_WORKTREE_ON_DONE", "keep")
+            .current_dir(dir)
+            .args(["worktree", "config"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+        env.normalize(&stdout(&out))
+    }
+
+    #[test]
+    fn text_names_each_keys_origin_and_the_repository_config() {
+        let env = TestEnv::fixture();
+        let project = layered(&env);
+        assert_snapshot!(config_in(&env, &project, &[]));
+    }
+
+    /// A `DIR` inside a linked worktree, or a subdirectory of the main
+    /// checkout as the working directory, shows the main checkout's
+    /// settings.
+    #[test]
+    fn a_linked_worktree_shows_its_main_checkouts_settings() {
+        let env = TestEnv::fixture();
+        let project = layered(&env);
+        std::fs::create_dir(project.join("sub")).unwrap();
+        let main = config_in(&env, &project, &[]);
+        let linked = env.home.join("proj-l");
+        assert_eq!(config_in(&env, &env.home, &["proj-l"]), main);
+        assert_eq!(config_in(&env, &linked, &[]), main);
+        assert_eq!(config_in(&env, &project.join("sub"), &[]), main);
+    }
+
+    #[test]
+    fn a_repository_without_a_config_says_none() {
+        let env = TestEnv::fixture();
+        layered(&env);
+        let other = env.home.join("other");
+        env.git_repo(&other);
+        let text = config_in(&env, &env.home, &["other"]);
+        assert!(
+            text.starts_with(
+                "# repository: [ROOT]/home/other\n# repository config: none\n\n[worktree]\n\
+                 base = \"origin/develop\"                      # [ROOT]/home/.config/tasq/config.toml\n"
+            ),
+            "{text}"
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&config_in(&env, &env.home, &["other", "--json"])).unwrap();
+        assert_eq!(json["repository_config"], serde_json::Value::Null);
+        assert_eq!(json["repository"], "[ROOT]/home/other");
+        // An empty table is a leaf too.
+        assert_eq!(json["origins"]["worktree.variables"], "defaults");
+    }
+
+    #[test]
+    fn json_names_each_keys_origin_and_the_repository_config() {
+        let env = TestEnv::fixture();
+        let project = layered(&env);
+        assert_snapshot!(config_in(&env, &project, &["--json"]));
+    }
+
+    #[test]
+    fn outside_a_repository_or_a_directory_it_fails() {
+        let env = TestEnv::fixture();
+        env.tasq_wt()
+            .args(["worktree", "config", "nowhere"])
+            .assert()
+            .code(1)
+            .stderr(format!(
+                "tasq: directory not found: {}\n",
+                env.home.join("nowhere").display()
+            ));
+        let file = env.home.join("file");
+        std::fs::write(&file, "").unwrap();
+        env.tasq_wt()
+            .args(["worktree", "config", "file"])
+            .assert()
+            .code(1)
+            .stderr(format!("tasq: not a directory: {}\n", file.display()));
+        let plain = env.home.join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        env.tasq_wt()
+            .args(["worktree", "config", "plain"])
+            .assert()
+            .code(1)
+            .stderr(format!(
+                "tasq: not inside a git repository: {}\n",
+                plain.canonicalize().unwrap().display()
+            ));
+    }
+
+    #[test]
+    fn hidden_and_refused_with_worktrees_disabled() {
+        let env = TestEnv::fixture();
+        let project = layered(&env);
+        env.tasq()
+            .current_dir(&project)
+            .args(["worktree", "config"])
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr("tasq: worktrees are disabled; set worktrees_enabled = true (docs/config.md#worktrees)\n");
+        let top = env.tasq().arg("--help").output().unwrap();
+        assert!(!stdout(&top).contains("worktree"), "{}", stdout(&top));
     }
 }
