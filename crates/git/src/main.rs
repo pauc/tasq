@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use clap::{Args, Parser, Subcommand};
+use tasq_git::clone;
 use tasq_git::git::Git;
 use tasq_git::init::{self, Identity, InitError, Options};
 use tasq_git::job::{self, Settings};
@@ -28,6 +29,10 @@ enum Command {
     Hook,
     /// Make the store a git repository, and push it to <URL> if given.
     Init(InitArgs),
+    /// Fill an empty store from a branch of <URL>.
+    Clone(CloneArgs),
+    /// Commit, fetch, rebase and push now, printing each step.
+    Sync,
     /// Commit and sync the store's writes (detached by `hook`).
     #[command(hide = true)]
     Job {
@@ -55,6 +60,26 @@ struct InitArgs {
     /// The branch, here and on the remote [default: the store name].
     #[arg(long)]
     branch: Option<String>,
+    #[command(flatten)]
+    identity: IdentityArgs,
+}
+
+#[derive(Args)]
+struct CloneArgs {
+    /// The remote to clone the store from.
+    url: String,
+    /// The branch, on the remote and here [default: the store name].
+    #[arg(long)]
+    branch: Option<String>,
+    /// The store to fill [default: the configured store.name].
+    #[arg(long, value_name = "NAME")]
+    store: Option<String>,
+    #[command(flatten)]
+    identity: IdentityArgs,
+}
+
+#[derive(Args)]
+struct IdentityArgs {
     /// The name the store commits as [default: [plugin.git] name].
     #[arg(long)]
     name: Option<String>,
@@ -74,6 +99,8 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Hook => hook(),
         Command::Init(args) => report(run_init(args)),
+        Command::Clone(args) => report(run_clone(args)),
+        Command::Sync => sync(),
         Command::Job { store, interval } => report(run_job(&store, interval)),
         Command::Rebase { store } => rebase(&store),
     }
@@ -136,6 +163,70 @@ fn rebase(store: &Path) -> ExitCode {
     }
 }
 
+/// `tasq git sync`: the job's rounds in the foreground, git keeping the
+/// terminal for a prompt; each step on stdout, exit 1 if one failed.
+fn sync() -> ExitCode {
+    let result = (|| -> Result<job::Report, String> {
+        let mut tasq = tasq_here()?;
+        // The plugin's own `tasq` calls fire no event: a `store-open`
+        // would start a job beside this one.
+        tasq.env.push(("TASQ_EVENT".into(), "sync".into()));
+        let store = tasq.store().map_err(|err| err.to_string())?;
+        let git = Git {
+            env: without_git_vars(std::env::vars_os()),
+        };
+        let settings = Settings {
+            interval: Duration::ZERO,
+            exe: std::env::current_exe()
+                .map_err(|err| format!("could not find tasq-git itself: {err}"))?,
+        };
+        job::foreground(&git, &tasq, &store.location, &settings).map_err(|err| err.to_string())
+    })();
+    match result {
+        Ok(done) => {
+            let mut out = done.lines.join("\n");
+            out.push('\n');
+            let _ = std::io::stdout().write_all(out.as_bytes());
+            if done.failed {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(message) => report(Err(message)),
+    }
+}
+
+fn run_clone(args: CloneArgs) -> Result<String, String> {
+    let tasq = tasq_here()?;
+    let git = Git {
+        env: without_git_vars(std::env::vars_os()),
+    };
+    let result = (|| -> Result<_, InitError> {
+        let store = tasq.store_named(args.store.as_deref())?;
+        let identity = args.identity.or_defaults(&tasq)?;
+        let options = clone::Options {
+            url: args.url,
+            branch: args.branch,
+            identity,
+        };
+        clone::clone(&git, &store, &options)
+    })();
+    result.map(|r| r.to_string()).map_err(|err| err.to_string())
+}
+
+impl IdentityArgs {
+    /// The flags, each one missing taken from `[plugin.git]`.
+    fn or_defaults(self, tasq: &Tasq) -> Result<Identity, InitError> {
+        Identity {
+            name: self.name,
+            email: self.email,
+            ssh_key: self.ssh_key,
+        }
+        .or_defaults(&tasq.plugin_config()?)
+    }
+}
+
 fn run_init(args: InitArgs) -> Result<String, String> {
     let tasq = tasq_here()?;
     let git = Git {
@@ -143,12 +234,7 @@ fn run_init(args: InitArgs) -> Result<String, String> {
     };
     let result = (|| -> Result<_, InitError> {
         let store = tasq.store()?;
-        let identity = Identity {
-            name: args.name,
-            email: args.email,
-            ssh_key: args.ssh_key,
-        }
-        .or_defaults(&tasq.plugin_config()?)?;
+        let identity = args.identity.or_defaults(&tasq)?;
         let options = Options {
             url: args.url,
             branch: args.branch,
@@ -167,7 +253,11 @@ fn hook() -> ExitCode {
         .read_to_string(&mut stdin)
         .map_err(|err| format!("could not read the event payload: {err}"))
         .and_then(|_| {
-            tasq_git::hook::run(&stdin, SystemTime::now(), spawn_job).map_err(|err| err.to_string())
+            let git = Git {
+                env: background_env(std::env::vars_os()),
+            };
+            tasq_git::hook::run(&stdin, &git, SystemTime::now(), spawn_job)
+                .map_err(|err| err.to_string())
         });
     match result {
         Ok(out) => {

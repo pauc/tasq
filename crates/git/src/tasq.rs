@@ -112,7 +112,21 @@ struct Config {
 impl Tasq {
     /// The store the command resolves.
     pub fn store(&self) -> Result<Store, TasqError> {
-        let info: StoreInfo = self.ask(&["store", "info", "--json"])?;
+        self.store_info(&["store", "info", "--json"])
+    }
+
+    /// The store `name` (`tasq --set store.name=<name>`), or the one the
+    /// command resolves when `None`.
+    pub fn store_named(&self, name: Option<&str>) -> Result<Store, TasqError> {
+        let Some(name) = name else {
+            return self.store();
+        };
+        let set = format!("store.name={name}");
+        self.store_info(&["--set", &set, "store", "info", "--json"])
+    }
+
+    fn store_info(&self, args: &[&str]) -> Result<Store, TasqError> {
+        let info: StoreInfo = self.ask(args)?;
         Ok(Store {
             name: info.store_name.value,
             location: info.store.location,

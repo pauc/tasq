@@ -21,6 +21,9 @@
 //! created it offline). After a rebase moved the branch, and while that
 //! warning stands, the job asks `tasq doctor --json` and keeps one lasting
 //! warning per `ids` failure, until they are fixed by hand.
+//!
+//! `tasq git sync` runs the same rounds in the foreground ([`foreground`]),
+//! fetching whatever the interval, and prints one line per step.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -67,9 +70,42 @@ pub struct Settings {
     pub exe: PathBuf,
 }
 
+/// What the rounds did, one line per step, for `tasq git sync` to print.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Report {
+    /// One line per step, in order.
+    pub lines: Vec<String>,
+    /// Whether a step failed (its line is the lasting warning it left).
+    pub failed: bool,
+}
+
+impl Report {
+    fn step(&mut self, line: String) {
+        self.lines.push(line);
+    }
+
+    fn failure(&mut self, line: String) {
+        self.lines.push(line);
+        self.failed = true;
+    }
+}
+
 /// Why the job stopped.
 #[derive(Debug, thiserror::Error)]
 pub enum JobError {
+    /// `tasq git sync` on a store that is not a repository.
+    #[error(
+        "{} is not a git repository: tasq git init makes it one, or tasq git clone <url> fills \
+         an empty store",
+        .0.display()
+    )]
+    NotRepository(PathBuf),
+    /// `tasq git sync` while a rebase is stopped in the store.
+    #[error(
+        "a rebase is in progress in {}: finish it with git rebase --continue or --abort",
+        .0.display()
+    )]
+    Rebasing(PathBuf),
     /// A git step of the commit failed; also left as a lasting warning.
     #[error("{COMMIT_FAILED}{0}")]
     Commit(String),
@@ -90,29 +126,85 @@ pub fn run(git: &Git, tasq: &Tasq, store: &Path, settings: &Settings) -> Result<
         return Ok(());
     }
     let state = State::of(store);
+    let Some(lock) = take_lock(&state)? else {
+        return Ok(());
+    };
+    rounds(
+        git,
+        tasq,
+        store,
+        &state,
+        lock,
+        settings,
+        &mut Report::default(),
+    )
+}
+
+/// `tasq git sync`: the rounds of [`run`] in the foreground, once a running
+/// job is done, fetching whatever `settings.interval` says; what each step
+/// did. A store that is not a repository, or one with a rebase stopped in
+/// it, is an error.
+pub fn foreground(
+    git: &Git,
+    tasq: &Tasq,
+    store: &Path,
+    settings: &Settings,
+) -> Result<Report, JobError> {
+    if !is_repository(store) {
+        return Err(JobError::NotRepository(store.to_owned()));
+    }
+    if rebasing(git, store) {
+        return Err(JobError::Rebasing(store.to_owned()));
+    }
+    let state = State::of(store);
+    let lock = loop {
+        if let Some(lock) = take_lock(&state)? {
+            break lock;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let mut report = Report::default();
+    rounds(git, tasq, store, &state, lock, settings, &mut report)?;
+    Ok(report)
+}
+
+fn take_lock(state: &State) -> Result<Option<JobLock>, JobError> {
+    state
+        .lock_job(SystemTime::now())
+        .map_err(io("could not take the job lock"))
+}
+
+/// Rounds under `lock`, then under the lock taken again, while a hook
+/// touched `pending` meanwhile.
+fn rounds(
+    git: &Git,
+    tasq: &Tasq,
+    store: &Path,
+    state: &State,
+    mut lock: JobLock,
+    settings: &Settings,
+    report: &mut Report,
+) -> Result<(), JobError> {
     loop {
-        let Some(lock) = state
-            .lock_job(SystemTime::now())
-            .map_err(io("could not take the job lock"))?
-        else {
-            break;
-        };
         state
             .clear_pending()
             .map_err(io("could not clear the pending mark"))?;
         // A rebase in progress is the user resolving a conflict: the
         // writes wait for it, uncommitted, and nothing is synced.
         if !rebasing(git, store) {
-            round(git, tasq, store, &state, &lock, settings)?;
+            round(git, tasq, store, state, &lock, settings, report)?;
         }
         // A hook that touched `pending` while this lock was held started no
         // job: the work is this one's.
         drop(lock);
         if !state.is_pending() {
-            break;
+            return Ok(());
         }
+        let Some(next) = take_lock(state)? else {
+            return Ok(());
+        };
+        lock = next;
     }
-    Ok(())
 }
 
 /// One commit, and the sync when it committed or the fetch is due.
@@ -123,19 +215,24 @@ fn round(
     state: &State,
     lock: &JobLock,
     settings: &Settings,
+    report: &mut Report,
 ) -> Result<(), JobError> {
     let outcome = commit(git, tasq, store, state);
     match &outcome {
         Ok(_) => state.set_warning(COMMIT_FAILED, None),
         Err(JobError::Commit(message)) => state.set_warning(COMMIT_FAILED, Some(message)),
-        Err(JobError::State { .. }) => Ok(()),
+        Err(_) => Ok(()),
     }
     .map_err(io("could not write the warnings"))?;
     let committed = outcome?;
+    match &committed {
+        Some(subject) => report.step(format!("committed: {subject}")),
+        None => report.step("nothing to commit".to_owned()),
+    }
     let mut pulled = false;
-    if committed || state.fetch_due(SystemTime::now(), settings.interval) {
+    if committed.is_some() || state.fetch_due(SystemTime::now(), settings.interval) {
         let before = head(git, store);
-        sync(git, tasq, store, state, lock, &settings.exe)?;
+        sync(git, tasq, store, state, lock, &settings.exe, report)?;
         state
             .record_fetch(SystemTime::now())
             .map_err(io("could not record the fetch"))?;
@@ -145,7 +242,7 @@ fn round(
         .has_warning(DUPLICATE_ID)
         .map_err(io("could not read the warnings"))?;
     if pulled || standing {
-        duplicates(tasq, state)?;
+        duplicates(tasq, state, report)?;
     }
     Ok(())
 }
@@ -158,7 +255,7 @@ fn head(git: &Git, store: &Path) -> Option<String> {
 /// One [`DUPLICATE_ID`] warning per `ids` failure of `tasq doctor`,
 /// `<detail>; fix: <fix>`; the warnings are left as they were when doctor
 /// gives no answer.
-fn duplicates(tasq: &Tasq, state: &State) -> Result<(), JobError> {
+fn duplicates(tasq: &Tasq, state: &State, report: &mut Report) -> Result<(), JobError> {
     let Some(failures) = tasq.id_failures() else {
         return Ok(());
     };
@@ -169,6 +266,9 @@ fn duplicates(tasq: &Tasq, state: &State) -> Result<(), JobError> {
             None => check.detail.clone(),
         })
         .collect();
+    for line in &lines {
+        report.failure(format!("{DUPLICATE_ID}{line}"));
+    }
     let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
     state
         .set_warnings(DUPLICATE_ID, &lines)
@@ -179,14 +279,15 @@ fn io(action: &'static str) -> impl Fn(std::io::Error) -> JobError {
     move |source| JobError::State { action, source }
 }
 
-/// One commit of the task files, if they changed; whether it made one.
-/// The writes it explains are forgotten either way: a write with no change
-/// left was committed already.
-fn commit(git: &Git, tasq: &Tasq, store: &Path, state: &State) -> Result<bool, JobError> {
+/// One commit of the task files, if they changed; its subject, if it made
+/// one. The writes it explains are forgotten either way: a write with no
+/// change left was committed already.
+fn commit(git: &Git, tasq: &Tasq, store: &Path, state: &State) -> Result<Option<String>, JobError> {
     let writes = state.writes().map_err(io("could not read the writes"))?;
     let mut status = vec!["status", "--porcelain", "-z", "--untracked-files=all", "--"];
     status.extend(TASK_FILES);
     let changed = !git.check(store, &status).map_err(failed)?.is_empty();
+    let mut subject = None;
     if changed {
         let mut add = vec!["add", "--all", "--"];
         add.extend(TASK_FILES);
@@ -194,11 +295,12 @@ fn commit(git: &Git, tasq: &Tasq, store: &Path, state: &State) -> Result<bool, J
         let text = message(&writes, |id| tasq.title(id).ok());
         git.check(store, &["commit", "--quiet", "-m", &text])
             .map_err(failed)?;
+        subject = text.lines().next().map(str::to_owned);
     }
     state
         .forget(&writes)
         .map_err(io("could not drop the committed writes"))?;
-    Ok(changed)
+    Ok(subject)
 }
 
 fn failed(err: GitError) -> JobError {
@@ -228,20 +330,27 @@ fn sync(
     state: &State,
     lock: &JobLock,
     exe: &Path,
+    report: &mut Report,
 ) -> Result<(), JobError> {
-    if git
-        .check(store, &["rev-parse", "--verify", "--quiet", "@{upstream}"])
-        .is_err()
-    {
+    let Ok(upstream) = git.check(store, &["rev-parse", "--abbrev-ref", "@{upstream}"]) else {
+        report.step("no upstream: nothing to fetch or push".to_owned());
         return Ok(());
-    }
+    };
     let rebase = [
         exe.as_os_str(),
         OsStr::new("rebase"),
         OsStr::new("--store"),
         store.as_os_str(),
     ];
-    let outcome = exchange(git, tasq, store, lock, &rebase);
+    let remote = Remote {
+        git,
+        tasq,
+        store,
+        lock,
+        rebase: &rebase,
+        upstream: upstream.trim(),
+    };
+    let outcome = remote.exchange(report);
     let stop = match &outcome {
         Ok(Exchange::Done) => None,
         Ok(Exchange::Deferred) => Some(REBASE),
@@ -250,8 +359,10 @@ fn sync(
     for kind in [FETCH_FAILED, REBASE, PUSH_FAILED] {
         if stop == Some(kind) {
             if let Err((_, message)) = &outcome {
+                let message = one_line(message);
+                report.failure(format!("{kind}{message}"));
                 state
-                    .set_warning(kind, Some(&one_line(message)))
+                    .set_warning(kind, Some(&message))
                     .map_err(io("could not write the warnings"))?;
             }
             break;
@@ -272,41 +383,83 @@ enum Exchange {
     Deferred,
 }
 
-/// The fetch, rebase and push; the warning kind of the step that failed
-/// and its message. A push that fails is tried once more after another
-/// fetch and rebase.
-fn exchange(
-    git: &Git,
-    tasq: &Tasq,
-    store: &Path,
-    lock: &JobLock,
-    rebase: &[&OsStr],
-) -> Result<Exchange, (&'static str, String)> {
-    for last in [false, true] {
-        refresh(lock);
-        git.check(store, &["fetch", "--quiet"])
-            .map_err(|err| (FETCH_FAILED, err.message))?;
-        let (_, behind) = divergence(git, store).map_err(|m| (FETCH_FAILED, m))?;
-        if behind > 0 {
+/// The branch's upstream, and what the exchange with it needs.
+struct Remote<'a> {
+    git: &'a Git,
+    tasq: &'a Tasq,
+    store: &'a Path,
+    lock: &'a JobLock,
+    /// `tasq-git rebase --store <dir>`, run under the store lock.
+    rebase: &'a [&'a OsStr],
+    /// Its short name (`origin/default`), for the report.
+    upstream: &'a str,
+}
+
+impl Remote<'_> {
+    /// The fetch, rebase and push; the warning kind of the step that
+    /// failed and its message. A push that fails is tried once more after
+    /// another fetch and rebase.
+    fn exchange(&self, report: &mut Report) -> Result<Exchange, (&'static str, String)> {
+        let Self {
+            git,
+            tasq,
+            store,
+            lock,
+            rebase,
+            upstream,
+        } = *self;
+        for last in [false, true] {
             refresh(lock);
-            tasq.locked(rebase)
-                .map_err(|m| (REBASE, rebase_failure(&m)))?;
+            git.check(store, &["fetch", "--quiet"])
+                .map_err(|err| (FETCH_FAILED, err.message))?;
+            report.step(format!("fetched {upstream}"));
+            let (_, behind) = divergence(git, store).map_err(|m| (FETCH_FAILED, m))?;
+            if behind > 0 {
+                refresh(lock);
+                tasq.locked(rebase)
+                    .map_err(|m| (REBASE, rebase_failure(&m)))?;
+            }
+            let (ahead, still) =
+                divergence(git, store).map_err(|m| (REBASE, rebase_failure(&m)))?;
+            if still > 0 {
+                report.step(
+                    "rebase left for the next round: a task file changed meanwhile".to_owned(),
+                );
+                return Ok(Exchange::Deferred);
+            }
+            if behind > 0 {
+                report.step(format!("pulled {} from {upstream}", commits(behind)));
+            }
+            if ahead == 0 {
+                if behind == 0 {
+                    report.step(format!("up to date with {upstream}"));
+                }
+                return Ok(Exchange::Done);
+            }
+            refresh(lock);
+            match git.check(store, &["-c", "push.default=upstream", "push", "--quiet"]) {
+                Ok(_) => {
+                    report.step(format!("pushed {} to {upstream}", commits(ahead)));
+                    return Ok(Exchange::Done);
+                }
+                Err(err) if last => return Err((PUSH_FAILED, err.message)),
+                Err(err) => report.step(format!(
+                    "push failed, fetching again: {}",
+                    one_line(&err.message)
+                )),
+            }
         }
-        let (ahead, behind) = divergence(git, store).map_err(|m| (REBASE, rebase_failure(&m)))?;
-        if behind > 0 {
-            return Ok(Exchange::Deferred);
-        }
-        if ahead == 0 {
-            return Ok(Exchange::Done);
-        }
-        refresh(lock);
-        match git.check(store, &["-c", "push.default=upstream", "push", "--quiet"]) {
-            Ok(_) => return Ok(Exchange::Done),
-            Err(err) if last => return Err((PUSH_FAILED, err.message)),
-            Err(_) => {}
-        }
+        Ok(Exchange::Done)
     }
-    Ok(Exchange::Done)
+}
+
+/// `1 commit`, `2 commits`.
+pub fn commits(n: usize) -> String {
+    if n == 1 {
+        "1 commit".to_owned()
+    } else {
+        format!("{n} commits")
+    }
 }
 
 /// The rebase warning, after [`REBASE`], for what the rebase step printed:
@@ -387,7 +540,7 @@ pub fn rebase(git: &Git, store: &Path) -> Result<(), String> {
 
 /// Whether a rebase is stopped in the repository at `store` (git's
 /// `rebase-merge` or `rebase-apply` directory is there).
-fn rebasing(git: &Git, store: &Path) -> bool {
+pub fn rebasing(git: &Git, store: &Path) -> bool {
     git.check(
         store,
         &[

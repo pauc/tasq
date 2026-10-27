@@ -41,6 +41,10 @@ impl Env {
         env.plugin_config(&serde_json::json!({}));
         let script = format!(
             "#!/bin/sh\n\
+             if [ \"$1\" = --set ]; then\n\
+               printf '%s\\n' \"$2\" >> '{dir}/sets'\n\
+               shift 2\n\
+             fi\n\
              case \"$1 $2 $3\" in\n\
              \"store info --json\") answer='{dir}/store-info.json' ;;\n\
              \"config show --json\") answer='{dir}/config-show.json' ;;\n\
@@ -733,6 +737,309 @@ mod tasq {
             stderr(&out).starts_with("tasq-git: tasq config show --json answered something else: "),
             "{}",
             stderr(&out)
+        );
+    }
+}
+
+/// `tasq git clone <url>`: a store from a remote branch.
+mod clone {
+    use super::*;
+
+    const X: &str = "01K0000000000000000000000X.md";
+
+    fn clone<'a>(url: &'a str, extra: &[&'a str]) -> Vec<&'a str> {
+        let mut args = vec!["clone", url];
+        args.extend(extra);
+        args
+    }
+
+    /// A remote whose `default` branch holds task 9.
+    fn remote_with_default(env: &Env) -> String {
+        let url = env.remote();
+        env.remote_branch(&url, "default");
+        url
+    }
+
+    #[test]
+    fn an_absent_store_gets_the_branch_with_its_upstream_and_identity() {
+        let env = Env::new();
+        let url = remote_with_default(&env);
+        let out = env.tasq_git(&clone(
+            &url,
+            &["--name", "Me Personal", "--email", "me@example.invalid"],
+        ));
+        assert_ok(&out);
+        assert_eq!(
+            stdout(&out),
+            format!(
+                "cloned branch default of {url} into {}: 1 task file\n",
+                env.store.display()
+            )
+        );
+        assert_eq!(
+            std::fs::read_to_string(env.store.join(X)).unwrap(),
+            "---\nid: 9\n---\n# X\n"
+        );
+        assert_eq!(
+            env.git(&env.store, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
+            "origin/default\n"
+        );
+        assert_eq!(
+            env.config("remote.origin.fetch").as_deref(),
+            Some("+refs/heads/default:refs/remotes/origin/default")
+        );
+        assert_eq!(env.config("user.name").as_deref(), Some("Me Personal"));
+        assert_eq!(
+            env.config("user.email").as_deref(),
+            Some("me@example.invalid")
+        );
+        assert_eq!(env.config("core.sshCommand"), None);
+        assert_eq!(
+            env.git(&env.store, &["status", "--porcelain"]),
+            "",
+            "the working tree is the branch"
+        );
+    }
+
+    #[test]
+    fn several_task_files_are_counted() {
+        let env = Env::new();
+        let url = env.remote();
+        let dir = env.base().join("src");
+        std::fs::create_dir_all(&dir).unwrap();
+        env.git(&dir, &["init", "-q", "-b", "default"]);
+        std::fs::write(dir.join(TASK_3.0), TASK_3.1).unwrap();
+        std::fs::write(dir.join(TASK_4.0), TASK_4.1).unwrap();
+        env.git(&dir, &["add", "-A"]);
+        env.git(
+            &dir,
+            &[
+                "-c",
+                "user.name=O",
+                "-c",
+                "user.email=o@x",
+                "commit",
+                "-q",
+                "-m",
+                "x",
+            ],
+        );
+        env.git(&dir, &["push", "-q", &url, "default"]);
+        let out = env.tasq_git(&clone(&url, &[]));
+        assert_ok(&out);
+        assert!(
+            stdout(&out).ends_with(": 2 task files\n"),
+            "{}",
+            stdout(&out)
+        );
+    }
+
+    #[test]
+    fn a_store_with_other_files_keeps_them() {
+        let env = Env::new();
+        let url = remote_with_default(&env);
+        env.store_with(&[(".tasq/lock", ""), ("notes.txt", "mine\n")]);
+        let out = env.tasq_git(&clone(&url, &[]));
+        assert_ok(&out);
+        assert!(env.store.join(X).is_file());
+        assert_eq!(
+            std::fs::read_to_string(env.store.join("notes.txt")).unwrap(),
+            "mine\n"
+        );
+        assert!(env.store.join(".tasq/lock").is_file());
+    }
+
+    #[test]
+    fn a_store_with_task_files_is_refused() {
+        let env = Env::new();
+        let url = remote_with_default(&env);
+        env.store_with(&[("01K6Q8ZT3D0000000000000003.MD", TASK_3.1)]);
+        let out = env.tasq_git(&clone(&url, &[]));
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(stdout(&out), "");
+        assert_eq!(
+            stderr(&out),
+            format!(
+                "tasq-git: {} already has task files; tasq git clone only fills an empty \
+                 store\nfix: tasq git clone {url} --store <another> into a new store, or tasq \
+                 git init {url} --branch <another> to push this one\n",
+                env.store.display()
+            )
+        );
+        assert!(!env.store.join(".git").exists());
+    }
+
+    #[test]
+    fn hidden_or_nested_markdown_is_no_task_file() {
+        let env = Env::new();
+        let url = remote_with_default(&env);
+        env.store_with(&[
+            (".#x.md", "lock\n"),
+            ("sub/y.md", "nested\n"),
+            ("z.txt", ""),
+        ]);
+        let out = env.tasq_git(&clone(&url, &[]));
+        assert_ok(&out);
+    }
+
+    #[test]
+    fn a_repository_is_refused() {
+        let env = Env::new();
+        let url = remote_with_default(&env);
+        env.store_with(&[("notes.txt", "")]);
+        env.git(&env.store, &["init", "-q"]);
+        let out = env.tasq_git(&clone(&url, &[]));
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            stderr(&out),
+            format!(
+                "tasq-git: {} is already a git repository\n",
+                env.store.display()
+            )
+        );
+    }
+
+    #[test]
+    fn a_missing_branch_is_refused_with_the_fix() {
+        let env = Env::new();
+        let url = remote_with_default(&env);
+        let out = env.tasq_git(&clone(&url, &["--branch", "work"]));
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            stderr(&out),
+            format!(
+                "tasq-git: branch work of {url} does not exist\nfix: tasq git init {url} \
+                 --branch work pushes a store to it\n"
+            )
+        );
+        assert!(!env.store.exists(), "the store was created");
+    }
+
+    #[test]
+    fn an_unreachable_remote_is_refused() {
+        let env = Env::new();
+        let url = format!("file://{}", env.base().join("nowhere.git").display());
+        let out = env.tasq_git(&clone(&url, &[]));
+        assert_eq!(out.status.code(), Some(1));
+        assert!(
+            stderr(&out).starts_with(&format!("tasq-git: could not reach {url}: ")),
+            "{}",
+            stderr(&out)
+        );
+        assert!(!env.store.exists());
+    }
+
+    #[test]
+    fn branch_picks_the_remote_and_local_branch() {
+        let env = Env::new();
+        let url = remote_with_default(&env);
+        env.remote_branch(&url, "work");
+        let out = env.tasq_git(&clone(&url, &["--branch", "work"]));
+        assert_ok(&out);
+        assert!(
+            stdout(&out).starts_with(&format!("cloned branch work of {url} into ")),
+            "{}",
+            stdout(&out)
+        );
+        assert_eq!(env.git(&env.store, &["branch", "--show-current"]), "work\n");
+        assert_eq!(
+            env.git(&env.store, &["rev-parse", "--abbrev-ref", "@{upstream}"]),
+            "origin/work\n"
+        );
+        assert_eq!(env.git(&env.store, &["branch", "--list"]), "* work\n");
+    }
+
+    #[test]
+    fn store_names_the_store_and_the_branch() {
+        let env = Env::new();
+        let url = remote_with_default(&env);
+        env.remote_branch(&url, "work");
+        let work = env.base().join("data").join("stores").join("work");
+        env.answers(
+            "store-info.json",
+            &serde_json::json!({
+                "store": {"location": work, "name": "tasq", "task_count": 0},
+                "store_name": {"from": "--set", "value": "work"},
+            })
+            .to_string(),
+        );
+        let out = env.tasq_git(&clone(&url, &["--store", "work"]));
+        assert_ok(&out);
+        assert_eq!(
+            std::fs::read_to_string(env.base().join("sets")).unwrap(),
+            "store.name=work\n"
+        );
+        assert_eq!(env.git(&work, &["branch", "--show-current"]), "work\n");
+        assert!(work.join(X).is_file());
+        assert!(!env.store.exists());
+    }
+
+    #[test]
+    fn without_store_tasq_resolves_it() {
+        let env = Env::new();
+        let url = remote_with_default(&env);
+        assert_ok(&env.tasq_git(&clone(&url, &[])));
+        assert!(!env.base().join("sets").exists());
+    }
+
+    #[test]
+    fn plugin_config_gives_the_identity_defaults() {
+        let env = Env::new();
+        let url = remote_with_default(&env);
+        env.plugin_config(&serde_json::json!({
+            "name": "Me Personal",
+            "email": "me@example.invalid",
+            "ssh_key": "/keys/me",
+        }));
+        let out = env.tasq_git(&clone(&url, &["--name", "Flag"]));
+        assert_ok(&out);
+        assert_eq!(env.config("user.name").as_deref(), Some("Flag"));
+        assert_eq!(
+            env.config("user.email").as_deref(),
+            Some("me@example.invalid")
+        );
+        assert_eq!(
+            env.config("core.sshCommand").as_deref(),
+            Some("ssh -i '/keys/me' -o IdentitiesOnly=yes")
+        );
+    }
+
+    #[test]
+    fn a_failed_checkout_leaves_no_repository() {
+        let env = Env::new();
+        let url = env.remote();
+        let dir = env.base().join("src");
+        std::fs::create_dir_all(&dir).unwrap();
+        env.git(&dir, &["init", "-q", "-b", "default"]);
+        std::fs::write(dir.join("notes.txt"), "theirs\n").unwrap();
+        env.git(&dir, &["add", "-A"]);
+        env.git(
+            &dir,
+            &[
+                "-c",
+                "user.name=O",
+                "-c",
+                "user.email=o@x",
+                "commit",
+                "-q",
+                "-m",
+                "x",
+            ],
+        );
+        env.git(&dir, &["push", "-q", &url, "default"]);
+        env.store_with(&[("notes.txt", "mine\n")]);
+        let out = env.tasq_git(&clone(&url, &[]));
+        assert_eq!(out.status.code(), Some(1));
+        assert!(
+            stderr(&out)
+                .starts_with("tasq-git: git checkout failed: error: The following untracked"),
+            "{}",
+            stderr(&out)
+        );
+        assert!(!env.store.join(".git").exists());
+        assert_eq!(
+            std::fs::read_to_string(env.store.join("notes.txt")).unwrap(),
+            "mine\n"
         );
     }
 }

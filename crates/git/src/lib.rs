@@ -12,13 +12,17 @@
 //!
 //! `tasq git init` (run by tasq's dispatch as `tasq-git init`) makes the
 //! store a repository and, given a URL, pushes it to a branch named after
-//! the store.
+//! the store; `tasq git clone` fills an empty store from such a branch;
+//! `tasq git sync` runs the job's steps in the foreground. `doctor` explains
+//! the repository's state (`doctor`).
 //!
 //! The crate depends on no tasq crate: everything it knows about tasq comes
 //! from the payloads, `tasq ... --json` and `tasq store lock`.
 
 #![warn(missing_docs)]
 
+pub mod clone;
+pub mod doctor;
 pub mod git;
 pub mod hook;
 pub mod init;

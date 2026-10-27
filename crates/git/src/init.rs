@@ -56,7 +56,7 @@ impl Identity {
     }
 
     /// The `(key, value)` pairs written into the repository config.
-    fn settings(&self) -> Vec<(&'static str, String)> {
+    pub(crate) fn settings(&self) -> Vec<(&'static str, String)> {
         let mut out = vec![];
         if let Some(name) = &self.name {
             out.push(("user.name", name.clone()));
@@ -82,7 +82,7 @@ pub struct Options {
     pub identity: Identity,
 }
 
-/// Why init did nothing (or undid what it did).
+/// Why init or clone did nothing (or undid what it did).
 #[derive(Debug, thiserror::Error)]
 pub enum InitError {
     /// tasq could not say which store, or what its configuration is.
@@ -110,6 +110,30 @@ pub enum InitError {
         url: String,
         /// The branch.
         branch: String,
+    },
+    /// Clone: the remote has no such branch.
+    #[error(
+        "branch {branch} of {url} does not exist\nfix: tasq git init {url} --branch {branch} \
+         pushes a store to it"
+    )]
+    BranchMissing {
+        /// The remote.
+        url: String,
+        /// The branch.
+        branch: String,
+    },
+    /// Clone: the store has task files of its own.
+    #[error(
+        "{} already has task files; tasq git clone only fills an empty store\nfix: tasq git \
+         clone {url} --store <another> into a new store, or tasq git init {url} --branch \
+         <another> to push this one",
+        .store.display()
+    )]
+    HasTaskFiles {
+        /// The store directory.
+        store: PathBuf,
+        /// The remote.
+        url: String,
     },
     /// `git ls-remote` could not ask the remote.
     #[error("could not reach {url}: {message}")]
@@ -189,31 +213,42 @@ pub fn init(git: &Git, store: &Store, options: &Options) -> Result<Report, InitE
             }
         }
     }
+    create(dir)?;
+    let committed = or_undo(dir, build(git, dir, &branch, options))?;
+    Ok(Report {
+        store: dir.clone(),
+        branch,
+        committed,
+        pushed: options.url.clone(),
+    })
+}
+
+/// Creates the store directory, if absent.
+pub(crate) fn create(dir: &Path) -> Result<(), InitError> {
     std::fs::create_dir_all(dir).map_err(|source| InitError::Io {
         action: "could not create the store directory",
-        path: dir.clone(),
+        path: dir.to_owned(),
         source,
-    })?;
-    match build(git, dir, &branch, options) {
-        Ok(committed) => Ok(Report {
-            store: dir.clone(),
-            branch,
-            committed,
-            pushed: options.url.clone(),
-        }),
-        Err(err) => {
-            // Nothing to undo when git never ran.
-            let made = dir.join(".git");
-            if made.exists() {
-                std::fs::remove_dir_all(&made).map_err(|source| InitError::Io {
-                    action: "init failed and could not remove",
-                    path: made,
-                    source,
-                })?;
-            }
-            Err(err.into())
-        }
+    })
+}
+
+/// `result`, after removing the `.git` that setup made in `dir` when it
+/// failed, so that it can be run again.
+pub(crate) fn or_undo<T>(dir: &Path, result: Result<T, GitError>) -> Result<T, InitError> {
+    let err = match result {
+        Ok(value) => return Ok(value),
+        Err(err) => err,
+    };
+    // Nothing to undo when git never ran.
+    let made = dir.join(".git");
+    if made.exists() {
+        std::fs::remove_dir_all(&made).map_err(|source| InitError::Io {
+            action: "setup failed and could not remove",
+            path: made,
+            source,
+        })?;
     }
+    Err(err.into())
 }
 
 /// `git init` and everything after it; returns the number of task files
@@ -256,7 +291,7 @@ pub fn ssh_command(key: &str) -> String {
 
 /// `dir`, or its nearest ancestor that exists: where to run a git command
 /// that needs no repository before the store directory is created.
-fn nearest_existing(dir: &Path) -> &Path {
+pub(crate) fn nearest_existing(dir: &Path) -> &Path {
     dir.ancestors()
         .find(|d| d.is_dir())
         .unwrap_or_else(|| Path::new("/"))

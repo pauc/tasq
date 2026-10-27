@@ -12,6 +12,8 @@ use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
 
+use crate::doctor;
+use crate::git::Git;
 use crate::payload::{self, Payload, PayloadError};
 use crate::state::State;
 
@@ -24,6 +26,9 @@ pub struct Check {
     pub status: &'static str,
     /// One line.
     pub message: String,
+    /// What to do about it, if anything.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
 }
 
 /// Why an event failed; tasq shows it as a warning naming the plugin and
@@ -54,9 +59,11 @@ pub const INTERVAL: Duration = Duration::from_secs(60);
 /// Handles the event in `stdin` and returns what to print on stdout:
 /// nothing, or for `doctor` the checks as a JSON array and a newline.
 /// `spawn` detaches the job for a store directory and the fetch interval;
-/// `now` judges whether a running job's lock is stale and a fetch due.
+/// `now` judges whether a running job's lock is stale and a fetch due, and
+/// dates the last fetch for `doctor`; `git` answers `doctor`'s questions.
 pub fn run(
     stdin: &str,
+    git: &Git,
     now: SystemTime,
     spawn: impl FnOnce(&Path, Duration) -> io::Result<()>,
 ) -> Result<String, HookError> {
@@ -68,7 +75,7 @@ pub fn run(
             _ => {}
         }
     }
-    Ok(answer(&payload))
+    Ok(answer(&payload, git, now))
 }
 
 /// `[plugin.git] interval`, whole seconds, [`INTERVAL`] when unset.
@@ -139,22 +146,28 @@ fn start(
     Ok(())
 }
 
-/// What the plugin prints for `payload`. Events it does not know, and every
-/// event of a store that is not a repository but `doctor`, print nothing.
-pub fn answer(payload: &Payload) -> String {
+/// What the plugin prints for `payload`: for `doctor`, the repository's
+/// checks ([`doctor::checks`]), or one saying sync is off for a store that
+/// is not a repository. Other events print nothing.
+pub fn answer(payload: &Payload, git: &Git, now: SystemTime) -> String {
     let location = &payload.store.location;
-    if payload.event != "doctor" || is_repository(location) {
+    if payload.event != "doctor" {
         return String::new();
     }
-    let off = Check {
-        name: "sync",
-        status: "ok",
-        message: format!(
-            "store sync off: {} is not a git repository",
-            location.display()
-        ),
+    let checks = if is_repository(location) {
+        doctor::checks(git, location, now)
+    } else {
+        vec![Check {
+            name: "sync",
+            status: "ok",
+            message: format!(
+                "store sync off: {} is not a git repository",
+                location.display()
+            ),
+            fix: None,
+        }]
     };
-    let mut out = serde_json::to_string(&[off]).expect("a check serialises");
+    let mut out = serde_json::to_string(&checks).expect("a check serialises");
     out.push('\n');
     out
 }

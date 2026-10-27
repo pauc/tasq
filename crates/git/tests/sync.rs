@@ -54,6 +54,11 @@ impl World {
                fi\n\
                exec \"$@\"\n\
              fi\n\
+             if [ \"$1 $2 $3\" = 'store info --json' ]; then\n\
+               printf '%s\\n' \"$TASQ_EVENT\" >> \"$base/events\"\n\
+               printf '{{\"schema\":1,\"store\":{{\"location\":\"%s\",\"name\":\"tasq\",\"task_count\":0}},\"store_name\":{{\"from\":\"defaults\",\"value\":\"default\"}}}}\\n' \"$FAKE_STORE\"\n\
+               exit 0\n\
+             fi\n\
              if [ \"$1 $2\" = 'doctor --json' ]; then\n\
                printf '%s\\n' \"$FAKE_STORE\" >> \"$base/doctors\"\n\
                [ -z \"$FAKE_DOCTOR_BROKEN\" ] || {{ echo 'doctor broke' >&2; exit 2; }}\n\
@@ -282,11 +287,29 @@ impl Machine<'_> {
         self.command(&all).output().unwrap()
     }
 
+    /// `tasq-git sync` (`tasq git sync`), in the foreground.
+    fn sync(&self) -> Output {
+        self.command(&["sync"]).output().unwrap()
+    }
+
     /// `tasq-git hook` with the `store-open` payload carrying `config`.
     fn store_open(&self, config: &serde_json::Value) -> Output {
+        self.hook("store-open", config)
+    }
+
+    /// The plugin's `doctor` answer, parsed.
+    fn doctor(&self) -> serde_json::Value {
+        let out = self.hook("doctor", &serde_json::json!({}));
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert_eq!(stderr(&out), "");
+        serde_json::from_str(&stdout(&out)).unwrap()
+    }
+
+    /// `tasq-git hook` with the payload of `event` carrying `config`.
+    fn hook(&self, event: &str, config: &serde_json::Value) -> Output {
         let payload = serde_json::json!({
             "schema": 1,
-            "event": "store-open",
+            "event": event,
             "store": {"name": "default", "location": self.store},
             "config": config,
         });
@@ -972,5 +995,465 @@ mod duplicate {
         assert_eq!(b.head(), a.head(), "the pull happened");
         assert_eq!(world.doctors().lines().count(), 1, "doctor was asked");
         assert_eq!(b.warnings().as_deref(), Some(WARNING));
+    }
+}
+
+/// `tasq git sync`: the job's steps in the foreground, one line each.
+mod foreground {
+    use super::*;
+
+    /// The output and exit code of `tasq-git sync`, stderr empty.
+    fn synced(m: &Machine) -> (String, Option<i32>) {
+        let out = m.sync();
+        assert_eq!(stderr(&out), "");
+        (stdout(&out), out.status.code())
+    }
+
+    #[test]
+    fn a_clean_sync_prints_each_step() {
+        let world = World::new();
+        let a = world.first();
+        let b = world.second();
+        b.note(TASK_4, "on b");
+        assert_silent(&b.job(&[]));
+        std::fs::create_dir_all(a.state("")).unwrap();
+        std::fs::write(a.state("writes"), "log 3\n").unwrap();
+        a.note(TASK_3, "on a");
+        // Fetched a moment ago: the foreground fetches all the same.
+        a.fetched(Duration::ZERO);
+
+        assert_eq!(
+            synced(&a),
+            (
+                "committed: log 3: Three\n\
+                 fetched origin/default\n\
+                 pulled 1 commit from origin/default\n\
+                 pushed 1 commit to origin/default\n"
+                    .to_owned(),
+                Some(0)
+            )
+        );
+        assert_eq!(world.remote_head(), a.head());
+        assert_eq!(a.subjects(), ["log 3: Three", "update task files", "start"]);
+        assert_eq!(a.warnings(), None);
+        assert!(!a.state("job.lock").exists());
+        assert_eq!(
+            std::fs::read_to_string(world.base().join("events")).unwrap(),
+            "sync\n",
+            "tasq is told not to fire events at the plugin"
+        );
+    }
+
+    #[test]
+    fn several_commits_are_counted() {
+        let world = World::new();
+        let a = world.first();
+        let b = world.second();
+        b.note(TASK_4, "on b");
+        b.git(&["commit", "-q", "-am", "one"]);
+        b.note(TASK_4, "again");
+        b.git(&["commit", "-q", "-am", "two"]);
+        b.git(&["push", "-q"]);
+        a.note(TASK_3, "on a");
+        a.git(&["commit", "-q", "-am", "three"]);
+        a.note(TASK_3, "again");
+        assert_eq!(
+            synced(&a),
+            (
+                "committed: update task files\n\
+                 fetched origin/default\n\
+                 pulled 2 commits from origin/default\n\
+                 pushed 2 commits to origin/default\n"
+                    .to_owned(),
+                Some(0)
+            )
+        );
+    }
+
+    #[test]
+    fn nothing_to_do_is_up_to_date() {
+        let world = World::new();
+        let a = world.first();
+        assert_eq!(
+            synced(&a),
+            (
+                "nothing to commit\n\
+                 fetched origin/default\n\
+                 up to date with origin/default\n"
+                    .to_owned(),
+                Some(0)
+            )
+        );
+        assert!(a.state("last-fetch").exists());
+    }
+
+    #[test]
+    fn an_offline_remote_is_the_failed_step_and_exit_1() {
+        let world = World::new();
+        let a = world.first();
+        let remote = world.base().join("remote.git");
+        std::fs::rename(&remote, world.base().join("gone.git")).unwrap();
+        a.note(TASK_3, "offline");
+        let (out, code) = synced(&a);
+        assert_eq!(code, Some(1));
+        let failure = format!(
+            "fetch failed: fatal: '{}' does not appear to be a git repository; fatal: Could \
+             not read from remote repository.; Please make sure you have the correct access \
+             rights; and the repository exists.",
+            remote.display()
+        );
+        assert_eq!(out, format!("committed: update task files\n{failure}\n"));
+        assert_eq!(a.warnings(), Some(format!("{failure}\n")));
+    }
+
+    #[test]
+    fn a_conflict_is_aborted_and_reported() {
+        let world = World::new();
+        let a = world.first();
+        let b = world.second();
+        a.note(TASK_3, "on a");
+        assert_silent(&a.job(&[]));
+        b.note(TASK_3, "on b");
+        let pushed = world.remote_head();
+        let (out, code) = synced(&b);
+        assert_eq!(code, Some(1));
+        let failure = format!(
+            "rebase conflict on task 3: local commits kept, nothing pushed until it is \
+             resolved: cd {} && git pull --rebase, fix the files, git add them, git rebase \
+             --continue",
+            b.store.display()
+        );
+        assert_eq!(
+            out,
+            format!("committed: update task files\nfetched origin/default\n{failure}\n")
+        );
+        assert_eq!(b.warnings(), Some(format!("{failure}\n")));
+        assert_eq!(world.remote_head(), pushed);
+        assert!(!b.rebasing());
+        assert!(b.read(TASK_3).ends_with("# Three\n- on b\n"));
+    }
+
+    #[test]
+    fn a_rejected_push_is_tried_again() {
+        let world = World::new();
+        let a = world.first();
+        let b = world.second();
+        a.note(TASK_3, "on a");
+        a.git(&["commit", "-q", "-am", "from a"]);
+        world.pre_push(&format!(
+            "[ -f '{done}' ] && exit 0\n: > '{done}'\ngit -C '{a}' push -q\n",
+            done = world.base().join("raced").display(),
+            a = a.store.display()
+        ));
+        b.note(TASK_4, "on b");
+        let (out, code) = synced(&b);
+        assert_eq!(code, Some(0), "{out}");
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 6, "{out}");
+        assert_eq!(
+            lines[..2],
+            ["committed: update task files", "fetched origin/default"]
+        );
+        assert!(
+            lines[2].starts_with("push failed, fetching again: "),
+            "{out}"
+        );
+        assert!(
+            lines[2].ends_with(&format!(
+                "; error: failed to push some refs to '{}'",
+                world.url()
+            )),
+            "{out}"
+        );
+        assert_eq!(
+            lines[3..],
+            [
+                "fetched origin/default",
+                "pulled 1 commit from origin/default",
+                "pushed 1 commit to origin/default",
+            ]
+        );
+        assert_eq!(world.remote_head(), b.head());
+    }
+
+    #[test]
+    fn a_store_without_an_upstream_only_commits() {
+        let world = World::new();
+        let a = world.first();
+        a.git(&["branch", "--unset-upstream"]);
+        a.note(TASK_3, "local");
+        assert_eq!(
+            synced(&a),
+            (
+                "committed: update task files\nno upstream: nothing to fetch or push\n".to_owned(),
+                Some(0)
+            )
+        );
+        assert_eq!(a.subjects(), ["update task files", "start"]);
+    }
+
+    #[test]
+    fn a_pulled_duplicate_id_is_reported() {
+        let world = World::new();
+        let a = world.first();
+        let b = world.second();
+        a.write(
+            "01K6Q8ZT3D000000000000000A.md",
+            "---\nid: 5\n---\n# Five on a\n",
+        );
+        assert_silent(&a.job(&[]));
+        b.write(
+            "01K6Q8ZT3E000000000000000B.md",
+            "---\nid: 5\n---\n# Five on b\n",
+        );
+        let (out, code) = synced(&b);
+        assert_eq!(code, Some(1));
+        assert_eq!(
+            out,
+            "committed: update task files\n\
+             fetched origin/default\n\
+             pulled 1 commit from origin/default\n\
+             pushed 1 commit to origin/default\n\
+             duplicate id: id 5 is claimed twice; fix: renumber the newer\n"
+        );
+    }
+
+    #[test]
+    fn it_waits_for_a_running_job() {
+        let world = World::new();
+        let a = world.first();
+        std::fs::create_dir_all(a.state("")).unwrap();
+        std::fs::write(a.state("job.lock"), "another job\n").unwrap();
+        let mut child = a
+            .command(&["sync"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(child.try_wait().unwrap().is_none(), "it did not wait");
+        assert!(!a.state("last-fetch").exists());
+        std::fs::remove_file(a.state("job.lock")).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert!(a.state("last-fetch").exists());
+    }
+
+    #[test]
+    fn a_rebase_in_progress_is_refused() {
+        let world = World::new();
+        let a = world.first();
+        let b = world.second();
+        a.note(TASK_3, "on a");
+        assert_silent(&a.job(&[]));
+        b.note(TASK_3, "on b");
+        b.git(&["commit", "-q", "-am", "on b"]);
+        assert_eq!(b.try_git(&["pull", "--rebase"]).status.code(), Some(1));
+        let out = b.sync();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(stdout(&out), "");
+        assert_eq!(
+            stderr(&out),
+            format!(
+                "tasq-git: a rebase is in progress in {}: finish it with git rebase --continue \
+                 or --abort\n",
+                b.store.display()
+            )
+        );
+        assert!(b.rebasing());
+    }
+
+    #[test]
+    fn a_plain_store_is_refused() {
+        let world = World::new();
+        let plain = world.machine("plain");
+        std::fs::create_dir_all(&plain.store).unwrap();
+        let out = plain.sync();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            stderr(&out),
+            format!(
+                "tasq-git: {} is not a git repository: tasq git init makes it one, or tasq git \
+                 clone <url> fills an empty store\n",
+                plain.store.display()
+            )
+        );
+        assert!(!plain.state("").exists());
+    }
+
+    #[test]
+    fn a_failed_commit_is_an_error() {
+        let world = World::new();
+        let a = world.first();
+        let hooks = world.home().join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        install(
+            &hooks.join("pre-commit"),
+            "#!/bin/sh\necho no >&2\nexit 1\n",
+        );
+        a.git(&["config", "core.hooksPath", hooks.to_str().unwrap()]);
+        a.note(TASK_3, "on a");
+        let out = a.sync();
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(stdout(&out), "");
+        assert_eq!(stderr(&out), "tasq-git: commit failed: no\n");
+    }
+}
+
+/// The plugin's `doctor` checks for a store that is a repository.
+mod doctor {
+    use super::*;
+
+    fn check(name: &str, status: &str, message: &str) -> serde_json::Value {
+        serde_json::json!({"name": name, "status": status, "message": message})
+    }
+
+    fn fixed(name: &str, status: &str, message: &str, fix: &str) -> serde_json::Value {
+        serde_json::json!({"name": name, "status": status, "message": message, "fix": fix})
+    }
+
+    #[test]
+    fn a_store_in_sync_has_each_check_ok() {
+        let world = World::new();
+        let a = world.first();
+        a.fetched(Duration::from_secs(300));
+        assert_eq!(
+            a.doctor(),
+            serde_json::json!([
+                check(
+                    "identity",
+                    "ok",
+                    "commits as Me Personal <me@example.invalid>"
+                ),
+                check(
+                    "remote",
+                    "ok",
+                    &format!("branch default tracks origin/default at {}", world.url())
+                ),
+                check("push", "ok", "every commit is pushed"),
+                check("fetch", "ok", "last fetch 5 min ago"),
+                check("rebase", "ok", "no rebase in progress"),
+            ])
+        );
+    }
+
+    #[test]
+    fn unpushed_commits_a_key_and_no_fetch_yet() {
+        let world = World::new();
+        let a = world.first();
+        a.git(&[
+            "config",
+            "core.sshCommand",
+            "ssh -i '/keys/me' -o IdentitiesOnly=yes",
+        ]);
+        a.note(TASK_3, "one");
+        a.git(&["commit", "-q", "-am", "one"]);
+        a.note(TASK_3, "two");
+        a.git(&["commit", "-q", "-am", "two"]);
+        assert_eq!(
+            a.doctor(),
+            serde_json::json!([
+                check(
+                    "identity",
+                    "ok",
+                    "commits as Me Personal <me@example.invalid>, pushes with ssh -i '/keys/me' \
+                     -o IdentitiesOnly=yes"
+                ),
+                check(
+                    "remote",
+                    "ok",
+                    &format!("branch default tracks origin/default at {}", world.url())
+                ),
+                fixed("push", "warn", "2 commits not pushed", "tasq git sync"),
+                fixed("fetch", "warn", "never fetched", "tasq git sync"),
+                check("rebase", "ok", "no rebase in progress"),
+            ])
+        );
+        a.git(&["reset", "-q", "--hard", "HEAD~1"]);
+        assert_eq!(
+            a.doctor()[2],
+            fixed("push", "warn", "1 commit not pushed", "tasq git sync")
+        );
+    }
+
+    #[test]
+    fn a_store_without_an_upstream_has_no_remote_checks() {
+        let world = World::new();
+        let a = world.first();
+        a.git(&["branch", "--unset-upstream"]);
+        assert_eq!(
+            a.doctor(),
+            serde_json::json!([
+                check(
+                    "identity",
+                    "ok",
+                    "commits as Me Personal <me@example.invalid>"
+                ),
+                check(
+                    "remote",
+                    "ok",
+                    "branch default has no upstream: commits stay local"
+                ),
+                check("rebase", "ok", "no rebase in progress"),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_rebase_in_progress_fails() {
+        let world = World::new();
+        let a = world.first();
+        let b = world.second();
+        a.note(TASK_3, "on a");
+        assert_silent(&a.job(&[]));
+        b.note(TASK_3, "on b");
+        b.git(&["commit", "-q", "-am", "on b"]);
+        assert_eq!(b.try_git(&["pull", "--rebase"]).status.code(), Some(1));
+        let store = b.store.display();
+        assert_eq!(
+            b.doctor(),
+            serde_json::json!([
+                check(
+                    "identity",
+                    "ok",
+                    "commits as Me Personal <me@example.invalid>"
+                ),
+                fixed(
+                    "rebase",
+                    "fail",
+                    &format!("a rebase is in progress in {store}"),
+                    &format!(
+                        "cd {store}, fix the files, git add them, git rebase --continue (or git \
+                         rebase --abort)"
+                    )
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn an_unknown_identity_fails() {
+        let world = World::new();
+        let a = world.first();
+        a.git(&["config", "--unset", "user.email"]);
+        std::fs::write(
+            world.home().join(".gitconfig"),
+            "[user]\n\tuseConfigOnly = true\n",
+        )
+        .unwrap();
+        let store = a.store.display();
+        assert_eq!(
+            a.doctor()[0],
+            fixed(
+                "identity",
+                "fail",
+                "git cannot tell who commits: fatal: no email was given and auto-detection is \
+                 disabled",
+                &format!(
+                    "git -C {store} config user.name '<name>' && git -C {store} config \
+                     user.email '<email>'"
+                )
+            )
+        );
     }
 }

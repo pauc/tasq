@@ -54,6 +54,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ids). With `tasq-git` enabled, a pull that brings in such an id (two machines created a task
   offline) leaves the lasting warning `duplicate id: <doctor's detail>; fix: <doctor's fix>`,
   one per id, until the files are fixed by hand. Ids are never renumbered automatically.
+- `tasq git sync` commits, fetches, rebases and pushes the store in the foreground, whatever
+  the interval, printing one line per step (`committed: log 3: ...`, `fetched origin/default`,
+  `pulled 1 commit from origin/default`, `pushed 1 commit to origin/default`, `up to date with
+  origin/default`); a failed step prints the lasting warning it leaves and exits 1. git keeps
+  the terminal, so it can ask for a passphrase. It waits for a background job that is running,
+  and refuses a store that is not a repository or has a rebase in progress.
+- `tasq git clone <url> [--branch <b>] [--store <name>] [--name <n>] [--email <e>] [--ssh-key
+  <path>]` fills a store (`--store`, else the configured one) from a branch of a remote (default:
+  the store name), fetching that branch only and tracking it, with the identity of `tasq git
+  init`. A store with task files, a branch the remote does not have and an unreachable remote
+  are refused before the store is touched; other files in the store directory are kept.
+- With `tasq-git` enabled, `tasq doctor` explains a store that is a git repository: `git/identity`
+  (who it commits as, and the `ssh` command it pushes with), `git/remote` (the branch and the
+  upstream it tracks, or that it has none), `git/push` (commits not pushed), `git/fetch` (how
+  long ago the last fetch was) and `git/rebase` (a rebase left in progress fails).
 - `docs/plugins.md` describes the plugin extension points normatively (ADR 0030): enabling a
   plugin, the events and every payload with an example, the plugin's process (arguments,
   environment, timeout, exit codes), lasting warnings, doctor checks, `tasq store lock` and

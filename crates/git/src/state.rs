@@ -137,11 +137,17 @@ impl State {
     /// unreadable, from the future (the clock went back) or at least
     /// `interval` old.
     pub fn fetch_due(&self, now: SystemTime, interval: Duration) -> bool {
-        let last = std::fs::read_to_string(self.path("last-fetch"))
+        self.last_fetch()
+            .is_none_or(|last| now.duration_since(last).map_or(true, |age| age >= interval))
+    }
+
+    /// When the job last looked at the remote; `None` when it never did,
+    /// or `last-fetch` cannot be read.
+    pub fn last_fetch(&self) -> Option<SystemTime> {
+        std::fs::read_to_string(self.path("last-fetch"))
             .ok()
             .and_then(|text| text.trim().parse::<u64>().ok())
-            .map(|secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs));
-        last.is_none_or(|last| now.duration_since(last).map_or(true, |age| age >= interval))
+            .map(|secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
     }
 
     /// Records `now` as the last look at the remote.

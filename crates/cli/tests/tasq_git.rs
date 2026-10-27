@@ -277,3 +277,98 @@ fn an_id_pulled_in_twice_is_a_lasting_warning_until_fixed_by_hand() {
     assert!(out.status.success(), "{}", stderr(&out));
     eventually("the warning to clear", || !warnings.exists());
 }
+
+#[test]
+fn git_sync_prints_each_step_and_doctor_explains_the_repository() {
+    let env = TestEnv::fixture();
+    if !enable_tasq_git(&env) {
+        return;
+    }
+    let other = with_another_machine(&env);
+    let name = env.file_of(4).file_name().unwrap().to_owned();
+    let text = std::fs::read_to_string(other.join(&name)).unwrap();
+    std::fs::write(other.join(&name), format!("{text}- elsewhere\n")).unwrap();
+    env.git(&other, &["commit", "-q", "-am", "elsewhere"]);
+    env.git(&other, &["push", "-q"]);
+
+    let out = env.tasq().args(["git", "sync"]).output().unwrap();
+    assert_eq!(stderr(&out), "");
+    assert!(out.status.success());
+    assert_eq!(
+        stdout(&out),
+        "nothing to commit\nfetched origin/default\npulled 1 commit from origin/default\n"
+    );
+    assert_eq!(
+        env.git(&env.store(), &["rev-parse", "HEAD"]),
+        env.git(&other, &["rev-parse", "HEAD"])
+    );
+
+    let out = env.tasq().args(["doctor", "--json"]).output().unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let checks: Vec<(String, String)> = doc["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"].as_str().unwrap().starts_with("git/"))
+        .map(|c| {
+            (
+                c["name"].as_str().unwrap().to_owned(),
+                c["status"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let expected = ["identity", "remote", "push", "fetch", "rebase"]
+        .map(|name| (format!("git/{name}"), "ok".to_owned()));
+    assert_eq!(checks, expected, "{doc}");
+}
+
+#[test]
+fn git_clone_fills_another_store() {
+    let env = TestEnv::fixture();
+    if !enable_tasq_git(&env) {
+        return;
+    }
+    with_another_machine(&env);
+    let root = env.root.path().canonicalize().unwrap();
+    let url = format!("file://{}", root.join("remote.git").display());
+    let out = env
+        .tasq()
+        .args([
+            "git", "clone", &url, "--store", "work", "--branch", "default",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(stderr(&out), "");
+    assert!(out.status.success());
+    assert_eq!(
+        env.normalize(&stdout(&out)),
+        format!(
+            "cloned branch default of {} into [ROOT]/home/.local/share/tasq/stores/work: 5 \
+             task files\n",
+            env.normalize(&url)
+        )
+    );
+    let mine = env.tasq().args(["list", "--json"]).output().unwrap();
+    let work = env
+        .tasq()
+        .args(["--set", "store.name=work", "list", "--json"])
+        .output()
+        .unwrap();
+    assert!(work.status.success(), "{}", stderr(&work));
+    assert_eq!(stdout(&work), stdout(&mine));
+
+    // A second clone into the filled store is refused.
+    let out = env
+        .tasq()
+        .args([
+            "git", "clone", &url, "--store", "work", "--branch", "default",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("is already a git repository"),
+        "{}",
+        stderr(&out)
+    );
+}

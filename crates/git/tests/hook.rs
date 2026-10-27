@@ -168,14 +168,24 @@ mod repository {
     fn doctor_does_not_say_sync_is_off() {
         let store = Store::plain();
         std::fs::create_dir(store.dir.join(".git")).unwrap();
-        assert_silent(&hook(&store.payload("doctor")));
+        assert_repository_checks(&hook(&store.payload("doctor")));
     }
 
     #[test]
     fn a_git_file_counts_too() {
         let store = Store::plain();
         std::fs::write(store.dir.join(".git"), "gitdir: /elsewhere\n").unwrap();
-        assert_silent(&hook(&store.payload("doctor")));
+        assert_repository_checks(&hook(&store.payload("doctor")));
+    }
+
+    /// The checks of a repository store (`tests/sync.rs`), here with no
+    /// git to run: the identity fails first.
+    fn assert_repository_checks(out: &Output) {
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(out));
+        assert_eq!(stderr(out), "");
+        let checks: serde_json::Value = serde_json::from_str(&stdout(out)).unwrap();
+        assert_eq!(checks[0]["name"], "identity", "{checks}");
+        assert_eq!(checks[0]["status"], "fail", "{checks}");
     }
 }
 
