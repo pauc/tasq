@@ -164,12 +164,12 @@ directory; `[profile.<name>]` anywhere is an error naming the file to move it to
 
 **Blocked by:** CC-001.
 
-**Status:** todo
+**Status:** done
 
-- [ ] Selected profile applies over `config.toml`; unknown profile lists the files' names.
-- [ ] `[profile.x]` in `config.toml` fails with file:line:column and `profiles/x.toml`.
-- [ ] `config show` names the profile file as the origin.
-- [ ] `mutants-in` the diff: zero missed.
+- [x] Selected profile applies over `config.toml`; unknown profile lists the files' names.
+- [x] `[profile.x]` in `config.toml` fails with file:line:column and `profiles/x.toml`.
+- [x] `config show` names the profile file as the origin.
+- [x] `mutants-in` the diff: zero missed.
 
 ### CC-003: `worktrees_enabled`
 
