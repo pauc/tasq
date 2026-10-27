@@ -5,12 +5,12 @@ use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use clap::{Args, Parser, Subcommand};
 use tasq_git::git::Git;
 use tasq_git::init::{self, Identity, InitError, Options};
-use tasq_git::job;
+use tasq_git::job::{self, Settings};
 use tasq_git::process::{background_env, spawn_detached, without_git_vars};
 use tasq_git::tasq::{self, Tasq};
 
@@ -28,9 +28,20 @@ enum Command {
     Hook,
     /// Make the store a git repository, and push it to <URL> if given.
     Init(InitArgs),
-    /// Commit the store's writes (detached by `hook`).
+    /// Commit and sync the store's writes (detached by `hook`).
     #[command(hide = true)]
     Job {
+        /// The store directory.
+        #[arg(long)]
+        store: PathBuf,
+        /// Seconds after the last fetch that the next one is due.
+        #[arg(long, default_value_t = tasq_git::hook::INTERVAL.as_secs())]
+        interval: u64,
+    },
+    /// Rebase the store onto its upstream (run by the job under the store
+    /// lock).
+    #[command(hide = true)]
+    Rebase {
         /// The store directory.
         #[arg(long)]
         store: PathBuf,
@@ -63,7 +74,8 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Hook => hook(),
         Command::Init(args) => report(run_init(args)),
-        Command::Job { store } => report(run_job(&store)),
+        Command::Job { store, interval } => report(run_job(&store, interval)),
+        Command::Rebase { store } => rebase(&store),
     }
 }
 
@@ -94,14 +106,34 @@ fn tasq_here() -> Result<Tasq, String> {
     })
 }
 
-fn run_job(store: &Path) -> Result<String, String> {
+fn run_job(store: &Path, interval: u64) -> Result<String, String> {
     let tasq = tasq_here()?;
     let git = Git {
         env: background_env(std::env::vars_os()),
     };
-    job::run(&git, &tasq, store)
+    let settings = Settings {
+        interval: Duration::from_secs(interval),
+        exe: std::env::current_exe()
+            .map_err(|err| format!("could not find tasq-git itself: {err}"))?,
+    };
+    job::run(&git, &tasq, store, &settings)
         .map(|()| String::new())
         .map_err(|err| err.to_string())
+}
+
+/// The rebase under the store lock; git's message alone on failure, which
+/// the job turns into the lasting warning.
+fn rebase(store: &Path) -> ExitCode {
+    let git = Git {
+        env: background_env(std::env::vars_os()),
+    };
+    match job::rebase(&git, store) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            let _ = writeln!(std::io::stderr(), "{message}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn run_init(args: InitArgs) -> Result<String, String> {
@@ -150,11 +182,19 @@ fn hook() -> ExitCode {
     }
 }
 
-/// Detaches `tasq-git job --store <store>`, this very binary.
-fn spawn_job(store: &Path) -> std::io::Result<()> {
+/// Detaches `tasq-git job --store <store> --interval <secs>`, this very
+/// binary.
+fn spawn_job(store: &Path, interval: Duration) -> std::io::Result<()> {
     let exe = std::env::current_exe()?;
+    let interval = interval.as_secs().to_string();
     spawn_detached(
         &exe,
-        &[OsStr::new("job"), OsStr::new("--store"), store.as_os_str()],
+        &[
+            OsStr::new("job"),
+            OsStr::new("--store"),
+            store.as_os_str(),
+            OsStr::new("--interval"),
+            OsStr::new(&interval),
+        ],
     )
 }

@@ -38,7 +38,7 @@ impl Finished {
 
 // Reason: wraps `std::process::Command`; nothing to assert without a process.
 #[mutants::skip]
-pub fn run(program: &Path, args: &[&str], cwd: &Path, env: &Env) -> Finished {
+pub fn run<A: AsRef<OsStr>>(program: &Path, args: &[A], cwd: &Path, env: &Env) -> Finished {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -73,7 +73,9 @@ pub fn without_git_vars(env: impl IntoIterator<Item = (OsString, OsString)>) -> 
 
 /// What the background job runs `git` with: only `PATH`, `HOME` and
 /// `SSH_AUTH_SOCK` of `env`, and the settings that make any prompt fail
-/// instead of waiting for a terminal nobody watches. No `GIT_SSH_COMMAND`,
+/// instead of waiting for a terminal nobody watches. git asks nothing on
+/// the terminal, and ssh (passphrase, host key) asks `false` instead of
+/// the terminal, which the detached job still has. No `GIT_SSH_COMMAND`,
 /// so the repository's `core.sshCommand` applies.
 pub fn background_env(env: impl IntoIterator<Item = (OsString, OsString)>) -> Env {
     let mut out: Env = env
@@ -82,7 +84,8 @@ pub fn background_env(env: impl IntoIterator<Item = (OsString, OsString)>) -> En
         .collect();
     for (key, value) in [
         ("GIT_TERMINAL_PROMPT", "0"),
-        ("SSH_ASKPASS_REQUIRE", "never"),
+        ("SSH_ASKPASS", "false"),
+        ("SSH_ASKPASS_REQUIRE", "force"),
         ("LANG", "C"),
     ] {
         out.push((key.into(), value.into()));
@@ -136,7 +139,8 @@ mod tests {
             ("HOME", "/home/me"),
             ("SSH_AUTH_SOCK", "/run/agent"),
             ("GIT_TERMINAL_PROMPT", "0"),
-            ("SSH_ASKPASS_REQUIRE", "never"),
+            ("SSH_ASKPASS", "false"),
+            ("SSH_ASKPASS_REQUIRE", "force"),
             ("LANG", "C"),
         ]
         .map(|(k, v)| (k.to_owned(), v.to_owned()));

@@ -16,6 +16,9 @@ pub struct Payload {
     pub event: String,
     /// The store the event is about.
     pub store: Store,
+    /// The `[plugin.git]` table, `{}` when there is none.
+    #[serde(default)]
+    pub config: serde_json::Map<String, serde_json::Value>,
     /// `post-write` only: the command that wrote.
     #[serde(default)]
     pub command: Option<String>,

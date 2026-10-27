@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while it runs is committed before it exits. The job ignores exported `GIT_*` variables and
   cannot prompt. A failed commit is the lasting warning `commit failed: <git's message>`,
   cleared by the next commit.
+- With `tasq-git` enabled, a store whose branch has an upstream is synced in the background:
+  after a commit, and whenever a command opens the store and the last fetch is older than
+  `[plugin.git] interval` (whole seconds, default 60), the job fetches, rebases onto the
+  upstream under `tasq store lock` when behind, and pushes when ahead. A push that fails is
+  tried once more after another fetch and rebase. A failed fetch, rebase or push is the lasting
+  warning `fetch failed: ...`, `rebase failed: ...` or `push failed: ...`, cleared once that
+  step succeeds. The job refreshes its lock during a long round, and ssh asks `false` instead of
+  the terminal (`SSH_ASKPASS_REQUIRE=force`), so a passphrase or host key prompt fails at once.
 - `docs/plugins.md` describes the plugin extension points normatively (ADR 0030): enabling a
   plugin, the events and every payload with an example, the plugin's process (arguments,
   environment, timeout, exit codes), lasting warnings, doctor checks, `tasq store lock` and

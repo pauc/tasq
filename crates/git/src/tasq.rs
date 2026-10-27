@@ -1,7 +1,9 @@
 //! What the plugin asks `tasq`: the store (`tasq store info --json`), its
 //! own `[plugin.git]` table (`tasq config show --json`) and a task's title
-//! (`tasq view <id> --json`), as `docs/json.md` describes them.
+//! (`tasq view <id> --json`), as `docs/json.md` describes them; and it runs
+//! a command under the store lock (`tasq store lock -- <cmd>`).
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -110,6 +112,19 @@ impl Tasq {
     pub fn title(&self, id: &str) -> Result<String, TasqError> {
         let view: View = self.ask(&["view", id, "--json"])?;
         Ok(view.task.title)
+    }
+
+    /// Runs `cmd` under the store lock (`tasq store lock -- <cmd>`); the
+    /// error is what `cmd`, or tasq, printed.
+    pub fn locked(&self, cmd: &[&OsStr]) -> Result<(), String> {
+        let mut args: Vec<OsString> = ["store", "lock", "--"].map(OsString::from).to_vec();
+        args.extend(cmd.iter().map(OsString::from));
+        let out = process::run(&self.bin, &args, &self.cwd, &self.env);
+        if out.success {
+            Ok(())
+        } else {
+            Err(out.message())
+        }
     }
 
     fn ask<T: serde::de::DeserializeOwned>(&self, args: &[&str]) -> Result<T, TasqError> {

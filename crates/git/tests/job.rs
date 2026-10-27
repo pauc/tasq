@@ -558,17 +558,6 @@ mod hook {
     }
 
     #[test]
-    fn store_open_starts_nothing() {
-        let env = Env::new();
-        env.touch_task(TASK_3);
-        let payload = env
-            .payload("x", &[])
-            .replace("\"post-write\"", "\"store-open\"");
-        assert_silent(&env.hook(&payload));
-        assert!(!env.store.join(".tasq").exists());
-    }
-
-    #[test]
     fn a_post_write_without_a_command_is_an_error() {
         let env = Env::new();
         let mut payload: serde_json::Value =

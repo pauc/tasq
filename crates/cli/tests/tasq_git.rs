@@ -141,3 +141,77 @@ fn a_write_is_committed_in_the_background() {
         )
     );
 }
+
+#[test]
+fn another_machines_write_is_pulled_when_the_store_opens() {
+    let env = TestEnv::fixture();
+    if !enable_tasq_git(&env) {
+        return;
+    }
+    let root = env.root.path().canonicalize().unwrap();
+    env.git(
+        &root,
+        &["init", "-q", "--bare", "-b", "default", "remote.git"],
+    );
+    let url = format!("file://{}", root.join("remote.git").display());
+    let out = env
+        .tasq()
+        .args([
+            "git",
+            "init",
+            &url,
+            "--name",
+            "Me",
+            "--email",
+            "me@example.invalid",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+
+    // Another machine edits task 3 and pushes.
+    let other = root.join("other");
+    env.git(
+        &root,
+        &[
+            "clone",
+            "-q",
+            "--branch",
+            "default",
+            &url,
+            other.to_str().unwrap(),
+        ],
+    );
+    env.git(&other, &["config", "user.name", "Me"]);
+    env.git(&other, &["config", "user.email", "me@example.invalid"]);
+    let name = env.file_of(3).file_name().unwrap().to_owned();
+    let text = std::fs::read_to_string(other.join(&name)).unwrap();
+    std::fs::write(
+        other.join(&name),
+        format!("{text}- from the other machine\n"),
+    )
+    .unwrap();
+    env.git(&other, &["commit", "-q", "-am", "elsewhere"]);
+    env.git(&other, &["push", "-q"]);
+    let pushed = env.git(&other, &["rev-parse", "HEAD"]);
+
+    // Never fetched: opening the store starts the job, which rebases under
+    // the real `tasq store lock`.
+    let out = env.tasq().arg("list").output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stderr(&out), "");
+    let store = env.store();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while env.git(&store, &["rev-parse", "HEAD"]) != pushed {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the other machine's commit never arrived"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        std::fs::read_to_string(env.file_of(3))
+            .unwrap()
+            .ends_with("- from the other machine\n")
+    );
+}

@@ -7,6 +7,8 @@
 //! - `writes`: one line per `post-write` not yet committed (`<command>
 //!   <ids>`), for the commit message. Hooks append to it and the job drops
 //!   what it committed, both under an advisory lock on the file.
+//! - `last-fetch`: when the job last looked at the remote, in Unix
+//!   seconds; `store-open` starts a job once it is older than the interval.
 //! - `warnings`: the lasting warnings tasq shows (`docs/plugins.md`).
 
 use std::fs::{File, OpenOptions};
@@ -131,6 +133,27 @@ impl State {
         Ok(None)
     }
 
+    /// Whether the remote is due a look at `now`: `last-fetch` is missing,
+    /// unreadable, from the future (the clock went back) or at least
+    /// `interval` old.
+    pub fn fetch_due(&self, now: SystemTime, interval: Duration) -> bool {
+        let last = std::fs::read_to_string(self.path("last-fetch"))
+            .ok()
+            .and_then(|text| text.trim().parse::<u64>().ok())
+            .map(|secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs));
+        last.is_none_or(|last| now.duration_since(last).map_or(true, |age| age >= interval))
+    }
+
+    /// Records `now` as the last look at the remote.
+    pub fn record_fetch(&self, now: SystemTime) -> io::Result<()> {
+        self.create_dir()?;
+        let secs = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        std::fs::write(self.path("last-fetch"), format!("{secs}\n"))
+    }
+
     /// Replaces the warning lines starting with `kind` by `kind` followed
     /// by `message`, or removes them when `message` is `None`. The other
     /// lines are kept; the file goes when none is left.
@@ -191,6 +214,21 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
 pub struct JobLock {
     path: PathBuf,
     token: String,
+}
+
+impl JobLock {
+    /// Stamps the lock with `now`, so that a round running long (a slow
+    /// fetch or push) is not taken for a dead job's. A lock another job
+    /// has taken since is left alone.
+    pub fn refresh(&self, now: SystemTime) -> io::Result<()> {
+        if std::fs::read_to_string(&self.path)? != self.token {
+            return Ok(());
+        }
+        File::options()
+            .write(true)
+            .open(&self.path)?
+            .set_modified(now)
+    }
 }
 
 impl Drop for JobLock {
@@ -281,6 +319,56 @@ mod tests {
         assert!(is_stale(at(0), at(120)));
         assert!(is_stale(at(0), at(121)));
         assert!(!is_stale(at(10), at(0)));
+    }
+
+    #[test]
+    fn a_refreshed_lock_lives_two_minutes_from_the_refresh() {
+        let root = tempfile::tempdir().unwrap();
+        let state = State::of(root.path());
+        let lock = state.lock_job(at(0)).unwrap().unwrap();
+        lock.refresh(at(100)).unwrap();
+        assert!(state.job_running(at(219)));
+        assert!(!state.job_running(at(220)));
+    }
+
+    #[test]
+    fn a_lock_taken_over_is_not_refreshed() {
+        let root = tempfile::tempdir().unwrap();
+        let state = State::of(root.path());
+        let lock = state.lock_job(at(0)).unwrap().unwrap();
+        std::fs::write(state.path("job.lock"), "another job\n").unwrap();
+        File::options()
+            .write(true)
+            .open(state.path("job.lock"))
+            .unwrap()
+            .set_modified(at(0))
+            .unwrap();
+        lock.refresh(at(100)).unwrap();
+        assert!(!state.job_running(at(120)));
+        std::fs::remove_file(state.path("job.lock")).unwrap();
+        assert!(lock.refresh(at(100)).is_err());
+    }
+
+    #[test]
+    fn a_fetch_is_due_once_the_interval_has_passed() {
+        let root = tempfile::tempdir().unwrap();
+        let state = State::of(root.path());
+        let minute = Duration::from_secs(60);
+        assert!(state.fetch_due(at(0), minute), "never fetched");
+        state.record_fetch(at(0)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(state.path("last-fetch")).unwrap(),
+            format!("{}\n", T.as_secs())
+        );
+        assert!(!state.fetch_due(at(59), minute));
+        assert!(state.fetch_due(at(60), minute));
+        assert!(state.fetch_due(at(61), minute));
+        assert!(state.fetch_due(at(0), Duration::ZERO));
+        assert!(!state.fetch_due(at(0), minute), "just now");
+        let earlier = SystemTime::UNIX_EPOCH + T - Duration::from_secs(1);
+        assert!(state.fetch_due(earlier, minute), "the clock went back");
+        std::fs::write(state.path("last-fetch"), "soon\n").unwrap();
+        assert!(state.fetch_due(at(0), minute));
     }
 
     #[test]

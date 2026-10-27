@@ -5,8 +5,10 @@
 //! `docs/plugins.md` on stdin. A store that is not a repository is left
 //! alone: its events do nothing and `doctor` answers that sync is off.
 //!
-//! For a store that is, `post-write` detaches `tasq-git job`, which
-//! commits the task files in the background (`job`, `state`).
+//! For a store that is, `post-write`, and `store-open` once the last fetch
+//! is older than the interval, detach `tasq-git job`, which commits the
+//! task files in the background and, when the branch has an upstream,
+//! fetches, rebases (under `tasq store lock`) and pushes (`job`, `state`).
 //!
 //! `tasq git init` (run by tasq's dispatch as `tasq-git init`) makes the
 //! store a repository and, given a URL, pushes it to a branch named after
