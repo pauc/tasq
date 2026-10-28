@@ -49,7 +49,8 @@ pushed branch default to git@github.com:me/tasks.git
 
 - The first commit, `tasq git init`, holds exactly the task files: the store's top-level `.md`
   files. `.tasq/` (the lock, plugin state) and anything else in the directory are never
-  committed.
+  committed. `init` adds `.tasq/` to the repository's `.git/info/exclude` (not a committed
+  `.gitignore`), so `git status` stays quiet and a manual `git add -A` leaves it out.
 - The branch is named after the store (`store.name`, `default` unless configured), so several
   stores share one remote repository, one branch each: `tasq --set store.name=work git init
   <url>` pushes the `work` store to branch `work`. `--branch` picks another name.
@@ -83,7 +84,7 @@ pushed branch default to git@github.com:me/tasks.git
 
 `clone` refuses, before touching anything, a store that already has task files, a branch the
 remote does not have and a remote it cannot reach. Other files in the store directory
-(`.tasq/`) are kept. To join a store you already have locally, move its task files away first,
+(`.tasq/`) are kept, and `.tasq/` goes into `.git/info/exclude` as with `init`. To join a store you already have locally, move its task files away first,
 clone, then recreate the ones that were not on the remote.
 
 ## Identity
@@ -249,6 +250,7 @@ For a store that is a repository, the plugin adds:
 
 ```
 OK    git/identity commits as Me Personal <me@example.com>, pushes with ssh -i '~/.ssh/id_personal' -o IdentitiesOnly=yes
+OK    git/exclude  .tasq/ is ignored
 OK    git/remote   branch default tracks origin/default at git@github.com:me/tasks.git
 WARN  git/push     2 commits not pushed
                    fix: tasq git sync
@@ -259,6 +261,7 @@ OK    git/rebase   no rebase in progress
 | Check | Shows |
 |---|---|
 | `git/identity` | who the store commits as and the `ssh` command it pushes with; `FAIL` when git cannot tell, with the `git config` commands to set it |
+| `git/exclude` | whether git ignores `.tasq/`; `WARN` when not (a store set up before `init` and `clone` excluded it), with the line to add to `.git/info/exclude` |
 | `git/remote` | the branch, its upstream and the remote URL, or `has no upstream: commits stay local` |
 | `git/push` | commits not pushed yet, counted against the last fetch (doctor never asks the remote) |
 | `git/fetch` | how long ago the last fetch (or attempt) was; `WARN never fetched` |

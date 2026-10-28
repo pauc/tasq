@@ -319,7 +319,7 @@ fn git_sync_prints_each_step_and_doctor_explains_the_repository() {
             )
         })
         .collect();
-    let expected = ["identity", "remote", "push", "fetch", "rebase"]
+    let expected = ["identity", "exclude", "remote", "push", "fetch", "rebase"]
         .map(|name| (format!("git/{name}"), "ok".to_owned()));
     assert_eq!(checks, expected, "{doc}");
 }

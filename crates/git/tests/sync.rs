@@ -110,6 +110,7 @@ impl World {
         a.write(TASK_4, "---\nid: 4\n---\n# Four\n");
         a.git(&["init", "-q", "-b", "default"]);
         a.identity();
+        a.exclude();
         a.git(&["add", "-A"]);
         a.git(&["commit", "-q", "-m", "start"]);
         a.git(&["remote", "add", "origin", &self.url()]);
@@ -126,6 +127,7 @@ impl World {
             &["clone", "-q", "--branch", "default", &self.url(), store],
         );
         b.identity();
+        b.exclude();
         let wrapper = self.base().join("bin/counting-upload-pack");
         b.git(&[
             "config",
@@ -254,6 +256,14 @@ impl Machine<'_> {
     fn identity(&self) {
         self.git(&["config", "user.name", "Me Personal"]);
         self.git(&["config", "user.email", "me@example.invalid"]);
+    }
+
+    /// `.tasq/` in `info/exclude`, as init and clone leave it.
+    fn exclude(&self) {
+        let exclude = self.store.join(".git/info/exclude");
+        let mut text = std::fs::read_to_string(&exclude).unwrap_or_default();
+        text.push_str(".tasq/\n");
+        std::fs::write(exclude, text).unwrap();
     }
 
     fn write(&self, file: &str, text: &str) {
@@ -1445,6 +1455,7 @@ mod doctor {
                     "ok",
                     "commits as Me Personal <me@example.invalid>"
                 ),
+                check("exclude", "ok", ".tasq/ is ignored"),
                 check(
                     "remote",
                     "ok",
@@ -1479,6 +1490,7 @@ mod doctor {
                     "commits as Me Personal <me@example.invalid>, pushes with ssh -i '/keys/me' \
                      -o IdentitiesOnly=yes"
                 ),
+                check("exclude", "ok", ".tasq/ is ignored"),
                 check(
                     "remote",
                     "ok",
@@ -1491,7 +1503,7 @@ mod doctor {
         );
         a.git(&["reset", "-q", "--hard", "HEAD~1"]);
         assert_eq!(
-            a.doctor()[2],
+            a.doctor()[3],
             fixed("push", "warn", "1 commit not pushed", "tasq git sync")
         );
     }
@@ -1509,6 +1521,7 @@ mod doctor {
                     "ok",
                     "commits as Me Personal <me@example.invalid>"
                 ),
+                check("exclude", "ok", ".tasq/ is ignored"),
                 check(
                     "remote",
                     "ok",
@@ -1538,6 +1551,7 @@ mod doctor {
                     "ok",
                     "commits as Me Personal <me@example.invalid>"
                 ),
+                check("exclude", "ok", ".tasq/ is ignored"),
                 fixed(
                     "rebase",
                     "fail",
@@ -1549,6 +1563,28 @@ mod doctor {
                 ),
             ])
         );
+    }
+
+    #[test]
+    fn a_store_where_tasq_is_not_ignored_warns() {
+        let world = World::new();
+        let a = world.first();
+        std::fs::write(a.store.join(".git/info/exclude"), "# none\n").unwrap();
+        assert_eq!(
+            a.doctor()[1],
+            fixed(
+                "exclude",
+                "warn",
+                ".tasq/ is not ignored: git add -A would commit the store lock and plugin state",
+                &format!(
+                    "echo .tasq/ >> {}",
+                    a.store.join(".git/info/exclude").display()
+                )
+            )
+        );
+        // Any ignore file will do.
+        std::fs::write(a.store.join(".gitignore"), ".tasq/\n").unwrap();
+        assert_eq!(a.doctor()[1], check("exclude", "ok", ".tasq/ is ignored"));
     }
 
     #[test]

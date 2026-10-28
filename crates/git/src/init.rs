@@ -15,6 +15,10 @@ use crate::tasq::{Store, TasqError};
 /// The subject of the first commit.
 const SUBJECT: &str = "tasq git init";
 
+/// The `info/exclude` line that keeps the store's own files (`.tasq/`: the
+/// lock, plugin state) out of `git status` and `git add -A`.
+pub const EXCLUDE: &str = ".tasq/";
+
 /// The identity the store commits and pushes as. A field left `None` is
 /// not written, so git's own resolution applies to it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -234,7 +238,7 @@ pub(crate) fn create(dir: &Path) -> Result<(), InitError> {
 
 /// `result`, after removing the `.git` that setup made in `dir` when it
 /// failed, so that it can be run again.
-pub(crate) fn or_undo<T>(dir: &Path, result: Result<T, GitError>) -> Result<T, InitError> {
+pub(crate) fn or_undo<T>(dir: &Path, result: Result<T, InitError>) -> Result<T, InitError> {
     let err = match result {
         Ok(value) => return Ok(value),
         Err(err) => err,
@@ -248,13 +252,37 @@ pub(crate) fn or_undo<T>(dir: &Path, result: Result<T, GitError>) -> Result<T, I
             source,
         })?;
     }
-    Err(err.into())
+    Err(err)
+}
+
+/// `git init` of `dir` on `branch`, with [`EXCLUDE`] added to its
+/// `info/exclude` after what the template put there.
+pub(crate) fn git_init(git: &Git, dir: &Path, branch: &str) -> Result<(), InitError> {
+    git.check(dir, &["init", "--quiet", "--initial-branch", branch])?;
+    let exclude = git.git_path(dir, "info/exclude")?;
+    let io = |source| InitError::Io {
+        action: "could not add .tasq/ to",
+        path: exclude.clone(),
+        source,
+    };
+    // Absent is empty; a file that cannot be read cannot be written either,
+    // and the write below reports it.
+    let mut text = std::fs::read(&exclude).unwrap_or_default();
+    if !text.is_empty() && !text.ends_with(b"\n") {
+        text.push(b'\n');
+    }
+    text.extend_from_slice(EXCLUDE.as_bytes());
+    text.push(b'\n');
+    if let Some(info) = exclude.parent() {
+        std::fs::create_dir_all(info).map_err(io)?;
+    }
+    std::fs::write(&exclude, text).map_err(io)
 }
 
 /// `git init` and everything after it; returns the number of task files
 /// committed.
-fn build(git: &Git, dir: &Path, branch: &str, options: &Options) -> Result<usize, GitError> {
-    git.check(dir, &["init", "--quiet", "--initial-branch", branch])?;
+fn build(git: &Git, dir: &Path, branch: &str, options: &Options) -> Result<usize, InitError> {
+    git_init(git, dir, branch)?;
     for (key, value) in options.identity.settings() {
         git.check(dir, &["config", "--local", key, &value])?;
     }
