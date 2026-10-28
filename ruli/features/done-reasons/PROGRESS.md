@@ -7,7 +7,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 61.
 | Sub-task | Title | Status | Commits |
 |----------|-------|--------|---------|
 | SD-001 | `DoneReason` and the policy in core | done | 3801dc0 |
-| SD-002 | sources report reasons | todo | |
+| SD-002 | sources report reasons | done | 1ea7da5 |
 | SD-003 | config keys and the per-kind check | done | 59d536f |
 | SD-004 | docs, ADR, changelog | todo | |
 | SD-005 | the user's `sf` profile | todo | |
@@ -37,6 +37,18 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 61.
 - Clippy `result_large_err` fires on a test closure returning `Result<Loaded, ConfigError>`;
   the closure returns the error text instead.
 
+- SD-002 (1ea7da5): mutants `crates/sources/src/{registry,work_items,review_requests,llm_bridge}.rs`
+  83 tested, 64 caught, 19 unviable, 0 missed.
+- cargo-mutants does not mutate struct field initialisers, so `policy_for` wiring two
+  `done_when_*` keys crossed survived every earlier test and every mutant run. The per-key
+  registry test sets one key `false` on a kind that uses it and asserts the whole `DoneWhen`
+  against a literal with only that switch off; crossing `merged` and `approved` by hand fails it.
+- Precedence is now pinned: a closed issue no longer assigned to me is `Closed`, not
+  `Unassigned`; a merged or closed MR I approved is `Merged` or `Closed`, not `Approved`. An
+  issue with no assignees is `Unassigned`. Each was checked by breaking the match by hand.
+- The registry test config needs a `[forge.f]` with a `kind` matching the source kind, or load
+  fails with `BadForgeReference` / `ForgeKindRequired` before `policy_for` is reached.
+
 ## Blockers
 
 ## Deviations
@@ -49,3 +61,6 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 61.
 - SD-003: no committed fixture, example or test config set `close_when_done` or a key of
   another kind, so none needed updating; `examples/` and `plan-4.6.toml` load unchanged. The
   doc comments cite ADR 0032, which SD-004 writes.
+- SD-002: no code change. SD-001 already made the sources report the right reasons and SD-003
+  already mapped the four keys in `policy_for`, so every new test passed on arrival instead of
+  going red first. Each was proven by a hand-made breakage instead (see Learnings).
