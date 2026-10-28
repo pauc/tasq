@@ -1,6 +1,6 @@
 //! `git`, with the environment every call gets.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::process::{self, Env, Finished};
@@ -68,6 +68,13 @@ impl Git {
                 message: out.message(),
             })
         }
+    }
+
+    /// Where the repository at `dir` keeps `path` (`info/exclude`, ...),
+    /// which may be outside `.git` in a linked worktree.
+    pub fn git_path(&self, dir: &Path, path: &str) -> Result<PathBuf, GitError> {
+        let out = self.check(dir, &["rev-parse", "--git-path", path])?;
+        Ok(dir.join(out.trim_end()))
     }
 
     /// Whether `url` has a branch `branch`, asked from `dir` (any existing

@@ -1,5 +1,5 @@
 //! The plugin's `doctor` checks for a store that is a repository: who it
-//! commits as, its remote and branch, the commits not pushed yet, the last
+//! commits as, whether `.tasq/` is ignored, its remote and branch, the commits not pushed yet, the last
 //! fetch and a rebase left in progress. All of them read the repository
 //! and the plugin's state; none asks the remote.
 
@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::git::Git;
 use crate::hook::Check;
+use crate::init::EXCLUDE;
 use crate::job::{commits, rebasing};
 use crate::state::State;
 
@@ -15,9 +16,10 @@ use crate::state::State;
 const SYNC: &str = "tasq git sync";
 
 /// The checks of the repository at `store` at `now`. While a rebase is
-/// stopped, only the identity and the rebase: the branch is detached.
+/// stopped, only the identity, the exclude and the rebase: the branch is
+/// detached.
 pub fn checks(git: &Git, store: &Path, now: SystemTime) -> Vec<Check> {
-    let mut out = vec![identity(git, store)];
+    let mut out = vec![identity(git, store), exclude(git, store)];
     if rebasing(git, store) {
         let at = store.display();
         out.push(Check {
@@ -101,6 +103,28 @@ fn identity(git: &Git, store: &Path) -> Check {
         message.push_str(ssh.trim());
     }
     ok("identity", message)
+}
+
+/// Whether git ignores `.tasq/`, by `info/exclude` (init and clone add it
+/// there) or any other ignore file.
+fn exclude(git: &Git, store: &Path) -> Check {
+    if git
+        .run(store, &["check-ignore", "--quiet", EXCLUDE])
+        .success
+    {
+        return ok("exclude", format!("{EXCLUDE} is ignored"));
+    }
+    let file = git
+        .git_path(store, "info/exclude")
+        .unwrap_or_else(|_| store.join(".git/info/exclude"));
+    Check {
+        name: "exclude",
+        status: "warn",
+        message: format!(
+            "{EXCLUDE} is not ignored: git add -A would commit the store lock and plugin state"
+        ),
+        fix: Some(format!("echo {EXCLUDE} >> {}", file.display())),
+    }
 }
 
 /// The commits `HEAD` has that its upstream had at the last fetch.

@@ -150,6 +150,32 @@ impl Env {
             .unwrap()
     }
 
+    /// A template directory for `git init` under `templates/<name>`, with
+    /// `files` (relative path, contents), named in `.gitconfig`.
+    fn template(&self, name: &str, files: &[(&str, &str)]) {
+        let dir = self.base().join("templates").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (path, text) in files {
+            let path = dir.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        self.gitconfig(&format!("[init]\n\ttemplateDir = {}\n", dir.display()));
+    }
+
+    /// The store repository's `info/exclude`.
+    fn exclude(&self) -> String {
+        std::fs::read_to_string(self.store.join(".git/info/exclude")).unwrap()
+    }
+
+    /// `git status` of `.tasq` in the store, ignored files shown.
+    fn tasq_status(&self) -> String {
+        self.git(
+            &self.store,
+            &["status", "--porcelain", "--ignored", "--", ".tasq"],
+        )
+    }
+
     /// The store repository's local config value of `key`, `None` if unset.
     fn config(&self, key: &str) -> Option<String> {
         let out = self.git_output(&self.store, &["config", "--local", "--get", key]);
@@ -307,6 +333,48 @@ mod local {
             "the store lost .tasq"
         );
         assert!(env.store.join("notes.txt").is_file());
+        assert_eq!(env.tasq_status(), "!! .tasq/\n");
+    }
+
+    #[test]
+    fn tasq_is_excluded_after_the_templates_lines() {
+        let env = Env::new();
+        env.template("mine", &[("info/exclude", "# mine\n")]);
+        assert_ok(&env.tasq_git(&ME));
+        assert_eq!(env.exclude(), "# mine\n.tasq/\n");
+    }
+
+    #[test]
+    fn a_template_exclude_without_a_last_newline_gets_one() {
+        let env = Env::new();
+        env.template("mine", &[("info/exclude", "# mine")]);
+        assert_ok(&env.tasq_git(&ME));
+        assert_eq!(env.exclude(), "# mine\n.tasq/\n");
+    }
+
+    #[test]
+    fn a_template_without_info_gets_an_exclude() {
+        let env = Env::new();
+        env.template("bare", &[]);
+        assert_ok(&env.tasq_git(&ME));
+        assert_eq!(env.exclude(), ".tasq/\n");
+    }
+
+    #[test]
+    fn an_exclude_that_cannot_be_written_leaves_no_repository() {
+        let env = Env::new();
+        env.store_with(&[TASK_3]);
+        env.template("odd", &[("info/exclude/keep", "")]);
+        let out = env.tasq_git(&ME);
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            stderr(&out),
+            format!(
+                "tasq-git: could not add .tasq/ to {}: Is a directory (os error 21)\n",
+                env.store.join(".git/info/exclude").display()
+            )
+        );
+        assert!(!env.store.join(".git").exists());
     }
 
     #[test]
@@ -885,6 +953,20 @@ mod clone {
             "mine\n"
         );
         assert!(env.store.join(".tasq/lock").is_file());
+        assert_eq!(env.tasq_status(), "!! .tasq/\n");
+        assert_eq!(
+            env.git(&env.store, &["status", "--porcelain"]),
+            "?? notes.txt\n"
+        );
+    }
+
+    #[test]
+    fn tasq_is_excluded_after_the_templates_lines() {
+        let env = Env::new();
+        let url = remote_with_default(&env);
+        env.template("mine", &[("info/exclude", "# mine")]);
+        assert_ok(&env.tasq_git(&clone(&url, &[])));
+        assert_eq!(env.exclude(), "# mine\n.tasq/\n");
     }
 
     #[test]

@@ -10,9 +10,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::git::{Git, GitError, RemoteBranch, TASK_FILES};
+use crate::git::{Git, RemoteBranch, TASK_FILES};
 use crate::hook::is_repository;
-use crate::init::{Identity, InitError, create, nearest_existing, or_undo};
+use crate::init::{Identity, InitError, create, git_init, nearest_existing, or_undo};
 use crate::tasq::Store;
 
 /// What `tasq git clone` was asked for.
@@ -94,8 +94,8 @@ pub fn clone(git: &Git, store: &Store, options: &Options) -> Result<Report, Init
 
 /// `git init`, the identity, the remote fetching `branch` alone, and the
 /// branch checked out tracking it; the number of task files.
-fn fetch(git: &Git, dir: &Path, branch: &str, options: &Options) -> Result<usize, GitError> {
-    git.check(dir, &["init", "--quiet", "--initial-branch", branch])?;
+fn fetch(git: &Git, dir: &Path, branch: &str, options: &Options) -> Result<usize, InitError> {
+    git_init(git, dir, branch)?;
     for (key, value) in options.identity.settings() {
         git.check(dir, &["config", "--local", key, &value])?;
     }
