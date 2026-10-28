@@ -18,10 +18,14 @@ For each source:
    (else `workflow.default_status`), the URL under `## Related`, the first progress note
    `sync(<source>): created`.
 4. A matched open task whose item is done gets a note (`sync(<source>): merged`) and is marked
-   done (`close_when_done`, default on). With `flag = "<tag>"`, matched open tasks missing that
-   tag get it. Done tasks are never touched, so a merged MR that shows up again is not re-created.
+   done, when the source's `done_when_*` key for the reason the item is done is on (all are on
+   by default; see "When a task is marked done"). An item done for a reason that is off is
+   treated as open: no note, the task stays open. With `flag = "<tag>"`, matched open tasks
+   missing that tag get it. Done tasks are never touched, so a merged MR that shows up again is
+   not re-created, and a new item that is already done never becomes a task.
 5. Tracked open tasks the sweep no longer lists are re-checked one by one with `check`, which
-   says whether each is still open, done (and why) or gone.
+   says whether each is still open or done, and why (gone is one of the reasons); step 4
+   applies to the result.
 
 `tasq sync <id>...` skips the sweep and only re-checks those tasks. `--dry-run` prints the
 changes without writing. One failing source is reported and the others still run; the exit
@@ -45,6 +49,39 @@ by accident; when every enabled source is `auto = false`, a bare `tasq sync` say
 pre-checked (`Space` toggles, `Enter` runs the checked ones, the choice is kept for the
 session).
 
+## When a task is marked done
+
+A source reports why an item is done. Four of the reasons have their own `[[source]]` key,
+`true` by default: off, an item done for that reason is treated as open. Only the kinds marked
+in the table read a key; setting it on another kind is a config error at the key
+(``source "issues": `done_when_merged` does not apply to kind gitlab-work-items``).
+
+| Reason | Note | Key | Review requests | Work items | LLM bridge |
+|--------|------|-----|-----------------|------------|------------|
+| Closed | `closed` | `done_when_closed` | MR closed without being merged | issue closed | no |
+| Merged | `merged` | `done_when_merged` | MR merged | no | no |
+| Approved | `approved by you` | `done_when_approved` | you approved the MR | no | no |
+| Unassigned | `no longer assigned to you` | `done_when_unassigned` | no | issue open, no longer assigned to you | no |
+| Gone | `no longer exists` | none, always closes | MR not found | issue not found | no |
+| Reported | the item's `note`, else `done` | none, always closes | no | no | the item's `state` is `done` |
+
+When two apply, the item's own state wins: a merged or closed MR you approved is merged or
+closed, and a closed issue no longer assigned to you is closed. An issue with no assignees is
+unassigned.
+
+To keep a task open while its issue is reassigned for review, and still close it when the issue
+closes:
+
+```toml
+[[source]]
+name = "gitlab-work-items"
+kind = "gitlab-work-items"
+forge = "gitlab"
+done_when_unassigned = false
+```
+
+`close_when_done`, the single switch these keys replace, is a config error naming them.
+
 ## Forge sources
 
 `gitlab-review-requests` / `github-review-requests`: open merge requests where you are a
@@ -52,7 +89,7 @@ requested reviewer. Drafts are skipped unless `drafts = true`, and `exclude_auth
 merge requests by those usernames (exact; `["dependabot", "silverbot"]` keeps dependency bumps
 out, which labels cannot do reliably). Both filters apply only when listing: `check` keeps
 following every tracked task, so a task created before an author was excluded still closes
-when its MR merges. `check` reports done when the MR is merged, closed, approved by you, or
+when its MR merges (with `done_when_merged`, the default). `check` reports done when the MR is merged, closed, approved by you, or
 gone. Default title `Review MR !{iid}: {title}` (`Review PR #{iid}: {title}` on GitHub).
 
 `gitlab-work-items` / `github-work-items`: open issues assigned to you, filtered by `labels`
@@ -100,7 +137,9 @@ after it: the first fenced block is taken (told to print only the array, Claude 
 output.
 
 Repeated items are dropped: same external id, else same URL, else same title ignoring case and
-whitespace. The bridge cannot look items up again, so it never closes tasks; close them with
+whitespace. The bridge cannot look items up again: a tracked task it no longer lists stays
+open. It closes a task only when its output lists the item with `"state": "done"`, whatever
+the `done_when_*` keys say (they do not apply to the bridge); otherwise close it with
 `tasq done` or let another source do it.
 
 Example configuration and prompt: `examples/sources/`.

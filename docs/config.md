@@ -121,7 +121,7 @@ preset = "dark"              # dark, light, solarized, gruvbox or mono; see "Col
 # token_cmd = "glab config get token --host gitlab.example.com"  # else GITLAB_TOKEN / GITHUB_TOKEN
 # url = "https://gitlab.example.com/api/v4"   # API base; defaults from host
 
-# [[source]]
+# [[source]]                      # a key marked with kinds is an error on any other kind
 # name = "gitlab-review-requests"
 # kind = "gitlab-review-requests"   # gitlab-review-requests | gitlab-work-items |
 #                                   # github-review-requests | github-work-items | llm-bridge
@@ -133,14 +133,17 @@ preset = "dark"              # dark, light, solarized, gruvbox or mono; see "Col
 # enabled = true
 # auto = true                       # false: a bare `tasq sync` skips it; run it with --source or from the TUI
 # create_new = true                 # false: only update tasks that already exist
-# close_when_done = true            # mark the task done when the item is merged/closed/approved
+# done_when_closed = true           # forge-backed kinds: done when the MR closes unmerged or the issue closes
+# done_when_merged = true           # review requests: ... when the MR is merged
+# done_when_approved = true         # review requests: ... when you approved the MR
+# done_when_unassigned = true       # work items: ... when the open issue is no longer yours
 # flag = "review-request"           # tag added to matched open tasks that lack it
-# title = "Review MR !{iid}: {title}"  # {title} {iid} {project}
+# title = "Review MR !{iid}: {title}"  # forge-backed kinds: {title} {iid} {project}
 # labels = ["team::core"]           # work items: include only these labels
 # exclude_labels = ["wontfix"]      # work items: skip these labels
 # exclude_authors = ["dependabot"]  # review requests: skip MRs by these usernames
 # drafts = false                    # review requests: true keeps draft MRs
-# projects = ["group/", "owner/repo"]  # allow-list; a trailing / matches a group
+# projects = ["group/", "owner/repo"]  # work items: allow-list; a trailing / matches a group
 
 [report.summary]
 summarizer = "llm"           # raw | llm
@@ -192,22 +195,25 @@ timeout = 2                  # seconds a plugin may take over one event
 | `forge.<name>.url` | string | `https://<host>/api/v4` (GitLab), `https://api.github.com` (github.com), `https://<host>/api/v3` (other GitHub) | API base URL override. |
 | `source[].name` | string | required | Unique name, recorded in each task's `source` key. |
 | `source[].kind` | string | required | `gitlab-review-requests`, `gitlab-work-items`, `github-review-requests`, `github-work-items`, `llm-bridge`. |
-| `source[].forge` | string | unset | `[forge.<name>]` to use. Required by the forge-backed kinds; its kind must match. |
-| `source[].command` | string | unset | Command run by `llm-bridge`. Required by it. |
-| `source[].prompt_file` | path | unset | File fed to the `llm-bridge` command on stdin. `~` expanded. |
+| `source[].forge` | string | unset | Forge-backed kinds: `[forge.<name>]` to use. Required by them; its kind must match. |
+| `source[].command` | string | unset | `llm-bridge`: the command it runs. Required by it. |
+| `source[].prompt_file` | path | unset | `llm-bridge`: file fed to the command on stdin. `~` expanded. |
 | `source[].tags` | array of strings | `[]` | Tags added to every task the source creates. |
 | `source[].status` | string | `workflow.default_status` | Status of tasks the source creates. |
 | `source[].enabled` | bool | `true` | Whether the source can run at all. `false`: never, and naming it is an error. |
 | `source[].auto` | bool | `true` | Whether a bare `tasq sync` (and the TUI's `s`) includes it. `false`: it runs only when named with `--source` or checked in the TUI's `S` picker. |
 | `source[].create_new` | bool | `true` | Create tasks for new items. `false`: only update existing tasks. |
-| `source[].close_when_done` | bool | `true` | Log a note and mark the task done when its item is merged, closed, approved or reassigned. |
+| `source[].done_when_closed` | bool | `true` | Review requests and work items: log a note and mark the task done when its MR is closed without being merged, or its issue is closed. `false`: the task stays open. |
+| `source[].done_when_merged` | bool | `true` | Review requests: log a note and mark the task done when its MR is merged. |
+| `source[].done_when_approved` | bool | `true` | Review requests: log a note and mark the task done when you approved its MR. |
+| `source[].done_when_unassigned` | bool | `true` | Work items: log a note and mark the task done when its issue is open but no longer assigned to you. `false` keeps it open through a handoff for review. |
 | `source[].flag` | string | unset | Tag added to matched open tasks that lack it. |
-| `source[].title` | string | per kind | Title template: `{title}`, `{iid}`, `{project}`. Defaults `Review MR !{iid}: {title}`, `Review PR #{iid}: {title}`, `#{iid}: {title}`. |
+| `source[].title` | string | per kind | Forge-backed kinds: title template: `{title}`, `{iid}`, `{project}`. Defaults `Review MR !{iid}: {title}`, `Review PR #{iid}: {title}`, `#{iid}: {title}`. |
 | `source[].labels` | array of strings | `[]` | Work items: only those carrying one of these labels. |
 | `source[].exclude_labels` | array of strings | `[]` | Work items: skip those carrying one of these labels. |
-| `source[].exclude_authors` | array of strings | `[]` | Review requests: skip merge requests by these authors (exact usernames, `dependabot`). Tracked tasks still close when their MR merges. |
+| `source[].exclude_authors` | array of strings | `[]` | Review requests: skip merge requests by these authors (exact usernames, `dependabot`). Tracked tasks still close when their MR merges (with `done_when_merged`). |
 | `source[].drafts` | bool | `false` | Review requests: `true` makes draft merge requests tasks too; `false` skips them until marked ready. |
-| `source[].projects` | array of strings | `[]` (every project) | `group/project`, a group prefix with a trailing `/`, or `owner/repo`. |
+| `source[].projects` | array of strings | `[]` (every project) | Work items: only these projects, `group/project`, a group prefix with a trailing `/`, or `owner/repo`. |
 | `report.summary.summarizer` | `raw` \| `llm` | `llm` | Print the notes, or distil them with `command`. |
 | `report.summary.command` | string | `claude -p` | Reads the rendered prompt on stdin, prints the summary. |
 | `report.summary.model` | string | unset | Appended as `--model <model>`. |
@@ -285,6 +291,14 @@ store); `TASQ_BIN`, `TASQ_HOOK` and
   List the files under `worktree.copies` meanwhile.
 - A `[forge.<name>]` named `gitlab` or `github` infers `kind` and `host`; any other name needs `kind`.
 - Forge-backed sources need `forge` pointing at a forge of the matching kind; `llm-bridge` needs `command`.
+- A `[[source]]` key its kind does not read is an error at the key, naming the source and the
+  kind (`` source "mrs": `labels` does not apply to kind gitlab-review-requests ``). Every kind
+  reads `name`, `kind`, `tags`, `status`, `enabled`, `auto`, `create_new` and `flag`; the
+  description of every other `source[]` key above starts with the kinds that read it ("Review
+  requests", "Work items", "Forge-backed kinds", `llm-bridge`). See `docs/sources.md`, "When a
+  task is marked done".
+- `close_when_done` no longer exists; setting it is an error naming `done_when_closed`,
+  `done_when_merged`, `done_when_approved` and `done_when_unassigned`.
 - `~` is expanded in paths.
 
 ## Worktrees

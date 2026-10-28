@@ -254,6 +254,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `[[source]] close_when_done` is replaced by one key per reason a source reports
+  an item done (ADR 0032, task 61), each `true` by default: `done_when_closed` (review
+  requests: the MR was closed without being merged; work items: the issue was closed),
+  `done_when_merged` and `done_when_approved` (review requests), `done_when_unassigned` (work
+  items: the open issue is no longer assigned to you). An item done for a reason that is off is
+  treated as open: no note, the task stays open, and `flag` still applies. An item that no
+  longer exists, and an LLM bridge item whose `state` is `done`, always close the task. With
+  `done_when_unassigned = false`, an issue reassigned to its reviewer keeps its task open until
+  the issue closes. `close_when_done` in `config.toml` or a profile is an error at the key:
+  `` `close_when_done` was replaced by `done_when_closed`, `done_when_merged`,
+  `done_when_approved` (review requests) and `done_when_unassigned` (work items); see
+  docs/sources.md ``.
+- **Breaking:** a `[[source]]` key that the source's kind does not read is a config error at
+  the key, instead of being ignored: `labels`, `exclude_labels` and `projects` on review
+  requests, `exclude_authors` and `drafts` on work items, `forge`, `title` and the
+  `done_when_*` keys on `llm-bridge`, `command` and `prompt_file` on the forge kinds,
+  `done_when_merged` and `done_when_approved` on work items, `done_when_unassigned` on review
+  requests (`` config.toml:12:1: source "gitlab-work-items":
+  `done_when_approved` does not apply to kind gitlab-work-items ``).
 - **Breaking:** configuration lives only in the config directory (ADR 0031): `--config-dir`,
   else `TASQ_CONFIG_DIR`, else `$XDG_CONFIG_HOME/tasq`, else `~/.config/tasq`. The moves are
   listed in `docs/migration.md` ("From an earlier `tasq`").

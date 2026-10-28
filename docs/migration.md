@@ -237,6 +237,18 @@ Then check:
 - `tasq doctor` shows an `OK repo-config` line per repository config; a `WARN`
   names the `path` to set.
 
+## From an earlier `tasq`: done reasons
+
+Since ADR 0032 a source closes a task per reason the item is done, and each `[[source]]`
+reads only the keys of its kind. Both are errors at the key, so a config that still loads
+needs no change.
+
+| Before | Now | If left as is |
+|---|---|---|
+| `close_when_done = true` | nothing: every `done_when_*` key defaults to `true` | error at the key: `` `close_when_done` was replaced by `done_when_closed`, `done_when_merged`, `done_when_approved` (review requests) and `done_when_unassigned` (work items); see docs/sources.md `` |
+| `close_when_done = false` | `done_when_closed = false` and, on review requests, `done_when_merged = false` and `done_when_approved = false`; on work items `done_when_unassigned = false`. A gone item still closes its task | the same error |
+| a key of another kind on a `[[source]]` (`labels` on review requests, `drafts` on work items, `forge` on `llm-bridge`, ...) | remove it: it never did anything | error at the key: `` source "<name>": `<key>` does not apply to kind <kind> `` |
+
 ## Rollback
 
 `tasq` never writes the script's nb notebook: go back to the script and nb.
