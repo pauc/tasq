@@ -355,9 +355,9 @@ not a committed `.gitignore`), so a manual `git add -A` never commits the lock o
 
 **Blocked by:** GS-009.
 
-**Status:** in progress
+**Status:** done
 
-- [ ] After init and clone, `git status --ignored` shows `.tasq/` as ignored; the template's
+- [x] After init and clone, `git status --ignored` shows `.tasq/` as ignored; the template's
   lines are kept, a missing `info/` is created, a failed write leaves no repository.
-- [ ] `doctor` warns on a store without the exclude, and is ok with any ignore file.
-- [ ] `mutants-in crates/git/src`: zero missed.
+- [x] `doctor` warns on a store without the exclude, and is ok with any ignore file.
+- [x] `mutants-in crates/git/src`: zero missed.
