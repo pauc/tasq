@@ -224,6 +224,7 @@ impl Source for LlmBridge {
 mod tests {
     use super::*;
     use tasq_core::model::Tag;
+    use tasq_core::source::DoneReason;
 
     #[test]
     fn fences() {
@@ -262,7 +263,7 @@ mod tests {
         let items =
             parse_items("{\"items\":[{\"external_id\":\"a\",\"title\":\"A\",\"state\":\"done\"}]}")
                 .unwrap();
-        assert_eq!(items[0].state, ItemState::Done);
+        assert_eq!(items[0].state, ItemState::Done(DoneReason::Reported));
         let envelope = serde_json::json!({
             "type": "result",
             "result": "```json\n[{\"external_id\":\"b\",\"title\":\"B\",\"tags\":[\"slack\"]}]\n```"

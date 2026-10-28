@@ -2,7 +2,9 @@
 //! per forge, with label and project filters.
 
 use tasq_core::model::Origin;
-use tasq_core::source::{ItemState, Source, SourceError, SourceItem, SourceItemState, SyncContext};
+use tasq_core::source::{
+    DoneReason, ItemState, Source, SourceError, SourceItem, SourceItemState, SyncContext,
+};
 
 use crate::forge::{Forge, WorkItem};
 use crate::review_requests::{Lookup, list_error, lookup, origin_ref, render_title};
@@ -105,8 +107,10 @@ impl Source for WorkItems {
                 continue;
             }
             let (state, note) = match lookup(self.forge.work_item(&reference))? {
-                Lookup::Gone => (ItemState::Done, "no longer exists"),
-                Lookup::Found(item) if item.closed => (ItemState::Done, "closed"),
+                Lookup::Gone => (ItemState::Done(DoneReason::Gone), "no longer exists"),
+                Lookup::Found(item) if item.closed => {
+                    (ItemState::Done(DoneReason::Closed), "closed")
+                }
                 Lookup::Found(item) => {
                     if me.is_none() {
                         me = Some(lookup(self.forge.current_user())?.username_or_unavailable()?);
@@ -117,7 +121,10 @@ impl Source for WorkItems {
                     if mine {
                         (ItemState::Open, "open")
                     } else {
-                        (ItemState::Done, "no longer assigned to you")
+                        (
+                            ItemState::Done(DoneReason::Unassigned),
+                            "no longer assigned to you",
+                        )
                     }
                 }
             };
@@ -367,10 +374,13 @@ mod tests {
         assert_eq!(
             notes,
             vec![
-                (ItemState::Done, "closed"),
-                (ItemState::Done, "no longer assigned to you"),
+                (ItemState::Done(DoneReason::Closed), "closed"),
+                (
+                    ItemState::Done(DoneReason::Unassigned),
+                    "no longer assigned to you"
+                ),
                 (ItemState::Open, "open"),
-                (ItemState::Done, "no longer exists"),
+                (ItemState::Done(DoneReason::Gone), "no longer exists"),
             ]
         );
         assert!(matches!(

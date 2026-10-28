@@ -3,7 +3,9 @@
 
 use tasq_core::config::ForgeKind;
 use tasq_core::model::Origin;
-use tasq_core::source::{ItemState, Source, SourceError, SourceItem, SourceItemState, SyncContext};
+use tasq_core::source::{
+    DoneReason, ItemState, Source, SourceError, SourceItem, SourceItemState, SyncContext,
+};
 
 use crate::forge::{Forge, MergeRequest, MrState};
 use crate::http::HttpError;
@@ -165,11 +167,13 @@ impl Source for ReviewRequests {
                 continue;
             }
             let (state, note) = match lookup(self.forge.merge_request(&reference))? {
-                Lookup::Gone => (ItemState::Done, "no longer exists"),
+                Lookup::Gone => (ItemState::Done(DoneReason::Gone), "no longer exists"),
                 Lookup::Found(mr) => match mr.state {
-                    MrState::Merged => (ItemState::Done, "merged"),
-                    MrState::Closed => (ItemState::Done, "closed"),
-                    MrState::Open if mr.approved_by_me => (ItemState::Done, "approved by you"),
+                    MrState::Merged => (ItemState::Done(DoneReason::Merged), "merged"),
+                    MrState::Closed => (ItemState::Done(DoneReason::Closed), "closed"),
+                    MrState::Open if mr.approved_by_me => {
+                        (ItemState::Done(DoneReason::Approved), "approved by you")
+                    }
                     MrState::Open => (ItemState::Open, "open"),
                 },
             };
@@ -513,7 +517,7 @@ mod tests {
         assert_eq!(states.len(), 1);
         assert_eq!(
             (states[0].state, states[0].note.as_deref()),
-            (ItemState::Done, Some("merged"))
+            (ItemState::Done(DoneReason::Merged), Some("merged"))
         );
     }
 
@@ -555,11 +559,11 @@ mod tests {
         assert_eq!(
             notes,
             vec![
-                (ItemState::Done, "merged"),
-                (ItemState::Done, "closed"),
-                (ItemState::Done, "approved by you"),
+                (ItemState::Done(DoneReason::Merged), "merged"),
+                (ItemState::Done(DoneReason::Closed), "closed"),
+                (ItemState::Done(DoneReason::Approved), "approved by you"),
                 (ItemState::Open, "open"),
-                (ItemState::Done, "no longer exists"),
+                (ItemState::Done(DoneReason::Gone), "no longer exists"),
             ]
         );
         assert_eq!(states[0].origin, origins[0]);

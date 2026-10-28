@@ -21,15 +21,68 @@ use crate::model::{Link, Origin, Priority, Status, Tag, Task, TaskDraft, TaskId}
 use crate::store::{Store, StoreError};
 
 /// What the source says about an item.
+///
+/// On the wire (the LLM bridge JSON) a state is `open`, `done` or
+/// `needs-attention`: `done` reads as [`DoneReason::Reported`] and every
+/// `Done(_)` writes `done`. Nothing reads a forge state back, so the reason
+/// stays in the process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(from = "WireState", into = "WireState")]
 pub enum ItemState {
     /// Still something to do.
     Open,
-    /// Finished elsewhere (merged, closed, reassigned, approved).
-    Done,
+    /// Finished elsewhere; the reason says why, and [`Policy::closes`]
+    /// decides whether that closes the task.
+    Done(DoneReason),
     /// Still open but something happened the user should look at.
     NeedsAttention,
+}
+
+/// Why a source reports an item as done.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoneReason {
+    /// The item no longer exists (a 404). Always closes the task.
+    Gone,
+    /// Closed: an issue, or a merge request closed without merging.
+    Closed,
+    /// The merge request was merged.
+    Merged,
+    /// The user approved the merge request.
+    Approved,
+    /// The item is open but no longer assigned to the user.
+    Unassigned,
+    /// The source itself said so (the LLM bridge's `done`). Always closes
+    /// the task; the bridge's prompt decides when.
+    Reported,
+}
+
+/// The wire shape of [`ItemState`]: the three words the LLM bridge speaks.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum WireState {
+    Open,
+    Done,
+    NeedsAttention,
+}
+
+impl From<WireState> for ItemState {
+    fn from(wire: WireState) -> Self {
+        match wire {
+            WireState::Open => Self::Open,
+            WireState::Done => Self::Done(DoneReason::Reported),
+            WireState::NeedsAttention => Self::NeedsAttention,
+        }
+    }
+}
+
+impl From<ItemState> for WireState {
+    fn from(state: ItemState) -> Self {
+        match state {
+            ItemState::Open => Self::Open,
+            ItemState::Done(_) => Self::Done,
+            ItemState::NeedsAttention => Self::NeedsAttention,
+        }
+    }
 }
 
 /// One thing a source found.
@@ -157,19 +210,65 @@ pub trait Source {
 pub struct Policy {
     /// Create tasks for new open items.
     pub create_new: bool,
-    /// Log a note and mark the task done when its item is done.
-    pub close_when_done: bool,
+    /// Which [`DoneReason`]s log a note and mark the task done.
+    pub done_when: DoneWhen,
     /// Tag added to a matched open task that lacks it (`review-request`).
     pub flag: Option<Tag>,
 }
 
 impl Default for Policy {
-    /// Create and close, no flag.
+    /// Create, close for every reason, no flag.
     fn default() -> Self {
         Self {
             create_new: true,
-            close_when_done: true,
+            done_when: DoneWhen::default(),
             flag: None,
+        }
+    }
+}
+
+impl Policy {
+    /// Whether an item done for `reason` closes its task: [`DoneReason::Gone`]
+    /// and [`DoneReason::Reported`] always do, the others when their
+    /// [`DoneWhen`] switch is on. A done item that does not close is
+    /// reconciled like an open one.
+    pub fn closes(&self, reason: DoneReason) -> bool {
+        match reason {
+            DoneReason::Gone | DoneReason::Reported => true,
+            DoneReason::Closed => self.done_when.closed,
+            DoneReason::Merged => self.done_when.merged,
+            DoneReason::Approved => self.done_when.approved,
+            DoneReason::Unassigned => self.done_when.unassigned,
+        }
+    }
+}
+
+/// One switch per [`DoneReason`] a source may turn off (`[[source]]
+/// done_when_closed` and friends). All on by default.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "four independent switches, one per config key; a set type would not read better at the call sites"
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DoneWhen {
+    /// [`DoneReason::Closed`] closes the task.
+    pub closed: bool,
+    /// [`DoneReason::Merged`] closes the task.
+    pub merged: bool,
+    /// [`DoneReason::Approved`] closes the task.
+    pub approved: bool,
+    /// [`DoneReason::Unassigned`] closes the task.
+    pub unassigned: bool,
+}
+
+impl Default for DoneWhen {
+    /// Every reason closes.
+    fn default() -> Self {
+        Self {
+            closed: true,
+            merged: true,
+            approved: true,
+            unassigned: true,
         }
     }
 }
@@ -269,10 +368,10 @@ pub fn find_task<'a>(
 /// Compares what `source` reports with the existing tasks.
 ///
 /// - A new open item becomes a `Create` (with `policy.create_new`); a new
-///   done item is ignored.
-/// - A matched open task whose item is done becomes a `Close` (with
-///   `policy.close_when_done`); a matched task that is already done gets
-///   nothing.
+///   done item is ignored, whatever its reason.
+/// - A matched open task whose item is done becomes a `Close` when
+///   [`Policy::closes`] says so for the item's [`DoneReason`]; otherwise the
+///   item counts as open. A matched task that is already done gets nothing.
 /// - A matched open task gets a `Flag` when `policy.flag` is set and the
 ///   tag is missing, and a `Note` when the item needs attention.
 /// - `states` (from `Source::check`) are matched by origin only and follow
@@ -296,7 +395,7 @@ pub fn reconcile(
         seen.push(&item.external_id);
         match find_task(tasks, source, &item.external_id, item.url.as_deref()) {
             None => {
-                if item.state != ItemState::Done && policy.create_new {
+                if !matches!(item.state, ItemState::Done(_)) && policy.create_new {
                     changes.push(Change::Create {
                         draft: Box::new(draft_for(source, item, defaults)),
                     });
@@ -344,32 +443,29 @@ fn changes_for_known(
     if task.done {
         return Vec::new();
     }
+    if let ItemState::Done(reason) = state
+        && policy.closes(reason)
+    {
+        return vec![Change::Close {
+            id: task.id.clone(),
+            note: sync_note(source, note.unwrap_or("done")),
+        }];
+    }
+    // Open, needs attention, or done for a reason the policy keeps open.
     let mut out = Vec::new();
-    match state {
-        ItemState::Done => {
-            if policy.close_when_done {
-                out.push(Change::Close {
-                    id: task.id.clone(),
-                    note: sync_note(source, note.unwrap_or("done")),
-                });
-            }
-        }
-        ItemState::Open | ItemState::NeedsAttention => {
-            if let Some(tag) = &policy.flag
-                && !task.has_tag(tag)
-            {
-                out.push(Change::Flag {
-                    id: task.id.clone(),
-                    tag: tag.clone(),
-                });
-            }
-            if state == ItemState::NeedsAttention {
-                out.push(Change::Note {
-                    id: task.id.clone(),
-                    note: sync_note(source, note.unwrap_or("needs attention")),
-                });
-            }
-        }
+    if let Some(tag) = &policy.flag
+        && !task.has_tag(tag)
+    {
+        out.push(Change::Flag {
+            id: task.id.clone(),
+            tag: tag.clone(),
+        });
+    }
+    if state == ItemState::NeedsAttention {
+        out.push(Change::Note {
+            id: task.id.clone(),
+            note: sync_note(source, note.unwrap_or("needs attention")),
+        });
     }
     out
 }
@@ -571,7 +667,8 @@ mod tests {
 
     #[test]
     fn done_or_duplicate_new_items_and_create_new_off() {
-        let done = SourceItem::new("x", "T").with_state(ItemState::Done, Some("merged"));
+        let done = SourceItem::new("x", "T")
+            .with_state(ItemState::Done(DoneReason::Merged), Some("merged"));
         assert_eq!(
             reconcile(SRC, &[], &[done], &[], &Policy::default(), &defaults()),
             Vec::new()
@@ -604,7 +701,8 @@ mod tests {
     fn known_items_close_flag_and_note() {
         let tasks = vec![tracked(1, "a"), tracked(2, "b"), tracked(3, "c")];
         let items = vec![
-            SourceItem::new("a", "A").with_state(ItemState::Done, Some("merged")),
+            SourceItem::new("a", "A")
+                .with_state(ItemState::Done(DoneReason::Merged), Some("merged")),
             SourceItem::new("b", "B"),
             SourceItem::new("c", "C").with_state(ItemState::NeedsAttention, None),
         ];
@@ -647,7 +745,10 @@ mod tests {
         // No flag configured and close disabled: an open item changes nothing,
         // a done one neither.
         let passive = Policy {
-            close_when_done: false,
+            done_when: DoneWhen {
+                merged: false,
+                ..DoneWhen::default()
+            },
             ..Policy::default()
         };
         assert_eq!(
@@ -670,11 +771,238 @@ mod tests {
         );
     }
 
+    const REASONS: [DoneReason; 6] = [
+        DoneReason::Gone,
+        DoneReason::Closed,
+        DoneReason::Merged,
+        DoneReason::Approved,
+        DoneReason::Unassigned,
+        DoneReason::Reported,
+    ];
+
+    fn done_item(reason: DoneReason) -> SourceItem {
+        SourceItem::new("a", "A").with_state(ItemState::Done(reason), Some("why"))
+    }
+
+    fn close(id: u64) -> Vec<Change> {
+        vec![Change::Close {
+            id: TaskId::from(id),
+            note: "sync(gitlab-review-requests): why".into(),
+        }]
+    }
+
+    const ALL_OFF: DoneWhen = DoneWhen {
+        closed: false,
+        merged: false,
+        approved: false,
+        unassigned: false,
+    };
+
+    #[test]
+    fn each_done_reason_has_its_own_switch() {
+        let tasks = vec![tracked(1, "a")];
+        assert_eq!(
+            DoneWhen::default(),
+            DoneWhen {
+                closed: true,
+                merged: true,
+                approved: true,
+                unassigned: true,
+            }
+        );
+        // Each switch turns off exactly its reason; the others still close.
+        let switched: [(DoneReason, DoneWhen); 4] = [
+            (
+                DoneReason::Closed,
+                DoneWhen {
+                    closed: true,
+                    ..ALL_OFF
+                },
+            ),
+            (
+                DoneReason::Merged,
+                DoneWhen {
+                    merged: true,
+                    ..ALL_OFF
+                },
+            ),
+            (
+                DoneReason::Approved,
+                DoneWhen {
+                    approved: true,
+                    ..ALL_OFF
+                },
+            ),
+            (
+                DoneReason::Unassigned,
+                DoneWhen {
+                    unassigned: true,
+                    ..ALL_OFF
+                },
+            ),
+        ];
+        for (on, only) in switched {
+            let on_policy = Policy {
+                done_when: DoneWhen {
+                    closed: !only.closed,
+                    merged: !only.merged,
+                    approved: !only.approved,
+                    unassigned: !only.unassigned,
+                },
+                ..Policy::default()
+            };
+            let off_policy = Policy {
+                done_when: only,
+                ..Policy::default()
+            };
+            for reason in REASONS {
+                let always = matches!(reason, DoneReason::Gone | DoneReason::Reported);
+                // Only `on`'s switch off: everything but `on` closes.
+                assert_eq!(
+                    on_policy.closes(reason),
+                    reason != on,
+                    "{on:?} off, {reason:?}"
+                );
+                assert_eq!(
+                    reconcile(
+                        SRC,
+                        &tasks,
+                        &[done_item(reason)],
+                        &[],
+                        &on_policy,
+                        &defaults()
+                    ),
+                    if reason == on { Vec::new() } else { close(1) },
+                    "{on:?} off, {reason:?}"
+                );
+                // Only `on`'s switch on: `on` and the always-close reasons close.
+                assert_eq!(
+                    off_policy.closes(reason),
+                    reason == on || always,
+                    "only {on:?} on, {reason:?}"
+                );
+                assert_eq!(
+                    reconcile(
+                        SRC,
+                        &tasks,
+                        &[done_item(reason)],
+                        &[],
+                        &off_policy,
+                        &defaults()
+                    ),
+                    if reason == on || always {
+                        close(1)
+                    } else {
+                        Vec::new()
+                    },
+                    "only {on:?} on, {reason:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn gone_and_reported_always_close_and_check_states_follow_the_switches() {
+        let tasks = vec![tracked(1, "a")];
+        let passive = Policy {
+            done_when: ALL_OFF,
+            ..Policy::default()
+        };
+        for reason in REASONS {
+            let always = matches!(reason, DoneReason::Gone | DoneReason::Reported);
+            assert_eq!(passive.closes(reason), always, "{reason:?}");
+            assert_eq!(
+                reconcile(
+                    SRC,
+                    &tasks,
+                    &[done_item(reason)],
+                    &[],
+                    &passive,
+                    &defaults()
+                ),
+                if always { close(1) } else { Vec::new() },
+                "{reason:?}"
+            );
+        }
+        // Through `Source::check` states too.
+        let state = SourceItemState {
+            origin: tasks[0].origin.clone().unwrap(),
+            state: ItemState::Done(DoneReason::Unassigned),
+            note: Some("why".into()),
+        };
+        assert_eq!(
+            reconcile(
+                SRC,
+                &tasks,
+                &[],
+                std::slice::from_ref(&state),
+                &passive,
+                &defaults()
+            ),
+            Vec::new()
+        );
+        assert_eq!(
+            reconcile(SRC, &tasks, &[], &[state], &Policy::default(), &defaults()),
+            close(1)
+        );
+    }
+
+    #[test]
+    fn a_done_item_that_does_not_close_is_treated_as_open() {
+        let tasks = vec![tracked(1, "a")];
+        let policy = Policy {
+            done_when: DoneWhen {
+                unassigned: false,
+                ..DoneWhen::default()
+            },
+            flag: Some(tag("issue")),
+            ..Policy::default()
+        };
+        // The flag still applies, nothing is logged.
+        assert_eq!(
+            reconcile(
+                SRC,
+                &tasks,
+                &[done_item(DoneReason::Unassigned)],
+                &[],
+                &policy,
+                &defaults()
+            ),
+            vec![Change::Flag {
+                id: TaskId::from(1),
+                tag: tag("issue"),
+            }]
+        );
+        // A task that carries the flag already gets nothing.
+        let mut flagged = tracked(2, "a");
+        flagged.add_tag(tag("issue"));
+        assert_eq!(
+            reconcile(
+                SRC,
+                &[flagged],
+                &[done_item(DoneReason::Unassigned)],
+                &[],
+                &policy,
+                &defaults()
+            ),
+            Vec::new()
+        );
+        // A new done item is never created, whatever the reason or switch.
+        for reason in REASONS {
+            assert_eq!(
+                reconcile(SRC, &[], &[done_item(reason)], &[], &policy, &defaults()),
+                Vec::new(),
+                "{reason:?}"
+            );
+        }
+    }
+
     #[test]
     fn done_tasks_are_never_touched() {
         let mut t = tracked(1, "a");
         t.mark_done();
-        let items = vec![SourceItem::new("a", "A").with_state(ItemState::Done, None)];
+        let items =
+            vec![SourceItem::new("a", "A").with_state(ItemState::Done(DoneReason::Gone), None)];
         let policy = Policy {
             flag: Some(tag("f")),
             ..Policy::default()
@@ -696,7 +1024,7 @@ mod tests {
             SourceItem::new("g/p!5", "Review").with_url("https://gl/g/p/-/merge_requests/5"),
             SourceItem::new("g/p#6", "Issue")
                 .with_url("https://gl/g/p/-/issues/6")
-                .with_state(ItemState::Done, Some("closed")),
+                .with_state(ItemState::Done(DoneReason::Closed), Some("closed")),
             SourceItem::new("g/p!7", "New").with_url("https://gl/g/p/-/merge_requests/7"),
         ];
         let changes = reconcile(SRC, &tasks, &items, &[], &Policy::default(), &defaults());
@@ -719,7 +1047,7 @@ mod tests {
         let states = vec![
             SourceItemState {
                 origin: tasks[0].origin.clone().unwrap(),
-                state: ItemState::Done,
+                state: ItemState::Done(DoneReason::Approved),
                 note: Some("approved by you".into()),
             },
             SourceItemState {
@@ -728,7 +1056,7 @@ mod tests {
                     external_id: "b".into(),
                     url: None,
                 },
-                state: ItemState::Done,
+                state: ItemState::Done(DoneReason::Merged),
                 note: None,
             },
             SourceItemState {
@@ -737,7 +1065,7 @@ mod tests {
                     external_id: "unknown".into(),
                     url: None,
                 },
-                state: ItemState::Done,
+                state: ItemState::Done(DoneReason::Merged),
                 note: None,
             },
             SourceItemState {
@@ -772,6 +1100,36 @@ mod tests {
                 .unwrap();
         assert_eq!(needs.state, ItemState::NeedsAttention);
         assert_eq!(needs.tags, vec![tag("a")]);
+    }
+
+    #[test]
+    fn state_wire_format_carries_no_reason() {
+        // The LLM bridge writes `done`; it reads back as `Reported`.
+        let done: ItemState = serde_json::from_str("\"done\"").unwrap();
+        assert_eq!(done, ItemState::Done(DoneReason::Reported));
+        // Every reason writes `done`.
+        for reason in [
+            DoneReason::Gone,
+            DoneReason::Closed,
+            DoneReason::Merged,
+            DoneReason::Approved,
+            DoneReason::Unassigned,
+            DoneReason::Reported,
+        ] {
+            assert_eq!(
+                serde_json::to_string(&ItemState::Done(reason)).unwrap(),
+                "\"done\"",
+                "{reason:?}"
+            );
+        }
+        for (state, wire) in [
+            (ItemState::Open, "\"open\""),
+            (ItemState::NeedsAttention, "\"needs-attention\""),
+        ] {
+            assert_eq!(serde_json::to_string(&state).unwrap(), wire);
+            assert_eq!(serde_json::from_str::<ItemState>(wire).unwrap(), state);
+        }
+        assert!(serde_json::from_str::<ItemState>("\"merged\"").is_err());
     }
 
     #[test]

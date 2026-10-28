@@ -2,7 +2,7 @@
 
 use tasq_core::config::{Config, ForgeConfig, ForgeKind, SourceConfig, SourceKind};
 use tasq_core::model::Tag;
-use tasq_core::source::{Defaults, Policy, Source, SourceError};
+use tasq_core::source::{Defaults, DoneWhen, Policy, Source, SourceError};
 
 use crate::auth::token;
 use crate::forge::Forge;
@@ -49,7 +49,13 @@ pub fn policy_for(cfg: &SourceConfig) -> Result<Policy, SourceError> {
         };
     Ok(Policy {
         create_new: cfg.create_new,
-        close_when_done: cfg.close_when_done,
+        // Until the per-reason keys land (SD-003), the one switch drives all four.
+        done_when: DoneWhen {
+            closed: cfg.close_when_done,
+            merged: cfg.close_when_done,
+            approved: cfg.close_when_done,
+            unassigned: cfg.close_when_done,
+        },
         flag,
     })
 }
@@ -245,7 +251,8 @@ enabled = false
             reviews.policy.flag,
             Some(Tag::new("review-request").unwrap())
         );
-        assert!(reviews.policy.create_new && reviews.policy.close_when_done);
+        assert!(reviews.policy.create_new);
+        assert_eq!(reviews.policy.done_when, DoneWhen::default());
         assert_eq!(reviews.defaults.status, Some(Status::READY));
         assert_eq!(reviews.defaults.tags.len(), 2);
         let issues = built[1].1.as_ref().unwrap();
