@@ -344,3 +344,20 @@ under Deviations. Store commits must not be signed or run the user's global hook
 - [x] Each finding verified; a failing test for each real one before its fix.
 - [x] The job and `tasq git sync` commit, rebase and push without signing or hooks.
 - [x] `mutants-in crates/git/src` and the store diff: zero missed.
+
+### GS-010: keep `.tasq/` out of `git status`
+
+**What to build:** tasq 62. `tasq git init` and `tasq git clone` add `.tasq/` to the
+repository's `info/exclude` (found with `git rev-parse --git-path`, after the template's lines;
+not a committed `.gitignore`), so a manual `git add -A` never commits the lock or
+`.tasq/plugins/git/`. The doctor gets a `git/exclude` check: `WARN` with the line to add when
+`git check-ignore` says `.tasq/` is not ignored (any ignore file counts).
+
+**Blocked by:** GS-009.
+
+**Status:** in progress
+
+- [ ] After init and clone, `git status --ignored` shows `.tasq/` as ignored; the template's
+  lines are kept, a missing `info/` is created, a failed write leaves no repository.
+- [ ] `doctor` warns on a store without the exclude, and is ok with any ignore file.
+- [ ] `mutants-in crates/git/src`: zero missed.
