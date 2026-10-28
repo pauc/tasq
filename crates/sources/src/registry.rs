@@ -262,6 +262,65 @@ enabled = false
         assert_eq!(inbox.source.name(), "inbox");
     }
 
+    /// Each `done_when_*` key reaches its own `DoneWhen` switch and no other.
+    #[test]
+    fn each_done_when_key_reaches_the_policy() {
+        let all = DoneWhen::default();
+        let cases = [
+            (
+                "gitlab-review-requests",
+                "done_when_closed",
+                DoneWhen {
+                    closed: false,
+                    ..all
+                },
+            ),
+            (
+                "gitlab-work-items",
+                "done_when_closed",
+                DoneWhen {
+                    closed: false,
+                    ..all
+                },
+            ),
+            (
+                "gitlab-review-requests",
+                "done_when_merged",
+                DoneWhen {
+                    merged: false,
+                    ..all
+                },
+            ),
+            (
+                "github-review-requests",
+                "done_when_approved",
+                DoneWhen {
+                    approved: false,
+                    ..all
+                },
+            ),
+            (
+                "github-work-items",
+                "done_when_unassigned",
+                DoneWhen {
+                    unassigned: false,
+                    ..all
+                },
+            ),
+        ];
+        for (kind, key, expected) in cases {
+            let forge = kind.split('-').next().unwrap();
+            let config = load(&format!(
+                "[forge.f]\nkind = \"{forge}\"\n\n[[source]]\nname = \"s\"\nkind = \"{kind}\"\nforge = \"f\"\n{key} = false\n"
+            ));
+            assert_eq!(
+                policy_for(&config.source[0]).unwrap().done_when,
+                expected,
+                "{kind} {key}"
+            );
+        }
+    }
+
     /// `exclude_authors` and `drafts` reach the review-request source.
     #[test]
     fn review_request_filters_are_wired() {

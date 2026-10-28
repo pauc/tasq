@@ -530,6 +530,8 @@ mod tests {
                 (r(2), Ok(mr("g/p", 2, MrState::Closed, false))),
                 (r(3), Ok(mr("g/p", 3, MrState::Open, true))),
                 (r(4), Ok(mr("g/p", 4, MrState::Open, false))),
+                (r(7), Ok(mr("g/p", 7, MrState::Merged, true))),
+                (r(8), Ok(mr("g/p", 8, MrState::Closed, true))),
                 (
                     r(6),
                     Err(HttpError::Status {
@@ -567,6 +569,20 @@ mod tests {
             ]
         );
         assert_eq!(states[0].origin, origins[0]);
+        // Merged or closed wins over an approval: the reason is what ended it.
+        let ended: Vec<ItemState> = source
+            .check(&[origin("g/p!7", None), origin("g/p!8", None)])
+            .unwrap()
+            .iter()
+            .map(|s| s.state)
+            .collect();
+        assert_eq!(
+            ended,
+            vec![
+                ItemState::Done(DoneReason::Merged),
+                ItemState::Done(DoneReason::Closed)
+            ]
+        );
         let err = source.check(&[origin("g/p!6", None)]).unwrap_err();
         assert!(matches!(err, SourceError::Unavailable(_)), "{err}");
     }

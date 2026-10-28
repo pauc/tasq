@@ -343,6 +343,8 @@ mod tests {
             (r(1), Ok(item("g/p", 1, true, &["me"], &[]))),
             (r(2), Ok(item("g/p", 2, false, &["someone"], &[]))),
             (r(3), Ok(item("g/p", 3, false, &["someone", "me"], &[]))),
+            (r(6), Ok(item("g/p", 6, true, &["someone"], &[]))),
+            (r(7), Ok(item("g/p", 7, false, &[], &[]))),
             (
                 r(5),
                 Err(HttpError::Auth {
@@ -381,6 +383,20 @@ mod tests {
                 ),
                 (ItemState::Open, "open"),
                 (ItemState::Done(DoneReason::Gone), "no longer exists"),
+            ]
+        );
+        // Closed wins over reassigned; nobody assigned is unassigned.
+        let more: Vec<ItemState> = source
+            .check(&[origin("g/p#6"), origin("g/p#7")])
+            .unwrap()
+            .iter()
+            .map(|s| s.state)
+            .collect();
+        assert_eq!(
+            more,
+            vec![
+                ItemState::Done(DoneReason::Closed),
+                ItemState::Done(DoneReason::Unassigned)
             ]
         );
         assert!(matches!(

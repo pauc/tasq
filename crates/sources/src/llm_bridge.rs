@@ -264,6 +264,25 @@ mod tests {
             parse_items("{\"items\":[{\"external_id\":\"a\",\"title\":\"A\",\"state\":\"done\"}]}")
                 .unwrap();
         assert_eq!(items[0].state, ItemState::Done(DoneReason::Reported));
+        let states: Vec<ItemState> = parse_items(
+            "[{\"external_id\":\"a\",\"title\":\"A\",\"state\":\"open\"},\
+             {\"external_id\":\"b\",\"title\":\"B\",\"state\":\"done\"},\
+             {\"external_id\":\"c\",\"title\":\"C\",\"state\":\"needs-attention\"},\
+             {\"external_id\":\"d\",\"title\":\"D\"}]",
+        )
+        .unwrap()
+        .iter()
+        .map(|i| i.state)
+        .collect();
+        assert_eq!(
+            states,
+            vec![
+                ItemState::Open,
+                ItemState::Done(DoneReason::Reported),
+                ItemState::NeedsAttention,
+                ItemState::Open
+            ]
+        );
         let envelope = serde_json::json!({
             "type": "result",
             "result": "```json\n[{\"external_id\":\"b\",\"title\":\"B\",\"tags\":[\"slack\"]}]\n```"
