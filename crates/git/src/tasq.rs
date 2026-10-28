@@ -114,8 +114,8 @@ impl Tasq {
     /// `env`, run in `cwd`, the directory the job started in, or in the
     /// store when that one is gone (a `tasq done` that removed the
     /// worktree it ran in). The store is pinned (`TASQ_DATA_DIR`,
-    /// `TASQ_STORE_NAME`), so a `.tasq.toml` of either directory cannot
-    /// point it at another store.
+    /// `TASQ_STORE_NAME`), so nothing in its environment can point it at
+    /// another store.
     pub fn for_store(bin: PathBuf, env: Env, cwd: Option<PathBuf>, store: &Path) -> Self {
         let mut env: Env = env
             .into_iter()

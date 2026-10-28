@@ -5,8 +5,8 @@ every command that writes is committed, pushed to a remote and pulled on your ot
 in the background, so no command and not `tasq ui` waits for git. It is the `tasq-git`
 plugin (ADR 0030), opt-in, and a store that is not a repository behaves exactly as without it.
 
-Commands, run in the store tasq resolves (`--profile`, `--set store.name=...` and `.tasq.toml`
-apply, as for any command):
+Commands, run in the store tasq resolves (`--profile`, `--set store.name=...` and the
+environment apply, as for any command):
 
 | Command | What it does |
 |---|---|

@@ -28,7 +28,7 @@ fn enable_tasq_git(env: &TestEnv) -> bool {
         return false;
     }
     std::os::unix::fs::symlink(plugin, env.bin.join("tasq-git")).unwrap();
-    env.write_project_config("[plugins]\nenabled = [\"git\"]\n");
+    env.write_global_config("[plugins]\nenabled = [\"git\"]\n");
     true
 }
 
@@ -77,7 +77,9 @@ fn git_init_makes_the_fixture_store_a_repository() {
     if !enable_tasq_git(&env) {
         return;
     }
-    env.write_global_config("[plugin.git]\nname = \"Me Personal\"\nssh_key = \"/keys/me\"\n");
+    env.write_global_config(
+        "[plugins]\nenabled = [\"git\"]\n\n[plugin.git]\nname = \"Me Personal\"\nssh_key = \"/keys/me\"\n",
+    );
     let out = env
         .tasq()
         .args(["git", "init", "--email", "me@example.invalid"])
