@@ -304,7 +304,7 @@ fn opens_no_store_and_tells_no_plugin() {
         "tasq-echo",
         &format!("{PROBE}\necho \"$TASQ_EVENT\" >> \"$HOME/events\""),
     );
-    env.write_project_config("[plugins]\nenabled = [\"echo\", \"missing\"]\n");
+    env.write_global_config("[plugins]\nenabled = [\"echo\", \"missing\"]\n");
     let ran = marker(&env);
     let out = env
         .tasq()

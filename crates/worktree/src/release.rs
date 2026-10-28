@@ -15,7 +15,7 @@ use tasq_core::worktree::status;
 use tasq_core::worktree::vars::Vars;
 use thiserror::Error;
 
-use crate::hooks::{Approver, HookFailure, prepare, run_all};
+use crate::hooks::{HookFailure, prepare, run_all};
 use crate::{Git, GitError, RepoSettings};
 
 /// How [`release`] runs.
@@ -72,8 +72,7 @@ pub enum ReleaseError {
 /// ([`Git::safety`]). A worktree holding `cwd` is kept. What is kept is a
 /// warning through `report`, with the command that finishes the job when
 /// there is one. The entries stay. The lines say what was done (or would
-/// be, on a dry run). Hooks run with `git.env` plus the hook variables;
-/// `approver` approves the repository's own.
+/// be, on a dry run). Hooks run with `git.env` plus the hook variables.
 ///
 /// # Errors
 ///
@@ -85,7 +84,6 @@ pub fn release(
     settings: &RepoSettings,
     cwd: &Path,
     how: Releasing,
-    approver: &Approver,
     report: &mut dyn FnMut(HookEvent),
 ) -> Result<Vec<String>, ReleaseError> {
     if how.closing && settings.config.on_done == OnDone::Keep {
@@ -115,7 +113,6 @@ pub fn release(
         let job = WorktreeRelease {
             git,
             settings,
-            approver,
             task,
             worktree,
             path: &path,
@@ -131,7 +128,6 @@ pub fn release(
 struct WorktreeRelease<'a> {
     git: &'a Git,
     settings: &'a RepoSettings,
-    approver: &'a Approver,
     task: &'a Task,
     worktree: &'a Worktree,
     path: &'a Path,
@@ -155,7 +151,7 @@ impl WorktreeRelease<'_> {
                 Ok(false)
             }
             WorktreeFate::Remove if self.how.dry_run => {
-                let hooks = self.hooks(&self.vars(), report)?;
+                let hooks = self.hooks(&self.vars())?;
                 lines.push(format!("would remove worktree {}", self.path.display()));
                 lines.extend(
                     hooks
@@ -178,7 +174,7 @@ impl WorktreeRelease<'_> {
         let main = &self.settings.main;
         let path = self.path.display();
         let vars = self.vars();
-        let [pre, post] = self.hooks(&vars, report)?;
+        let [pre, post] = self.hooks(&vars)?;
         let mut env = self.git.env.clone();
         env.extend(hooks::env(&vars));
         if let Err(e) = run_all(&pre, self.path, &env, report) {
@@ -234,19 +230,8 @@ impl WorktreeRelease<'_> {
     }
 
     /// The `pre-remove` and `post-remove` hooks of this worktree.
-    fn hooks(
-        &self,
-        vars: &Vars,
-        report: &mut dyn FnMut(HookEvent),
-    ) -> Result<[Hooks; 2], HookFailure> {
-        prepare(
-            self.settings,
-            [Kind::PreRemove, Kind::PostRemove],
-            vars,
-            self.approver,
-            self.how.dry_run,
-            report,
-        )
+    fn hooks(&self, vars: &Vars) -> Result<[Hooks; 2], HookFailure> {
+        prepare(self.settings, [Kind::PreRemove, Kind::PostRemove], vars)
     }
 
     /// The template variables of this worktree, for its hooks.

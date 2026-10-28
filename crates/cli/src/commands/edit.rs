@@ -11,7 +11,7 @@ use tasq_core::store::Store;
 
 use crate::app::App;
 use crate::commands::worktree::{self, Releasing};
-use crate::commands::worktree_hooks::{self, Approval};
+use crate::commands::worktree_hooks;
 use crate::commands::{finish, finish_edit};
 use crate::error::{CliError, Result};
 use crate::plugins::{self, Hook};
@@ -58,7 +58,7 @@ pub fn log(app: &App, id: &str, note: &str) -> Result<()> {
 /// [`Store::set_done`]. A task that is already done is refused. Then,
 /// with worktrees enabled, the task's worktrees are released (plan 4.2
 /// step 3); a failure there is a warning, the task is closed either way.
-pub fn done(app: &App, id: &str, note: Option<&str>, yes: bool) -> Result<()> {
+pub fn done(app: &App, id: &str, note: Option<&str>) -> Result<()> {
     let id = App::task_id(id)?;
     let mut store = app.open_store()?;
     let clock = app.clock()?;
@@ -68,9 +68,8 @@ pub fn done(app: &App, id: &str, note: Option<&str>, yes: bool) -> Result<()> {
     }
     let mut text = format!("[{id}] done: {}\n", task.title);
     if app.worktrees() {
-        let approval = Approval::from_yes(yes);
         let report = &mut worktree_hooks::to_terminal(app);
-        match worktree::release(app, &task, Releasing::closing(), approval, report) {
+        match worktree::release(app, &task, Releasing::closing(), report) {
             Ok(lines) => text.push_str(&worktree::prefixed(&id, &lines)),
             Err(e) => app.out.warn(&format!("worktrees not released: {e}")),
         }

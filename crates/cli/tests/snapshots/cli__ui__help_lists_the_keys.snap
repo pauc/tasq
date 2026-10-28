@@ -8,10 +8,10 @@ Usage: tasq ui [OPTIONS]
 
 Options:
       --profile <NAME>
-          Apply the `[profile.<NAME>]` block of the config files (also TASQ_PROFILE)
+          Apply the profile file `profiles/<NAME>.toml` of the config directory (also TASQ_PROFILE)
 
-      --config <FILE>
-          Use FILE instead of the global config file (also TASQ_CONFIG)
+      --config-dir <DIR>
+          Read the configuration from DIR instead of ~/.config/tasq (also TASQ_CONFIG_DIR)
 
       --set <KEY=VALUE>
           Override one config key, e.g. --set store.name=work. Repeatable

@@ -141,8 +141,8 @@ fn edit(app: &App, command: EditCommand) -> Result<()> {
             commands::edit::set(app, &id, &value, note.into_note().as_deref())
         }
         EditCommand::Log { id, note } => commands::edit::log(app, &id, &note),
-        EditCommand::Done { id, note, yes } => {
-            commands::edit::done(app, &id, note.into_note().as_deref(), yes)
+        EditCommand::Done { id, note } => {
+            commands::edit::done(app, &id, note.into_note().as_deref())
         }
         EditCommand::Reopen { id, status, note } => {
             commands::edit::reopen(app, &id, status.as_deref(), note.into_note().as_deref())
@@ -188,14 +188,14 @@ pub fn worktrees_enabled(global: &GlobalArgs) -> bool {
     load_options(global)
         .ok()
         .and_then(|opts| Config::load(&opts).ok())
-        .is_some_and(|loaded| loaded.config.worktree.enabled)
+        .is_some_and(|loaded| loaded.config.worktrees_enabled)
 }
 
 /// [`LoadOptions`] from the process (cwd, `$HOME`, environment) plus the
-/// `--config`, `--profile` and `--set` flags.
+/// `--config-dir`, `--profile` and `--set` flags.
 pub fn load_options(global: &GlobalArgs) -> Result<LoadOptions> {
     let mut opts = LoadOptions::from_process()?;
-    opts.explicit_file.clone_from(&global.config);
+    opts.config_dir.clone_from(&global.config_dir);
     opts.profile.clone_from(&global.profile);
     opts.overrides.clone_from(&global.set);
     Ok(opts)
@@ -227,14 +227,13 @@ impl App {
         &self.loaded.config
     }
 
-    /// The configuration as loaded from `dir` instead of the current
-    /// directory, so the `.tasq.toml` next to a repository applies wherever
-    /// tasq runs (the worktree commands, plan 4.4). Everything else (the
-    /// global file, `--config`, `--profile`, `--set`, the environment) is as
-    /// for [`App::config`].
-    pub fn config_at(&self, dir: &std::path::Path) -> Result<Loaded> {
+    /// The configuration for the worktree commands of the repository
+    /// whose main checkout is `main`: [`App::config`] plus the repository
+    /// config whose `path` is `main` (ADR-0031). The working directory
+    /// stays the real one, so a relative `--config-dir` means the same here.
+    pub fn config_for_repo(&self, main: &std::path::Path) -> Result<Loaded> {
         let mut opts = self.opts.clone();
-        opts.cwd = dir.to_path_buf();
+        opts.repo = Some(main.to_path_buf());
         Ok(Config::load(&opts)?)
     }
 
@@ -254,9 +253,9 @@ impl App {
         self.config().workflow.workflow()
     }
 
-    /// Whether worktrees are enabled (`worktree.enabled`, ADR 0022).
+    /// Whether worktrees are enabled (`worktrees_enabled`, ADR 0031).
     pub fn worktrees(&self) -> bool {
-        self.config().worktree.enabled
+        self.config().worktrees_enabled
     }
 
     /// A task as JSON, without `worktrees` when they are disabled.

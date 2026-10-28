@@ -11,15 +11,20 @@
 //! leaves every other key alone):
 //!
 //! 1. built-in defaults ([`Config::default`]);
-//! 2. the global file, `$XDG_CONFIG_HOME/tasq/config.toml` or
-//!    `~/.config/tasq/config.toml`, replaced by `TASQ_CONFIG` / `--config`
-//!    when given (that file must then exist);
-//! 3. the nearest `.tasq.toml` walking up from the working directory (see
-//!    [`project_file`] for the stop rule);
-//! 4. the selected profile, a `[profile.<name>]` block from any of the files
-//!    above, chosen with `--profile` or `TASQ_PROFILE`;
+//! 2. the global file, `config.toml` in the config directory: the one named
+//!    by `--config-dir` / `TASQ_CONFIG_DIR` (which must then exist), else
+//!    `$XDG_CONFIG_HOME/tasq`, else `~/.config/tasq` (see [`config_dir`]);
+//! 3. the selected profile, `profiles/<name>.toml` in the config directory
+//!    (the same shape as `config.toml`), chosen with `--profile` or
+//!    `TASQ_PROFILE`; a `[profile.<name>]` table in any file is an error;
+//! 4. the repository config, for the worktree commands only: the file in
+//!    `repos/` of the config directory whose `path` is the main checkout
+//!    named by [`LoadOptions::repo`]; it holds `path` and `[worktree]`;
 //! 5. `TASQ_*` environment variables (see [`ENV_KEYS`]);
 //! 6. explicit overrides passed by the command line (`--set key=value`).
+//!
+//! Nothing is read from the working directory or from a repository
+//! (ADR-0031).
 //!
 //! Each layer is a partial TOML document. They are deep-merged as TOML
 //! tables, then the result is deserialised into [`Config`] once, so the
@@ -39,6 +44,8 @@
 //! ([`default_data_dir`]), and records it in the defaults layer.
 //!
 //! ```toml
+//! worktrees_enabled = false
+//!
 //! [store]
 //! name = "default"
 //!
@@ -93,7 +100,6 @@
 //! [plugin]
 //!
 //! [worktree]
-//! enabled = false
 //! path = "{{project_parent}}/{{project_name}}-{{branch_safe}}"
 //! branch = "{{id}}-{{slug}}"
 //! base = "origin/HEAD"
@@ -128,9 +134,9 @@ use crate::worktree::lifecycle::DeleteBranch;
 
 pub use self::error::ConfigError;
 pub use self::load::{
-    ENV_CONFIG, ENV_DATA_DIR, ENV_KEYS, ENV_PROFILE, ENV_SET, ENV_STORE_NAME, GLOBAL_FILE, Layer,
-    LoadOptions, Loaded, Origin, PROJECT_FILE, default_data_dir, global_file, parse_env_set,
-    project_file,
+    ENV_CONFIG_DIR, ENV_DATA_DIR, ENV_KEYS, ENV_PROFILE, ENV_SET, ENV_STORE_NAME, GLOBAL_FILE,
+    Layer, LoadOptions, Loaded, Origin, REPOS_DIR, RepoConfig, config_dir, default_data_dir,
+    named_config_dir, parse_env_set, repo_configs,
 };
 pub use self::path::{contract_tilde, expand_tilde};
 
@@ -149,6 +155,9 @@ pub struct Config {
     /// `$XDG_DATA_HOME` nor a home directory is known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_dir: Option<PathBuf>,
+    /// Whether worktrees exist at all (ADR 0022, ADR 0031). Off hides every
+    /// worktree command, field and section display. Default: `false`.
+    pub worktrees_enabled: bool,
     /// Which store under `data_dir` the tasks live in.
     pub store: StoreConfig,
     /// The status workflow.
@@ -174,7 +183,8 @@ pub struct Config {
     /// are: tasq checks no key inside, so a value can be anything TOML
     /// holds.
     pub plugin: BTreeMap<String, toml::Table>,
-    /// Worktrees per task, off unless `enabled` (`[worktree]`, ADR 0022).
+    /// Worktrees per task, off unless `worktrees_enabled` (`[worktree]`,
+    /// ADR 0022).
     pub worktree: WorktreeConfig,
 }
 
@@ -252,6 +262,13 @@ fn removed_for_worktree<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Remove
     ))
 }
 
+fn moved_to_worktrees_enabled<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Removed, D::Error> {
+    Err(serde::de::Error::custom(
+        "worktree.enabled moved to the top level: \
+         set worktrees_enabled above any table (docs/config.md, \"Worktrees\")",
+    ))
+}
+
 fn not_yet_copy_ignored<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Removed, D::Error> {
     Err(serde::de::Error::custom(
         "worktree.copy_ignored is not implemented yet; \
@@ -266,9 +283,10 @@ fn not_yet_copy_ignored<'de, D: serde::Deserializer<'de>>(_: D) -> Result<Remove
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WorktreeConfig {
-    /// Whether the feature exists at all. Off hides every worktree command,
-    /// field and section display. Default: `false`.
-    pub enabled: bool,
+    /// Moved to [`Config::worktrees_enabled`] (ADR 0031); setting it is an
+    /// error naming the new key.
+    #[serde(skip_serializing, deserialize_with = "moved_to_worktrees_enabled")]
+    pub(crate) enabled: Removed,
     /// Where a declared worktree lives, rendered when it is declared.
     /// Default: `{{project_parent}}/{{project_name}}-{{branch_safe}}`.
     pub path: String,
@@ -305,7 +323,7 @@ pub struct WorktreeConfig {
 impl Default for WorktreeConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: Removed,
             path: "{{project_parent}}/{{project_name}}-{{branch_safe}}".to_owned(),
             branch: "{{id}}-{{slug}}".to_owned(),
             base: "origin/HEAD".to_owned(),

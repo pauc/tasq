@@ -2,7 +2,7 @@
 source: crates/cli/tests/events.rs
 expression: env.normalize(&stdout(&out))
 ---
-OK    config       loaded from defaults, [ROOT]/home/.tasq.toml
+OK    config       loaded from defaults, [ROOT]/home/.config/tasq/config.toml
 OK    location     [ROOT]/home/.local/share/tasq/stores/default (data_dir from defaults, store.name from defaults)
 OK    store        store at [ROOT]/home/.local/share/tasq/stores/default, 5 task file(s)
 OK    task-files   every .md file is a task file

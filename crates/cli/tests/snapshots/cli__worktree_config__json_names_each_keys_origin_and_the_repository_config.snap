@@ -1,0 +1,47 @@
+---
+source: crates/cli/tests/cli.rs
+expression: "config_in(&env, &project, &[\"--json\"])"
+---
+{
+  "origins": {
+    "worktree.base": "[ROOT]/home/.config/tasq/repos/proj.toml",
+    "worktree.branch": "profile work ([ROOT]/home/.config/tasq/profiles/work.toml)",
+    "worktree.copies": "defaults",
+    "worktree.delete_branch": "defaults",
+    "worktree.hooks.post-create": "[ROOT]/home/.config/tasq/repos/proj.toml",
+    "worktree.hooks.post-remove": "defaults",
+    "worktree.hooks.pre-create": "defaults",
+    "worktree.hooks.pre-remove": "defaults",
+    "worktree.on_create": "defaults",
+    "worktree.on_done": "env",
+    "worktree.path": "defaults",
+    "worktree.symlinks": "defaults",
+    "worktree.templates": "defaults",
+    "worktree.variables.service": "[ROOT]/home/.config/tasq/repos/proj.toml"
+  },
+  "repository": "[ROOT]/home/proj",
+  "repository_config": "[ROOT]/home/.config/tasq/repos/proj.toml",
+  "schema": 1,
+  "worktree": {
+    "base": "origin/main",
+    "branch": "pau/{{id}}",
+    "copies": [],
+    "delete_branch": "safe",
+    "hooks": {
+      "post-create": [
+        "make setup"
+      ],
+      "post-remove": [],
+      "pre-create": [],
+      "pre-remove": []
+    },
+    "on_create": "auto",
+    "on_done": "keep",
+    "path": "{{project_parent}}/{{project_name}}-{{branch_safe}}",
+    "symlinks": [],
+    "templates": [],
+    "variables": {
+      "service": "api"
+    }
+  }
+}

@@ -1,54 +1,16 @@
-//! Worktree hooks (plan 4.5, WT-204): which lines may run, asking for
-//! approval, the trust store on disk, and running them.
+//! Worktree hooks (plan 4.5, WT-204): rendering them and running them.
 //!
-//! Hooks from the global configuration (or `--config`, `--set`, the
-//! environment) run without asking. Hooks from a repository's own
-//! `.tasq.toml`, which can arrive with a clone, run only once approved:
-//! stored in the trust file, `--yes` for one run, or a yes to the question
-//! the caller asks. Unapproved, they are skipped with a warning. The
-//! decisions are [`tasq_core::worktree::hooks`]'s.
+//! Every hook comes from the user's config directory, so every hook runs
+//! (ADR-0031). The decisions are [`tasq_core::worktree::hooks`]'s.
 
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use tasq_core::worktree::hooks::{
-    self, Approve, HookError, HookEvent, Hooks, Kind, TrustStore, approval,
-};
+use tasq_core::worktree::hooks::{HookError, HookEvent, Hooks, Kind};
 use tasq_core::worktree::vars::Vars;
 use thiserror::Error;
 
 use crate::process::{Finished, run};
 use crate::settings::RepoSettings;
-
-/// How lines that need approval and have none are treated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Approval {
-    /// `--yes`: approved for this run.
-    Given,
-    /// Asked with [`Approver::ask`].
-    Ask,
-    /// Never asked (the TUI owns the terminal): skipped with a warning.
-    Skip,
-}
-
-impl Approval {
-    /// `Given` for `--yes`, else `Ask`.
-    pub fn from_yes(yes: bool) -> Self {
-        if yes { Self::Given } else { Self::Ask }
-    }
-}
-
-/// How the lines that need approval get it.
-#[derive(Debug, Clone)]
-pub struct Approver {
-    /// What to do about lines with no approval.
-    pub approval: Approval,
-    /// Where approvals are kept; `None` when there is nowhere to keep them.
-    pub trust_file: Option<PathBuf>,
-    /// Asks a yes/no question ([`Approval::Ask`]); the caller owns the
-    /// terminal.
-    pub ask: fn(&str) -> io::Result<bool>,
-}
 
 /// Why hooks could not be prepared or a blocking one failed.
 #[derive(Debug, Error)]
@@ -59,165 +21,33 @@ pub enum HookFailure {
     /// A blocking (`pre-*`) hook failed: the message says which and why.
     #[error("{0}")]
     Blocking(String),
-    /// There is no trust file to read approvals from.
-    #[error("cannot tell where to keep hook approvals: HOME is not set")]
-    NoTrustFile,
-    /// The trust file cannot be read, parsed or written.
-    #[error("{}: {message}", .path.display())]
-    TrustFile {
-        /// The trust file.
-        path: PathBuf,
-        /// What went wrong.
-        message: String,
-    },
-    /// Asking failed.
-    #[error(transparent)]
-    Ask(#[from] io::Error),
 }
 
 /// The hooks of `kinds` for a worktree of the repository `settings`
-/// describes, rendered with `vars`. Lines from the repository's own file
-/// that are not approved yet are approved for this run
-/// ([`Approval::Given`]), asked about ([`Approval::Ask`]; a yes is
-/// stored), or skipped with a warning; a dry run neither asks nor stores
-/// nor warns.
+/// describes, rendered with `vars`.
 ///
 /// # Errors
 ///
-/// [`HookFailure`] for a line that does not render, an unreadable trust
-/// file, or a question that cannot be asked.
+/// [`HookFailure::Line`] for a line that does not render.
 pub fn prepare<const N: usize>(
     settings: &RepoSettings,
     kinds: [Kind; N],
     vars: &Vars,
-    approver: &Approver,
-    dry_run: bool,
-    report: &mut dyn FnMut(HookEvent),
 ) -> Result<[Hooks; N], HookFailure> {
-    let pending = pending(settings, &kinds, approver.trust_file.as_deref())?;
-    let allowed = pending.is_empty()
-        || match approver.approval {
-            Approval::Given => true,
-            Approval::Ask => approve(settings, &pending, dry_run, approver)?,
-            Approval::Skip => false,
-        };
     let mut failed = None;
     let all = kinds.map(|kind| {
-        let skip = |line: &str| !allowed && pending.iter().any(|(k, l)| *k == kind && l == line);
-        Hooks::render(kind, &settings.config.hooks, vars, skip).unwrap_or_else(|e| {
+        Hooks::render(kind, &settings.config.hooks, vars).unwrap_or_else(|e| {
             failed.get_or_insert(e);
             Hooks {
                 kind,
                 run: Vec::new(),
-                skipped: Vec::new(),
             }
         })
     });
-    if let Some(e) = failed {
-        return Err(e.into());
+    match failed {
+        Some(e) => Err(e.into()),
+        None => Ok(all),
     }
-    if !allowed && !dry_run {
-        let file = settings.repo_file.as_deref().unwrap_or(Path::new(""));
-        report(HookEvent::Warning(hooks::not_approved(
-            file,
-            &pending,
-            &settings.main,
-        )));
-    }
-    Ok(all)
-}
-
-/// The lines of `kinds` that come from the repository's file and are not
-/// in the trust store.
-fn pending(
-    settings: &RepoSettings,
-    kinds: &[Kind],
-    trust_file: Option<&Path>,
-) -> Result<Vec<(Kind, String)>, HookFailure> {
-    let Some(file) = &settings.repo_file else {
-        return Ok(Vec::new());
-    };
-    let store = read_store(trust_file)?;
-    Ok(hooks::pending(
-        &store,
-        file,
-        &settings.untrusted,
-        kinds,
-        &settings.config.hooks,
-    ))
-}
-
-/// Asks whether the pending lines may run (never on a dry run); a yes
-/// approves every hook line of the repository's file and stores that.
-fn approve(
-    settings: &RepoSettings,
-    pending: &[(Kind, String)],
-    dry_run: bool,
-    approver: &Approver,
-) -> Result<bool, HookFailure> {
-    match approval(settings.repo_file.as_deref(), pending, dry_run) {
-        Approve::Yes => Ok(true),
-        Approve::No => Ok(false),
-        Approve::Ask(question) => {
-            let yes = (approver.ask)(&question)?;
-            if yes {
-                trust(settings, approver.trust_file.as_deref())?;
-            }
-            Ok(yes)
-        }
-    }
-}
-
-/// Stores every hook line the repository's file sets as approved, in
-/// `trust_file`; the lines, by kind. Nothing to store without such a file.
-///
-/// # Errors
-///
-/// [`HookFailure::NoTrustFile`] or [`HookFailure::TrustFile`] when the
-/// trust file cannot be read or written.
-pub fn trust(
-    settings: &RepoSettings,
-    trust_file: Option<&Path>,
-) -> Result<Vec<(Kind, String)>, HookFailure> {
-    let Some(file) = &settings.repo_file else {
-        return Ok(Vec::new());
-    };
-    let mut store = read_store(trust_file)?;
-    let mut approved = Vec::new();
-    for &kind in &settings.untrusted {
-        let lines = kind.lines(&settings.config.hooks);
-        store.approve(file, lines);
-        approved.extend(lines.iter().map(|line| (kind, line.clone())));
-    }
-    if !approved.is_empty() {
-        write_store(trust_file, &store)?;
-    }
-    Ok(approved)
-}
-
-fn read_store(trust_file: Option<&Path>) -> Result<TrustStore, HookFailure> {
-    let file = trust_file.ok_or(HookFailure::NoTrustFile)?;
-    let failed = |message: String| HookFailure::TrustFile {
-        path: file.to_path_buf(),
-        message,
-    };
-    match std::fs::read_to_string(file) {
-        Ok(text) => TrustStore::parse(&text).map_err(|e| failed(e.to_string())),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(TrustStore::default()),
-        Err(e) => Err(failed(e.to_string())),
-    }
-}
-
-fn write_store(trust_file: Option<&Path>, store: &TrustStore) -> Result<(), HookFailure> {
-    let file = trust_file.ok_or(HookFailure::NoTrustFile)?;
-    let failed = |e: io::Error| HookFailure::TrustFile {
-        path: file.to_path_buf(),
-        message: e.to_string(),
-    };
-    if let Some(dir) = file.parent() {
-        std::fs::create_dir_all(dir).map_err(failed)?;
-    }
-    std::fs::write(file, store.to_toml()).map_err(failed)
 }
 
 /// Runs `hooks` in `cwd` with exactly `env`. A failure of a blocking

@@ -31,7 +31,6 @@ use crate::app::App;
 use crate::cli::GlobalArgs;
 use crate::commands::create::{Asked, new_task_worktree};
 use crate::commands::worktree::{self, Releasing};
-use crate::commands::worktree_hooks::Approval;
 use crate::error::{CliError, Result};
 use crate::plugins::{self, Hook, HookEvent};
 
@@ -191,8 +190,9 @@ impl Host for CliHost<'_> {
     }
 
     /// The same `post-done` hooks as `tasq done`, with the same document,
-    /// then the same release of its worktrees, never asking about hooks
-    /// (the UI owns the terminal): unapproved ones are skipped.
+    /// then the same release of its worktrees, with the hooks' warnings
+    /// collected into the error rather than printed (the UI owns the
+    /// terminal).
     fn after_done(&mut self, task: &Task) -> std::result::Result<(), String> {
         let hooks = self.hooks(Hook::PostDone, task);
         if !self.app.worktrees() {
@@ -205,7 +205,7 @@ impl Host for CliHost<'_> {
             }
         };
         let how = Releasing::closing();
-        if let Err(e) = worktree::release(self.app, task, how, Approval::Skip, &mut collect) {
+        if let Err(e) = worktree::release(self.app, task, how, &mut collect) {
             warnings.push(format!("worktrees not released: {e}"));
         }
         if warnings.is_empty() {
@@ -323,15 +323,15 @@ fn wait_for(command: &mut Command, name: &str) -> std::result::Result<(), String
 }
 
 /// The global flags that select the configuration, as arguments for a
-/// child `tasq`: `--profile`, `--config` and every `--set`. Output flags
+/// child `tasq`: `--profile`, `--config-dir` and every `--set`. Output flags
 /// are left to the child, which has the terminal.
 pub fn global_args(global: &GlobalArgs) -> Vec<String> {
     let mut args = Vec::new();
     if let Some(profile) = &global.profile {
         args.extend(["--profile".to_owned(), profile.clone()]);
     }
-    if let Some(config) = &global.config {
-        args.extend(["--config".to_owned(), config.display().to_string()]);
+    if let Some(dir) = &global.config_dir {
+        args.extend(["--config-dir".to_owned(), dir.display().to_string()]);
     }
     for (key, value) in &global.set {
         args.extend(["--set".to_owned(), format!("{key}={value}")]);
@@ -354,9 +354,12 @@ mod tests {
     }
     use crate::output::Output;
 
-    /// An app whose only configuration is `.tasq.toml` in `dir` with `text`.
+    /// An app whose home is `dir` and whose only configuration is its
+    /// `config.toml` with `text`.
     fn app_in(dir: &Path, text: &str) -> App {
-        std::fs::write(dir.join(".tasq.toml"), text).unwrap();
+        let config_dir = dir.join(".config").join("tasq");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("config.toml"), text).unwrap();
         let mut opts = LoadOptions::new(dir);
         opts.home = Some(dir.to_path_buf());
         let loaded = Config::load(&opts).unwrap();
@@ -490,7 +493,7 @@ mod tests {
             &project,
             &["worktree", "add", "-q", "-b", "b", wt.to_str().unwrap()],
         );
-        let mut app = app_in(dir, "[worktree]\nenabled = true\n");
+        let mut app = app_in(dir, "worktrees_enabled = true\n");
         for key in ["PATH", "HOME"] {
             if let Ok(value) = std::env::var(key) {
                 app.opts.env.insert(key.to_owned(), value);
@@ -517,22 +520,29 @@ mod tests {
             ))
         );
         std::fs::remove_file(wt.join("scratch")).unwrap();
-        // Hooks of the repository's own file are never asked about here.
+        // Hooks of the repository config run without asking: a failing
+        // pre-remove keeps the worktree.
+        let repos = dir.join(".config").join("tasq").join("repos");
+        std::fs::create_dir_all(&repos).unwrap();
+        let config = repos.join("proj.toml");
         std::fs::write(
-            dir.join("proj").join(".git").join("info").join("exclude"),
-            ".tasq.toml\n",
+            &config,
+            format!(
+                "path = \"{}\"\n[worktree.hooks]\npre-remove = [\"/bin/false\"]\n",
+                dir.join("proj").display()
+            ),
         )
         .unwrap();
-        std::fs::write(
-            dir.join("proj").join(".tasq.toml"),
-            "[worktree.hooks]\npre-remove = [\"/bin/false\"]\n",
-        )
-        .unwrap();
-        let warning = host(&app).after_done(&task).unwrap_err();
-        assert!(
-            warning.starts_with("hooks from ") && warning.contains("were skipped"),
-            "{warning}"
+        assert_eq!(
+            host(&app).after_done(&task),
+            Err(format!(
+                "kept worktree {}: pre-remove hook \"/bin/false\" failed: exit status 1",
+                wt.display()
+            ))
         );
+        assert!(wt.exists(), "kept");
+        std::fs::remove_file(&config).unwrap();
+        assert_eq!(host(&app).after_done(&task), Ok(()));
         assert!(!wt.exists(), "removed");
         assert_eq!(host(&app).after_done(&task), Ok(()), "nothing left");
         let off = app_in(&dir, "");
@@ -609,7 +619,7 @@ post-done = [
         std::fs::create_dir_all(repo.join(".git")).unwrap();
         let plain = root.join("plain");
         std::fs::create_dir(&plain).unwrap();
-        let app = app_in(&root, "[worktree]\nenabled = true\n");
+        let app = app_in(&root, "worktrees_enabled = true\n");
         let mut task = Task::new(TaskId::from(9), "Fresh start");
         task.project = Some(repo.clone());
         let at = |name: &str| root.join(name);
@@ -695,7 +705,7 @@ post-create = [
         assert_eq!(global_args(&GlobalArgs::default()), Vec::<String>::new());
         let global = GlobalArgs {
             profile: Some("work".into()),
-            config: Some("/etc/tasq.toml".into()),
+            config_dir: Some("/etc/tasq".into()),
             set: vec![("store.name".into(), "x".into())],
             json: true,
             no_color: true,
@@ -706,8 +716,8 @@ post-create = [
             [
                 "--profile",
                 "work",
-                "--config",
-                "/etc/tasq.toml",
+                "--config-dir",
+                "/etc/tasq",
                 "--set",
                 "store.name=x"
             ]

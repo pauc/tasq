@@ -11,11 +11,15 @@ use super::{Config, ConfigError, ForgeKind, expand_tilde};
 
 /// Name of the global file inside the config directory.
 pub const GLOBAL_FILE: &str = "config.toml";
-/// Name of the per-project file searched upwards from the working directory.
-pub const PROJECT_FILE: &str = ".tasq.toml";
-/// Environment variable naming a file that replaces the global one.
-pub const ENV_CONFIG: &str = "TASQ_CONFIG";
-/// Environment variable selecting a `[profile.<name>]`.
+/// Directory of profile files inside the config directory: the profile
+/// `<name>` is `profiles/<name>.toml` (ADR-0031).
+pub const PROFILES_DIR: &str = "profiles";
+/// Directory of repository configs inside the config directory: each
+/// `repos/*.toml` names one main checkout in `path` (ADR-0031).
+pub const REPOS_DIR: &str = "repos";
+/// Environment variable naming the config directory (ADR-0031).
+pub const ENV_CONFIG_DIR: &str = "TASQ_CONFIG_DIR";
+/// Environment variable selecting a profile (`profiles/<name>.toml`).
 pub const ENV_PROFILE: &str = "TASQ_PROFILE";
 /// Environment variable carrying `key=value` overrides, one per line, the
 /// same way `--set` does. It is how `tasq` hands its `--set` flags to the
@@ -51,7 +55,7 @@ pub const ENV_STORE_NAME: &str = "TASQ_STORE_NAME";
 /// | `TASQ_SUMMARY_MODEL` | `report.summary.model` |
 /// | `TASQ_SUMMARY_COMMAND` | `report.summary.command` |
 /// | `TASQ_SUMMARY_PROMPT_FILE` | `report.summary.prompt_file` |
-/// | `TASQ_WORKTREE_ENABLED` | `worktree.enabled` |
+/// | `TASQ_WORKTREES_ENABLED` | `worktrees_enabled` |
 /// | `TASQ_WORKTREE_PATH` | `worktree.path` |
 /// | `TASQ_WORKTREE_BRANCH` | `worktree.branch` |
 /// | `TASQ_WORKTREE_BASE` | `worktree.base` |
@@ -60,7 +64,7 @@ pub const ENV_STORE_NAME: &str = "TASQ_STORE_NAME";
 /// | `TASQ_WORKTREE_DELETE_BRANCH` | `worktree.delete_branch` |
 ///
 /// Values are converted like `--set` values (see [`LoadOptions::overrides`]).
-/// A variable set to the empty string is treated as unset. [`ENV_CONFIG`],
+/// A variable set to the empty string is treated as unset. [`ENV_CONFIG_DIR`],
 /// [`ENV_PROFILE`] and [`ENV_SET`] are not keys and are handled separately;
 /// [`ENV_SET`] entries belong to the same layer as these variables and win
 /// over them for the same key.
@@ -84,7 +88,7 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("TASQ_SUMMARY_MODEL", "report.summary.model"),
     ("TASQ_SUMMARY_COMMAND", "report.summary.command"),
     ("TASQ_SUMMARY_PROMPT_FILE", "report.summary.prompt_file"),
-    ("TASQ_WORKTREE_ENABLED", "worktree.enabled"),
+    ("TASQ_WORKTREES_ENABLED", "worktrees_enabled"),
     ("TASQ_WORKTREE_PATH", "worktree.path"),
     ("TASQ_WORKTREE_BRANCH", "worktree.branch"),
     ("TASQ_WORKTREE_BASE", "worktree.base"),
@@ -96,18 +100,23 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
 /// Everything [`Config::load`] needs, injected so loading is pure.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LoadOptions {
-    /// Directory the search for [`PROJECT_FILE`] starts from. Should be
-    /// absolute, otherwise the walk stops at the first relative component.
+    /// The working directory, absolute: a relative `--config-dir` or
+    /// [`ENV_CONFIG_DIR`] starts here. Nothing is read from it.
     pub cwd: PathBuf,
     /// The user's home, for `~` expansion and the default config directory.
     /// `None` when `$HOME` is unset.
     pub home: Option<PathBuf>,
     /// The process environment (or any subset of it).
     pub env: BTreeMap<String, String>,
-    /// File replacing the global one (`--config`). Wins over [`ENV_CONFIG`].
-    pub explicit_file: Option<PathBuf>,
+    /// Config directory (`--config-dir`). Wins over [`ENV_CONFIG_DIR`].
+    pub config_dir: Option<PathBuf>,
     /// Profile to apply (`--profile`). Wins over [`ENV_PROFILE`].
     pub profile: Option<String>,
+    /// The main checkout of the repository the worktree commands work on,
+    /// absolute and already resolved by the caller. Selects the
+    /// repository config whose `path` is exactly this directory; `None`
+    /// reads no repository config.
+    pub repo: Option<PathBuf>,
     /// Final overrides as `(key path, value)`, for example
     /// `("ui.no_osc8", "true")`. The value is converted to the type of the
     /// key: `true`/`false`/`yes`/`no`/`1`/`0`/`on`/`off` for booleans, a
@@ -126,7 +135,7 @@ impl LoadOptions {
     }
 
     /// Options from the real process: current directory, `$HOME` and the
-    /// whole environment. `explicit_file`, `profile` and `overrides` stay
+    /// whole environment. `config_dir`, `profile` and `overrides` stay
     /// empty for the command line to fill.
     ///
     /// Reason: reads process state, nothing to assert in a unit test.
@@ -160,13 +169,15 @@ pub enum Origin {
     Defaults,
     /// A config file.
     File(PathBuf),
-    /// A `[profile.<name>]` block in a config file.
+    /// A profile file, `profiles/<name>.toml` in the config directory.
     Profile {
         /// The profile name.
         name: String,
-        /// The file defining the block.
+        /// The profile file.
         file: PathBuf,
     },
+    /// A repository config, `repos/<any>.toml` in the config directory.
+    Repo(PathBuf),
     /// `TASQ_*` environment variables.
     Env,
     /// Overrides passed in [`LoadOptions::overrides`].
@@ -177,7 +188,7 @@ impl Origin {
     /// The file behind this origin, if it is one.
     pub fn path(&self) -> Option<&Path> {
         match self {
-            Self::File(p) | Self::Profile { file: p, .. } => Some(p),
+            Self::File(p) | Self::Profile { file: p, .. } | Self::Repo(p) => Some(p),
             Self::Defaults | Self::Env | Self::Overrides => None,
         }
     }
@@ -187,10 +198,8 @@ impl fmt::Display for Origin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Defaults => f.write_str("defaults"),
-            Self::File(p) => write!(f, "{}", p.display()),
-            Self::Profile { name, file } => {
-                write!(f, "[profile.{name}] in {}", file.display())
-            }
+            Self::File(p) | Self::Repo(p) => write!(f, "{}", p.display()),
+            Self::Profile { name, file } => write!(f, "profile {name} ({})", file.display()),
             Self::Env => f.write_str("env"),
             Self::Overrides => f.write_str("--set"),
         }
@@ -216,8 +225,11 @@ pub struct Loaded {
     pub layers: Vec<Layer>,
     /// The profile that was applied, if any.
     pub profile: Option<String>,
-    /// Every profile name defined in the loaded files, sorted.
+    /// Every profile in the config directory: the stems of
+    /// `profiles/*.toml`, sorted.
     pub profiles: Vec<String>,
+    /// The repository config that matched [`LoadOptions::repo`], if any.
+    pub repo: Option<PathBuf>,
 }
 
 impl Loaded {
@@ -288,37 +300,38 @@ fn covers(set: &str, asked: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('.'))
 }
 
-/// The nearest [`PROJECT_FILE`] from `cwd` upwards.
-///
-/// The walk checks `cwd` and each ancestor up to the filesystem root. When
-/// `home` is `cwd` or one of its ancestors the walk stops after checking
-/// `home` itself: a `~/.tasq.toml` is a legitimate per-user default, but
-/// nothing above the home directory is this user's project.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
-)]
-pub fn project_file(cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
-    for dir in cwd.ancestors() {
-        let candidate = dir.join(PROJECT_FILE);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        if home == Some(dir) {
-            break;
-        }
-    }
-    None
+/// The config directory: the one named by `--config-dir` or
+/// [`ENV_CONFIG_DIR`] (`~` expanded, relative to `cwd`), else
+/// `$XDG_CONFIG_HOME/tasq`, else `~/.config/tasq`, else `None` when none is
+/// known (ADR-0031).
+pub fn config_dir(opts: &LoadOptions) -> Option<PathBuf> {
+    named_config_dir(opts)
+        .map(|(dir, _)| dir)
+        .or_else(|| default_config_dir(opts))
 }
 
-/// The global file: `$XDG_CONFIG_HOME/tasq/config.toml`, else
-/// `~/.config/tasq/config.toml`, else `None` when neither is known.
-pub fn global_file(opts: &LoadOptions) -> Option<PathBuf> {
-    let dir = match opts.env_nonempty("XDG_CONFIG_HOME") {
+/// The config directory named by `--config-dir` or [`ENV_CONFIG_DIR`],
+/// with `~` expanded and made absolute against `cwd`, and which of the two
+/// named it. `None` when neither names one (an empty variable is unset).
+pub fn named_config_dir(opts: &LoadOptions) -> Option<(PathBuf, &'static str)> {
+    let (dir, named_by) = match &opts.config_dir {
+        Some(dir) => (dir.clone(), "--config-dir"),
+        None => (
+            PathBuf::from(opts.env_nonempty(ENV_CONFIG_DIR)?),
+            ENV_CONFIG_DIR,
+        ),
+    };
+    let dir = opts.cwd.join(expand_tilde(&dir, opts.home.as_deref()));
+    Some((dir, named_by))
+}
+
+/// `$XDG_CONFIG_HOME/tasq`, else `~/.config/tasq`.
+fn default_config_dir(opts: &LoadOptions) -> Option<PathBuf> {
+    let base = match opts.env_nonempty("XDG_CONFIG_HOME") {
         Some(xdg) => PathBuf::from(xdg),
         None => opts.home.as_ref()?.join(".config"),
     };
-    Some(dir.join("tasq").join(GLOBAL_FILE))
+    Some(base.join("tasq"))
 }
 
 /// The default `data_dir`: `$XDG_DATA_HOME/tasq/stores`, else
@@ -332,15 +345,15 @@ pub fn default_data_dir(opts: &LoadOptions) -> Option<PathBuf> {
     Some(dir.join("tasq").join("stores"))
 }
 
-/// Shape of one file: a partial [`Config`] plus `[profile.<name>]` blocks.
+/// Shape of one file: a partial [`Config`].
 ///
 /// Mirrors the sections of [`Config`] so that each file is checked for
-/// unknown keys and bad values with its own spans. A profile body is a
-/// partial [`Config`], so profiles cannot nest.
+/// unknown keys and bad values with its own spans.
 #[derive(Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct FileSchema {
     data_dir: Option<PathBuf>,
+    worktrees_enabled: bool,
     store: super::StoreConfig,
     workflow: super::WorkflowConfig,
     work: super::WorkConfig,
@@ -353,13 +366,13 @@ struct FileSchema {
     plugins: super::PluginsConfig,
     plugin: BTreeMap<String, Table>,
     worktree: super::WorktreeConfig,
-    profile: BTreeMap<String, Config>,
 }
 
 impl Default for FileSchema {
     fn default() -> Self {
         let Config {
             data_dir,
+            worktrees_enabled,
             store,
             workflow,
             work,
@@ -375,6 +388,7 @@ impl Default for FileSchema {
         } = Config::default();
         Self {
             data_dir,
+            worktrees_enabled,
             store,
             workflow,
             work,
@@ -387,9 +401,46 @@ impl Default for FileSchema {
             plugins,
             plugin,
             worktree,
-            profile: BTreeMap::new(),
         }
     }
+}
+
+/// The `[profile.<name>]` tables of a file, with the span of each name.
+/// Anything else, a `profile` that is not a table of tables included, is
+/// left to [`FileSchema`].
+#[derive(Deserialize)]
+struct InlineProfiles {
+    profile: BTreeMap<toml::Spanned<String>, Table>,
+}
+
+/// Shape of a repository config: the main checkout it applies to and the
+/// `[worktree]` settings it sets.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepoFileSchema {
+    path: toml::Spanned<PathBuf>,
+    #[serde(default)]
+    #[expect(dead_code, reason = "only checked here; the table is merged")]
+    worktree: super::WorktreeConfig,
+}
+
+/// `worktrees_enabled` in a repository config, with the span of its
+/// value: the switch is not a repository setting.
+#[derive(Deserialize)]
+struct RepoSwitch {
+    worktrees_enabled: toml::Spanned<Value>,
+}
+
+/// The old `worktree.enabled` in a repository config; see [`RepoSwitch`].
+#[derive(Deserialize)]
+struct RepoEnabled {
+    worktree: RepoEnabledWorktree,
+}
+
+/// See [`RepoEnabled`].
+#[derive(Deserialize)]
+struct RepoEnabledWorktree {
+    enabled: toml::Spanned<Value>,
 }
 
 /// Splits the value of [`ENV_SET`] into `(key, value)` pairs: one
@@ -418,44 +469,80 @@ pub fn parse_env_set(text: &str) -> Result<Vec<(String, String)>, ConfigError> {
     Ok(pairs)
 }
 
-/// A parsed file: its config table and its profile blocks.
+/// A parsed file: its path and its config table.
 struct ParsedFile {
     path: PathBuf,
     table: Table,
-    profiles: BTreeMap<String, Table>,
 }
 
-/// Parses and validates `text` as a config file named `path`.
-fn parse_file(path: &Path, text: &str) -> Result<ParsedFile, ConfigError> {
-    let to_error = |e: toml::de::Error| {
-        let (line, column) = line_col(text, e.span().map_or(0, |s| s.start));
-        ConfigError::Parse {
-            file: path.to_path_buf(),
-            line,
-            column,
-            message: e.message().to_owned(),
-        }
-    };
+/// What a config file is, for the error a `[profile.<name>]` table in it
+/// gets: the file to move it to in the config directory, unless the file
+/// is that profile already.
+enum FileKind<'a> {
+    /// `config.toml` in this config directory.
+    Global(&'a Path),
+    /// `profiles/<name>.toml` in this config directory.
+    Profile {
+        /// The config directory.
+        config_dir: &'a Path,
+        /// The profile the file is.
+        name: &'a str,
+    },
+}
+
+/// Parses and validates `text` as a config file named `path`, of `kind`.
+fn parse_file(path: &Path, text: &str, kind: &FileKind) -> Result<ParsedFile, ConfigError> {
+    let to_error = |e: toml::de::Error| parse_error(path, text, &e);
+    if let Ok(InlineProfiles { profile }) = toml::from_str(text)
+        && let Some(name) = profile.keys().min_by_key(|name| name.span().start)
+    {
+        let (line, column) = line_col(text, name.span().start);
+        let file = path.to_path_buf();
+        let name = name.get_ref().clone();
+        return Err(match kind {
+            FileKind::Profile { name: own, .. } if *own == name => ConfigError::ProfileInProfile {
+                file,
+                line,
+                column,
+                name,
+            },
+            FileKind::Global(config_dir) | FileKind::Profile { config_dir, .. } => {
+                ConfigError::InlineProfile {
+                    target: config_dir.join(PROFILES_DIR).join(format!("{name}.toml")),
+                    file,
+                    line,
+                    column,
+                    name,
+                }
+            }
+        });
+    }
     // Typed first: `deny_unknown_fields` and the newtype validators report
     // with spans, which the generic table cannot do.
     toml::from_str::<FileSchema>(text).map_err(to_error)?;
-    let mut table: Table = toml::from_str(text).map_err(to_error)?;
-    let profiles = match table.remove("profile") {
-        Some(Value::Table(profiles)) => profiles
-            .into_iter()
-            .map(|(name, body)| match body {
-                Value::Table(t) => (name, t),
-                // Unreachable: the typed pass accepted only tables here.
-                _ => (name, Table::new()),
-            })
-            .collect(),
-        _ => BTreeMap::new(),
-    };
+    let table: Table = toml::from_str(text).map_err(to_error)?;
     Ok(ParsedFile {
         path: path.to_path_buf(),
         table,
-        profiles,
     })
+}
+
+/// A parser error in the file `path` holding `text`, at its line and
+/// column.
+fn parse_error(path: &Path, text: &str, e: &toml::de::Error) -> ConfigError {
+    error_at(path, text, e.span().map_or(0, |s| s.start), e.message())
+}
+
+/// A [`ConfigError::Parse`] with `message` at byte `offset` of `text`, the
+/// contents of the file `path`.
+fn error_at(path: &Path, text: &str, offset: usize, message: &str) -> ConfigError {
+    let (line, column) = line_col(text, offset);
+    ConfigError::Parse {
+        file: path.to_path_buf(),
+        line,
+        column,
+        message: message.to_owned(),
+    }
 }
 
 /// 1-based line and column of byte `offset` in `text`.
@@ -578,6 +665,10 @@ fn coerce(
             Some(shape) => shape,
             None => return Ok(Value::String(raw.to_owned())),
         }
+    } else if key == "worktree.enabled" {
+        return Err(ConfigError::WorktreeEnabledMoved {
+            origin: origin.clone(),
+        });
     } else {
         template_lookup(template, key).ok_or_else(|| ConfigError::UnknownKey {
             origin: origin.clone(),
@@ -677,39 +768,145 @@ fn read_file(path: &Path) -> Result<String, ConfigError> {
     })
 }
 
-/// Which files take part, in order.
+/// The config directory, checked, and its global file when there is one.
 #[expect(
     clippy::disallowed_methods,
     reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
 )]
-fn file_paths(opts: &LoadOptions) -> Result<Vec<PathBuf>, ConfigError> {
-    let explicit = opts
-        .explicit_file
+fn config_paths(opts: &LoadOptions) -> Result<(Option<PathBuf>, Option<PathBuf>), ConfigError> {
+    let dir = match named_config_dir(opts) {
+        Some((dir, named_by)) if !dir.is_dir() => {
+            return Err(ConfigError::MissingDir { dir, named_by });
+        }
+        Some((dir, _)) => Some(dir),
+        None => default_config_dir(opts),
+    };
+    let global = dir
         .as_ref()
-        .map(|p| (p.clone(), "--config"))
-        .or_else(|| {
-            opts.env_nonempty(ENV_CONFIG)
-                .map(|v| (PathBuf::from(v), ENV_CONFIG))
-        });
+        .map(|dir| dir.join(GLOBAL_FILE))
+        .filter(|p| p.is_file());
+    Ok((dir, global))
+}
+
+/// A repository config: the file in [`REPOS_DIR`] and the main checkout
+/// its `path` names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoConfig {
+    /// The file, `repos/<any>.toml` in the config directory.
+    pub file: PathBuf,
+    /// Its `path`, `~` expanded.
+    pub path: PathBuf,
+}
+
+/// Every repository config in the config directory, in file name order.
+/// Fails like [`Config::load`] on a broken file or a duplicate `path`.
+pub fn repo_configs(opts: &LoadOptions) -> Result<Vec<RepoConfig>, ConfigError> {
+    let (dir, _) = config_paths(opts)?;
+    let Some(dir) = dir else {
+        return Ok(Vec::new());
+    };
+    Ok(repo_files(&dir, opts)?
+        .into_iter()
+        .map(|(main, file)| RepoConfig {
+            file: file.path,
+            path: main,
+        })
+        .collect())
+}
+
+/// The repository config in `dir`'s [`REPOS_DIR`] whose `path` is `repo`,
+/// as its path and its table without `path`. Every file is parsed, so a
+/// mistake or a duplicate `path` fails whichever repository is asked about.
+fn repo_file(
+    dir: &Path,
+    repo: &Path,
+    opts: &LoadOptions,
+) -> Result<Option<ParsedFile>, ConfigError> {
+    Ok(repo_files(dir, opts)?
+        .into_iter()
+        .find_map(|(main, file)| (main == *repo).then_some(file)))
+}
+
+/// The `*.toml` files in `dir`, sorted. None when it is absent.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "config loading reads the filesystem from core; known exception to the no-I/O rule"
+)]
+fn toml_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "toml") && path.is_file())
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// Every repository config in `dir`'s [`REPOS_DIR`], parsed, with the main
+/// checkout it names, in file name order. Two files with one `path` fail.
+fn repo_files(dir: &Path, opts: &LoadOptions) -> Result<Vec<(PathBuf, ParsedFile)>, ConfigError> {
+    let paths = toml_files(&dir.join(REPOS_DIR));
+    let mut mains: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
     let mut files = Vec::new();
-    match explicit {
-        Some((file, named_by)) => {
-            let file = expand_tilde(&file, opts.home.as_deref());
-            if !file.is_file() {
-                return Err(ConfigError::MissingFile { file, named_by });
-            }
-            files.push(file);
+    for path in paths {
+        let (main, table) = parse_repo_file(&path, &read_file(&path)?, opts.home.as_deref())?;
+        if let Some(first) = mains.get(&main) {
+            return Err(ConfigError::DuplicateRepo {
+                first: first.clone(),
+                second: path,
+                path: main,
+            });
         }
-        None => {
-            if let Some(global) = global_file(opts).filter(|p| p.is_file()) {
-                files.push(global);
-            }
-        }
-    }
-    if let Some(project) = project_file(&opts.cwd, opts.home.as_deref()) {
-        files.push(project);
+        mains.insert(main.clone(), path.clone());
+        files.push((main, ParsedFile { path, table }));
     }
     Ok(files)
+}
+
+/// Parses and validates `text` as the repository config `path`: its main
+/// checkout (`~` expanded) and its table without `path`.
+fn parse_repo_file(
+    path: &Path,
+    text: &str,
+    home: Option<&Path>,
+) -> Result<(PathBuf, Table), ConfigError> {
+    let switch = toml::from_str::<RepoSwitch>(text)
+        .map(|s| s.worktrees_enabled)
+        .or_else(|_| toml::from_str::<RepoEnabled>(text).map(|r| r.worktree.enabled));
+    if let Ok(value) = switch {
+        return Err(error_at(
+            path,
+            text,
+            value.span().start,
+            "worktrees_enabled is not a repository setting: \
+             set it in config.toml or a profile (docs/config.md, \"Worktrees\")",
+        ));
+    }
+    let schema: RepoFileSchema = toml::from_str(text).map_err(|e| parse_error(path, text, &e))?;
+    let main = expand_tilde(schema.path.get_ref(), home);
+    if main.is_relative() {
+        return Err(error_at(
+            path,
+            text,
+            schema.path.span().start,
+            "path must be absolute or start with ~/, the main checkout of a repository",
+        ));
+    }
+    let mut table: Table = toml::from_str(text).map_err(|e| parse_error(path, text, &e))?;
+    table.remove("path");
+    Ok((main, table))
+}
+
+/// The profile names in `dir`'s [`PROFILES_DIR`]: the stems of its
+/// `*.toml` files, sorted. None when the directory is absent.
+fn profile_names(dir: &Path) -> Vec<String> {
+    toml_files(&dir.join(PROFILES_DIR))
+        .into_iter()
+        .filter_map(|path| path.file_stem()?.to_str().map(str::to_owned))
+        .collect()
 }
 
 impl Config {
@@ -728,50 +925,57 @@ impl Config {
             keys: leaf_keys(&merged),
         }];
 
-        let mut files = Vec::new();
-        for path in file_paths(opts)? {
-            let text = read_file(&path)?;
-            files.push(parse_file(&path, &text)?);
-        }
-        for file in &files {
+        let (dir, global) = config_paths(opts)?;
+        // Without a config directory, errors still name `profiles/x.toml`.
+        let base = dir.clone().unwrap_or_default();
+        if let Some(path) = global {
+            let file = parse_file(&path, &read_file(&path)?, &FileKind::Global(&base))?;
             layers.push(Layer {
-                origin: Origin::File(file.path.clone()),
+                origin: Origin::File(file.path),
                 keys: leaf_keys(&file.table),
             });
-            deep_merge(&mut merged, file.table.clone());
+            deep_merge(&mut merged, file.table);
         }
 
-        let mut profiles: Vec<String> = files
-            .iter()
-            .flat_map(|f| f.profiles.keys().cloned())
-            .collect();
-        profiles.sort();
-        profiles.dedup();
+        let profiles = dir.as_deref().map(profile_names).unwrap_or_default();
         let profile = opts
             .profile
             .clone()
             .or_else(|| opts.env_nonempty(ENV_PROFILE).map(str::to_owned));
         if let Some(name) = &profile {
-            let mut found = false;
-            for file in &files {
-                if let Some(body) = file.profiles.get(name) {
-                    found = true;
-                    layers.push(Layer {
-                        origin: Origin::Profile {
-                            name: name.clone(),
-                            file: file.path.clone(),
-                        },
-                        keys: leaf_keys(body),
-                    });
-                    deep_merge(&mut merged, body.clone());
-                }
-            }
-            if !found {
+            let path = base.join(PROFILES_DIR).join(format!("{name}.toml"));
+            if !profiles.contains(name) {
                 return Err(ConfigError::UnknownProfile {
                     name: name.clone(),
+                    file: path,
                     available: profiles,
                 });
             }
+            let kind = FileKind::Profile {
+                config_dir: &base,
+                name,
+            };
+            let file = parse_file(&path, &read_file(&path)?, &kind)?;
+            layers.push(Layer {
+                origin: Origin::Profile {
+                    name: name.clone(),
+                    file: file.path,
+                },
+                keys: leaf_keys(&file.table),
+            });
+            deep_merge(&mut merged, file.table);
+        }
+
+        let mut repo = None;
+        if let (Some(dir), Some(main)) = (&dir, &opts.repo)
+            && let Some(file) = repo_file(dir, main, opts)?
+        {
+            layers.push(Layer {
+                origin: Origin::Repo(file.path.clone()),
+                keys: leaf_keys(&file.table),
+            });
+            deep_merge(&mut merged, file.table);
+            repo = Some(file.path);
         }
 
         let template = template();
@@ -810,6 +1014,7 @@ impl Config {
             layers,
             profile,
             profiles,
+            repo,
         };
         finalize(&mut loaded, opts.home.as_deref())?;
         check_store_name(&loaded)?;

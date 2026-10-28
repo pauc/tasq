@@ -27,7 +27,7 @@ use crate::commands::existing_dir;
 use crate::commands::worktree::{
     Releasing, disabled, materialize, prefixed, project_of, release, repo_settings,
 };
-use crate::commands::worktree_hooks::{self, Approval};
+use crate::commands::worktree_hooks;
 use crate::error::{CliError, Result};
 use crate::json;
 
@@ -104,27 +104,39 @@ pub fn render(rows: &[Row]) -> String {
 /// The declared worktrees to list: of task `id` when given; else of every
 /// task working in the current directory's repository (every task with
 /// `all`, or outside a repository), leaving out those of closed tasks that
-/// do not exist.
+/// do not exist. A configuration that does not load (a broken repository
+/// config fails every repository) is an error, not default settings.
 pub fn rows(app: &App, store: &dyn Store, id: Option<&TaskId>, all: bool) -> Result<Vec<Row>> {
     let tasks = match id {
         Some(id) => vec![store.get(id)?],
         None => store.list(&Filter::new().any_done())?,
     };
     let scope = listing::scope(id.is_some(), all, &app.opts.cwd);
-    Ok(listing::rows(
+    let mut failed = None;
+    let rows = listing::rows(
         &app.git(),
         &tasks,
         &scope,
         |task| project_of(app, task).ok(),
-        |project| repo_settings(app, project).ok(),
-    ))
+        |project| match repo_settings(app, project) {
+            Ok(settings) => Some(settings),
+            Err(e) => {
+                failed.get_or_insert(e);
+                None
+            }
+        },
+    );
+    match failed {
+        Some(e) => Err(e),
+        None => Ok(rows),
+    }
 }
 
-/// `tasq worktree prune [--all] [--dry-run] [--yes]`: runs `git worktree
+/// `tasq worktree prune [--all] [--dry-run]`: runs `git worktree
 /// prune` in each repository of the scope (as `ls` without an id), then
 /// releases the worktrees of its done tasks, never forcing. A task
 /// that cannot be released is a warning; the others go on.
-pub fn prune(app: &App, all: bool, yes: bool, dry_run: bool) -> Result<()> {
+pub fn prune(app: &App, all: bool, dry_run: bool) -> Result<()> {
     if !app.worktrees() {
         return Err(disabled());
     }
@@ -151,11 +163,10 @@ pub fn prune(app: &App, all: bool, yes: bool, dry_run: bool) -> Result<()> {
         }
     }
     let how = Releasing::on_demand(false, dry_run);
-    let approval = Approval::from_yes(yes);
     let mut report = worktree_hooks::to_terminal(app);
     let mut released = Vec::new();
     for task in &plan.tasks {
-        match release(app, task, how, approval, &mut report) {
+        match release(app, task, how, &mut report) {
             Ok(lines) if lines.is_empty() => {}
             Ok(lines) => released.push((task.id.clone(), lines)),
             Err(e) => app
@@ -220,25 +231,25 @@ pub fn path(app: &App, target: &str) -> Result<()> {
         return Err(disabled());
     }
     let store = app.open_store()?;
-    let dir = resolve(app, &store, target, None)?;
+    let dir = resolve(app, &store, target, false)?;
     if app.out.json_mode() {
         return app.out.json(&json::document([("path", json!(dir))]));
     }
     app.out.print(&format!("{}\n", dir.display()))
 }
 
-/// `tasq worktree switch [TARGET] [--yes]`: resolves the target (a task's
+/// `tasq worktree switch [TARGET]`: resolves the target (a task's
 /// worktree is created first), or lets the user choose one, remembers the
 /// worktree being left for `-`, and hands the directory to the shell
 /// function.
-pub fn switch(app: &App, target: Option<&str>, yes: bool) -> Result<()> {
+pub fn switch(app: &App, target: Option<&str>) -> Result<()> {
     if !app.worktrees() {
         return Err(disabled());
     }
     let store = app.open_store()?;
     let dir = match target {
-        Some(target) => resolve(app, &store, target, Some(yes))?,
-        None => choose(app, &store, yes)?,
+        Some(target) => resolve(app, &store, target, true)?,
+        None => choose(app, &store)?,
     };
     let here = git::work_tree_root(&app.opts.cwd, Path::exists).unwrap_or(&app.opts.cwd);
     let here = here.canonicalize().unwrap_or_else(|_| here.to_path_buf());
@@ -260,8 +271,8 @@ pub fn switch(app: &App, target: Option<&str>, yes: bool) -> Result<()> {
 }
 
 /// The directory `arg` names. A task's worktree that does not exist is
-/// created when `create` is `Some(yes)` (`switch`), an error otherwise.
-fn resolve(app: &App, store: &dyn Store, arg: &str, create: Option<bool>) -> Result<PathBuf> {
+/// created when `create` is set (`switch`), an error otherwise.
+fn resolve(app: &App, store: &dyn Store, arg: &str, create: bool) -> Result<PathBuf> {
     let parsed =
         target::parse(arg, Path::new(arg).is_dir()).map_err(|e| CliError::user(e.to_string()))?;
     match parsed {
@@ -308,17 +319,17 @@ fn resolve(app: &App, store: &dyn Store, arg: &str, create: Option<bool>) -> Res
 
 /// The task's first existing worktree; else, with `create`, the one
 /// [`materialize`] creates.
-fn task_dir(app: &App, task: &Task, create: Option<bool>) -> Result<PathBuf> {
+fn task_dir(app: &App, task: &Task, create: bool) -> Result<PathBuf> {
     if let Some(found) = task.worktrees.iter().find(|w| w.path.is_dir()) {
         return Ok(found.path.clone());
     }
     let id = &task.id;
-    let Some(yes) = create else {
+    if !create {
         return Err(CliError::user(format!(
             "task {id} has no worktree yet; tasq worktree switch task:{id} creates it"
         )));
-    };
-    match materialize(app, task, None, yes, false)? {
+    }
+    match materialize(app, task, None, false)? {
         Some(created) => {
             app.out
                 .print(&format!("[{id}] created worktree {}\n", created.line))?;
@@ -332,7 +343,7 @@ fn task_dir(app: &App, task: &Task, create: Option<bool>) -> Result<PathBuf> {
 
 /// The user's pick among the main checkout and the listed worktrees: with
 /// fzf when it is on `PATH`, else from a numbered list on stderr.
-fn choose(app: &App, store: &dyn Store, yes: bool) -> Result<PathBuf> {
+fn choose(app: &App, store: &dyn Store) -> Result<PathBuf> {
     enum Choice {
         Dir(PathBuf),
         Task(TaskId),
@@ -370,7 +381,7 @@ fn choose(app: &App, store: &dyn Store, yes: bool) -> Result<PathBuf> {
         .ok_or_else(|| CliError::user(format!("not a choice: {:?}", reply.trim())))?;
     match choices.swap_remove(index).1 {
         Choice::Dir(dir) => Ok(dir),
-        Choice::Task(id) => task_dir(app, &store.get(&id)?, Some(yes)),
+        Choice::Task(id) => task_dir(app, &store.get(&id)?, true),
     }
 }
 

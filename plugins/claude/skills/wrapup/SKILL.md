@@ -26,7 +26,7 @@ Then read the task as it is now:
 ```sh
 tasq view --json <id>
 tasq config show --json   # .config.workflow.statuses: the statuses you may set;
-                          # .config.worktree.enabled: whether worktrees are tracked
+                          # .config.worktrees_enabled: whether worktrees are tracked
 ```
 
 Look at `task.progress` so you do not repeat notes that are already there, and at

@@ -81,13 +81,13 @@ pub struct Cli {
 #[derive(Debug, Clone, Args, Default)]
 #[command(next_display_order = 900)]
 pub struct GlobalArgs {
-    /// Apply the `[profile.<NAME>]` block of the config files (also TASQ_PROFILE).
+    /// Apply the profile file `profiles/<NAME>.toml` of the config directory (also TASQ_PROFILE).
     #[arg(long, global = true, value_name = "NAME")]
     pub profile: Option<String>,
 
-    /// Use FILE instead of the global config file (also TASQ_CONFIG).
-    #[arg(long, global = true, value_name = "FILE")]
-    pub config: Option<PathBuf>,
+    /// Read the configuration from DIR instead of ~/.config/tasq (also TASQ_CONFIG_DIR).
+    #[arg(long, global = true, value_name = "DIR")]
+    pub config_dir: Option<PathBuf>,
 
     /// Override one config key, e.g. --set store.name=work. Repeatable.
     #[arg(long = "set", global = true, value_name = "KEY=VALUE", value_parser = parse_key_value)]
@@ -156,9 +156,6 @@ pub enum Command {
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
 
     /// Open a work session on a specific task.
@@ -179,9 +176,6 @@ pub enum Command {
         /// Print what would happen (directory, commands, prompt) and launch nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
 
     /// Show a task: rendered with glow on a terminal, plain markdown otherwise.
@@ -385,9 +379,6 @@ pub enum EditCommand {
         /// The progress note, positional or `--note`.
         #[command(flatten)]
         note: NoteArg,
-        /// Run the worktree hooks of the repository's own .tasq.toml without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
 
     /// Reopen a done task (`# [ ]`), with a status, logging a note.
@@ -678,7 +669,7 @@ action that [ui.keys] can rebind (`launch-window = \"alt+enter\"`); the
 const PLUGINS_HELP: &str = "\
 `tasq <name> [args...]` runs the executable tasq-<name> found on PATH when
 <name> is not a built-in command, with the remaining arguments verbatim and
-TASQ_BIN (this binary), TASQ_PROFILE, TASQ_CONFIG and TASQ_SET (the --set
+TASQ_BIN (this binary), TASQ_PROFILE, TASQ_CONFIG_DIR and TASQ_SET (the --set
 flags, one per line) in its environment, so `$TASQ_BIN ... --json` inside
 the plugin sees the same configuration. Built-in commands (and their
 aliases, such as `ls`) always win.
@@ -728,9 +719,6 @@ pub enum WorktreeAction {
         /// Say what would be created; fetch and create nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
     /// Do what closing the task does to its worktrees, without closing it.
     ///
@@ -752,9 +740,6 @@ pub enum WorktreeAction {
         /// Say what would be removed and deleted; change nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
     /// Forget missing worktrees, then release what closing tasks left behind.
     ///
@@ -772,9 +757,6 @@ pub enum WorktreeAction {
         /// Say what would be removed, deleted and forgotten; change nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
     /// List declared worktrees: task, status, branch, state, path.
     ///
@@ -804,9 +786,6 @@ pub enum WorktreeAction {
         /// Where to go.
         #[arg(value_name = "TARGET")]
         target: Option<String>,
-        /// Run the hooks of the repository's own .tasq.toml without asking, this once.
-        #[arg(long)]
-        yes: bool,
     },
     /// Print the directory TARGET names (as for switch), creating nothing.
     Path {
@@ -823,12 +802,14 @@ pub enum WorktreeAction {
         #[arg(value_enum, value_name = "SHELL")]
         shell: InitShell,
     },
-    /// Approve the hooks of a repository's own .tasq.toml ahead of time.
+    /// Show the worktree settings that apply to a repository.
     ///
-    /// Hooks a repository's .tasq.toml sets run only once approved; this
-    /// approves every hook line it sets now. Editing a line asks again.
-    Trust {
-        /// A directory in the repository [default: the current directory].
+    /// The `[worktree]` settings for the repository that contains DIR
+    /// (default: the current directory), each with the layer it came from, and the
+    /// repository config whose `path` is that repository's main checkout,
+    /// or none. A linked worktree shows its main checkout's settings.
+    Config {
+        /// A directory inside the repository.
         #[arg(value_name = "DIR")]
         dir: Option<PathBuf>,
     },
@@ -972,10 +953,7 @@ pub fn command(worktrees: bool) -> clap::Command {
     if !worktrees {
         return command
             .mut_subcommand("worktree", |c| c.hide(true))
-            .mut_subcommand("create", |c| c.mut_arg("worktree", |a| a.hide(true)))
-            .mut_subcommand("done", |c| c.mut_arg("yes", |a| a.hide(true)))
-            .mut_subcommand("next", |c| c.mut_arg("yes", |a| a.hide(true)))
-            .mut_subcommand("pick", |c| c.mut_arg("yes", |a| a.hide(true)));
+            .mut_subcommand("create", |c| c.mut_arg("worktree", |a| a.hide(true)));
     }
     command
         .mut_subcommand("done", |c| {
@@ -1003,7 +981,7 @@ pub fn command(worktrees: bool) -> clap::Command {
 }
 
 /// The command completions are generated from: [`command`], minus the
-/// `worktree` subcommand, `create --worktree` and `done`/`next`/`pick --yes` unless worktrees are
+/// `worktree` subcommand and `create --worktree` unless worktrees are
 /// enabled. Hiding is not enough there, as the zsh generator still lists
 /// hidden subcommands and arguments.
 pub fn completion_command(worktrees: bool) -> clap::Command {
@@ -1016,12 +994,8 @@ pub fn completion_command(worktrees: bool) -> clap::Command {
         .get_subcommands()
         .filter(|s| s.get_name() != "worktree")
     {
-        let worktree_only = |a: &clap::Arg| a.get_id() != "worktree" && a.get_id() != "yes";
         let sub = match sub.get_name() {
-            "create" => rebuilt("create", sub, worktree_only),
-            "done" => rebuilt("done", sub, worktree_only),
-            "next" => rebuilt("next", sub, worktree_only),
-            "pick" => rebuilt("pick", sub, worktree_only),
+            "create" => rebuilt("create", sub, |a| a.get_id() != "worktree"),
             _ => sub.clone(),
         };
         pruned = pruned.subcommand(sub);
@@ -1064,7 +1038,7 @@ fn launch_help_with_worktrees(command: clap::Command) -> clap::Command {
     command.after_help(format!("{LAUNCH_HELP_WORKTREES}\n{launchers}"))
 }
 
-/// `--config`, `--profile` and `--set` wherever they appear in `argv`
+/// `--config-dir`, `--profile` and `--set` wherever they appear in `argv`
 /// (program name first, up to a `--`), so the configuration can be loaded
 /// before clap parses. Malformed values are skipped; clap reports them.
 pub fn early_globals(argv: &[std::ffi::OsString]) -> GlobalArgs {
@@ -1078,14 +1052,14 @@ pub fn early_globals(argv: &[std::ffi::OsString]) -> GlobalArgs {
             Some((f, v)) if f.starts_with("--") => (f.to_owned(), Some(v.to_owned())),
             _ => (arg.clone().into_owned(), None),
         };
-        if !matches!(flag.as_str(), "--config" | "--profile" | "--set") {
+        if !matches!(flag.as_str(), "--config-dir" | "--profile" | "--set") {
             continue;
         }
         let Some(value) = inline.or_else(|| rest.next().map(std::borrow::Cow::into_owned)) else {
             break;
         };
         match flag.as_str() {
-            "--config" => global.config = Some(PathBuf::from(value)),
+            "--config-dir" => global.config_dir = Some(PathBuf::from(value)),
             "--profile" => global.profile = Some(value),
             _ => global.set.extend(parse_key_value(&value).ok()),
         }

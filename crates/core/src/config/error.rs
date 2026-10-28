@@ -12,12 +12,13 @@ use super::Origin;
 /// expected, so they can be shown to the user as they are.
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    /// The file named by `--config` or `TASQ_CONFIG` does not exist.
-    #[error("config file {file} does not exist (named by {named_by})")]
-    MissingFile {
-        /// The missing file.
-        file: PathBuf,
-        /// `--config` or `TASQ_CONFIG`.
+    /// The directory named by `--config-dir` or `TASQ_CONFIG_DIR` does not
+    /// exist (or is not a directory).
+    #[error("config directory {dir} does not exist or is not a directory (named by {named_by})")]
+    MissingDir {
+        /// The missing directory, `~` expanded and absolute.
+        dir: PathBuf,
+        /// `--config-dir` or `TASQ_CONFIG_DIR`.
         named_by: &'static str,
     },
     /// A file exists but could not be read.
@@ -44,6 +45,57 @@ pub enum ConfigError {
         /// ``unknown field `nmae`, expected one of `name`, ... ``.
         message: String,
     },
+    /// A file holds a `[profile.<name>]` table: a profile is a file of
+    /// its own now (ADR-0031).
+    #[error(
+        "{file}:{line}:{column}: profiles are files now: move [profile.{name}] to {}",
+        target.display()
+    )]
+    InlineProfile {
+        /// The file holding the table.
+        file: PathBuf,
+        /// 1-based line of the profile name.
+        line: usize,
+        /// 1-based column of the profile name.
+        column: usize,
+        /// The profile name.
+        name: String,
+        /// The profile file to move it to, `profiles/<name>.toml` in the
+        /// config directory.
+        target: PathBuf,
+    },
+    /// The profile file `profiles/<name>.toml` holds a `[profile.<name>]`
+    /// table: the file is the profile, so its tables go without the prefix
+    /// (ADR-0031).
+    #[error(
+        "{file}:{line}:{column}: a profile file is the profile itself: remove the \
+         [profile.{name}] header and the profile.{name}. prefix of its tables"
+    )]
+    ProfileInProfile {
+        /// The profile file.
+        file: PathBuf,
+        /// 1-based line of the profile name.
+        line: usize,
+        /// 1-based column of the profile name.
+        column: usize,
+        /// The profile name in the table header.
+        name: String,
+    },
+    /// Two repository configs name the same main checkout (ADR-0031).
+    #[error(
+        "repository configs {} and {} both have path {}",
+        first.display(),
+        second.display(),
+        path.display()
+    )]
+    DuplicateRepo {
+        /// The first file, in name order.
+        first: PathBuf,
+        /// The second file.
+        second: PathBuf,
+        /// The main checkout both name, `~` expanded.
+        path: PathBuf,
+    },
     /// A value set by the environment or `--set` could not be used.
     #[error("{origin}: {key}={value:?}: expected {expected}")]
     InvalidValue {
@@ -56,6 +108,16 @@ pub enum ConfigError {
         /// What would have been accepted.
         expected: String,
     },
+    /// `--set` or [`super::ENV_SET`] named `worktree.enabled`, which moved
+    /// to the top-level `worktrees_enabled` (ADR 0031).
+    #[error(
+        "{origin}: worktree.enabled moved to the top level: \
+         set worktrees_enabled (docs/config.md, \"Worktrees\")"
+    )]
+    WorktreeEnabledMoved {
+        /// Where the key came from.
+        origin: Origin,
+    },
     /// `--set` or an override named a key that does not exist.
     #[error("{origin}: unknown config key {key:?}")]
     UnknownKey {
@@ -64,15 +126,20 @@ pub enum ConfigError {
         /// The key path as given.
         key: String,
     },
-    /// The selected profile is not defined in any file.
+    /// The selected profile has no file in the config directory's
+    /// `profiles/`.
     #[error(
-        "profile {name:?} is not defined; available profiles: {}",
-        list(available)
+        "profile {name:?} is not defined: no file {}; available profiles: {}",
+        file.display(),
+        if available.is_empty() { "none".to_owned() } else { list(available) }
     )]
     UnknownProfile {
         /// The requested profile.
         name: String,
-        /// Profiles defined across the loaded files.
+        /// The file it would be, `profiles/<name>.toml` in the config
+        /// directory.
+        file: PathBuf,
+        /// The profiles that have a file.
         available: Vec<String>,
     },
     /// The merged layers do not form a valid config. Each file is valid on

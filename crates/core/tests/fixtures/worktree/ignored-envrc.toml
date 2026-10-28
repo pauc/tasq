@@ -1,7 +1,6 @@
 # The default sibling layout; the project's gitignored .envrc is copied as
 # it is.
 [worktree]
-enabled = true
 copies = [".envrc"]
 
 [worktree.hooks]

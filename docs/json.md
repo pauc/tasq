@@ -14,7 +14,7 @@ refuse anything else; a future shape change bumps the number.
 | `tasq worktree prune` | `"dry_run": bool`, `"forgotten": [{repo, lines}]` (per repository, the lines `git worktree prune --verbose` printed), `"released": [{task, lines}]` (per done task, what was removed and deleted, or would be); repositories and tasks with nothing to report are left out, and what was kept goes to stderr as warnings |
 | `tasq worktree switch`, `tasq worktree path` | `"path"`: the directory (`switch` with `--json` neither prints a hint nor writes `$TASQ_CD_FILE`) |
 | `tasq worktree shell-init` | `"script"`: the shell function |
-| `tasq worktree trust` | `"file"`: the repository's `.tasq.toml` (its main checkout when it has none), `"approved": [{kind, line}]`: each hook line now approved, `kind` one of `"pre-create"`, `"post-create"`, `"pre-remove"`, `"post-remove"` (in that order, then the lines in file order); `[]` when the file sets no hooks |
+| `tasq worktree config` | `"repository"`: the main checkout, `"repository_config"`: the repository config whose `path` matched it (`null` when none), `"worktree"`: the effective `[worktree]` settings, `"origins": {key: origin}`: for each leaf (`worktree.base`, `worktree.hooks.post-create`, ...; an array is one leaf), the layer that set it as `tasq config show` names it, or `unset` |
 | `tasq project <id>` (show) | `"task": Task`, `"default_project": path or null` |
 | `tasq next`, `tasq pick` with `--dry-run` | `"task": Task`, `"workdir"`, `"in_worktree": bool` (only with worktrees enabled), `"launcher"`, `"env": {name: value}`, `"steps": [string]` |
 | `tasq store info` | `"store": {name, location, task_count}` (`"tasq"`, the directory, the count), `"plugins": [name, ...]` (the enabled plugins, `[plugins] enabled`, ADR 0030), `"data_dir": {value, from}` (the resolved directory and the layer that set it, as `tasq config show` names it: `defaults`, a file, `env`, `--set`), `"store_name": {value, from}` |
@@ -67,7 +67,7 @@ The `Task` object is the core model (`tasq_core::model::Task`) serialised with s
 - `origin` is `{"source", "external_id", "url"}` for tasks created by `tasq sync`.
 - `closed_at` is when a done task was closed (`YYYY-MM-DD HH:MM`), `null` on open tasks and
   on tasks closed outside tasq (ADR 0020). It may be left out on input.
-- `worktrees` is present only when worktrees are enabled (`worktree.enabled`, ADR 0022), in
+- `worktrees` is present only when worktrees are enabled (`worktrees_enabled`, ADR 0022), in
   every document that carries a task, hook documents included. It may be left out on input,
   which leaves the stored worktrees unchanged.
 - `created` is when the task was created (`YYYY-MM-DD HH:MM`, local time), read from the task

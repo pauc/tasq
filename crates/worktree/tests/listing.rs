@@ -98,8 +98,6 @@ impl Project {
             main: self.main.clone(),
             config,
             templates_dir: self.main.clone(),
-            repo_file: None,
-            untrusted: Vec::new(),
         }
     }
 }

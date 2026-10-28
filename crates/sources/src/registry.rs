@@ -185,7 +185,7 @@ mod tests {
         let file = dir.path().join("config.toml");
         std::fs::write(&file, toml).unwrap();
         let mut opts = LoadOptions::new(dir.path());
-        opts.explicit_file = Some(file);
+        opts.config_dir = Some(dir.path().to_path_buf());
         Config::load(&opts).unwrap().config
     }
 

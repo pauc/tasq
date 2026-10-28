@@ -40,6 +40,22 @@ _Avoid_: Callback, trigger
 A command line configured by the user to run on one event.
 _Avoid_: Plugin (a plugin is enabled, not configured per event)
 
+**Config directory**:
+The one directory tasq reads configuration from: the global config file and every profile. Nothing is read from the directory tasq runs in or from a repository.
+_Avoid_: Project config, dotfile
+
+**Profile**:
+A named partial configuration, one file in the config directory, applied over the global config only when selected by name.
+_Avoid_: Environment, context, workspace
+
+**Repository config**:
+Worktree settings for one repository, one file in the config directory naming that repository's main checkout. Applied whenever tasq works on that repository's worktrees, whichever profile is selected.
+_Avoid_: Repo file, project config, `.tasq.toml`
+
+**Main checkout**:
+The working tree of a repository that holds its `.git` directory, as opposed to the worktrees added from it.
+_Avoid_: Main worktree, original, repo root
+
 **Task file**:
 The markdown file that holds one task: a frontmatter block of scalar fields, then the title heading and the list sections. Its name is a ULID, from which the task's creation time is read; nothing else is read from it.
 _Avoid_: Todo file, note

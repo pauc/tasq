@@ -31,7 +31,7 @@ fn echo(env: &TestEnv) -> Option<PathBuf> {
         .canonicalize()
         .unwrap();
     std::os::unix::fs::symlink(plugin, env.bin.join("tasq-echo")).unwrap();
-    env.write_project_config("[plugins]\nenabled = [\"echo\"]\n");
+    env.write_global_config("[plugins]\nenabled = [\"echo\"]\n");
     Some(env.home.join("echo.log"))
 }
 
@@ -111,7 +111,7 @@ mod runner {
     fn the_payload_carries_the_schema_the_store_and_the_plugin_config() {
         let env = TestEnv::fixture();
         let Some(log) = echo(&env) else { return };
-        env.write_project_config(
+        env.write_global_config(
             "[plugins]\nenabled = [\"echo\"]\n\n[plugin.echo]\ninterval = 60\nsince = 2026-10-26\n\
              [plugin.echo.deep]\nlist = [1, \"two\"]\n\n[plugin.other]\nsecret = \"not yours\"\n",
         );
@@ -131,7 +131,7 @@ mod runner {
         insta::assert_snapshot!(env.normalize(&std::fs::read_to_string(&log).unwrap()));
         // No table: an empty config.
         std::fs::remove_file(&log).unwrap();
-        env.write_project_config("[plugins]\nenabled = [\"echo\"]\n");
+        env.write_global_config("[plugins]\nenabled = [\"echo\"]\n");
         env.tasq()
             .env("TASQ_ECHO_LOG", &log)
             .arg("list")
@@ -153,7 +153,8 @@ mod runner {
                 log.display()
             ),
         );
-        env.write_project_config("[plugins]\nenabled = [\"envy\"]\n\n[profile.p]\n");
+        env.write_global_config("[plugins]\nenabled = [\"envy\"]\n");
+        env.write_profile("p", "");
         env.tasq()
             .args(["--profile", "p", "--set", "ui.no_osc8=true", "list"])
             .assert()
@@ -172,7 +173,7 @@ mod runner {
         env.fake_tool("tasq-two", &format!("{PROBE}\necho second"));
         env.fake_tool("tasq-mute", &format!("{PROBE}\necho ' '"));
         // A plugin that prints only blanks shows nothing, even at -v.
-        env.write_project_config("[plugins]\nenabled = [\"two\", \"one\", \"mute\"]\n");
+        env.write_global_config("[plugins]\nenabled = [\"two\", \"one\", \"mute\"]\n");
         env.tasq().arg("list").assert().success().stderr("");
         let out = env.tasq().args(["-v", "list"]).output().unwrap();
         let err = env.normalize(&stderr(&out));
@@ -189,7 +190,7 @@ mod runner {
         let env = TestEnv::fixture();
         env.fake_tool("tasq-bad", &format!("{PROBE}\necho nope >&2\nexit 3"));
         env.fake_tool("tasq-quiet", &format!("{PROBE}\nexit 4"));
-        env.write_project_config("[plugins]\nenabled = [\"bad\", \"quiet\"]\n");
+        env.write_global_config("[plugins]\nenabled = [\"bad\", \"quiet\"]\n");
         let out = env.tasq().arg("list").output().unwrap();
         assert_eq!(out.status.code(), Some(0));
         assert!(
@@ -229,7 +230,7 @@ mod runner {
         let env = TestEnv::fixture();
         // `exec`, so the shell itself is what gets killed.
         env.fake_tool("tasq-slow", &format!("{PROBE}\nexec /bin/sleep 30"));
-        env.write_project_config("[plugins]\nenabled = [\"slow\"]\ntimeout = 1\n");
+        env.write_global_config("[plugins]\nenabled = [\"slow\"]\ntimeout = 1\n");
         let started = std::time::Instant::now();
         let out = env.tasq().arg("list").output().unwrap();
         let took = started.elapsed();
@@ -258,7 +259,7 @@ mod runner {
                 marker.display()
             ),
         );
-        env.write_project_config("[plugins]\nenabled = [\"leaky\"]\ntimeout = 1\n");
+        env.write_global_config("[plugins]\nenabled = [\"leaky\"]\ntimeout = 1\n");
         let started = std::time::Instant::now();
         let out = env.tasq().arg("list").output().unwrap();
         let took = started.elapsed();
@@ -286,7 +287,7 @@ mod runner {
                 log.display()
             ),
         );
-        env.write_project_config("[plugins]\nenabled = [\"reader\"]\ntimeout = 5\n");
+        env.write_global_config("[plugins]\nenabled = [\"reader\"]\ntimeout = 5\n");
         env.tasq().arg("list").assert().success().stderr("");
         assert_eq!(std::fs::read_to_string(&log).unwrap(), "store-open\n");
     }
@@ -424,7 +425,7 @@ mod post_write {
             &log,
             &[
                 "--set",
-                "worktree.enabled=true",
+                "worktrees_enabled=true",
                 "create",
                 "Again",
                 "--worktree",
@@ -491,7 +492,7 @@ mod post_write {
                  {{\"external_id\":\"b\",\"title\":\"Two\"}}]'"
             ),
         );
-        env.write_project_config(&format!(
+        env.write_global_config(&format!(
             "[plugins]\nenabled = [\"echo\"]\n\n[[source]]\nname = \"inbox\"\n\
              kind = \"llm-bridge\"\ncommand = \"inbox-bridge\"\nprompt_file = \"{}\"\n",
             env.home.join("prompt.md").display()
@@ -539,7 +540,7 @@ mod post_write {
             &log,
             &[
                 "--set",
-                "worktree.enabled=true",
+                "worktrees_enabled=true",
                 "worktree",
                 "set",
                 "3",
@@ -612,7 +613,7 @@ mod post_write {
                 "{PROBE}\nread -r prompt\necho '[{{\"external_id\":\"a\",\"title\":\"One\"}}]'"
             ),
         );
-        env.write_project_config(&format!(
+        env.write_global_config(&format!(
             "[plugins]\nenabled = [\"echo\"]\n\n[[source]]\nname = \"inbox\"\n\
              kind = \"llm-bridge\"\ncommand = \"inbox-bridge\"\nprompt_file = \"{}\"\n",
             env.home.join("prompt.md").display()
@@ -628,7 +629,7 @@ mod post_write {
         let env = TestEnv::fixture();
         let Some(log) = echo(&env) else { return };
         env.fake_tool("claude", "exit 0");
-        env.write_project_config(
+        env.write_global_config(
             "[plugins]\nenabled = [\"echo\"]\n\n[hooks]\npre-launch = [\"/bin/sh -c 'exit 5'\"]\n",
         );
         let out = env
@@ -657,7 +658,7 @@ mod post_write {
             "tasq-bad",
             &format!("{PROBE}\n[ \"$TASQ_EVENT\" = post-write ] || exit 0\necho nope >&2\nexit 3"),
         );
-        env.write_project_config("[plugins]\nenabled = [\"bad\"]\n");
+        env.write_global_config("[plugins]\nenabled = [\"bad\"]\n");
         env.tasq()
             .args(["log", "3", "a note"])
             .assert()
@@ -695,7 +696,7 @@ mod lasting_warnings {
             &format!("{PROBE}\n[ \"$TASQ_EVENT\" = store-open ] || exit 0\nexit 3"),
         );
         env.fake_tool("tasq-quiet", &format!("{PROBE}\nexit 0"));
-        env.write_project_config("[plugins]\nenabled = [\"gone\", \"bad\", \"quiet\"]\n");
+        env.write_global_config("[plugins]\nenabled = [\"gone\", \"bad\", \"quiet\"]\n");
         let quiet = write_warnings(
             &env,
             "quiet",
@@ -737,7 +738,7 @@ mod lasting_warnings {
     fn are_not_printed_by_a_tasq_run_during_an_event() {
         let env = TestEnv::fixture();
         env.fake_tool("tasq-quiet", &format!("{PROBE}\nexit 0"));
-        env.write_project_config("[plugins]\nenabled = [\"quiet\"]\n");
+        env.write_global_config("[plugins]\nenabled = [\"quiet\"]\n");
         write_warnings(&env, "quiet", "push failed\n");
         env.tasq()
             .env("TASQ_EVENT", "post-write")
@@ -763,7 +764,7 @@ mod lasting_warnings {
             "tasq-mirror",
             &format!("{PROBE}\necho 'fetch failed' > '{}'", file.display()),
         );
-        env.write_project_config("[plugins]\nenabled = [\"mirror\"]\n");
+        env.write_global_config("[plugins]\nenabled = [\"mirror\"]\n");
         env.tasq()
             .arg("list")
             .assert()
@@ -796,9 +797,7 @@ mod doctor {
             &format!("{PROBE}\n{only_doctor}\necho nope >&2\nexit 3"),
         );
         env.fake_tool("tasq-quiet", &format!("{PROBE}\nexit 0"));
-        env.write_project_config(
-            "[plugins]\nenabled = [\"git\", \"broken\", \"bad\", \"quiet\"]\n",
-        );
+        env.write_global_config("[plugins]\nenabled = [\"git\", \"broken\", \"bad\", \"quiet\"]\n");
         write_warnings(env, "git", "push failed: no network\n");
         write_warnings(env, "quiet", "one\ntwo\n");
     }
@@ -941,7 +940,7 @@ mod interrupt {
                 started = started.display()
             ),
         );
-        env.write_project_config("[plugins]\nenabled = [\"slow\"]\ntimeout = 30\n");
+        env.write_global_config("[plugins]\nenabled = [\"slow\"]\ntimeout = 30\n");
         let mut tasq = Running(env.tasq_std().arg("list").spawn().unwrap());
         wait_for(&started);
         let group = std::fs::read_to_string(&started).unwrap().trim().to_owned();
@@ -970,7 +969,7 @@ mod interrupt {
                 started = started.display()
             ),
         );
-        env.write_project_config("[plugins]\nenabled = [\"stubborn\"]\ntimeout = 30\n");
+        env.write_global_config("[plugins]\nenabled = [\"stubborn\"]\ntimeout = 30\n");
         let mut tasq = Running(env.tasq_std().arg("list").spawn().unwrap());
         wait_for(&started);
         let group = std::fs::read_to_string(&started).unwrap().trim().to_owned();
@@ -1004,7 +1003,7 @@ mod interrupt {
                 opened = opened.display()
             ),
         );
-        env.write_project_config("[plugins]\nenabled = [\"quick\"]\n");
+        env.write_global_config("[plugins]\nenabled = [\"quick\"]\n");
         let lock = env.store().join(".tasq").join("lock");
         std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
         // Wall time, ahead of `TASQ_NOW`: never stale to this `tasq`.

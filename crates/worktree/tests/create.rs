@@ -10,7 +10,7 @@ use tasq_core::config::{TemplateFile, WorktreeConfig};
 use tasq_core::model::{Task, TaskId, Worktree};
 use tasq_core::worktree::hooks::HookEvent;
 use tasq_worktree::create::{CreateError, Created, materialize};
-use tasq_worktree::hooks::{Approval, Approver, HookFailure};
+use tasq_worktree::hooks::HookFailure;
 use tasq_worktree::{Git, Repo, RepoSettings};
 use tempfile::TempDir;
 
@@ -69,8 +69,6 @@ impl Project {
             main: main.clone(),
             config,
             templates_dir: main.clone(),
-            repo_file: None,
-            untrusted: Vec::new(),
         };
         let mut project = Self {
             _dir: dir,
@@ -140,7 +138,6 @@ impl Project {
             task,
             Some(&self.settings),
             from,
-            &approver(),
             dry_run,
             &mut |e| events.push(e),
         );
@@ -149,18 +146,6 @@ impl Project {
 
     fn log(&self) -> Option<String> {
         std::fs::read_to_string(self.root.join("log")).ok()
-    }
-}
-
-fn never(question: &str) -> std::io::Result<bool> {
-    panic!("asked {question:?}")
-}
-
-fn approver() -> Approver {
-    Approver {
-        approval: Approval::Ask,
-        trust_file: None,
-        ask: never,
     }
 }
 
@@ -176,7 +161,7 @@ fn nothing_to_create() {
     let p = Project::new();
     let none = |task: &Task, settings: Option<&RepoSettings>| {
         let mut events = Vec::new();
-        let created = materialize(&p.git, task, settings, None, &approver(), false, &mut |e| {
+        let created = materialize(&p.git, task, settings, None, false, &mut |e| {
             events.push(e);
         });
         assert_eq!(created.unwrap(), None);
@@ -205,7 +190,6 @@ fn a_worktree_to_create_without_a_project_is_an_error() {
         &p.on_branch("feat/x"),
         None,
         None,
-        &approver(),
         false,
         &mut |e| events.push(e),
     );

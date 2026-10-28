@@ -100,10 +100,10 @@ impl TestEnv {
         cmd
     }
 
-    /// [`Self::tasq`] with worktrees enabled (`TASQ_WORKTREE_ENABLED=1`, ADR 0022).
+    /// [`Self::tasq`] with worktrees enabled (`TASQ_WORKTREES_ENABLED=1`, ADR 0031).
     pub fn tasq_wt(&self) -> assert_cmd::Command {
         let mut cmd = self.tasq();
-        cmd.env("TASQ_WORKTREE_ENABLED", "1");
+        cmd.env("TASQ_WORKTREES_ENABLED", "1");
         cmd
     }
 
@@ -161,16 +161,31 @@ impl TestEnv {
         std::fs::read_to_string(self.file_of(id)).unwrap()
     }
 
-    /// Writes `<home>/.tasq.toml`.
-    pub fn write_project_config(&self, text: &str) {
-        std::fs::write(self.home.join(".tasq.toml"), text).unwrap();
-    }
-
     /// Writes `<home>/.config/tasq/config.toml`.
     pub fn write_global_config(&self, text: &str) -> PathBuf {
         let dir = self.home.join(".config").join("tasq");
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("config.toml");
+        std::fs::write(&file, text).unwrap();
+        file
+    }
+
+    /// Writes the profile `name`, `profiles/<name>.toml` in the default
+    /// config directory, and returns its path.
+    pub fn write_profile(&self, name: &str, text: &str) -> PathBuf {
+        let dir = self.home.join(".config").join("tasq").join("profiles");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(format!("{name}.toml"));
+        std::fs::write(&file, text).unwrap();
+        file
+    }
+
+    /// Writes the repository config `repos/<name>.toml` in the default
+    /// config directory and returns its path.
+    pub fn write_repo_config(&self, name: &str, text: &str) -> PathBuf {
+        let dir = self.home.join(".config").join("tasq").join("repos");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(format!("{name}.toml"));
         std::fs::write(&file, text).unwrap();
         file
     }

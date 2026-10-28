@@ -5,6 +5,8 @@
 #
 # Secrets never live here: the GitLab token comes from `glab config get token`.
 
+worktrees_enabled = true     # the [worktree] settings below apply (ADR 0031)
+
 [store]
 name = "home"                # ~/.local/share/tasq/stores/home
 
@@ -90,8 +92,7 @@ pre-launch = []
 [worktree]
 # Every task in a git project gets a declared worktree, created when the task is
 # launched and released when it is closed (docs/config.md, "Worktrees").
-# Per-repository links, copies, templates and hooks go in a .tasq.toml next to
-# the repository; these are the personal defaults.
-enabled = true
+# Per-repository links, copies, templates and hooks go in a repository config,
+# ~/.config/tasq/repos/<name>.toml; these are the personal defaults.
 path = "{{project_parent}}/{{branch_safe}}"   # siblings of the main checkout
 branch = "{{id}}-{{slug}}"

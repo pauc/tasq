@@ -31,7 +31,7 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0003](0003-store-source-launcher-traits.md) | Store, Source and Launcher extension traits | Accepted |
 | [0004](0004-adapter-decides-sync-strategy.md) | Each Source adapter decides its sync strategy | Accepted |
 | [0005](0005-cli-first-tui-second.md) | CLI first, TUI second | Accepted |
-| [0006](0006-plugin-mechanism.md) | Plugin mechanism: external executables for users, in-process adapters built in | Accepted |
+| [0006](0006-plugin-mechanism.md) | Plugin mechanism: external executables for users, in-process adapters built in | Accepted; `TASQ_CONFIG` replaced by `TASQ_CONFIG_DIR` (ADR-0031) |
 | [0007](0007-nb-under-the-hood.md) | nb under the hood: hybrid native/nb bookkeeping | Superseded by ADR-0023 |
 | [0008](0008-license.md) | GPL-3.0-or-later license | Accepted |
 | [0009](0009-tui-host-actions-through-the-cli.md) | TUI edits through core, host actions through the CLI binary | Accepted |
@@ -47,7 +47,7 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0019](0019-relative-due-dates.md) | Relative, coloured due dates: `dates::Due`, `ui.due_format` (relative/iso/both), `overdue` and `due-soon` theme roles; ISO in `--json` and the detail pane | Accepted |
 | [0020](0020-closed-section.md) | Recording when a task was closed: `Task::closed_at`, a tasq-only `## Closed` section (`YYYY-MM-DD HH:MM`), `Task::close`, `edit::done` in one write | Accepted |
 | [0021](0021-detail-at-the-bottom.md) | The TUI detail under the list: `ui.detail_position = "right" \| "bottom"`, `LayoutKind::Stacked` from 20 rows | Accepted |
-| [0022](0022-worktrees-opt-in-core-feature.md) | Worktrees as an opt-in core feature: `worktree.enabled` hides every surface when off; `[worktree]` provisioning replaces gwm; pure plans in `tasq-core::worktree`, executed by a new `tasq-worktree` crate; trust for repo hooks | Proposed |
+| [0022](0022-worktrees-opt-in-core-feature.md) | Worktrees as an opt-in core feature: `worktree.enabled` hides every surface when off; `[worktree]` provisioning replaces gwm; pure plans in `tasq-core::worktree`, executed by a new `tasq-worktree` crate; trust for repo hooks | Proposed; `.tasq.toml` and hook trust superseded by ADR-0031 |
 | [0023](0023-no-nb-at-runtime.md) | No nb at runtime: native bookkeeping, commits and sync in a background job behind `.git/tasq/lock`, `store.sync_interval`, `tasq store reconcile` | Superseded by ADR-0027 |
 | [0024](0024-format-v2-frontmatter-and-stable-ids.md) | Format v2 after nb compatibility ends: frontmatter for scalar fields (`id`, `status`, `priority`, `due`, `closed`, `project`, `source`, `tags`), stable ids, list sections stay in the body, `tasq migrate` | Superseded by ADR-0026 |
 | [0025](0025-manual-rank-within-a-status-group.md) | Manual rank within a status group: `Task::rank`, a tasq-only `## Rank` section (ascending, step 1024, kept across status changes), `tasq move --before/--after/--top/--unrank`, `ctrl+k`/`ctrl+j` in the TUI | Accepted |
@@ -56,3 +56,4 @@ decision changes, a new ADR supersedes the old one and the old one keeps its tex
 | [0028](0028-no-positional-ahead-of-subcommands.md) | No positional argument ahead of subcommands: `tasq list [WORD]` (alias `ls`) replaces the bare `tasq <WORD>`, `tasq worktree set <ID> [BRANCH\|PATH]` replaces `tasq worktree <ID> ...`, so the generated shell completions reach every subcommand | Accepted |
 | [0029](0029-window-not-detached.md) | `--window` (`-w`), `launch.window` and `launch-window` replace `--detached`, `launch.detached` and `launch-detached`: the flag names where the session opens, `--no-focus` whether you follow | Accepted |
 | [0030](0030-store-sync-as-a-plugin.md) | Store sync is a plugin: `tasq-git` on generic extension points (`[plugins] enabled`, the `store-open`/`post-write`/`doctor` events, lasting plugin warnings, `tasq store lock`, TUI reload); a repo per store with its own identity, background commit/fetch/rebase/push, conflicts aborted, duplicate ids explained not renumbered | Accepted |
+| [0031](0031-config-only-in-the-config-directory.md) | Configuration lives only in the config directory: `--config-dir`, `profiles/<name>.toml`, repository configs in `repos/` matched by main checkout, top-level `worktrees_enabled`, no `.tasq.toml`, no hook trust, `tasq worktree config` | Accepted |

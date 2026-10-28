@@ -72,7 +72,7 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    TASQ_STORE_NAME=work tasq
    ```
 
-   Permanently, in `~/.config/tasq/config.toml` (or a `.tasq.toml` in a project):
+   Permanently, in `~/.config/tasq/config.toml` (or a profile, `~/.config/tasq/profiles/<name>.toml`):
 
    ```toml
    [store]
@@ -108,7 +108,7 @@ the original `tasks` script: [`docs/migration.md`](docs/migration.md).
    The task is set to in-progress and a session opens in the task's project, else
    `work.default_project`. The default launcher is Claude Code with a prompt built from the
    task; `shell`, `tmux`, `herdr` and `auto` are the others (`launch.default`). With
-   worktrees enabled (`[worktree] enabled = true`), the session opens in the task's worktree
+   worktrees enabled (`worktrees_enabled = true`), the session opens in the task's worktree
    instead, creating it first when it does not exist; `tasq create ... --worktree [BRANCH]` and
    `tasq worktree set 12 [BRANCH]` declare one, `tasq worktree up 12` creates it without launching.
 
@@ -200,10 +200,11 @@ fixed. `tasq git init <url>` sets up the first machine, `tasq git clone <url>` t
 `tasq git sync` syncs now. Each store commits and pushes with its own identity and SSH key.
 [`docs/git-sync.md`](docs/git-sync.md).
 
-**Layered configuration.** TOML, later layers winning key by key: built-in defaults,
-`~/.config/tasq/config.toml`, the nearest `.tasq.toml` walking up from the current directory,
-a `[profile.<name>]` selected with `--profile`, `TASQ_*` environment variables, `--set
-key=value`. Unknown keys are errors with file, line and column. `tasq config show` prints the
+**Layered configuration.** TOML in one directory, `~/.config/tasq` (or `--config-dir`),
+later layers winning key by key: built-in defaults, `config.toml`, a profile
+`profiles/<name>.toml` selected with `--profile`, for the worktree commands the repository
+config in `repos/` naming the repository's main checkout, `TASQ_*` environment variables,
+`--set key=value`. Nothing is read from the directory tasq runs in. Unknown keys are errors with file, line and column. `tasq config show` prints the
 effective config and which layer set each key. Reference: [`docs/config.md`](docs/config.md).
 
 **Sources** turn things outside the store into tasks: merge requests waiting for your
@@ -222,7 +223,7 @@ environment.
 
 **Plugins and hooks.** `tasq <name> [args...]` runs an executable `tasq-<name>` found on
 `PATH` when `<name>` is not a built-in command, passing the remaining arguments verbatim and
-`TASQ_BIN` (plus `TASQ_PROFILE`, `TASQ_CONFIG`, `TASQ_SET` when in effect) so the plugin can
+`TASQ_BIN` (plus `TASQ_PROFILE`, `TASQ_CONFIG_DIR`, `TASQ_SET` when in effect) so the plugin can
 call back into `tasq --json` and `tasq apply` with the same configuration. Built-ins and
 their aliases always win. `[hooks]` runs command lines after `create`
 and `done` and before a session starts, with the task as JSON on stdin. A plugin enabled
@@ -256,8 +257,9 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq pick ID [--launcher NAME] [--dry-run]` | Open a session on a specific task |
 | `tasq view ID [--raw]` | Show a task (glow on a terminal, plain markdown otherwise; `--raw` is verbatim) |
 | `tasq project ID [PATH]` | Show or set the task's project directory |
-| `tasq worktree set ID [BRANCH]` / `tasq worktree set ID PATH` | Declare a worktree for the task (no git, nothing on disk), or track an existing one (with `worktree.enabled`) |
-| `tasq worktree up ID` / `ls` / `switch [TARGET]` / `path TARGET` / `release ID` / `prune` / `trust` | Create the declared worktree now, list worktrees, cd into one (after `eval "$(tasq worktree shell-init zsh)"`), release what closing does, forget missing ones, approve a repository's hooks |
+| `tasq worktree set ID [BRANCH]` / `tasq worktree set ID PATH` | Declare a worktree for the task (no git, nothing on disk), or track an existing one (with `worktrees_enabled`) |
+| `tasq worktree up ID` / `ls` / `switch [TARGET]` / `path TARGET` / `release ID` / `prune` | Create the declared worktree now, list worktrees, cd into one (after `eval "$(tasq worktree shell-init zsh)"`), release what closing does, forget missing ones |
+| `tasq worktree config [DIR]` | The `[worktree]` settings that apply to a repository, the layer of each and the repository config that matched |
 | `tasq session ID SESSION_ID [DESC] [--launcher NAME]` | Track an agent session |
 | `tasq mr ID URL [TITLE]` | Track a merge request |
 | `tasq sync [--source NAME] [--dry-run] [ID]...` | Refresh tasks from the configured sources, or re-check the given tasks |
@@ -275,7 +277,7 @@ current task. [`plugins/claude/README.md`](plugins/claude/README.md).
 | `tasq NAME [ARGS]...` | Run the plugin `tasq-NAME` from `PATH` |
 | `tasq git init\|clone\|sync` | Store sync, with `tasq-git` installed ([`docs/git-sync.md`](docs/git-sync.md)) |
 
-Global flags, accepted before or after the subcommand: `--profile NAME`, `--config FILE`,
+Global flags, accepted before or after the subcommand: `--profile NAME`, `--config-dir DIR`,
 `--set KEY=VALUE` (repeatable), `--json`, `--color auto|always|never`, `--no-color`,
 `--no-pager`, `-v`/`-vv`. `tasq --help` and `tasq <command> --help` carry the details.
 

@@ -4,16 +4,15 @@ use std::path::{Path, PathBuf};
 
 use tasq_core::config::WorktreeConfig;
 use tasq_core::model::Task;
-use tasq_core::worktree::hooks::Kind;
 use tasq_core::worktree::provision;
 use tasq_core::worktree::vars::Vars;
 
 use crate::Repo;
 
 /// The worktree settings of the repository a task works in: `[worktree]`
-/// as loaded from its main checkout, so the `.tasq.toml` next to the
-/// repository applies wherever tasq runs (plan 4.4). Loading them is the
-/// caller's, which owns the configuration layers.
+/// with the repository config of its main checkout applied, wherever tasq
+/// runs (ADR-0031). Loading them is the caller's, which owns the
+/// configuration layers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoSettings {
     /// The task's project directory, where `git` runs.
@@ -27,10 +26,6 @@ pub struct RepoSettings {
     /// Where relative template sources start: the directory of the file
     /// that set `worktree.templates`, else the main checkout.
     pub templates_dir: PathBuf,
-    /// The repository's own `.tasq.toml`, when there is one.
-    pub repo_file: Option<PathBuf>,
-    /// The hook kinds that file sets: they run only once approved.
-    pub untrusted: Vec<Kind>,
 }
 
 impl RepoSettings {
@@ -81,8 +76,6 @@ mod tests {
             main: "/ws/app".into(),
             config,
             templates_dir: "/ws/app".into(),
-            repo_file: None,
-            untrusted: Vec::new(),
         }
     }
 
