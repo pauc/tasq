@@ -1108,14 +1108,7 @@ mod tests {
         let done: ItemState = serde_json::from_str("\"done\"").unwrap();
         assert_eq!(done, ItemState::Done(DoneReason::Reported));
         // Every reason writes `done`.
-        for reason in [
-            DoneReason::Gone,
-            DoneReason::Closed,
-            DoneReason::Merged,
-            DoneReason::Approved,
-            DoneReason::Unassigned,
-            DoneReason::Reported,
-        ] {
+        for reason in REASONS {
             assert_eq!(
                 serde_json::to_string(&ItemState::Done(reason)).unwrap(),
                 "\"done\"",
