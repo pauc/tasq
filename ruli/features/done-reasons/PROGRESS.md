@@ -83,6 +83,11 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 61.
 - SD-003: no committed fixture, example or test config set `close_when_done` or a key of
   another kind, so none needed updating; `examples/` and `plan-4.6.toml` load unchanged. The
   doc comments cite ADR 0032, which SD-004 writes.
+- SD-003: the wrong-kind check also skips a source without a `name` that is a string, not
+  only one without a parseable `kind` as the plan says: the message names the source
+  (`source "mrs": ...`), so without a name there is nothing to print. `FileSchema` reports
+  "missing field `name`" first and the wrong-kind error on the next load. Stated in ADR 0032
+  and the `check_source_keys` doc comment, tested in `config_load.rs`.
 - SD-002: no code change. SD-001 already made the sources report the right reasons and SD-003
   already mapped the four keys in `policy_for`, so every new test passed on arrival instead of
   going red first. Each was proven by a hand-made breakage instead (see Learnings).
