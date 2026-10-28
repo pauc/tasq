@@ -9,13 +9,14 @@
     reason = "tests build fixtures on disk; the no-I/O rule is for the library"
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use tasq_core::config::{
     Config, ConfigError, DetailPosition, DueFormat, EnvStrategy, ForgeKind, KeySpec, LoadOptions,
-    Origin, RepoConfig, SourceKind, Summarizer, WeekStart, expand_tilde, repo_configs,
+    Origin, RepoConfig, SourceConfig, SourceKind, Summarizer, WeekStart, expand_tilde,
+    repo_configs,
 };
 use tasq_core::model::Status;
 use tasq_core::theme::Preset;
@@ -2214,6 +2215,339 @@ fn source_list_is_replaced_not_appended_by_a_later_layer() {
     assert_eq!(loaded.config.source[0].name, "b");
     assert!(!loaded.config.source[0].enabled);
     assert!(!loaded.config.source[0].auto);
+}
+
+// --- done_when_* keys and the per-kind check ---------------------------------
+
+const GL: &str = "[forge.gl]\nkind = \"gitlab\"\n";
+
+#[test]
+fn done_when_keys_default_to_true_and_are_read_per_kind() {
+    let sb = Sandbox::new();
+    sb.write_global(&format!(
+        "{GL}[[source]]\nname = \"mrs\"\nkind = \"gitlab-review-requests\"\nforge = \"gl\"\n"
+    ));
+    let s = Config::load(&sb.opts()).unwrap().config.source.remove(0);
+    assert_eq!(
+        (
+            s.done_when_closed,
+            s.done_when_merged,
+            s.done_when_approved,
+            s.done_when_unassigned
+        ),
+        (true, true, true, true)
+    );
+
+    sb.write_global(&format!(
+        "{GL}[[source]]\nname = \"mrs\"\nkind = \"gitlab-review-requests\"\nforge = \"gl\"\n\
+         done_when_closed = false\ndone_when_merged = false\ndone_when_approved = false\n\
+         [[source]]\nname = \"issues\"\nkind = \"gitlab-work-items\"\nforge = \"gl\"\n\
+         done_when_unassigned = false\n"
+    ));
+    let sources = Config::load(&sb.opts()).unwrap().config.source;
+    let mrs = &sources[0];
+    assert_eq!(
+        (
+            mrs.done_when_closed,
+            mrs.done_when_merged,
+            mrs.done_when_approved,
+            mrs.done_when_unassigned
+        ),
+        (false, false, false, true)
+    );
+    let issues = &sources[1];
+    assert_eq!(
+        (
+            issues.done_when_closed,
+            issues.done_when_merged,
+            issues.done_when_approved,
+            issues.done_when_unassigned
+        ),
+        (true, true, true, false)
+    );
+}
+
+/// The `[[source]]` keys every kind reads, in `SourceConfig` field order.
+const COMMON_KEYS: [&str; 8] = [
+    "name",
+    "kind",
+    "tags",
+    "status",
+    "enabled",
+    "auto",
+    "create_new",
+    "flag",
+];
+
+/// The keys each kind reads on top of the common ones: the key table of
+/// `docs/sources.md`.
+const KIND_KEYS: [(SourceKind, &[&str]); 5] = [
+    (
+        SourceKind::GitlabReviewRequests,
+        &[
+            "forge",
+            "title",
+            "exclude_authors",
+            "drafts",
+            "done_when_closed",
+            "done_when_merged",
+            "done_when_approved",
+        ],
+    ),
+    (
+        SourceKind::GitlabWorkItems,
+        &[
+            "forge",
+            "title",
+            "labels",
+            "exclude_labels",
+            "projects",
+            "done_when_closed",
+            "done_when_unassigned",
+        ],
+    ),
+    (
+        SourceKind::GithubReviewRequests,
+        &[
+            "forge",
+            "title",
+            "exclude_authors",
+            "drafts",
+            "done_when_closed",
+            "done_when_merged",
+            "done_when_approved",
+        ],
+    ),
+    (
+        SourceKind::GithubWorkItems,
+        &[
+            "forge",
+            "title",
+            "labels",
+            "exclude_labels",
+            "projects",
+            "done_when_closed",
+            "done_when_unassigned",
+        ],
+    ),
+    (SourceKind::LlmBridge, &["command", "prompt_file"]),
+];
+
+#[test]
+fn source_kind_uses_the_common_keys_and_its_own() {
+    assert_eq!(SourceKind::COMMON_KEYS, COMMON_KEYS);
+    assert_eq!(SourceKind::ALL.map(|k| (k, k.keys())), KIND_KEYS);
+    let every_key: BTreeSet<&str> = COMMON_KEYS
+        .iter()
+        .chain(KIND_KEYS.iter().flat_map(|(_, keys)| keys.iter()))
+        .copied()
+        .collect();
+    for (kind, keys) in KIND_KEYS {
+        let used: BTreeSet<&str> = every_key
+            .iter()
+            .filter(|key| kind.uses(key))
+            .copied()
+            .collect();
+        let expected: BTreeSet<&str> = COMMON_KEYS.iter().chain(keys).copied().collect();
+        assert_eq!(used, expected, "{}", kind.as_str());
+        assert!(!kind.uses("close_when_done"), "{}", kind.as_str());
+        assert!(!kind.uses("nonsense"), "{}", kind.as_str());
+    }
+}
+
+/// A new `SourceConfig` field cannot skip the key table: every field of a
+/// fully populated value is common or read by at least one kind.
+#[test]
+fn every_source_config_field_is_common_or_used_by_a_kind() {
+    let full = SourceConfig {
+        name: "x".to_owned(),
+        kind: SourceKind::LlmBridge,
+        forge: Some("gl".to_owned()),
+        command: Some("c".to_owned()),
+        prompt_file: Some(PathBuf::from("p")),
+        tags: vec!["t".to_owned()],
+        status: Some(Status::READY),
+        enabled: true,
+        auto: true,
+        create_new: true,
+        done_when_closed: true,
+        done_when_merged: true,
+        done_when_approved: true,
+        done_when_unassigned: true,
+        flag: Some("f".to_owned()),
+        title: Some("{title}".to_owned()),
+        labels: vec!["l".to_owned()],
+        exclude_labels: vec!["e".to_owned()],
+        exclude_authors: vec!["a".to_owned()],
+        drafts: true,
+        projects: vec!["p/".to_owned()],
+    };
+    let table = toml::Table::try_from(full).unwrap();
+    let fields: Vec<&str> = table.keys().map(String::as_str).collect();
+    assert_eq!(fields.len(), 21, "{fields:?}");
+    let orphans: Vec<&str> = fields
+        .iter()
+        .copied()
+        .filter(|field| !SourceKind::ALL.iter().any(|kind| kind.uses(field)))
+        .collect();
+    assert_eq!(orphans, Vec::<&str>::new());
+}
+
+const CLOSE_WHEN_DONE_MESSAGE: &str = "`close_when_done` was replaced by `done_when_closed`, \
+     `done_when_merged`, `done_when_approved` (review requests) and `done_when_unassigned` \
+     (work items); see docs/sources.md";
+
+/// Pulls the file, line, column and message out of a [`ConfigError::Parse`].
+fn parse_error(err: &ConfigError) -> (&Path, usize, usize, &str) {
+    match err {
+        ConfigError::Parse {
+            file,
+            line,
+            column,
+            message,
+        } => (file, *line, *column, message),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn close_when_done_is_an_error_naming_the_new_keys() {
+    let sb = Sandbox::new();
+    let path = sb.write_global(&format!(
+        "{GL}\n[[source]]\nname = \"mrs\"\nkind = \"gitlab-review-requests\"\nforge = \"gl\"\n\
+         close_when_done = false\n"
+    ));
+    let err = Config::load(&sb.opts()).unwrap_err();
+    assert_eq!(
+        parse_error(&err),
+        (path.as_path(), 8, 1, CLOSE_WHEN_DONE_MESSAGE)
+    );
+    assert_eq!(
+        err.to_string(),
+        format!("{}:8:1: {CLOSE_WHEN_DONE_MESSAGE}", path.display())
+    );
+
+    // Indented, in a profile, on a source without a kind: still the key's
+    // own position, and before any other complaint about the source.
+    sb.write_global("");
+    let path = sb.write_profile(
+        "p",
+        "[[source]]\nname = \"inbox\"\n  close_when_done = true\n",
+    );
+    let err = Config::load(&sb.opts_with_profile("p")).unwrap_err();
+    assert_eq!(
+        parse_error(&err),
+        (path.as_path(), 3, 3, CLOSE_WHEN_DONE_MESSAGE)
+    );
+}
+
+/// A key set on a source whose kind does not read it is an error at the
+/// key: one case per row of the key table, on a kind that is not in the
+/// row, with the value the key would take on its own kind.
+#[test]
+fn a_key_of_another_kind_is_an_error_at_the_key() {
+    let cases: [(&str, &str, &str); 14] = [
+        ("gitlab-review-requests", "labels", "[\"bug\"]"),
+        ("gitlab-review-requests", "exclude_labels", "[\"wontfix\"]"),
+        ("gitlab-review-requests", "projects", "[\"g/\"]"),
+        ("gitlab-review-requests", "done_when_unassigned", "false"),
+        ("gitlab-review-requests", "command", "\"c\""),
+        ("github-review-requests", "prompt_file", "\"p.md\""),
+        ("gitlab-work-items", "drafts", "false"),
+        ("gitlab-work-items", "exclude_authors", "[\"bot\"]"),
+        ("gitlab-work-items", "done_when_merged", "false"),
+        ("github-work-items", "done_when_approved", "true"),
+        ("llm-bridge", "forge", "\"gl\""),
+        ("llm-bridge", "title", "\"{title}\""),
+        ("llm-bridge", "done_when_closed", "true"),
+        ("llm-bridge", "exclude_authors", "[]"),
+    ];
+    for (kind, key, value) in cases {
+        let sb = Sandbox::new();
+        // Only the keys of the row's own kinds besides the one under test,
+        // so the error can only be about `key`.
+        let own = match kind {
+            "llm-bridge" => "command = \"c\"",
+            _ => "forge = \"gl\"",
+        };
+        let path = sb.write_global(&format!(
+            "{GL}[[source]]\nname = \"s\"\nkind = \"{kind}\"\n{own}\n{key} = {value}\n"
+        ));
+        let err = Config::load(&sb.opts()).unwrap_err();
+        assert_eq!(
+            parse_error(&err),
+            (
+                path.as_path(),
+                7,
+                1,
+                format!("source \"s\": `{key}` does not apply to kind {kind}").as_str()
+            ),
+            "{kind} {key}"
+        );
+    }
+}
+
+/// The wrong-kind check reports the first offending key in file order,
+/// in profile files too, and leaves to `FileSchema` what it cannot judge:
+/// a source without `name` or `kind`, a `kind` that does not parse, a key
+/// that no kind has.
+#[test]
+fn the_wrong_kind_check_reports_the_first_key_and_skips_what_it_cannot_judge() {
+    let sb = Sandbox::new();
+    sb.write_global("");
+    let path = sb.write_profile(
+        "p",
+        "[[source]]\nname = \"inbox\"\nkind = \"llm-bridge\"\ncommand = \"c\"\n\n\
+         [[source]]\nname = \"mrs\"\nkind = \"gitlab-review-requests\"\nforge = \"gl\"\n\
+         labels = []\n  drafts = true\n",
+    );
+    let err = Config::load(&sb.opts_with_profile("p")).unwrap_err();
+    assert_eq!(
+        parse_error(&err),
+        (
+            path.as_path(),
+            10,
+            1,
+            "source \"mrs\": `labels` does not apply to kind gitlab-review-requests"
+        )
+    );
+
+    let fail = |text: &str| -> String {
+        sb.write_profile("p", text);
+        Config::load(&sb.opts_with_profile("p"))
+            .unwrap_err()
+            .to_string()
+    };
+    let err = fail("[[source]]\nkind = \"llm-bridge\"\ncommand = \"c\"\nlabels = []\n");
+    assert!(err.contains("missing field `name`"), "{err}");
+    let err = fail("[[source]]\nname = \"s\"\ncommand = \"c\"\nlabels = []\n");
+    assert!(err.contains("missing field `kind`"), "{err}");
+    let err = fail("[[source]]\nname = \"s\"\nkind = \"slack\"\nlabels = []\n");
+    assert!(err.contains("unknown variant `slack`"), "{err}");
+    // A value of the wrong type: the type error at the value, not a kind error.
+    let err = fail("[[source]]\nname = \"s\"\nkind = 1\nlabels = []\n");
+    let at = |line: usize, column: usize| format!("{}:{line}:{column}: ", path.display());
+    assert!(err.starts_with(&at(3, 8)), "{err}");
+    let err = fail("[[source]]\nname = 1\nkind = \"llm-bridge\"\nlabels = []\n");
+    assert!(err.starts_with(&at(2, 8)), "{err}");
+    let err = fail("[[source]]\nname = \"s\"\nkind = \"llm-bridge\"\ncommand = \"c\"\nfoo = 1\n");
+    assert!(
+        err.starts_with(&format!("{}:5:1: unknown field `foo`", path.display())),
+        "{err}"
+    );
+    let err = fail("[source]\nname = \"s\"\nlabels = []\n");
+    assert!(err.contains("invalid type: map"), "{err}");
+
+    // A key the kind does read, or no key at all, is fine.
+    sb.write_profile(
+        "p",
+        "[forge.gl]\nkind = \"gitlab\"\n[[source]]\nname = \"mrs\"\nkind = \"gitlab-review-requests\"\n\
+         forge = \"gl\"\ndrafts = true\ntitle = \"{iid}\"\n\
+         [[source]]\nname = \"inbox\"\nkind = \"llm-bridge\"\ncommand = \"c\"\nflag = \"inbox\"\n",
+    );
+    let c = Config::load(&sb.opts_with_profile("p")).unwrap().config;
+    assert!(c.source[0].drafts);
+    assert_eq!(c.source[1].flag.as_deref(), Some("inbox"));
 }
 
 // --- the shipped examples ----------------------------------------------------

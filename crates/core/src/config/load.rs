@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use toml::{Table, Value};
 
-use super::{Config, ConfigError, ForgeKind, expand_tilde};
+use super::{Config, ConfigError, ForgeKind, SourceKind, expand_tilde};
 
 /// Name of the global file inside the config directory.
 pub const GLOBAL_FILE: &str = "config.toml";
@@ -413,6 +413,65 @@ struct InlineProfiles {
     profile: BTreeMap<toml::Spanned<String>, Table>,
 }
 
+/// The `[[source]]` tables of a file as raw keys with their spans, for
+/// [`check_source_keys`]. Only keys present in the file are seen, each
+/// with its position. Anything that is not a list of tables is left to
+/// [`FileSchema`].
+#[derive(Deserialize)]
+struct SourceKeys {
+    #[serde(default)]
+    source: Vec<BTreeMap<toml::Spanned<String>, Value>>,
+}
+
+/// The error a `close_when_done` key gets: the switch became one key per
+/// reason (ADR 0032).
+const CLOSE_WHEN_DONE: &str = "`close_when_done` was replaced by `done_when_closed`, \
+     `done_when_merged`, `done_when_approved` (review requests) and `done_when_unassigned` \
+     (work items); see docs/sources.md";
+
+/// Checks the keys of each `[[source]]` in `text`, in file order, before
+/// [`FileSchema`] sees them: `close_when_done` gets [`CLOSE_WHEN_DONE`]
+/// at the key, where `deny_unknown_fields` would only say "unknown field",
+/// and a [`super::SourceConfig`] key that the source's kind does not read
+/// (`labels` on review requests, `drafts` on work items, `forge` on the
+/// LLM bridge) is an error at the key naming the source and the kind. The
+/// kind check needs a `name` and a `kind` that parse; without them, and
+/// for keys no kind has, [`FileSchema`] reports as it would anyway.
+fn check_source_keys(path: &Path, text: &str) -> Result<(), ConfigError> {
+    let Ok(SourceKeys { source }) = toml::from_str::<SourceKeys>(text) else {
+        return Ok(());
+    };
+    for keys in source {
+        let mut keys: Vec<_> = keys.into_iter().collect();
+        keys.sort_by_key(|(key, _)| key.span().start);
+        let value_of = |wanted: &str| {
+            keys.iter()
+                .find(|(key, _)| key.get_ref() == wanted)
+                .map(|(_, value)| value)
+        };
+        let kind = value_of("kind").and_then(|v| v.clone().try_into::<SourceKind>().ok());
+        let name = value_of("name").and_then(Value::as_str);
+        for (key, _) in &keys {
+            let at = key.span().start;
+            let key = key.get_ref();
+            if key == "close_when_done" {
+                return Err(error_at(path, text, at, CLOSE_WHEN_DONE));
+            }
+            if let (Some(kind), Some(name)) = (kind, name)
+                && SourceKind::is_key(key)
+                && !kind.uses(key)
+            {
+                let message = format!(
+                    "source {name:?}: `{key}` does not apply to kind {}",
+                    kind.as_str()
+                );
+                return Err(error_at(path, text, at, &message));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Shape of a repository config: the main checkout it applies to and the
 /// `[worktree]` settings it sets.
 #[derive(Deserialize)]
@@ -517,6 +576,7 @@ fn parse_file(path: &Path, text: &str, kind: &FileKind) -> Result<ParsedFile, Co
             }
         });
     }
+    check_source_keys(path, text)?;
     // Typed first: `deny_unknown_fields` and the newtype validators report
     // with spans, which the generic table cannot do.
     toml::from_str::<FileSchema>(text).map_err(to_error)?;

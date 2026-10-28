@@ -49,12 +49,11 @@ pub fn policy_for(cfg: &SourceConfig) -> Result<Policy, SourceError> {
         };
     Ok(Policy {
         create_new: cfg.create_new,
-        // Until the per-reason keys land (SD-003), the one switch drives all four.
         done_when: DoneWhen {
-            closed: cfg.close_when_done,
-            merged: cfg.close_when_done,
-            approved: cfg.close_when_done,
-            unassigned: cfg.close_when_done,
+            closed: cfg.done_when_closed,
+            merged: cfg.done_when_merged,
+            approved: cfg.done_when_approved,
+            unassigned: cfg.done_when_unassigned,
         },
         flag,
     })

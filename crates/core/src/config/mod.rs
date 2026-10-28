@@ -700,7 +700,7 @@ impl ForgeKind {
 /// required ones are present (see [`SourceKind`]).
 #[allow(
     clippy::struct_excessive_bools,
-    reason = "five independent switches that a TOML table spells as booleans; an enum would not read better in the config file"
+    reason = "independent switches that a TOML table spells as booleans; an enum would not read better in the config file"
 )]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -737,10 +737,22 @@ pub struct SourceConfig {
     /// only updates tasks that already exist (the plan's `flag_only`).
     #[serde(default = "default_true")]
     pub create_new: bool,
-    /// Log a note and mark the task done when its item is done (merged,
-    /// closed, reassigned, approved). Default: `true`.
+    /// Mark the task done when its item was closed without being merged
+    /// (review requests) or closed (work items). Default: `true`.
     #[serde(default = "default_true")]
-    pub close_when_done: bool,
+    pub done_when_closed: bool,
+    /// Review requests: mark the task done when the merge request was
+    /// merged. Default: `true`.
+    #[serde(default = "default_true")]
+    pub done_when_merged: bool,
+    /// Review requests: mark the task done when I approved the merge
+    /// request. Default: `true`.
+    #[serde(default = "default_true")]
+    pub done_when_approved: bool,
+    /// Work items: mark the task done when the open item is no longer
+    /// assigned to me. Default: `true`.
+    #[serde(default = "default_true")]
+    pub done_when_unassigned: bool,
     /// Tag added to matched open tasks that lack it (`review-request`).
     /// Default: unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -792,6 +804,66 @@ pub enum SourceKind {
 }
 
 impl SourceKind {
+    /// Every kind, in declaration order.
+    pub const ALL: [Self; 5] = [
+        Self::GitlabReviewRequests,
+        Self::GitlabWorkItems,
+        Self::GithubReviewRequests,
+        Self::GithubWorkItems,
+        Self::LlmBridge,
+    ];
+
+    /// The `[[source]]` keys every kind reads.
+    pub const COMMON_KEYS: [&'static str; 8] = [
+        "name",
+        "kind",
+        "tags",
+        "status",
+        "enabled",
+        "auto",
+        "create_new",
+        "flag",
+    ];
+
+    /// The `[[source]]` keys this kind reads on top of [`Self::COMMON_KEYS`].
+    /// Any other [`SourceConfig`] field set on a source of this kind is a
+    /// config error (see [`Config::load`]).
+    pub fn keys(self) -> &'static [&'static str] {
+        match self {
+            Self::GitlabReviewRequests | Self::GithubReviewRequests => &[
+                "forge",
+                "title",
+                "exclude_authors",
+                "drafts",
+                "done_when_closed",
+                "done_when_merged",
+                "done_when_approved",
+            ],
+            Self::GitlabWorkItems | Self::GithubWorkItems => &[
+                "forge",
+                "title",
+                "labels",
+                "exclude_labels",
+                "projects",
+                "done_when_closed",
+                "done_when_unassigned",
+            ],
+            Self::LlmBridge => &["command", "prompt_file"],
+        }
+    }
+
+    /// Whether a `[[source]]` key applies to this kind: one of
+    /// [`Self::COMMON_KEYS`] or of [`Self::keys`].
+    pub fn uses(self, key: &str) -> bool {
+        Self::COMMON_KEYS.contains(&key) || self.keys().contains(&key)
+    }
+
+    /// Whether `key` is a `[[source]]` key of any kind: a [`SourceConfig`]
+    /// field, as opposed to a misspelling.
+    pub fn is_key(key: &str) -> bool {
+        Self::ALL.iter().any(|kind| kind.uses(key))
+    }
+
     /// The forge API this kind talks to, if any.
     pub fn forge_kind(self) -> Option<ForgeKind> {
         match self {
