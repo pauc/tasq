@@ -91,3 +91,26 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 61.
 - SD-002: no code change. SD-001 already made the sources report the right reasons and SD-003
   already mapped the four keys in `policy_for`, so every new test passed on arrival instead of
   going red first. Each was proven by a hand-made breakage instead (see Learnings).
+
+## Review
+
+Two-axis review of `main...HEAD` (2026-10-28): Standards against `CLAUDE.md` and
+`docs/testing.md`, Spec against PLAN.md SD-001..SD-004. No documented-standard violation and no
+missing, extra or wrong requirement; six findings, two fixed.
+
+| # | Axis | Finding | Outcome |
+|---|------|---------|---------|
+| 1 | Standards | Duplicated code (test-only): `state_wire_format_carries_no_reason` re-listed the six `DoneReason` variants although `REASONS` sits in the same test module | fixed (275321b) |
+| 2 | Standards | Duplicated code: both forge sources pair `Done(Gone)` with `"no longer exists"` and `Done(Closed)` with `"closed"`; a `DoneReason::note()` would collapse the pair | skipped: the plan says "the note stays as is, no mapping from reason to text" |
+| 3 | Standards | Feature envy (light): `Policy::closes` reads only `self.done_when` | skipped: ADR 0032 names `Policy::closes` as the decision point |
+| 4 | Standards | Shotgun surgery: a new `SourceConfig` field touches the struct, `SourceKind::keys`, the guard test and `docs/sources.md` | skipped: the guard test is the agreed mitigation; the table has to live somewhere |
+| 5 | Standards | `3801dc0 feat(core)` also rewrites four `crates/sources` files | skipped: already recorded under Deviations (SD-001) |
+| 6 | Spec | The wrong-kind check also skips a source without a string `name`; the plan only lists a missing or unparseable `kind`, and PROGRESS.md did not record it | fixed (93c4c3a) |
+
+Gate after the fixes: fmt, clippy `-D warnings`, workspace tests green; `cargo mutants --in-diff`
+38 tested, 27 caught, 11 unviable, 0 missed.
+
+Seen on the way, out of scope: `tasq_cli::commands::ui::tests::sync_passes_the_picked_sources_as_source_flags`
+failed once in a full `cargo test --workspace` run and passed alone and on the rerun. It writes a
+`#!/bin/sh` script to a temp dir and executes it at once while sibling tests fork, so an
+`ETXTBSY` race is the likely cause. `crates/cli` is untouched by this branch.
