@@ -9,7 +9,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 61.
 | SD-001 | `DoneReason` and the policy in core | done | 3801dc0 |
 | SD-002 | sources report reasons | done | 1ea7da5 |
 | SD-003 | config keys and the per-kind check | done | 59d536f |
-| SD-004 | docs, ADR, changelog | todo | |
+| SD-004 | docs, ADR, changelog | done | 73e49a7 |
 | SD-005 | the user's `sf` profile | todo | |
 
 ## Learnings
@@ -49,9 +49,31 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 61.
 - The registry test config needs a `[forge.f]` with a `kind` matching the source kind, or load
   fails with `BadForgeReference` / `ForgeKindRequired` before `policy_for` is reached.
 
+- SD-004 (73e49a7): docs only, no code touched, so no mutants run: 0 missed.
+- Every snippet written was loaded with `tasq --config-dir <dir> config show --json`: the
+  `docs/sources.md` work-items example (its `done_when_unassigned = false` reaches the config),
+  and the `docs/config.md` example block uncommented once as review requests and once as work
+  items, each without the other kinds' keys. The three error texts quoted in the docs are the
+  ones the binary prints. An exported `TASQ_PROFILE` makes `--config-dir` on a scratch dir fail
+  with "profile ... is not defined"; run the check with `env -u TASQ_PROFILE`.
+- The review of the draft caught claims the new keys made conditional: `exclude_authors`'
+  "still closes when its MR merges" (now: with `done_when_merged`), step 5's "gone" as a third
+  state (now a done reason), and the example block, whose mixed keys were harmless before and
+  are errors now on one kind (it now says so in its first line).
+
 ## Blockers
 
 ## Deviations
+
+- SD-004: `cargo doc --workspace --no-deps` is not warning-free, but all 9 warnings are on
+  `main` already, in files this branch does not touch (`crates/cli/src/cli.rs`,
+  `crates/core/src/edit.rs`, `crates/store/src/lock.rs`, `crates/tui/src/view.rs`); SD-004 adds
+  none. Left alone to keep the sub-task docs-only.
+- SD-004 also adds a "From an earlier `tasq`: done reasons" table to `docs/migration.md`, not in
+  the plan: the CHANGELOG points upgraders there for the ADR 0031 moves.
+- SD-004: the `LlmBridge::check` doc comment ("nothing is ever closed by it") was left as is. It
+  describes `check`, which is accurate; a fetched item whose `state` is `done` closes through
+  `reconcile`, which `docs/sources.md` now says.
 
 - SD-001 touches `crates/sources` as well: `ItemState::Done` becoming a tuple variant does not
   compile there, so the forge sources already report their correct reasons and
