@@ -18,6 +18,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use tempfile::TempDir;
 
+mod support;
+
 const TASK_3: &str = "01K6Q8ZT3D0000000000000003.md";
 const TASK_4: &str = "01K6Q8ZT3D0000000000000004.md";
 
@@ -197,6 +199,7 @@ impl Env {
             .env("PATH", self.path())
             .env("TASQ_BIN", self.bin.join("tasq"))
             .current_dir(&self.home);
+        support::forward_profile(&mut cmd);
         cmd
     }
 
@@ -489,22 +492,21 @@ mod commit {
         // detaches, start in a directory that no longer exists.
         let gone = env.base().join("gone");
         std::fs::create_dir_all(&gone).unwrap();
-        let out = Command::new("sh")
-            .args([
-                "-c",
-                "cd \"$1\" && rmdir \"$1\" && exec \"$2\" job --store \"$3\"",
-                "sh",
-            ])
-            .arg(&gone)
-            .arg(env!("CARGO_BIN_EXE_tasq-git"))
-            .arg(&env.store)
-            .env_clear()
-            .env("HOME", &env.home)
-            .env("PATH", env.path())
-            .env("TASQ_BIN", env.bin.join("tasq"))
-            .current_dir(env.base())
-            .output()
-            .unwrap();
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            "cd \"$1\" && rmdir \"$1\" && exec \"$2\" job --store \"$3\"",
+            "sh",
+        ])
+        .arg(&gone)
+        .arg(env!("CARGO_BIN_EXE_tasq-git"))
+        .arg(&env.store)
+        .env_clear()
+        .env("HOME", &env.home)
+        .env("PATH", env.path())
+        .env("TASQ_BIN", env.bin.join("tasq"))
+        .current_dir(env.base());
+        let out = support::forward_profile(&mut cmd).output().unwrap();
         assert_silent(&out);
         assert_eq!(env.messages(), ["log 3: Three"]);
         assert_eq!(

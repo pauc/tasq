@@ -12,6 +12,8 @@ use std::process::{Command, Output};
 
 use tempfile::TempDir;
 
+mod support;
+
 /// A temp root holding `home`, `bin` (the fake `tasq`), the store
 /// directory (absent until a test creates it) and a bare remote.
 struct Env {
@@ -125,6 +127,7 @@ impl Env {
             .env("HOME", &self.home)
             .env("PATH", self.path())
             .current_dir(&self.home);
+        support::forward_profile(&mut cmd);
         cmd
     }
 

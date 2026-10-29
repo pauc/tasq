@@ -24,6 +24,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use tempfile::TempDir;
 
+mod support;
+
 const TASK_3: &str = "01K6Q8ZT3D0000000000000003.md";
 const TASK_4: &str = "01K6Q8ZT3D0000000000000004.md";
 
@@ -389,6 +391,7 @@ impl Machine<'_> {
             .env("TASQ_BIN", self.world.base().join("bin/tasq"))
             .env("FAKE_STORE", &self.store)
             .current_dir(self.world.home());
+        support::forward_profile(&mut cmd);
         cmd
     }
 }

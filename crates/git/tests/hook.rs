@@ -10,6 +10,8 @@ use std::process::{Command, Output, Stdio};
 
 use tempfile::TempDir;
 
+mod support;
+
 /// A store directory under a temp root, absent until a test creates it.
 struct Store {
     _root: TempDir,
@@ -77,9 +79,9 @@ impl Store {
 
 /// Runs `tasq-git <args>` with `stdin` and an environment holding nothing.
 fn tasq_git(args: &[&str], stdin: &str) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tasq-git"))
-        .args(args)
-        .env_clear()
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_tasq-git"));
+    cmd.args(args).env_clear();
+    let mut child = support::forward_profile(&mut cmd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
