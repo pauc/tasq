@@ -7,344 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0](https://github.com/pauc/tasq/releases/tag/v0.1.0) - 2026-10-29
+
+First release: a terminal task manager over plain markdown task files.
+
 ### Added
 
-- `tasq-git`, the store sync plugin (ADR 0030, task 57), is a new binary of the workspace
-  (`crates/git`), installed by `scripts/install` and shipped in the release tarballs and the
-  Homebrew formula. Enabled with `[plugins] enabled = ["git"]`, it leaves a store that is not a
-  git repository alone (`store-open` and `post-write` do nothing) and answers `tasq doctor`
-  with `OK git/sync store sync off: <store> is not a git repository`. A payload with a schema
-  other than 1 is a warning naming it.
-- `tasq git init [<url>] [--branch <b>] [--name <n>] [--email <e>] [--ssh-key <path>]` makes
-  the store a git repository whose first commit holds exactly its task files (`.tasq/`, dot
-  files and anything else in the directory stay out), on a branch named after the store. The
-  identity is written into the repository's own config (`user.name`, `user.email`,
-  `core.sshCommand = ssh -i '<key>' -o IdentitiesOnly=yes`), each flag defaulting from
-  `[plugin.git] name`, `email`, `ssh_key`; exported `GIT_*` variables are ignored. Given a
-  URL, it pushes the branch there (an empty remote, or one without that branch) and refuses a
-  branch that already has history, before touching the store. A failure after `git init`
-  removes the new `.git`.
-- With `tasq-git` enabled, every command that writes to a store that is a git repository is
-  committed in the background: `post-write` records the writes and detaches `tasq-git job`,
-  which commits the task files only (never `.tasq/` or other files) with the subject
-  `<command> <ids>: <title of the first id>` (for example `log 57: Git sync as an opt-in
-  feature for tasq stores`) and, when several writes are batched, one body line each. One job
-  runs per store (an OS file lock on `.tasq/plugins/git/job.lock`, gone with the job); a write
-  made while it runs is committed before it exits. The job ignores exported `GIT_*` variables,
-  cannot prompt, and still commits when the command's working directory is gone (a `tasq done`
-  that removed its worktree). Every git the plugin runs does so without commit signing or hooks
-  (`commit.gpgSign=false`, `core.hooksPath=/dev/null`), whatever the global config says. A failed commit is the lasting warning `commit failed: <git's message>`,
-  cleared by the next commit.
-- With `tasq-git` enabled, a store whose branch has an upstream is synced in the background:
-  after a commit, and whenever a command opens the store and the last fetch is older than
-  `[plugin.git] interval` (whole seconds, default 60), the job fetches, rebases onto the
-  upstream under `tasq store lock` when behind, and pushes when ahead. A push that fails is
-  tried once more after another fetch and rebase. A failed fetch, rebase or push is the lasting
-  warning `fetch failed: ...`, `rebase failed: ...` or `push failed: ...`, cleared once that
-  step succeeds. A git command of the job running two minutes is killed (`fetch failed: git
-  timed out after 120 s`), and ssh asks `false` instead of the terminal
-  (`SSH_ASKPASS_REQUIRE=force`), so a passphrase or host key prompt fails at once. An `interval`
-  that is not whole seconds is a warning, and the default applies.
-- With `tasq-git` enabled, a rebase that conflicts (both machines edited one task) is aborted
-  under the store lock: the task files and the local commits stay as they were, no task file
-  ever holds conflict markers, and the lasting warning `rebase conflict on task <ids>: local
-  commits kept, nothing pushed until it is resolved: cd <store> && git pull --rebase, fix the
-  files, git add them, git rebase --continue` names the tasks. Nothing is pushed until it is
-  resolved; while a rebase is in progress in the store the job leaves the repository alone,
-  and the first job after `git rebase --continue` clears the warning and pushes.
-- `tasq doctor` explains a duplicate id: its `ids` failure names each file with its creation
-  time and title, oldest first, marks the newer ones, and its fix gives the next free id to
-  write into each newer file (`write 'id: 8' in <file>`; several duplicates get consecutive
-  ids). With `tasq-git` enabled, a pull that brings in such an id (two machines created a task
-  offline) leaves the lasting warning `duplicate id: <doctor's detail>; fix: <doctor's fix>`,
-  one per id, until the files are fixed by hand. Ids are never renumbered automatically.
-- `tasq git sync` commits, fetches, rebases and pushes the store in the foreground, whatever
-  the interval, printing one line per step (`committed: log 3: ...`, `fetched origin/default`,
-  `pulled 1 commit from origin/default`, `pushed 1 commit to origin/default`, `up to date with
-  origin/default`); a failed step prints the lasting warning it leaves and exits 1. git keeps
-  the terminal, so it can ask for a passphrase. It waits for a background job that is running,
-  and refuses a store that is not a repository or has a rebase in progress.
-- `tasq git clone <url> [--branch <b>] [--store <name>] [--name <n>] [--email <e>] [--ssh-key
-  <path>]` fills a store (`--store`, else the configured one) from a branch of a remote (default:
-  the store name), fetching that branch only and tracking it, with the identity of `tasq git
-  init`. A store with task files, a branch the remote does not have and an unreachable remote
-  are refused before the store is touched; other files in the store directory are kept.
-- With `tasq-git` enabled, `tasq doctor` explains a store that is a git repository: `git/identity`
-  (who it commits as, and the `ssh` command it pushes with), `git/remote` (the branch and the
-  upstream it tracks, or that it has none), `git/push` (commits not pushed), `git/fetch` (how
-  long ago the last fetch was) and `git/rebase` (a rebase left in progress fails).
-- `docs/git-sync.md` describes store sync: install and enable, the first and a second machine,
-  identity, what the background job does and the interval, `tasq git sync`, the lasting
-  warnings, conflicts, duplicate ids, the doctor checks and the plugin's state files. README,
-  `docs/plugins.md`, `docs/config.md` and `docs/architecture.md` link to it.
-- `docs/plugins.md` describes the plugin extension points normatively (ADR 0030): enabling a
-  plugin, the events and every payload with an example, the plugin's process (arguments,
-  environment, timeout, exit codes), lasting warnings, doctor checks, `tasq store lock` and
-  the TUI. `docs/config.md` documents `[plugins]` and `[plugin.<name>]`, `docs/json.md` the
-  event payloads.
-- `tasq ui` reloads by itself when the store's files change on disk (another terminal, a hand
-  edit, a plugin's job): every 2 s it compares the names, lengths and mtimes of the `.md`
-  files and reloads when they differ, keeping the selected task and the scroll. It does so
-  only while no picker or prompt is open. `r` now also sends enabled plugins `store-open`;
-  the automatic reload does not.
-- `tasq store lock [--timeout SECS] -- <cmd> [args...]` runs a command holding the store lock
-  every write takes, with `TASQ_STORE_DIR` and `TASQ_LOCKED=1` in its environment, and exits
-  with its exit code (128 plus the signal when a signal ended it). The lock is refreshed every
-  30 s while the command runs, so a long one is not taken for stale. A lock that cannot be
-  taken, one still held after `--timeout`, or a command that cannot start is exit 1, without
-  running anything. It is how a plugin rewrites task files without racing a write.
-- Lasting plugin warnings: an enabled plugin keeps the problems it wants shown in
-  `<store>/.tasq/plugins/<name>/warnings`, one per line, and tasq shows them until the plugin
-  clears the file: every command that opens the store prints them on stderr
-  (`tasq: warning: <name>: <line>`), `tasq ui` shows the first with the count in its status
-  bar, and `tasq doctor` lists each as a `WARN` check `<name>/warning`. tasq never writes the
-  file.
-- Plugin doctor checks: `tasq doctor` sends enabled plugins the `doctor` event and lists the
-  checks they answer on stdout (`[{"name", "status": "ok" | "warn" | "fail", "message",
-  "fix"?}]`) as `<name>/<check>`, after the plugin's `tasq-<name>` check. Blank output is no
-  checks; output that does not parse, a non-zero exit or a timeout is one `FAIL` check
-  `<name>/doctor`. `doctor` sends no `store-open`.
-- Enabled plugins are told what a command wrote: one `post-write` event per command, after its
-  last write, with `"command"` (the subcommand, `ui` in the TUI) and `"writes": [{"id",
-  "file", "kind": "create" | "update"}]`, each task once, in the order first written. Every
-  command that writes through the store sends it (`create`, `set`, `log`, `done`, `reopen`,
-  `apply`, `sync`, `move`, `mr`, `session`, `project`, `worktree`, `rename`, `tag`, `due`,
-  `desc`, `next`/`pick` setting a task in progress, before the launcher takes over), and so
-  does every TUI action that wrote. A command that wrote nothing (a read, an edit that changed
-  nothing, `--dry-run`, a failure before the first write) sends none; one that fails after a
-  write still sends what it wrote.
-- Enabled plugins are told when a command or `tasq ui` opens the store: tasq runs
-  `tasq-<name> hook` with `{"schema": 1, "event": "store-open", "store": {"name",
-  "location"}, "config": {...}}` on stdin (`config` is the plugin's `[plugin.<name>]` table),
-  `TASQ_EVENT=store-open` and the `TASQ_BIN`, `TASQ_PROFILE`, `TASQ_CONFIG` and `TASQ_SET`
-  hooks get. Plugins run one at a time in `enabled` order, with tasq's environment only and in
-  their own process group; one that exits non-zero, or is still running or holding its output
-  open after `plugins.timeout` seconds (default 2, then its process group is killed), is a
-  warning naming the plugin and the event, and the command's exit code is unchanged. What a
-  plugin prints shows at `-v`. A `tasq` run by a plugin during an event (`TASQ_EVENT` set)
-  tells no plugin, so a plugin can read the store through `$TASQ_BIN`.
-  `examples/plugins/tasq-echo` logs every event it gets.
-- Plugins are enabled by name: `[plugins] enabled = ["git"]` lists the `tasq-<name>`
-  executables tasq will tell about events (ADR 0030), and `[plugin.<name>]` holds each
-  plugin's own settings, loaded from every config layer (`--set plugin.git.interval=30`
-  included) and not checked by tasq. An unknown key under `[plugins]` fails with
-  file:line:column; a name that is empty, has `/`, whitespace or a leading `-`, is a built-in
-  command or is listed twice is an error. `tasq plugins list` shows the enabled plugins and
-  where each is installed (`--json` `"enabled": [{name, path}]`), `tasq store info` lists them
-  (`plugins:`, `--json` `"plugins"`), and an enabled plugin missing from `PATH` is a warning on
-  every command that opens the store and a `FAIL` check in `tasq doctor`.
-- Review-request sources skip draft merge requests unless `drafts = true`, and
-  `exclude_authors = ["dependabot"]` drops merge requests by those usernames (exact), as the
-  `/update-tasks` skill did; without it a first `tasq sync` against a busy GitLab creates a
-  task per dependency bump. Only listing is filtered: a tracked task still closes when its MR
-  merges. `tasq config show` prints both keys. The docs and examples now spell the GitLab
-  token command as `glab config get token --host <host>`: glab 1.118 has no `auth token`
-  subcommand and prints help with exit 0, which was sent as the token.
-- Manual order within a status group: `tasq move <id> --before <id>` / `--after <id>` places
-  a task next to another task of its group, `--top` puts it first (above every priority) and
-  `--unrank` hands it back to the priority, due, id order; `tasq list`, `tasq ui` and
-  `tasq next` follow. In `tasq ui`, `Ctrl+K`/`Ctrl+J` (`move-up`, `move-down`) move the
-  selected task one slot, next to its visible neighbour. The rank lives in a `## Rank` section
-  of the task file, is never shown, and is kept across status changes and close/reopen;
-  `rank` is in every task JSON (`tasq move --json` adds `changed` and `ranked`) and
-  `tasq apply` keeps it unless the document says `"rank": null`. The common move rewrites one
-  file; a move that ranks or renumbers neighbours goes out as one commit (ADR 0025).
-- `tasq ui` detail pane: `J`/`Ctrl+E` and `K`/`Ctrl+Y` scroll it (`detail-down`, `detail-up`),
-  `PgUp`/`PgDn` page it when it replaces the list, a scrollbar shows the position, and every
-  progress note is listed (no longer the last 8). Related and merge request entries show
-  their label or a short reference (`!7`, `#42`, `example.com/doc`) as OSC 8 hyperlinks
-  (`ui.no_osc8` turns them off); Project and Worktrees paths show the home directory as `~`.
-  `v` (`view`) runs `tasq view` on the task; with less as `ui.pager` it stays open full screen
-  even on a short task and `q` returns to the list.
-- Launch trace for `tasq pick|next`: `-v` prints every `herdr`/`tmux` command with its result
-  and output on stderr, and `launch.log` (`TASQ_LAUNCH_LOG`) appends it to a file with a header
-  and the outcome. The herdr launcher now names herdr's error when it cannot open a pane, warns
-  when a focus step fails, and reports the error of both `agent start` attempts.
-- `tasq rename`, `tasq due`, `tasq tag` and `tasq desc` (TEXT, `-` for stdin, no TEXT prints,
-  `""` clears, `--edit` opens `$VISUAL`/`$EDITOR`), each with `--note` and `--json`; `--note`
-  on `set`, `done` and `reopen` as an alias of the positional note. An edit that changes
-  nothing writes nothing and prints `[id] <field> unchanged` (also in the TUI's status line;
-  with `--json`, `"changed": []` next to the task, which otherwise names the fields written);
-  with a note it fails (exit 1), since the note is not logged either. `desc -` and `--edit`
-  drop blank lines at either end and CRLF; an editor that exits non-zero aborts `--edit`.
-  `tasq done` refuses a task that is already done (exit 1), so it no longer retries a failed
-  worktree release: `tasq worktree release` does that.
-- `[worktree]` configuration for worktrees per task (ADR 0022): `enabled` (default `false`),
-  `path` and `branch` templates, `base`, `on_create`, `on_done`, `delete_branch`, `symlinks`,
-  `copies`, `copy_ignored`, `templates`, `variables`, `ports` and `[worktree.hooks]`, with
-  `TASQ_WORKTREE_*` variables (`TASQ_WORKTREE_ENABLED` for `enabled`). The keys are validated;
-  the lifecycle that uses them is still being built.
-- Worktrees are invisible unless `worktree.enabled = true`: `tasq worktree` is hidden from
-  help and completions and refused, task JSON and hook documents leave out `worktrees` (and
-  `pick --dry-run --json` `in_worktree`), the TUI detail and the Claude prompt say nothing about
-  them, and sessions start in the project. `tasq apply` keeps the stored worktrees when the
-  document has no `worktrees` key.
-- Worktree template variables (`id`, `title`, `slug`, `project`, `project_name`,
-  `project_parent`, `repo`, `branch`, `branch_safe`, `branch_db`, `port`, `worktree`,
-  `worktree_name` and `[worktree.variables]`), checked per template at load time. The `{{name}}`
-  engine moved to `tasq_core::template`; `tasq-launch` no longer depends on `regex`.
-- Every task created with `tasq create` or the TUI's `c` key tracks a project: `--project`
-  when given, else the directory `tasq` runs in. `tasq pick` therefore always has somewhere
-  to start; `tasq project <id> <path>` changes it. The original script left the section out
-  unless `--project` was passed.
-- Work sessions in a new window: `tasq pick|next --window [--no-focus]` (`-w` for short) opens the session
-  with `launch.window` (`herdr`, `tmux`, or `auto` for whichever the terminal runs in)
-  instead of the current terminal, in the background with `--no-focus`. In `tasq ui`,
-  `Ctrl+Enter` opens the selected task in a new window and switches to it, `Shift+Enter`
-  opens it without leaving the list; plain `Enter` is unchanged. `launch.herdr.placement`
-  (`auto` | `workspace` | `tab`) says what a herdr window is. The two chords need a
-  terminal with the kitty keyboard protocol (herdr has it). ADR 0012, ADR 0029.
-- `tasq list --all` (done tasks in a `DONE` group after the open ones, also in `--json`) and
-  `tasq list --done` (only closed tasks); the other filters apply to both. `[ui.colors] done`
-  colours the group.
-- Plugins (ADR 0006): `tasq <name> [args...]` runs an executable `tasq-<name>` from `PATH`
-  when `<name>` is not a built-in command, with `TASQ_BIN`, `TASQ_PROFILE`, `TASQ_CONFIG` and
-  `TASQ_SET` forwarded so the plugin sees the same configuration; `[hooks]` config
-  (`post-create`, `post-done`, `pre-launch`) runs command lines with the task as JSON on
-  stdin, a failing `pre-launch` hook aborting the launch; `tasq plugins list`; `TASQ_SET`
-  environment variable (newline-separated `key=value` overrides). Reference plugin
-  `examples/plugins/tasq-tlogs` and hook `examples/plugins/hooks/log-event.sh`;
-  `docs/plugins.md`.
-- Documentation for a new user: README (install, quick start, concepts, commands),
-  `CONTRIBUTING.md`, `docs/config.md` with every key and its default, `docs/migration.md`
-  (running alongside the original `tasks` script), `docs/release.md`, `examples/config/`.
-- Release pipeline: `.github/workflows/release.yml` builds Linux and macOS tarballs on a
-  `v*` tag, creates the GitHub release with git-cliff notes (`cliff.toml`), publishes the
-  crates in dependency order and renders a Homebrew formula from `homebrew/tasq.rb.template`.
+**Tasks and the store**
 
-- `tasq ui`: a ratatui terminal UI over the same tasks. Grouped list with the CLI's ordering,
-  the selected task's detail beside it (one pane below 100 columns, `Tab` to switch), `/`
-  filter, status and priority pickers from the configured workflow, note and done prompts,
-  `c` to create a task from a title (with `workflow.default_status`; the `post-create` hooks
-  fire as for `tasq create`), `e` for `$EDITOR`, `Enter` for a work session and `S` for
-  `tasq sync` (both run as child `tasq` processes while the terminal is released), `?` help.
-  Colours follow `[ui.colors]`
-  and `NO_COLOR`. The edit operations behind `tasq set/log/done` moved to `tasq_core::edit`
-  so both front ends share them; `tasq_core::store::MemoryStore` is the in-memory store for
-  tests and `Store::file_of` tells a UI which file to open.
+- One task per `<ULID>.md` file in a store directory (default
+  `~/.local/share/tasq/stores/default`): frontmatter (`id`, `status`, `priority`, `due`,
+  `tags`, `rank`), then title, description, links, project, worktrees, sessions and a dated
+  progress log ([`docs/file-format.md`](docs/file-format.md)). Edits keep every byte they do
+  not understand, so hand edits coexist.
+- Integer ids, highest plus one, never renumbered. Writes take `.tasq/lock` and fail on a file
+  changed since it was read. Duplicate ids are reported by `tasq doctor` with the fix.
+- Configurable statuses (`[workflow]`, default `in-progress`, `ready`, `waiting`, `blocked`,
+  `later`), priorities `A`/`B`/`C`, due dates (`today`, `tomorrow`, ISO), topic tags, manual
+  rank within a status group.
 
-- `tasq` CLI with every editing command of the original script: `list` (default, with
-  status/tag/priority/text filters), `create`, `set`, `log`, `done`, `view` (glow rendering
-  with OSC 8 links on a terminal), `project`, `worktree` (track, or `--create` with
-  `git worktree add`), `session`, `mr`, `apply` (JSON in), `store info`, `store sync`, `doctor`,
-  `config show` and `completions`; `--json` on every command (`docs/json.md`),
-  `--color`/`--no-color`/`--no-pager`, `--profile`/`--config`/`--set`, `TASQ_NOW` for
-  reproducible timestamps.
-- `tasq next` and `tasq pick <id>`: open a work session in the first tracked worktree that
-  exists, else the project, else `work.default_project`, with `--launcher` and `--dry-run`.
-  Launchers: `claude` (prompt from a template, `direnv exec` when the `.envrc` is allowed),
-  `shell`, `tmux`, `herdr` (workspace or tab, Claude agent, prompt pasted in) and `auto`.
-- `tasq sync`: GitLab and GitHub review-request and work-item sources (create tasks, close
-  them when merged, approved, closed or reassigned), an LLM bridge for anything unstructured,
-  `--source`, `--dry-run`, `--json` and per-task re-checks. `tasq mr` resolves titles through
-  the configured forge.
-- `tasq summary [DAY] [--raw]`: the day's progress notes grouped per task (default: the last
-  working day; weekday names and `last <weekday>` look back), distilled by
-  `report.summary.command` reading a prompt template on stdin, or printed raw. `tasq dates
-  [SPEC]`: `this|last week`, `this|last month`, `last N days`, days and day pairs resolved to
-  `FROM TO`, with `--json` for scripts and plugins.
-- Claude Code plugin `plugins/claude` (namespace `tasq`): `/tasq:wrapup` (progress notes,
-  tracked MRs/worktree/session, final status through the CLI) and `/tasq:sync` (`tasq sync`,
-  inbox triage when no LLM bridge is configured, a briefing); the repository doubles as a
-  one-plugin marketplace; a status-line snippet shows `[id] title`.
-- nb-compatible store (`tasq-store-nb`) with nb and native bookkeepers.
-- Core domain model, lossless markdown format, queries and layered TOML config.
-- Cargo workspace with the `tasq-core`, `tasq-store-nb`, `tasq-sources`,
-  `tasq-launch`, `tasq` and `tasq-tui` crates, shared lints and quality gates.
+**Commands**
 
-### Changed
+- `list` (`ls`) with status, tag, priority and text filters, `--all`, `--done`.
+- `create`, `set`, `log`, `done`, `reopen`, `rename`, `due`, `tag`, `desc` (`-`, `""`,
+  `--edit`), `move` (`--before`, `--after`, `--top`, `--unrank`), `project`, `session`, `mr`,
+  `apply` (JSON in). No-op edits write nothing; `done` refuses a done task.
+- `view` (glow with OSC 8 links on a terminal, markdown otherwise), `summary [DAY]` (a day's
+  notes per task, distilled by `report.summary.command` or `--raw`), `dates [SPEC]`.
+- `store info`, `store lock -- CMD`, `doctor`, `config show`, `plugins list`,
+  `completions SHELL`.
+- `--json` on every command, `"schema": 1` ([`docs/json.md`](docs/json.md)). Exit 0, 1
+  (fixable error), 2 (usage or internal). `--profile`, `--config-dir`, `--set`, `--color`,
+  `--no-pager`, `-v`; `TASQ_NOW` fixes the clock.
 
-- **Breaking:** `[[source]] close_when_done` is replaced by one key per reason a source reports
-  an item done (ADR 0032, task 61), each `true` by default: `done_when_closed` (review
-  requests: the MR was closed without being merged; work items: the issue was closed),
-  `done_when_merged` and `done_when_approved` (review requests), `done_when_unassigned` (work
-  items: the open issue is no longer assigned to you). An item done for a reason that is off is
-  treated as open: no note, the task stays open, and `flag` still applies. An item that no
-  longer exists, and an LLM bridge item whose `state` is `done`, always close the task. With
-  `done_when_unassigned = false`, an issue reassigned to its reviewer keeps its task open until
-  the issue closes. `close_when_done` in `config.toml` or a profile is an error at the key:
-  `` `close_when_done` was replaced by `done_when_closed`, `done_when_merged`,
-  `done_when_approved` (review requests) and `done_when_unassigned` (work items); see
-  docs/sources.md ``.
-- **Breaking:** a `[[source]]` key that the source's kind does not read is a config error at
-  the key, instead of being ignored: `labels`, `exclude_labels` and `projects` on review
-  requests, `exclude_authors` and `drafts` on work items, `forge`, `title` and the
-  `done_when_*` keys on `llm-bridge`, `command` and `prompt_file` on the forge kinds,
-  `done_when_merged` and `done_when_approved` on work items, `done_when_unassigned` on review
-  requests (`` config.toml:12:1: source "gitlab-work-items":
-  `done_when_approved` does not apply to kind gitlab-work-items ``).
-- **Breaking:** configuration lives only in the config directory (ADR 0031): `--config-dir`,
-  else `TASQ_CONFIG_DIR`, else `$XDG_CONFIG_HOME/tasq`, else `~/.config/tasq`. The moves are
-  listed in `docs/migration.md` ("From an earlier `tasq`").
-  - The config directory holds `config.toml`, `profiles/<name>.toml` and `repos/*.toml`. A
-    directory named by `--config-dir` or `TASQ_CONFIG_DIR` must exist; plugins, hooks,
-    launched sessions and worktree hooks get it as `TASQ_CONFIG_DIR`, absolute.
-  - A profile is the file `profiles/<name>.toml`, the shape of `config.toml`, read only when
-    selected. A `[profile.<name>]` table is an error at its name naming the file to move it
-    to; an unknown profile names the file looked for and the profiles there are.
-  - A repository config, `repos/<any>.toml`, holds `path` (the repository's main checkout,
-    absolute or `~/`) and `[worktree]`; it applies to that repository's worktree commands from
-    any directory and with any profile, after the profile and before the environment. Any
-    other key, a relative `path` and two files with one `path` are errors. A relative
-    template `source` starts at its directory.
-  - The worktree feature switch is `worktrees_enabled` at the top level
-    (`TASQ_WORKTREES_ENABLED`). `worktree.enabled` is an error at its value naming the new
-    key, and `config show --json` has `.config.worktrees_enabled`.
-  - Worktree hooks run without approval, whichever file set them.
-  - `tasq worktree config [DIR]` shows the `[worktree]` settings that apply to `DIR`'s
-    repository, the layer of each and the repository config that matched (`--json` too).
-  - `tasq doctor` checks each repository config (`repo-config`): `WARN` when its `path` does
-    not exist, is not in a git repository, is a linked worktree or a subdirectory, or reaches
-    the main checkout through a symlink or `..`; `FAIL` when the files do not load.
-- **Breaking:** no positional argument shares a slot with subcommands any more (ADR-0028),
-  so the generated shell completions reach every subcommand (`tasq worktree rel<TAB>`,
-  `tasq store <TAB>`, ...).
-  - The list filter is `tasq list [WORD]`, with the new alias `tasq ls [WORD]`; the bare
-    `tasq <WORD>` shorthand is gone (`tasq ready` is now an unknown command, exit 2, unless a
-    `tasq-ready` plugin exists). A bare `tasq` still lists open tasks.
-  - Declaring or tracking a worktree is `tasq worktree set <ID> [BRANCH|PATH]` (and
-    `tasq worktree set <ID> --create <BRANCH>`); the `tasq worktree <ID> ...` form is gone. The
-    session prompt and the `/tasq:wrapup` skill use the new form; a bare `tasq worktree` prints
-    the subcommand list.
+**Work sessions**
 
-### Fixed
+- `next` (first in-progress task, else first ready) and `pick ID` start a session in the
+  task's worktree, else its project, else `work.default_project`.
+- Launchers `claude` (templated prompt, `direnv exec` when allowed), `shell`, `tmux`,
+  `herdr`, `auto`; `--window`/`--no-focus` for a new window; `--dry-run`; `-v` and
+  `launch.log` trace the launcher commands.
 
-- `plugins.enabled` rejects `.` and `..`: their lasting warnings file resolved outside
-  `.tasq/plugins/<name>`.
-- The store lock is stamped by tasq's clock (`TASQ_NOW` when set), or the wall time when that
-  is later, when taken and when `tasq store lock` refreshes it; a waiter on a clock far ahead
-  of the wall no longer breaks a live lock.
-- A plugin that exited with its output held open by a background job is reaped only after its
-  process group is killed at the timeout, so the kill can never reach a group that reused its
-  pid.
-- `tasq doctor` with built-in command names in `plugins.enabled` reports each as a `FAIL`
-  check `plugins` and still runs the store and plugin checks.
-- A Ctrl-C of `tasq` while a plugin handles an event ends the plugin too. The plugin runs in
-  its own process group, which the terminal's SIGINT does not reach, so `tasq` died and left it
-  running with no timeout. `tasq` now passes SIGINT on to the plugin's group, gives it until
-  the timeout to exit (a second Ctrl-C kills it at once), reaps it and exits 130. Outside an event Ctrl-C works as before.
-- The herdr launcher no longer races the new pane's shell: `herdr agent start` was sent a
-  few milliseconds after `workspace create`, before zsh (rc files, direnv, gitstatus) reached
-  its prompt, and herdr answered `agent_pane_busy`; the name-collision retry 100 ms later
-  only masked it. A busy pane is now retried every 100 ms for up to 5 s. `launch.log` and
-  `-v` keep one `agent start` record per name plus a `waited N ms for the pane's shell`
-  note; a pane still busy after that fails with herdr's message, the wait and the pane's
-  foreground process from `herdr pane process-info` (`gitstatusd (pid 42)`).
+**Worktrees** (opt-in: `worktrees_enabled = true`;
+[ADR 0022](docs/adr/0022-worktrees-opt-in-core-feature.md))
 
-### Removed
+- Declared from `[worktree]` `path`/`branch` templates (`worktree set`, `create --worktree`,
+  the TUI) or tracked from a path; created at launch or `worktree up` with provisioning
+  (`copies`, `symlinks`, `templates`, `ports`, `variables`) and `[worktree.hooks]`.
+- Released at close: worktrees removed, branches deleted when integrated or pushed, anything
+  with changes or in use kept with a warning. `worktree ls`, `switch` (`shell-init`), `path`,
+  `prune`, `config`.
+- Per-repository settings in `repos/*.toml`.
 
-- `.tasq.toml` is no longer read, in the current directory, above it or in a repository, and
-  nothing warns about one (ADR 0031). Its settings move to a profile or a repository config.
-- `--config FILE` and `TASQ_CONFIG` (use `--config-dir DIR` / `TASQ_CONFIG_DIR`), and
-  `TASQ_WORKTREE_ENABLED` (use `TASQ_WORKTREES_ENABLED`). A leftover `TASQ_CONFIG` or
-  `TASQ_WORKTREE_ENABLED` in the environment is ignored without a word.
-- Hook trust: `trust.toml`, the approval prompt, `tasq worktree trust` and `--yes` on `next`,
-  `pick`, `done`, `worktree up`, `worktree release`, `worktree prune` and `worktree switch`
-  (now an unknown argument, exit 2).
-- `tasq store info --json` no longer has the top-level `"bookkeeper"` key (always `null`; the
-  store has no bookkeeper), and `StoreInfo::bookkeeper` is gone. Enabled plugins are listed
-  under `"plugins"` instead.
-- `work.worktree_manager`, `work.worktree_command` and their `TASQ_WORKTREE_MANAGER` and
-  `TASQ_WORKTREE_COMMAND` variables: `tasq worktree --create` always runs `git worktree add`,
-  and worktree provisioning moves to `[worktree]`. A config that still sets them fails with the
-  file, line and column and a pointer to `[worktree]` (ADR 0022).
+**Sources** (`tasq sync`; [`docs/sources.md`](docs/sources.md))
+
+- GitLab and GitHub review requests and work items: a task per item, closed when merged,
+  approved, closed or unassigned (`done_when_*`). `drafts`, `exclude_authors`, tokens from a
+  command.
+- `llm-bridge`: a command's JSON becomes tasks.
+- `--source` (repeatable), `auto` sources, `--dry-run`, `sync ID...` re-checks,
+  `--interactive` for the Claude Code briefing.
+
+**Terminal UI** (`tasq ui`; [`docs/config.md`](docs/config.md#terminal-ui))
+
+- Grouped list with a detail pane (side, bottom or full), filter, status and priority
+  pickers, note and done prompts, create and edit views with a calendar picker, editor,
+  `view`, sessions (`Enter`, new window with `Ctrl+Enter`/`Shift+Enter`), sync and source
+  picker, folded groups, DONE group, Today view, `Ctrl+K`/`Ctrl+J` to move a task, `?` help.
+- Reloads when the store changes on disk. Colour presets, `[ui.theme.colors]`, `NO_COLOR`,
+  every key rebindable in `[ui.keys]`.
+
+**Configuration** ([`docs/config.md`](docs/config.md);
+[ADR 0031](docs/adr/0031-config-only-in-the-config-directory.md))
+
+- Config directory only (`--config-dir`, `TASQ_CONFIG_DIR`, `~/.config/tasq`): `config.toml`,
+  `profiles/<name>.toml`, `repos/*.toml`, then `TASQ_*` and `--set`. Errors carry
+  file:line:column; `config show` names the layer of each key. Examples in
+  [`examples/config/`](examples/config/).
+
+**Plugins and hooks** ([`docs/plugins.md`](docs/plugins.md);
+[ADR 0030](docs/adr/0030-store-sync-as-a-plugin.md))
+
+- `tasq NAME` runs `tasq-NAME` from `PATH` with the same configuration.
+- `[hooks]` `post-create`, `post-done`, `pre-launch` with the task as JSON on stdin.
+- `[plugins] enabled` plugins get `store-open`, `post-write` and `doctor` events, keep
+  lasting warnings shown by every command, and rewrite files under `tasq store lock`.
+  `[plugin.<name>]` for their settings. Examples in `examples/plugins/`.
+
+**Store sync** (`tasq-git`; [`docs/git-sync.md`](docs/git-sync.md))
+
+- Second binary, enabled with `[plugins] enabled = ["git"]`. `tasq git init [URL]`,
+  `tasq git clone URL`, `tasq git sync`; every command's writes are committed in a background
+  job that fetches, rebases and pushes on an `interval`.
+- Conflicting rebases are aborted with local commits kept and a warning naming the tasks;
+  duplicate ids from a pull warn until fixed. `doctor` checks identity, remote, push, fetch
+  and rebase state.
+
+**Claude Code plugin** (`plugins/claude`)
+
+- `/tasq:wrapup`, `/tasq:sync`, a status-line snippet; the repository is its own marketplace.
+
+**Distribution**
+
+- Tarballs for Linux x86_64/aarch64 and macOS x86_64/arm64 (`tasq`, `tasq-git`, `.sha256`);
+  `cargo install tasq`; eight crates on crates.io. GPL-3.0-or-later, MSRV 1.90. No Windows.
