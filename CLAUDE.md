@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`tasq` is a Rust rewrite of `original/tasks`, a bash script that managed todos stored as
+`tasq` started as a Rust rewrite of a bash script that managed todos stored as
 [nb](https://github.com/xwmx/nb) markdown files. tasq owns its storage: a store directory of
 `<ULID>.md` task files with a frontmatter block (ADR-0026). Work is driven by a phased plan:
 
@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `docs/adr/`: decision records. Add a new ADR rather than editing an accepted one; update the index in `docs/adr/README.md`.
 - `docs/file-format.md`, `docs/config.md`, `docs/testing.md`: normative references for the markdown format, config layers and test conventions.
 
-`original/tasks`, the nb notebooks it manages and the existing `~/.claude` skills are **never modified** by this project. The new tool ships under a new binary name and a new Claude Code plugin.
+The user's nb notebooks and the existing `~/.claude` skills are **never modified** by this project. The new tool ships under a new binary name and a new Claude Code plugin.
 
 ## Commands
 

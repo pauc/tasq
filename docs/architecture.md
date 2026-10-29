@@ -368,7 +368,6 @@ sees the traits.
 | `examples/` | Example configs, a reference plugin (`tasq-tlogs`), the event-logging plugin the event tests use (`tasq-echo`), a hook, and an LLM-bridge source setup. |
 | `homebrew/` | The Homebrew formula template used by the release workflow. |
 | `scripts/guard`, `scripts/test-runner` | Memory-capped wrappers every cargo invocation goes through (see `CONTRIBUTING.md`). |
-| `original/tasks` | The bash script this project rewrites. Never modified. |
 | `ruli/features/rust-rewrite/` | `PLAN.md` (tasks, acceptance criteria, decisions) and `PROGRESS.md` (status, learnings). |
 | `ruli/features/<slug>/` | One plan and progress log per larger task since then, e.g. `store-v2/` for ADR-0026. |
 | `docs/adr/` | Architecture decision records. |

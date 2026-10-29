@@ -42,8 +42,7 @@ tasq completions zsh  > ~/.zfunc/_tasq        # with ~/.zfunc in fpath
 tasq completions fish > ~/.config/fish/completions/tasq.fish
 ```
 
-How releases are built and published is in [`docs/release.md`](docs/release.md). Coming from
-the original `tasks` script: [`docs/migration.md`](docs/migration.md).
+How releases are built and published is in [`docs/release.md`](docs/release.md).
 
 ## Quick start
 

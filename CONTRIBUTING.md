@@ -135,7 +135,6 @@ index in [`docs/adr/README.md`](docs/adr/README.md). Template and process in tha
 | Plugins and hooks | `docs/plugins.md` |
 | Testing conventions and mutation testing | `docs/testing.md` |
 | Release process | `docs/release.md` |
-| Migration from the `tasks` script | `docs/migration.md` |
 | Claude Code plugin | `plugins/claude/README.md` |
 | Example configurations and plugins | `examples/README.md` |
 
@@ -143,8 +142,7 @@ Public items in `tasq-core` carry doc comments; `cargo doc` must stay warning-fr
 
 ## What never changes
 
-- `original/tasks`, the bash script this project rewrites. Read-only reference.
-- The user's real tasq stores, and the nb notebooks `original/tasks` manages. Tests only ever
-  touch temp copies of the fixtures (an isolated `HOME`).
+- The user's real tasq stores. Tests only ever touch temp copies of the fixtures (an isolated
+  `HOME`).
 - The existing `~/.claude` skills (`/wrapup`, `/update-tasks`, `/update-support-tasks`,
   `/time-logs`). The new tool ships its own plugin under `plugins/claude`.
