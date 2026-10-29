@@ -622,6 +622,24 @@ mod tests {
         assert_eq!(terminal_width(&env, None), DEFAULT_WIDTH);
     }
 
+    /// `render_with_glow` on a script this test just wrote, retried while
+    /// the exec fails with ETXTBSY: another test thread forking in the
+    /// window between the write and the exec gives its child the script's
+    /// write descriptor until that child execs (rust-lang/rust#114554).
+    fn render(glow: &Path, markdown: &str, style: &str, width: usize) -> std::io::Result<String> {
+        let mut result = render_with_glow(glow, markdown, style, width);
+        for _ in 0..10 {
+            match &result {
+                Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    result = render_with_glow(glow, markdown, style, width);
+                }
+                _ => break,
+            }
+        }
+        result
+    }
+
     #[test]
     fn render_with_glow_runs_the_program_and_reports_failures() {
         use std::os::unix::fs::PermissionsExt;
@@ -633,17 +651,17 @@ mod tests {
         )
         .unwrap();
         std::fs::set_permissions(&glow, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let out = render_with_glow(&glow, "# hi\n", "light", 88).unwrap();
+        let out = render(&glow, "# hi\n", "light", 88).unwrap();
         assert_eq!(out, "style=light width=88\n# hi\n");
         let failing = dir.path().join("glow-fail");
         std::fs::write(&failing, "#!/bin/sh\necho 'bad flag' >&2\nexit 1\n").unwrap();
         std::fs::set_permissions(&failing, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let err = render_with_glow(&failing, "x", "dark", 80).unwrap_err();
+        let err = render(&failing, "x", "dark", 80).unwrap_err();
         assert_eq!(err.to_string(), "bad flag");
         // More than a pipe buffer: the write always meets the closed pipe,
         // and the error is still glow's, not "Broken pipe".
         let big = "x".repeat(1 << 20);
-        let err = render_with_glow(&failing, &big, "dark", 80).unwrap_err();
+        let err = render(&failing, &big, "dark", 80).unwrap_err();
         assert_eq!(err.to_string(), "bad flag");
         assert!(render_with_glow(Path::new("/nonexistent/glow"), "x", "dark", 80).is_err());
     }
