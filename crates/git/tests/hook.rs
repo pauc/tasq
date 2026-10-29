@@ -77,10 +77,14 @@ impl Store {
     }
 }
 
-/// Runs `tasq-git <args>` with `stdin` and an environment holding nothing.
+/// Runs `tasq-git <args>` with `stdin` and an environment holding only a
+/// `PATH` of one empty directory: with `PATH` unset, `execvp` searches a
+/// default path (`/usr/bin:/bin`) and finds git, so an empty directory is
+/// what makes "no git to run" hold on every platform.
 fn tasq_git(args: &[&str], stdin: &str) -> Output {
+    let no_bin = tempfile::tempdir().unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_tasq-git"));
-    cmd.args(args).env_clear();
+    cmd.args(args).env_clear().env("PATH", no_bin.path());
     let mut child = support::forward_profile(&mut cmd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -181,13 +185,19 @@ mod repository {
     }
 
     /// The checks of a repository store (`tests/sync.rs`), here with no
-    /// git to run: the identity fails first.
+    /// git on the `PATH` of [`tasq_git`]: the identity fails first, and
+    /// for that reason.
     fn assert_repository_checks(out: &Output) {
         assert_eq!(out.status.code(), Some(0), "{}", stderr(out));
         assert_eq!(stderr(out), "");
         let checks: serde_json::Value = serde_json::from_str(&stdout(out)).unwrap();
         assert_eq!(checks[0]["name"], "identity", "{checks}");
         assert_eq!(checks[0]["status"], "fail", "{checks}");
+        assert_eq!(
+            checks[0]["message"],
+            "git cannot tell who commits: could not run git: No such file or directory (os error 2)",
+            "{checks}"
+        );
     }
 }
 
