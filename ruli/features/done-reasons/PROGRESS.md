@@ -10,7 +10,7 @@ Plan: [PLAN.md](PLAN.md). Task: tasq 61.
 | SD-002 | sources report reasons | done | 1ea7da5 |
 | SD-003 | config keys and the per-kind check | done | 59d536f |
 | SD-004 | docs, ADR, changelog | done | 73e49a7 |
-| SD-005 | the user's `sf` profile | todo | |
+| SD-005 | the user's `acme` profile | todo | |
 
 ## Learnings
 

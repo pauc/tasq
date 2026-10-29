@@ -63,7 +63,7 @@ Where things stand (2026-10-08, after WT-207):
 | WT-205 | Integration checks | done | core `worktree::integration` (`Check` cheapest first, `first_passing`, `targets`, `pushed_ref`, `cherry_all_upstream`, `merge_tree`, `Safety { integrated, pushed }` with `seen()` and `reason()`), c08b91c; `tasq_worktree::Git::safety`, e34a43b; 12 temp-repo tests (one per check, pushed with and without upstream, neither, local `main` fallback, the default branch itself, no local branch); 967 tests green; 0 missed mutants (76: 67 caught, 9 unviable) |
 | WT-206 | Releasing at close | done | 9fbc1b7 (core), dfcf827 (crate), 6932a22 (CLI, docs). core: `on_close(.., force)`, `DirSeen`/`KeepWorktree` gain `Foreign` and `InUse`, `KeepWorktree::reason`/`KeepBranch::reason`, `status` (`listed`, `changes` without provisioned paths, `dir_seen`), `provision::Step::target`; crate: `Git::{worktrees, changes, remove, prune, delete_branch}`; CLI: `worktree::release` (`Releasing`), `tasq worktree release`, `done --yes`, TUI `after_done`; `worktree_hooks::Approval` (`Skip` for the TUI) and an event sink instead of printing; 982 tests green; 0 missed mutants (diff: 67, 60 caught, 7 unviable) |
 | WT-207 | `ls`, `switch`, `path`, `shell-init`, completions | done | 98f5a78 (core `worktree::target`: `parse`, `by_branch`; `hooks::state_file`), 5221cd4 (CLI `worktree_nav`: `ls [ID] [--all]`, `switch [TARGET] [--yes]` with fzf or a numbered list, `path`, `shell-init bash|zsh|fish` through `$TASQ_CD_FILE`, `--json` for each; completions test; docs/json.md, docs/config.md); 994 tests green; 0 missed mutants (diff 61 + nav/status 67) |
-| WT-208 | Switch the author's workspaces off gwm (manual acceptance) | done | 6c8f966, 34610f9. tasq_lab and silverfin: `.tasq.toml` written, hooks trusted, full cycle passed twice each on the real notebook (tasks 51, 52; see Learnings). zantop_atelier dropped and gwm kept installed by the author (see Deviations) |
+| WT-208 | Switch the author's workspaces off gwm (manual acceptance) | done | 6c8f966, 34610f9. tasq_lab and acme: `.tasq.toml` written, hooks trusted, full cycle passed twice each on the real notebook (tasks 51, 52; see Learnings). zantop_atelier dropped and gwm kept installed by the author (see Deviations) |
 | WT-301 | `prune` | done | b6fb37b (core), 1305bec (crate), 8363670 (CLI, docs). core `worktree::prune::plan` (scope: done tasks to release, repositories to prune, `here` first); `tasq_worktree::Git::prune(repo, dry_run)` now `--verbose` and returns git's lines; CLI `worktree_nav::prune` (`tasq worktree prune [--all] [--dry-run] [--yes]`, `--json`), docs/config.md, docs/json.md; 998 tests green; 0 missed mutants (diff: 19, 18 caught, 1 unviable) |
 | WT-302 | Status-rich `ls` | todo | |
 | WT-303 | Fast copies of ignored files | todo | `worktree.copy_ignored` is rejected in config since fd5c8f8 (PR #7 review P-5: it parsed but did nothing). WT-303 re-adds it: the `WorktreeConfig` field (`not_yet_copy_ignored` goes), the `docs/config.md` row and example line, the `config show` snapshots, and replaces `copy_ignored_is_rejected_until_it_is_implemented` |
@@ -154,13 +154,13 @@ Where things stand (2026-10-08, after WT-207):
   `origin/HEAD` (the author left that as is). The author's `~/.zshrc` loads
   `tasq worktree shell-init zsh` next to gwm's line; with zsh's `EXTENDED_GLOB` a bare `^`
   globs, so `switch '^'` must be quoted (the author declined an alias).
-- WT-208 silverfin acceptance (2026-10-08, same build and notebook): throwaway task 52
-  declared `wt208-check` at `silverfin_worspace/wt208_check`; `tasq worktree up 52` (2.6 s)
+- WT-208 acme acceptance (2026-10-08, same build and notebook): throwaway task 52
+  declared `wt208-check` at `acme_workspace/wt208_check`; `tasq worktree up 52` (2.6 s)
   created it from `origin/HEAD` (`origin/main`) without an upstream, linked `node_modules`,
   `ignoreme`, `.nvim.lua` and `CLAUDE.local.md`, skipped `projects` with a warning (the main
   checkout has none), rendered `.envrc` byte for byte as the template with `{{original}}` =
-  `silverfin` and `{{branch}}` = `wt208-check`, and ran the trusted `direnv allow`. `direnv exec`
-  gave `PGDATABASE_*` = `silverfin_2db75ed4_*` (md5 of the branch), `BUNDLE_GEMFILE` in the
+  `acme` and `{{branch}}` = `wt208-check`, and ran the trusted `direnv allow`. `direnv exec`
+  gave `PGDATABASE_*` = `acme_2db75ed4_*` (md5 of the branch), `BUNDLE_GEMFILE` in the
   worktree and only the worktree's `bin` on `PATH`. `ls` showed it clean (links and the rendered
   file do not count). `tasq done 52` from the workspace directory removed it and deleted the
   branch ("same commit as origin/main"); reopen + `up` + `done` repeated it identically. The

@@ -7,7 +7,7 @@
 
 ADR-0026 took git out of the store: a store is a directory of task files with a
 `.tasq/lock`, and nothing is committed, pulled or pushed. The user's stores
-(Tasq, Silverfin) therefore have no history and no backup, and a second machine
+(Tasq, Acme) therefore have no history and no backup, and a second machine
 cannot see them. Task 57 brings git back as an opt-in feature.
 
 Forces:

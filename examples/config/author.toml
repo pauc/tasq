@@ -15,7 +15,7 @@ statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
 default_status = "ready"
 
 [work]
-default_project = "~/code/silverfin"       # sessions start here when a task tracks nothing
+default_project = "~/code/acme"       # sessions start here when a task tracks nothing
 
 [launch]
 default = "auto"             # herdr workspace when HERDR_ENV is set, else Claude Code
@@ -46,8 +46,8 @@ detail_position = "bottom"   # the task detail under the list in `tasq ui`
 # launch-window = "alt+enter"   # Ghostty keeps Ctrl+Enter for fullscreen
 
 [forge.gitlab]               # kind "gitlab" inferred from the block name
-host = "gitlab.silverfin.com"
-token_cmd = "glab config get token --host gitlab.silverfin.com"
+host = "gitlab.acme.com"
+token_cmd = "glab config get token --host gitlab.acme.com"
 
 [[source]]
 name = "gitlab-review-requests"
@@ -63,7 +63,7 @@ kind = "gitlab-work-items"
 forge = "gitlab"
 tags = ["gitlab"]
 status = "later"
-projects = ["silverfin/"]    # only this group; a trailing / matches every project under it
+projects = ["acme/"]    # only this group; a trailing / matches every project under it
 exclude_labels = ["wontfix"]
 
 [[source]]

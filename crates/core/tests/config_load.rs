@@ -2589,14 +2589,14 @@ fn plan_section_4_6_example_loads_as_is() {
     assert_eq!(c.workflow.statuses.len(), 5);
     assert_eq!(
         c.work.default_project,
-        Some(sb.home.join("code/SF/silverfin_worspace/silverfin"))
+        Some(sb.home.join("code/acme_workspace/acme"))
     );
     assert_eq!(c.launch.default, "claude");
     assert_eq!(c.launch.env, EnvStrategy::Direnv);
     assert_eq!(c.forge.len(), 1);
     let gl = &c.forge["gitlab"];
     assert_eq!(gl.kind, Some(ForgeKind::Gitlab));
-    assert_eq!(gl.host.as_deref(), Some("gitlab.silverfin.com"));
+    assert_eq!(gl.host.as_deref(), Some("gitlab.acme.com"));
     assert_eq!(gl.token_cmd.as_deref(), Some("glab auth token"));
     assert_eq!(c.source.len(), 3);
     assert_eq!(c.source[0].kind, SourceKind::GitlabReviewRequests);

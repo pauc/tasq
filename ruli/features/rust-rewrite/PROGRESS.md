@@ -356,7 +356,7 @@ time for anything that compiles; every cargo call through `scripts/guard`; mutan
   `cd <dir> && TASKS_NB_NOTEBOOK=... <cmd>` with `printf %q`, which is what the CLI test
   asserts (no direnv on the test `PATH`, `--set work.default_project=<home>`), plus exit 1
   with "work.default_project is not set" when there is no directory. The skill itself stays
-  private (`~/code/SF/.claude/skills/time-logs`); `docs/plugins.md` says so and
+  private (`~/code/acme_workspace/.claude/skills/time-logs`); `docs/plugins.md` says so and
   `docs/migration.md` maps `TASKS_DEFAULT_WORKTREE` to `work.default_project` for it.
 - **Sessions in a new window from the TUI (follow-up 2026-10-05, ADR 0012).** `Enter` stays
   "here"; `Ctrl+Enter` / `Shift+Enter` are `Cmd::Launch(id, LaunchTarget::Detached { focus })`

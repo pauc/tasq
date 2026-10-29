@@ -23,8 +23,8 @@ settings only. The trust machinery guards against files the user never receives.
 ```
 ~/.config/tasq/                  --config-dir / TASQ_CONFIG_DIR replace it
 ├── config.toml                  global config
-├── profiles/sf.toml             the profile "sf": [store], [work], [[source]] ...
-└── repos/silverfin.toml         path = "~/code/SF/silverfin_worspace/silverfin"
+├── profiles/acme.toml           the profile "acme": [store], [work], [[source]] ...
+└── repos/acme.toml              path = "~/code/acme_workspace/acme"
                                  [worktree] symlinks, templates, variables, hooks
 ```
 
@@ -136,8 +136,8 @@ settings only. The trust machinery guards against files the user never receives.
 
 The user's own setup moves after the last sub-task is installed: three profiles to
 `~/.config/tasq/profiles/`, the two `.tasq.toml` files to `~/.config/tasq/repos/` with
-`path = "~/code/tasq_lab/tasq"` and `path = "~/code/SF/silverfin_worspace/silverfin"`, the
-silverfin `.envrc` template into the config directory, `worktree.enabled` to
+`path = "~/code/tasq_lab/tasq"` and `path = "~/code/acme_workspace/acme"`, the
+acme `.envrc` template into the config directory, `worktree.enabled` to
 `worktrees_enabled`. Ask before touching `~/.config/tasq`.
 
 ## Sub-tasks

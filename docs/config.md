@@ -450,12 +450,12 @@ checkout of one repository (the working tree that holds its `.git` directory, no
 added from it), and a `[worktree]` table. The file name is free:
 
 ```toml
-# ~/.config/tasq/repos/silverfin.toml
-path = "~/code/SF/silverfin_worspace/silverfin"
+# ~/.config/tasq/repos/acme.toml
+path = "~/code/acme_workspace/acme"
 
 [worktree]
 symlinks = ["node_modules"]
-templates = [{ source = "templates/silverfin.envrc", target = ".envrc" }]  # ~/.config/tasq/repos/templates/
+templates = [{ source = "templates/acme.envrc", target = ".envrc" }]  # ~/.config/tasq/repos/templates/
 
 [worktree.hooks]
 post-create = ["direnv allow ."]

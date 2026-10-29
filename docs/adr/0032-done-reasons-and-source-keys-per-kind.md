@@ -11,9 +11,9 @@ for five different events: a merge request merged, closed, or approved by me, an
 closed or no longer assigned to me. The reason only survived as the note text (`"merged"`,
 `"no longer assigned to you"`).
 
-At Silverfin an issue moving to `Core::Review` is reassigned to the merge request's reviewer.
+At Acme an issue moving to `Core::Review` is reassigned to the merge request's reviewer.
 `WorkItems::check` reports an open issue no longer assigned to me as done, so sync closed the
-task while its work was still in review (task 216 in the `sf` store). Turning `close_when_done`
+task while its work was still in review (task 216 in the `acme` store). Turning `close_when_done`
 off to keep it open would also have stopped tasks from closing when their issue closes.
 
 Separately, `SourceConfig` is one flat struct for every kind. `labels` on a review-requests

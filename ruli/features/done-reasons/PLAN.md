@@ -6,11 +6,11 @@ Progress: [PROGRESS.md](PROGRESS.md). Planned 2026-10-28.
 
 ## Problem Statement
 
-Silverfin reassigns an issue to the MR reviewer when it moves to `Core::Review` and drops the
+Acme reassigns an issue to the MR reviewer when it moves to `Core::Review` and drops the
 person who worked on it. `WorkItems::check` (`crates/sources/src/work_items.rs:96`) reports an
 open issue no longer assigned to me as `ItemState::Done`, and `reconcile` closes every matched
 task whose item is done as long as `Policy::close_when_done` is on
-(`crates/core/src/source.rs:349`). Task 216 in the Silverfin store closed that way while its
+(`crates/core/src/source.rs:349`). Task 216 in the Acme store closed that way while its
 work was still in review.
 
 `close_when_done` is one switch for four different events (closed, merged, approved,
@@ -108,7 +108,7 @@ config.toml:12:1: source "gitlab-work-items": `done_when_approved` does not appl
 - Flags on the LLM bridge.
 - Reopening tasks: a task closed by sync stays closed when its item reopens (unchanged).
 - Detecting the reviewer handoff itself (e.g. by label); `done_when_unassigned = false` is the
-  fix for Silverfin.
+  fix for Acme.
 
 ## Sub-tasks
 
@@ -149,12 +149,12 @@ fixtures and `docs/config.md` examples still load; zero missed mutants in `confi
   (wrong-kind keys are errors, breaking).
 - `cargo doc` clean.
 
-### SD-005: the user's `sf` profile
+### SD-005: the user's `acme` profile
 
 Add `done_when_unassigned = false` to the `gitlab-work-items` source in
-`~/.config/tasq/profiles/sf.toml` (the task text says `config.toml`; the `sf` sources moved to
+`~/.config/tasq/profiles/acme.toml` (the task text says `config.toml`; the `acme` sources moved to
 the profile file with ADR 0031). Outside the repo, so only with explicit go-ahead, and after
-installing the new build. Check with `tasq --profile sf sync --dry-run`.
+installing the new build. Check with `tasq --profile acme sync --dry-run`.
 
 ## Further Notes
 

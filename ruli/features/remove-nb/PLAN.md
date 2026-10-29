@@ -11,7 +11,7 @@ record: [ADR 0027](../../../docs/adr/0027-nb-implementation-removed.md), superse
 ## Problem Statement
 
 Task 56 moved the CLI to a tasq-owned store. Nothing opens an nb notebook any more except
-`tasq migrate`, and every notebook the user wanted converted (Tasq, Silverfin) already has
+`tasq migrate`, and every notebook the user wanted converted (Tasq, Acme) already has
 been. What is left of the nb implementation is weight with no user:
 
 - A whole crate (the nb store, its bookkeeper and background job, git, index, resolve, doctor)
@@ -220,7 +220,7 @@ shape in core), a rename-only commit that drops the `v2` names, and a docs sweep
 - The list-section ops were tested only on v1 fixture pairs; the current-format write tests
   cover the scalar ops only. That gap is why the prefactor comes first.
 - The last commit with `tasq migrate` is `f7b09b1` (main at the start of this task).
-- The user's real stores (Tasq, Silverfin) are untouched by this work; the installed `tasq`
+- The user's real stores (Tasq, Acme) are untouched by this work; the installed `tasq`
   binary keeps working until it is reinstalled from the merged branch.
 
 ## Sub-tasks

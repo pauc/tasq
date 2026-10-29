@@ -10,7 +10,7 @@ only as the dependency of `tasq migrate`, "until a follow-up task deletes it
 together with the v1 reader and the parity tests". That follow-up is tasq 58.
 
 By then every notebook the author wanted converted had been migrated (Tasq,
-Silverfin). The notebooks left in nb are not going to be converted. No tasq
+Acme). The notebooks left in nb are not going to be converted. No tasq
 release exists (version `0.1.0`, no tag), so nobody else has a `tasq migrate`
 to depend on.
 

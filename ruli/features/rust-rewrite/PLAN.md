@@ -213,7 +213,7 @@ statuses = ["in-progress", "ready", "waiting", "blocked", "later"]
 default_status = "ready"
 
 [work]
-default_project = "~/code/SF/silverfin_worspace/silverfin"
+default_project = "~/code/acme_workspace/acme"
 worktree_manager = "git"     # git | command
 # worktree_command = "gwm create {new} {branch} --no-tmux -s"
 
@@ -222,7 +222,7 @@ default = "claude"           # shell | claude | tmux | herdr
 env = "direnv"               # inherit | direnv
 
 [forge.gitlab]                # shared client config, used by every gitlab-* source
-host = "gitlab.silverfin.com"
+host = "gitlab.acme.com"
 token_cmd = "glab auth token"
 
 [[source]]
