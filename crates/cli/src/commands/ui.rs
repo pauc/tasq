@@ -525,19 +525,22 @@ mod tests {
         let repos = dir.join(".config").join("tasq").join("repos");
         std::fs::create_dir_all(&repos).unwrap();
         let config = repos.join("proj.toml");
+        let fail = failing_script(&dir);
         std::fs::write(
             &config,
             format!(
-                "path = \"{}\"\n[worktree.hooks]\npre-remove = [\"/bin/false\"]\n",
-                dir.join("proj").display()
+                "path = \"{}\"\n[worktree.hooks]\npre-remove = [\"{}\"]\n",
+                dir.join("proj").display(),
+                fail.display()
             ),
         )
         .unwrap();
         assert_eq!(
             host(&app).after_done(&task),
             Err(format!(
-                "kept worktree {}: pre-remove hook \"/bin/false\" failed: exit status 1",
-                wt.display()
+                "kept worktree {}: pre-remove hook \"{}\" failed: exit status 1",
+                wt.display(),
+                fail.display()
             ))
         );
         assert!(wt.exists(), "kept");
@@ -547,6 +550,16 @@ mod tests {
         assert_eq!(host(&app).after_done(&task), Ok(()), "nothing left");
         let off = app_in(&dir, "");
         assert_eq!(host(&off).after_done(&task), Ok(()), "disabled: untouched");
+    }
+
+    /// An executable `<dir>/fail` that exits 1: a failing hook on every
+    /// platform (macOS has no `/bin/false`).
+    fn failing_script(dir: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("fail");
+        std::fs::write(&path, "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
     }
 
     fn closed_task() -> Task {
