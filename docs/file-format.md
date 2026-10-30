@@ -46,7 +46,7 @@ status: in-progress
 priority: A
 rank: 1024
 due: 2026-10-10
-project: /home/pau/code/tasks
+project: /home/me/code/tasks
 source: gitlab
 source_id: group/project!123
 source_url: https://gitlab.example.invalid/group/project/-/merge_requests/123

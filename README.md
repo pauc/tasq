@@ -25,9 +25,8 @@ The recordings are the `docs/demo/*.tape` files against a throwaway store
 
 | Method | Command |
 |---|---|
-| crates.io (once published) | `cargo install tasq` |
+| crates.io | `cargo install tasq` (and `cargo install tasq-git` for store sync) |
 | Prebuilt binary | Download `tasq-vX.Y.Z-<target>.tar.gz` for your platform from the [GitHub releases](https://github.com/pauc/tasq/releases) (Linux x86_64 and aarch64, macOS x86_64 and arm64; a `.sha256` sits next to each tarball), unpack it and put `tasq` on your `PATH` |
-| Homebrew | `brew install pauc/tasq/tasq` (the tap is `pauc/homebrew-tasq`) <!-- TODO: the tap repository does not exist yet; the first release with HOMEBREW_TAP_TOKEN set creates the formula --> |
 | From source | `git clone https://github.com/pauc/tasq && cd tasq && cargo install --path crates/cli` (and `--path crates/git` for store sync) |
 
 The binary is called `tasq`. Rust 1.90 or newer builds it from source. Nothing else is
@@ -302,7 +301,7 @@ GitLab, worktree, launcher and hook setup.
 
 ## Status
 
-Pre-release, version 0.1.0. The only store is the directory of task files described above;
+Version 0.1.0. The only store is the directory of task files described above;
 SQLite or other stores are behind the `Store` trait but not implemented. Linux and
 macOS; Windows should compile but is untested and unsupported (`exec`, direnv and tmux
 semantics). The plan and the decisions behind the design are in

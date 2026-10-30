@@ -101,4 +101,4 @@ Default five roles, applied as tasq topic tags (`#needs-triage`, ...). See `docs
 
 ### Domain docs
 
-Single-context: `CONTEXT.md` at the root (not written yet) plus `docs/adr/`. See `docs/agents/domain.md`.
+Single-context: `CONTEXT.md` at the root plus `docs/adr/`. See `docs/agents/domain.md`.
