@@ -10,8 +10,9 @@ The release pipeline is a hand-written GitHub Actions workflow,
 workflow code that has to be regenerated whenever the tool is upgraded, neither
 is installed on the author's machine, and the workflow needed here is small
 (four native builds, one release, eight `cargo publish` calls, one formula).
-Release notes come from the conventional commits through
-[git-cliff](https://git-cliff.org) and [`cliff.toml`](../cliff.toml).
+The release page shows the tag's section of `CHANGELOG.md`. That section
+starts as the conventional commits rendered by [git-cliff](https://git-cliff.org)
+and [`cliff.toml`](../cliff.toml), then gets a hand pass.
 
 ## Cutting a release
 
@@ -58,7 +59,7 @@ yanked, never replaced), so look at the dry run below before the first tag.
 |---|---|---|
 | `check-version` | ubuntu | Reads `version` from `Cargo.toml`; on a tag, fails unless `vVERSION == tag`. Exposes `version` to the other jobs. |
 | `build` (matrix) | `ubuntu-latest`, `ubuntu-24.04-arm`, `macos-15-intel`, `macos-latest` | Checks the runner's host triple is the matrix target (no cross-compilation), `cargo build --release --locked -p tasq -p tasq-git`, `tasq --version` and `tasq-git --version`, then packs `tasq-vVERSION-TARGET.tar.gz` (`tasq`, `tasq-git` (the store sync plugin), `README.md`, `LICENSE`, `CHANGELOG.md`) plus a `.sha256`. Uploads both as an artifact. |
-| `release` | ubuntu | Downloads every artifact, renders the notes for the tag with `git cliff --latest --strip header`, creates the GitHub release (`softprops/action-gh-release@v2`) with every tarball and checksum attached. The only job with `contents: write`. A tag containing `-` (`v0.2.0-rc.1`) is marked pre-release. |
+| `release` | ubuntu | Downloads every artifact, takes the notes from the tag's `## [VERSION]` section of `CHANGELOG.md` (the run fails when there is none), creates the GitHub release (`softprops/action-gh-release@v2`) with every tarball and checksum attached. The only job with `contents: write`. A tag containing `-` (`v0.2.0-rc.1`) is marked pre-release. |
 | `publish` | ubuntu | `cargo publish --locked -p <crate>` in dependency order: `tasq-core`; `tasq-store`; `tasq-sources`, `tasq-launch`, `tasq-worktree`, `tasq-tui`; `tasq`; `tasq-git` (no tasq dependency, so last). Each publish is skipped when that version already exists on crates.io, and is followed by a poll of the sparse index until the version is visible. Needs `CARGO_REGISTRY_TOKEN`. |
 | `homebrew` | ubuntu | Only when `HOMEBREW_TAP_TOKEN` is set. Renders `homebrew/tasq.rb.template` with the four tarball URLs and checksums and pushes it to `<owner>/homebrew-tasq` as `Formula/tasq.rb`. |
 
@@ -103,7 +104,7 @@ the binaries built and the GitHub release exists.
 ## Dry run
 
 Run the workflow by hand from the Actions tab (`workflow_dispatch`). It builds
-and packages every target, renders the notes for the unreleased commits and
+and packages every target, renders the `[Unreleased]` section of `CHANGELOG.md` as the notes and
 uploads them as the `release-notes` artifact. It creates no release, publishes
 nothing and never touches the tap. Download the artifacts to check the tarball
 layout and the checksums before tagging.

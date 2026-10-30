@@ -113,8 +113,8 @@ jobs:
             dist/*.tar.gz.sha256
           if-no-files-found: error
 
-  # Release notes for this tag from the conventional commits (cliff.toml), then
-  # the GitHub release with every tarball and checksum attached. On a dry run
+  # Release notes for this tag from its CHANGELOG.md section, then the GitHub
+  # release with every tarball and checksum attached. On a dry run
   # the notes are rendered and uploaded as an artifact; no release is created.
   release:
     name: github release
@@ -124,23 +124,26 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          # git-cliff walks the history between tags.
-          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
       - run: ls -l dist
-      - name: Render release notes
-        uses: orhun/git-cliff-action@v4
-        with:
-          config: cliff.toml
-          # `--latest`: the commits of the newest tag only. A dry run has no
-          # fresh tag, so it renders the unreleased section instead.
-          args: ${{ github.event_name == 'push' && '--latest --strip header' || '--unreleased --strip header' }}
+      - name: Release notes from CHANGELOG.md
         env:
-          OUTPUT: RELEASE_NOTES.md
+          # The tag's section, `## [VERSION](...) - DATE`, hand-written from the
+          # git-cliff rendering (docs/release.md). A dry run has no fresh tag,
+          # so it takes `## [Unreleased]` instead.
+          SECTION: ${{ github.event_name == 'push' && needs.check-version.outputs.version || 'Unreleased' }}
+        run: |
+          awk -v section="$SECTION" '
+            /^## \[/ { if (on) exit; on = index($0, "## [" section "]") == 1; next }
+            on && (started || NF) { started = 1; print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ "$GITHUB_EVENT_NAME" = push ] && ! grep -q '[^[:space:]]' RELEASE_NOTES.md; then
+            echo "::error::CHANGELOG.md has no section for $SECTION"
+            exit 1
+          fi
       - run: cat RELEASE_NOTES.md
       - uses: actions/upload-artifact@v4
         with:
