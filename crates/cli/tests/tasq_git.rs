@@ -118,11 +118,21 @@ fn a_write_is_committed_in_the_background() {
     }
     let out = env.tasq().args(["git", "init"]).output().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
+
+    // Never fetched: the first open after `init` starts a job of its own,
+    // which races the write below and can commit it as "update task files"
+    // before `post-write` records it. Let a read take that first look at the
+    // remote, and wait for it.
+    let out = env.tasq().arg("list").output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let store = env.store();
+    let last_fetch = store.join(".tasq/plugins/git/last-fetch");
+    eventually("the first fetch to be recorded", || last_fetch.is_file());
+
     let out = env.tasq().args(["log", "3", "a note"]).output().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stderr(&out), "");
 
-    let store = env.store();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         let subject = env.git(&store, &["log", "-1", "--format=%s"]);
